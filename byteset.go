@@ -26,11 +26,17 @@ func (s *TByteSet) TreatAsChar() *TByteSet {
 	return s
 }
 
+func (s *TByteSet) TreatAsByte() *TByteSet {
+	s.treatAsChar = false
+
+	return s
+}
+
 func (s *TByteSet) add(elements []byte) *TByteSet {
 	for _, element := range elements {
 		word, bit := s.split(element)
 
-		s.words[word] += bit
+		s.words[word] |= bit
 	}
 
 	return s
@@ -38,6 +44,10 @@ func (s *TByteSet) add(elements []byte) *TByteSet {
 
 func (s *TByteSet) Add(elements ...byte) *TByteSet {
 	return s.add(elements)
+}
+
+func (s *TByteSet) AddStr(elements string) *TByteSet {
+	return s.add([]byte(elements))
 }
 
 func (s *TByteSet) delete(elements []byte) *TByteSet {
@@ -52,6 +62,10 @@ func (s *TByteSet) delete(elements []byte) *TByteSet {
 
 func (s *TByteSet) Delete(elements ...byte) *TByteSet {
 	return s.delete(elements)
+}
+
+func (s *TByteSet) DeleteStr(elements string) *TByteSet {
+	return s.delete([]byte(elements))
 }
 
 func (s *TByteSet) Unite(t TByteSet) *TByteSet {
@@ -123,7 +137,7 @@ func (s TByteSet) String() string {
 		for b := 0; b < 64; b++ {
 			if (s.words[w] & (1 << b)) > 0 {
 				if buf.Len() > 1 {
-					fmt.Fprint(&buf, " ,")
+					fmt.Fprint(&buf, ", ")
 				}
 
 				item = byte(w*64 + b)
