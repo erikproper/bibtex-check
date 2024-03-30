@@ -41,3 +41,52 @@ func NewNamedStringsSet(Items ...string) TNamedStringsSet {
 func (Set TNamedStringsSet) Add(Items ...string) TNamedStringsSet {
 	return Set.AddRange(Items)
 }
+
+-----
+
+
+type TStringsSet map[string]bool
+
+func (set TStringsSet) addRange(items []string) TStringsSet {
+	for _, item := range items {
+		set[item] = true
+	}
+
+	return set
+}
+
+func NewNamedStringsSet(items ...string) TStringsSet {
+	set := TStringsSet{}
+
+	return set.addRange(items)
+}
+
+func (set TStringsSet) Add(items ...string) TStringsSet {
+	return set.addRange(items)
+}
+
+func (set TStringsSet) Remove(items ...string) TStringsSet {
+	for _, item := range items {
+		delete(set, item)
+	}
+
+	return set
+}
+
+func (set TStringsSet) Contains(items ...string) bool {
+	contains := true
+	containsItems := true
+
+	for _, item := range items {
+		_, contains = set[item]
+
+		containsItems = containsItems && contains
+
+		// We are done as soon as we come across an Item that is not contained in the set
+		if !containsItems {
+			return containsItems
+		}
+	}
+
+	return containsItems
+}
