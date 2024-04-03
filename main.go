@@ -259,6 +259,7 @@ func (t *TBiBTeXParser) Spaces() bool {
 
 func (t *TBiBTeXParser) MoveToToken() bool {
 	for t.Spaces() || t.Comments() {
+		// skip
 	}
 
 	return true
