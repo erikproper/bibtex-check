@@ -207,6 +207,7 @@ const (
 	BeginGroupCharacter  = '{'
 	EndGroupCharacter    = '}'
 	DoubleQuoteCharacter = '"'
+	PercentCharacter     = '%'
 )
 
 var RuneMap TRuneMap
@@ -229,7 +230,8 @@ func (t *TBiBTeXParser) NewBiBTeXParser() {
 		CarriageReturnCharacter, FormFeedCharacter, TabCharacter,
 		VerticalTabCharacter).TreatAsCharacters()
 
-	t.CommentStarters.Add('%').TreatAsCharacters()
+	t.CommentStarters.Add(PercentCharacter).TreatAsCharacters()
+
 	t.CommentEnders.Add(NewlineCharacter).TreatAsCharacters()
 }
 
