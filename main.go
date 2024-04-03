@@ -9,13 +9,13 @@ import (
 
 //import "io"
 
-/// 1: Positions (line + raw(!), so before CharacterMap, char position )
-
-/// 2: Make robust when file is not found
-
-/// 3: Typing stuff. Interfaces, etc.
-
-/// 4: BiBTeXParser parsing
+/// Clean initialize after opening stream.
+/// Initial BiBTeX file parsing
+/// Split files
+/// Enable logging/error reporting
+/// Make things robust and reporting when file is not found
+/// Error messages for parser "ForcedXXXX"
+/// Generate MetaData folder
 
 /// Reading person names:
 /// - Read names file first {<name>} {<alias>}
