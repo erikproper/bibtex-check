@@ -203,9 +203,10 @@ func (t *TCharacterStream) ThisCharacterWas(c byte) bool {
 // BiBTeXParser specific
 
 const (
-	EntryStartCharacter = '@'
-	EntryBeginCharacter = '{'
-	EntryEndCharacter   = '}'
+	EntryStartCharacter  = '@'
+	BeginGroupCharacter  = '{'
+	EndGroupCharacter    = '}'
+	DoubleQuoteCharacter = '"'
 )
 
 var RuneMap TRuneMap
