@@ -20,7 +20,7 @@ func ByteSet(elements ...byte) TByteSet {
 	return newSet
 }
 
-func (s *TByteSet) TreatAsChar() *TByteSet {
+func (s *TByteSet) TreatAsCharacters() *TByteSet {
 	s.treatAsChar = true
 
 	return s
@@ -46,7 +46,7 @@ func (s *TByteSet) Add(elements ...byte) *TByteSet {
 	return s.add(elements)
 }
 
-func (s *TByteSet) AddStr(elements string) *TByteSet {
+func (s *TByteSet) AddString(elements string) *TByteSet {
 	return s.add([]byte(elements))
 }
 
@@ -64,7 +64,7 @@ func (s *TByteSet) Delete(elements ...byte) *TByteSet {
 	return s.delete(elements)
 }
 
-func (s *TByteSet) DeleteStr(elements string) *TByteSet {
+func (s *TByteSet) DeleteString(elements string) *TByteSet {
 	return s.delete([]byte(elements))
 }
 
@@ -122,7 +122,7 @@ func (s TByteSet) Contains(elements ...byte) bool {
 
 	elementSet.add(elements)
 
-	return true
+	return elementSet.SubsetEq(s)
 }
 
 var ByteToString [255]string
