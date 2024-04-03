@@ -9,8 +9,12 @@ import (
 
 //import "io"
 
+/// t.SpaceCharacters etc do not have to be local.
+/// So ... do we need to define the BiBTeXParser as being a struct itself??
+///
 /// Clean initialize after opening stream.
 /// Initial BiBTeX file parsing
+/// Add comments ... also to the already splitted files.
 /// Split files
 /// Enable logging/error reporting
 /// Make things robust and reporting when file is not found
@@ -250,6 +254,7 @@ func (t *TBiBTeXParser) Comments() bool {
 
 func (t *TBiBTeXParser) Spaces() bool {
 	result := false
+
 	for t.ThisCharacterWasIn(t.SpaceCharacters) {
 		result = true
 	}
@@ -265,21 +270,19 @@ func (t *TBiBTeXParser) MoveToToken() bool {
 	return true
 }
 
-// {
 func (t *TBiBTeXParser) EntryBodyBegin() bool {
 	return t.MoveToToken() &&
-		true
+		t.ThisCharacterWas(BeginGroupCharacter)
 }
 
-// }
 func (t *TBiBTeXParser) EntryBodyEnd() bool {
 	return t.MoveToToken() &&
-		true
+		t.ThisCharacterWas(EndGroupCharacter)
 }
 
 func (t *TBiBTeXParser) EntryFields() bool {
 	return t.MoveToToken() &&
-		true
+		true ////// WORK
 }
 
 func (t *TBiBTeXParser) BiBTeXParserName(name *string) bool {
