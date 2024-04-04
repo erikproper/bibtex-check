@@ -5,20 +5,18 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 //import "io"
 
-/// t.SpaceCharacters etc do not have to be local.
-/// So ... do we need to define the BiBTeXParser as being a struct itself??
-///
-/// Clean initialize after opening stream.
 /// Initial BiBTeX file parsing
+/// String definitions via map ... initialise that one for each parse round ... also default strings for e.g. dates
+/// Enable logging/error reporting
+/// Error messages for parser "ForcedXXXX"
 /// Add comments ... also to the already splitted files.
 /// Split files
-/// Enable logging/error reporting
 /// Make things robust and reporting when file is not found
-/// Error messages for parser "ForcedXXXX"
 /// Generate MetaData folder
 
 /// Reading person names:
@@ -45,16 +43,9 @@ type TCharacterStream struct {
 }
 
 func (t *TCharacterStream) NewCharacterStream() {
-	t.endOfStream = true
 	t.textfileIsOpen = false
-	t.textRunes = []rune{}
-	t.textRunesPosition = 0
+	t.endOfStream = true
 	t.RuneMap = TRuneMap{}
-	t.runeString = ""
-	t.runeStringPosition = 0
-	t.currentCharacter = ' '
-	t.linePosition = 0
-	t.runePosition = 0
 }
 
 func (t *TCharacterStream) SetRuneMap(RuneMap TRuneMap) bool {
@@ -63,15 +54,10 @@ func (t *TCharacterStream) SetRuneMap(RuneMap TRuneMap) bool {
 	return true
 }
 
-func (t *TCharacterStream) TextfileOpen(fileName string) bool {
-	var err error
-
-	t.textfile, err = os.Open(fileName)
-	t.textfileIsOpen = true
-
+func (t *TCharacterStream) initializeStream(s string) {
 	t.endOfStream = false
 
-	t.textRunes = []rune{}
+	t.textRunes = []rune(s)
 	t.textRunesPosition = 0
 
 	t.runeString = ""
@@ -79,6 +65,17 @@ func (t *TCharacterStream) TextfileOpen(fileName string) bool {
 
 	t.linePosition = 1
 	t.runePosition = 0
+
+	t.currentCharacter = ' '
+}
+
+func (t *TCharacterStream) TextfileOpen(fileName string) bool {
+	var err error
+
+	t.textfile, err = os.Open(fileName)
+	t.textfileIsOpen = true
+
+	t.initializeStream("")
 
 	if err == nil {
 		t.textScanner = bufio.NewScanner(t.textfile)
@@ -109,16 +106,7 @@ func (t *TCharacterStream) TextString(s string) bool {
 		t.TextfileClose()
 	}
 
-	t.endOfStream = false
-
-	t.textRunes = []rune(s)
-	t.textRunesPosition = 0
-
-	t.runeString = ""
-	t.runeStringPosition = 0
-
-	t.linePosition = 1
-	t.runePosition = 0
+	t.initializeStream(s)
 
 	return t.NextCharacter()
 }
@@ -174,26 +162,34 @@ func (t *TCharacterStream) ThisCharacter() byte {
 	return t.currentCharacter
 }
 
-func (t *TCharacterStream) CollectThisCharacter(c *string) bool {
-	*c += string(t.currentCharacter)
+func (t *TCharacterStream) CollectCharacter(s *string) bool {
+	*s += string(t.currentCharacter)
 
 	return true
 }
 
-func (t *TCharacterStream) ThisCharacterIsIn(s TByteSet) bool {
-	return s.Contains(t.ThisCharacter())
+func (t *TCharacterStream) CollectAnyCharacterThatWas(s *string) bool {
+	return t.CollectCharacter(s) && t.NextCharacter()
 }
 
-func (t *TCharacterStream) ThisCharacterWasIn(s TByteSet) bool {
-	return t.ThisCharacterIsIn(s) && t.NextCharacter()
+func (t *TCharacterStream) ThisCharacterIsIn(S TByteSet) bool {
+	return S.Contains(t.ThisCharacter())
 }
 
-func (t *TCharacterStream) CollectCharacterThatWasIn(s TByteSet, c *string) bool {
-	return t.ThisCharacterIsIn(s) && t.CollectThisCharacter(c) && t.NextCharacter()
+func (t *TCharacterStream) ThisCharacterWasIn(S TByteSet) bool {
+	return t.ThisCharacterIsIn(S) && t.NextCharacter()
+}
+
+func (t *TCharacterStream) CollectCharacterThatWasIn(S TByteSet, s *string) bool {
+	return t.ThisCharacterIsIn(S) && t.CollectCharacter(s) && t.NextCharacter()
 }
 
 func (t *TCharacterStream) ThisCharacterWasNotIn(s TByteSet) bool {
 	return (!t.ThisCharacterIsIn(s)) && t.NextCharacter()
+}
+
+func (t *TCharacterStream) CollectCharacterThatWasNot(c byte, s *string) bool {
+	return ! t.ThisCharacterIs(c) && t.CollectCharacter(s) && t.NextCharacter()
 }
 
 func (t *TCharacterStream) ThisCharacterIs(c byte) bool {
@@ -204,7 +200,15 @@ func (t *TCharacterStream) ThisCharacterWas(c byte) bool {
 	return t.ThisCharacterIs(c) && t.NextCharacter()
 }
 
+func (t *TCharacterStream) CollectCharacterThatWas(c byte, s *string) bool {
+	return t.ThisCharacterIs(c) && t.CollectCharacter(s) && t.NextCharacter()
+}
+
 // BiBTeXParser specific
+
+type TBiBTeXStream struct {
+	TCharacterStream
+}
 
 const (
 	EntryStartCharacter  = '@'
@@ -212,57 +216,77 @@ const (
 	EndGroupCharacter    = '}'
 	DoubleQuoteCharacter = '"'
 	PercentCharacter     = '%'
+	EscapeCharacter      = '\\'
+	CommentEntryType     = "comment"
+	PreambleEntryType    = "preamble"
+	StringEntryType      = "string"
 )
 
-var RuneMap TRuneMap
+type TBiBTeXNameMap = map[string]string
 
-type TBiBTeXParser struct {
-	TCharacterStream
+var (
+	BiBTeXRuneMap TRuneMap
 
-	CommentStarters TByteSet
-	CommentEnders   TByteSet
-	SpaceCharacters TByteSet
+	BiBTeXTypeNameMap,
+	BiBTeXFieldNameMap TBiBTeXNameMap
+
+	BiBTeXNameCharacters,
+	BiBTeXCommentStarters,
+	BiBTeXCommentEnders,
+	BiBTeXSpaceCharacters TByteSet
+)
+
+func NormalizeBiBTeXTypeName(name *string) {
+	*name = strings.ToLower(*name)
+
+	normalized, mapped := BiBTeXTypeNameMap[*name]
+
+	if mapped {
+		*name = normalized
+	}
 }
 
-func (t *TBiBTeXParser) NewBiBTeXParser() {
+func NormalizeBiBTeXFieldName(name *string) {
+	*name = strings.ToLower(*name)
+
+	normalized, mapped := BiBTeXFieldNameMap[*name]
+
+	if mapped {
+		*name = normalized
+	}
+}
+
+func (t *TBiBTeXStream) NewBiBTeXParser() {
 	t.NewCharacterStream()
 
-	t.RuneMap = BiBTeXParserRuneMap
-
-	t.SpaceCharacters.Add(
-		SpaceCharacter, NewlineCharacter, BackspaceCharacter, BellCharacter,
-		CarriageReturnCharacter, FormFeedCharacter, TabCharacter,
-		VerticalTabCharacter).TreatAsCharacters()
-
-	t.CommentStarters.Add(PercentCharacter).TreatAsCharacters()
-
-	t.CommentEnders.Add(NewlineCharacter).TreatAsCharacters()
+	t.RuneMap = BiBTeXRuneMap
 }
 
-func (t *TBiBTeXParser) CommentsClausety() bool {
-	for t.ThisCharacterWasNotIn(t.CommentEnders) {
+func (t *TBiBTeXStream) CommentsClausety() bool {
+	for t.ThisCharacterWasNotIn(BiBTeXCommentEnders) {
 		// skip
 	}
 
 	return true
 }
 
-func (t *TBiBTeXParser) Comments() bool {
-	return t.ThisCharacterWasIn(t.CommentStarters) &&
-		t.CommentsClausety() && t.ThisCharacterWasIn(t.CommentEnders)
+func (t *TBiBTeXStream) Comments() bool {
+	return t.ThisCharacterWasIn(BiBTeXCommentStarters) &&
+		/**/ t.CommentsClausety() &&
+		/*  */ t.ThisCharacterWasIn(BiBTeXCommentEnders)
 }
 
-func (t *TBiBTeXParser) Spaces() bool {
+func (t *TBiBTeXStream) Spaces() bool {
 	result := false
 
-	for t.ThisCharacterWasIn(t.SpaceCharacters) {
+	for t.ThisCharacterWasIn(BiBTeXSpaceCharacters) {
 		result = true
 	}
 
 	return result
 }
 
-func (t *TBiBTeXParser) MoveToToken() bool {
+func (t *TBiBTeXStream) MoveToToken() bool {
 	for t.Spaces() || t.Comments() {
 		// skip
 	}
@@ -270,76 +294,109 @@ func (t *TBiBTeXParser) MoveToToken() bool {
 	return true
 }
 
-func (t *TBiBTeXParser) EntryBodyBegin() bool {
-	return t.MoveToToken() &&
-		t.ThisCharacterWas(BeginGroupCharacter)
+func (t *TBiBTeXStream) GroupedFieldElement(content *string) bool {
+	switch {
+	case t.CollectCharacterThatWas(BeginGroupCharacter, content):
+		return t.GroupedFieldContentety(content)
+			/**/ t.CollectCharacterThatWas(EndGroupCharacter, content)
+
+	case t.CollectCharacterThatWas(EscapeCharacter, content):
+		return t.CollectAnyCharacterThatWas(content)
+	}
+	
+	return t.CollectCharacterThatWasNot(EndGroupCharacter, content)
 }
 
-func (t *TBiBTeXParser) EntryBodyEnd() bool {
-	return t.MoveToToken() &&
-		t.ThisCharacterWas(EndGroupCharacter)
+func (t *TBiBTeXStream) GroupedFieldContentety(content *string) bool {
+	for t.GroupedFieldElement(content) {
+		// skip
+	}
+
+	return true
 }
 
-func (t *TBiBTeXParser) EntryFields() bool {
-	return t.MoveToToken() &&
-		true ////// WORK
+func (t *TBiBTeXStream) EntryFields(entryType string) bool {
+	content := ""
+	switch entryType {
+	case PreambleEntryType:
+		return t.GroupedFieldContentety(&content)
+
+	case CommentEntryType:
+		return t.GroupedFieldContentety(&content)
+
+	case StringEntryType:
+		t.MoveToToken()
+		fmt.Println("Stringssss")
+		return true
+
+	default:
+		t.MoveToToken()
+		fmt.Println("General")
+		return true // Key() && FieldDefinitions()
+	}
 }
 
-func (t *TBiBTeXParser) BiBTeXParserName(name *string) bool {
-	*name = ""
+func (t *TBiBTeXStream) EntryBodyBegin() bool {
+	return t.MoveToToken() && t.ThisCharacterWas(BeginGroupCharacter)
+}
 
+func (t *TBiBTeXStream) EntryBodyEnd() bool {
+	return t.MoveToToken() && t.ThisCharacterWas(EndGroupCharacter)
+}
+
+func (t *TBiBTeXStream) BiBTeXName(name *string) bool {
 	result := t.MoveToToken() &&
-		t.CollectCharacterThatWasIn(BiBTeXParserNameCharacters, name)
+		/*   */ t.CollectCharacterThatWasIn(BiBTeXNameCharacters, name)
 
-	for t.CollectCharacterThatWasIn(BiBTeXParserNameCharacters, name) {
+	for t.CollectCharacterThatWasIn(BiBTeXNameCharacters, name) {
 		// Skip
 	}
+
+	NormalizeBiBTeXTypeName(name)
 
 	fmt.Println("[[" + *name + "]]")
 
 	return result
 }
 
-func (t *TBiBTeXParser) EntryType(entryType *string) bool {
-	return t.BiBTeXParserName(entryType)
+func (t *TBiBTeXStream) EntryType(entryType *string) bool {
+	return t.BiBTeXName(entryType)
 }
 
-func (t *TBiBTeXParser) EntryStarter() bool {
+func (t *TBiBTeXStream) EntryStarter() bool {
 	return t.MoveToToken() &&
-		t.ThisCharacterWas(EntryStartCharacter)
+		/**/ t.ThisCharacterWas(EntryStartCharacter)
 }
 
-func (t *TBiBTeXParser) Entry() bool {
-	var entryType string
+func (t *TBiBTeXStream) Entry() bool {
+	entryType := ""
 
 	return t.EntryStarter() &&
-		t.EntryType(&entryType) &&
-		t.EntryBodyBegin() &&
-		t.EntryFields() &&
-		t.EntryBodyEnd()
+		/**/ t.EntryType(&entryType) &&
+		/*  */ t.EntryBodyBegin() &&
+		/*    */ t.EntryFields(entryType) &&
+		/*      */ t.EntryBodyEnd()
 }
 
-func (t *TBiBTeXParser) Entriesety() bool {
+func (t *TBiBTeXStream) Entriesety() bool {
 	return (t.Entry() && t.Entriesety()) || true
 }
 
-func (t *TBiBTeXParser) OK(p string) bool {
+func (t *TBiBTeXStream) OK(p string) bool {
 	fmt.Println("OK: [", string(t.ThisCharacter()), "] ", p)
 
 	return true
 }
 
-var BiBTeXParser TBiBTeXParser
+var BiBTeXParser TBiBTeXStream
 var count int
-var BiBTeXParserNameCharacters TByteSet
-var BiBTeXParserRuneMap TRuneMap
 
 func main() {
 	// Should move into a settings file.
 	// Settings should be an environment variable ...
 	// see https://gobyexample.com/environment-variables
 	// If settings file does not exist, then create one and push this as default into it.
-	BiBTeXParserRuneMap = TRuneMap{
+	BiBTeXRuneMap = TRuneMap{
 		'À': "{\\`A}",
 		'Á': "{\\'A}",
 		'Â': "{\\^A}",
@@ -477,15 +534,31 @@ func main() {
 		'®': "{\textregistered}",
 	}
 
-	// Should go into the init for the parser package
+	BiBTeXTypeNameMap = TBiBTeXNameMap{}
+	BiBTeXTypeNameMap["conference"] = "inproceedings"
+	BiBTeXTypeNameMap["softmisc"] = "misc"
+	BiBTeXTypeNameMap["patent"] = "misc"
+
+	//	BiBTeXFieldNameMap
 
 	BiBTeXParser.NewBiBTeXParser()
 
-	BiBTeXParserNameCharacters.AddString(
+	BiBTeXSpaceCharacters.Add(
+		SpaceCharacter, NewlineCharacter, BackspaceCharacter, BellCharacter,
+		CarriageReturnCharacter, FormFeedCharacter, TabCharacter,
+		VerticalTabCharacter).TreatAsCharacters()
+
+	BiBTeXCommentStarters.Add(PercentCharacter).TreatAsCharacters()
+
+	BiBTeXCommentEnders.Add(NewlineCharacter).TreatAsCharacters()
+
+	BiBTeXNameCharacters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 			"0123456789" +
 			"-_:/").TreatAsCharacters()
+
+	// End of Init
 
 	if BiBTeXParser.TextfileOpen("Test.bib") {
 		for BiBTeXParser.Entriesety() &&
@@ -518,6 +591,7 @@ func main() {
 //    isbn
 //    issn
 //    journal
+/// eprinttype / eprint??
 //    key
 //    month
 //    note
