@@ -221,6 +221,7 @@ const (
 	EndGroupCharacter     = '}'
 	DoubleQuotesCharacter = '"'
 	AssignmentCharacter   = '='
+	AdditionCharacter     = '#'
 	PercentCharacter      = '%'
 	CommaCharacter        = ','
 	EscapeCharacter       = '\\'
@@ -367,33 +368,45 @@ func (t *TBiBTeXStream) FieldType(fieldType *string) bool {
 // //// Then create a {Field,Entry}Admin using byte, with (1) defaults (+ named/constant identifiers) based on the pre-defined types, and (2) allow for aliases
 
 func (t *TBiBTeXStream) RecordFieldAssignment(fieldType, fieldValue string) bool {
-	fmt.Println("[F["+fieldType+"={"+fieldValue+"}]")
-	
+	fmt.Println("[F[" + fieldType + "={" + fieldValue + "}]")
+
 	return true
 }
 
-func (t *TBiBTeXStream) StringReference(fieldValue string) bool {
+func (t *TBiBTeXStream) StringReference(fieldValue *string) bool {
 	stringName := ""
-	
+
+	*fieldValue += "@STRING"
+
 	return t.FieldType(&stringName)
 }
-	
-func (t *TBiBTeXStream) FieldValue(fieldType string) bool {
-	fieldValue := ""
 
+func (t *TBiBTeXStream) FieldValueAdditionety(fieldValue *string) bool {
 	switch {
-	case t.CharacterOfNextTokenWas(BeginGroupCharacter):
-		return t.GroupedFieldContentety(EndGroupCharacter, TeXMode, &fieldValue) &&
-		/*    */ t.RecordFieldAssignment(fieldType, fieldValue) && 
-		/*      */ t.CharacterOfNextTokenWas(EndGroupCharacter)
 
-	case t.CharacterOfNextTokenWas(DoubleQuotesCharacter):
-		return t.GroupedFieldContentety(DoubleQuotesCharacter, TeXMode, &fieldValue) &&
-		/*    */ t.RecordFieldAssignment(fieldType, fieldValue) && 
-		/*      */ t.CharacterOfNextTokenWas(DoubleQuotesCharacter)
+	case t.CharacterOfNextTokenWas(AdditionCharacter):
+		return t.CharacterOfNextTokenWas(AdditionCharacter)
 
 	default:
-		return t.StringReference(&fieldValue)
+		return true
+
+	}
+}
+
+func (t *TBiBTeXStream) FieldValue(fieldValue *string) bool {
+	switch {
+
+	case t.CharacterOfNextTokenWas(BeginGroupCharacter):
+		return t.GroupedFieldContentety(EndGroupCharacter, TeXMode, fieldValue) &&
+			/* */ t.CharacterOfNextTokenWas(EndGroupCharacter)
+
+	case t.CharacterOfNextTokenWas(DoubleQuotesCharacter):
+		return t.GroupedFieldContentety(DoubleQuotesCharacter, TeXMode, fieldValue) &&
+			/* */ t.CharacterOfNextTokenWas(DoubleQuotesCharacter)
+
+	default:
+		return t.StringReference(fieldValue)
+
 	}
 
 	return false
@@ -401,10 +414,13 @@ func (t *TBiBTeXStream) FieldValue(fieldType string) bool {
 
 func (t *TBiBTeXStream) FieldDefinition() bool {
 	fieldType := ""
+	fieldValue := ""
 
 	return t.FieldType(&fieldType) &&
 		/**/ t.CharacterOfNextTokenWas(AssignmentCharacter) &&
-		/*  */ t.FieldValue(fieldType) &&
+		/*  */ t.FieldValue(&fieldValue) &&
+		/*    */ t.FieldValueAdditionety(&fieldValue) &&
+		/*      */ t.RecordFieldAssignment(fieldType, fieldValue)
 }
 
 func (t *TBiBTeXStream) FieldDefinitionsety() bool {
