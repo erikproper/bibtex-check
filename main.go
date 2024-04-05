@@ -210,8 +210,15 @@ func (t *TCharacterStream) CollectCharacterThatWas(c byte, s *string) bool {
 
 // BiBTeXParser specific
 
+type TStringMap map[string]string
 type TBiBTeXStream struct {
 	TCharacterStream
+
+	currentTagName,
+	currentTagValue,
+	currentEntryTypeName string
+
+	stringMap TStringMap
 }
 
 const (
@@ -235,39 +242,23 @@ type TBiBTeXNameMap = map[string]string
 var (
 	BiBTeXRuneMap TRuneMap
 
-	BiBTeXEntryTypeNameMap,
-	BiBTeXFieldTypeNameMap TBiBTeXNameMap
+	BiBTeXTagNameMap,
+	BiBTeXEmptyNameMap,
+	BiBTeXEntryNameMap TBiBTeXNameMap
 
+	BiBTeXCommentEnders,
 	BiBTeXNameCharacters,
 	BiBTeXCommentStarters,
-	BiBTeXCommentEnders,
 	BiBTeXSpaceCharacters TByteSet
 )
-
-func NormalizeEntryTypeName(name *string) {
-	*name = strings.ToLower(*name)
-
-	normalized, mapped := BiBTeXEntryTypeNameMap[*name]
-
-	if mapped {
-		*name = normalized
-	}
-}
-
-func NormalizeFieldTypeName(name *string) {
-	*name = strings.ToLower(*name)
-
-	normalized, mapped := BiBTeXFieldTypeNameMap[*name]
-
-	if mapped {
-		*name = normalized
-	}
-}
 
 func (t *TBiBTeXStream) NewBiBTeXParser() {
 	t.NewCharacterStream()
 
-	t.RuneMap = BiBTeXRuneMap
+	t.stringMap = TStringMap{}
+	t.currentTagName = ""
+	t.currentTagValue = ""
+	t.currentEntryTypeName = ""
 }
 
 func (t *TBiBTeXStream) CommentsClausety() bool {
@@ -312,10 +303,10 @@ func (t *TBiBTeXStream) CollectCharacterOfNextTokenThatWasIn(characters TByteSet
 		/**/ t.CollectCharacterThatWasIn(characters, s)
 }
 
-func (t *TBiBTeXStream) GroupedFieldElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
+func (t *TBiBTeXStream) GroupedTagElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
 	switch {
 	case t.CollectCharacterThatWas(BeginGroupCharacter, content):
-		return t.GroupedFieldContentety(EndGroupCharacter, inTeXMode, content)
+		return t.GroupedContentety(EndGroupCharacter, inTeXMode, content)
 		/*    */ t.CollectCharacterThatWas(EndGroupCharacter, content)
 
 	case t.CollectCharacterThatWas(EscapeCharacter, content):
@@ -328,64 +319,55 @@ func (t *TBiBTeXStream) GroupedFieldElement(groupEndCharacter byte, inTeXMode bo
 	return t.CollectCharacterThatWasNot(groupEndCharacter, content)
 }
 
-func (t *TBiBTeXStream) GroupedFieldContentety(groupEndCharacter byte, inTeXMode bool, content *string) bool {
-	for t.GroupedFieldElement(groupEndCharacter, inTeXMode, content) {
+func (t *TBiBTeXStream) GroupedContentety(groupEndCharacter byte, inTeXMode bool, content *string) bool {
+	for t.GroupedTagElement(groupEndCharacter, inTeXMode, content) {
 		// Skip
 	}
 
 	return true
 }
 
-func (t *TBiBTeXStream) EntryType(entryType *string) bool {
-	result := t.CollectCharacterOfNextTokenThatWasIn(BiBTeXNameCharacters, entryType)
+func (t *TBiBTeXStream) Name(nameMap TBiBTeXNameMap, name *string) bool {
+	result := t.CollectCharacterOfNextTokenThatWasIn(BiBTeXNameCharacters, name)
 
-	for t.CollectCharacterThatWasIn(BiBTeXNameCharacters, entryType) {
+	for t.CollectCharacterThatWasIn(BiBTeXNameCharacters, name) {
 		// Skip
 	}
 
-	NormalizeEntryTypeName(entryType)
+	*name = strings.ToLower(*name)
 
-	fmt.Println("[E[" + *entryType + "]]")
+	normalized, mapped := nameMap[*name]
+	if mapped {
+		*name = normalized
+	}
 
 	return result
 }
 
-func (t *TBiBTeXStream) FieldType(fieldType *string) bool {
-	result := t.CollectCharacterOfNextTokenThatWasIn(BiBTeXNameCharacters, fieldType)
-
-	for t.CollectCharacterThatWasIn(BiBTeXNameCharacters, fieldType) {
-		// Skip
-	}
-
-	NormalizeFieldTypeName(fieldType)
-
-	return result
-}
-
-// //// Then allow for # between values ... .... not after values.
+// currentTagValue
 // //// Then add semantics to strings
 // //// Then keys on regular entries, and, indeed, parse the rest of the regular entries.
-// //// Then create a {Field,Entry}Admin using byte, with (1) defaults (+ named/constant identifiers) based on the pre-defined types, and (2) allow for aliases
+// //// Then create a {Tag,Entry}Admin using byte, with (1) defaults (+ named/constant identifiers) based on the pre-defined types, and (2) allow for aliases
 
-func (t *TBiBTeXStream) RecordFieldAssignment(fieldType, fieldValue string) bool {
-	fmt.Println("[F[" + fieldType + "={" + fieldValue + "}]")
+func (t *TBiBTeXStream) RecordTagAssignment() bool {
+	fmt.Println("[F[" + t.currentEntryTypeName + "::" + t.currentTagName + "={" + t.currentTagValue + "}]")
 
 	return true
 }
 
-func (t *TBiBTeXStream) StringReference(fieldValue *string) bool {
+func (t *TBiBTeXStream) StringReference() bool {
+	t.currentTagValue += "@STRING"
 	stringName := ""
 
-	*fieldValue += "@STRING"
-
-	return t.FieldType(&stringName)
+	return t.Name(BiBTeXEmptyNameMap, &stringName)
 }
 
-func (t *TBiBTeXStream) FieldValueAdditionety(fieldValue *string) bool {
+func (t *TBiBTeXStream) TagValueAdditionety() bool {
 	switch {
 
 	case t.CharacterOfNextTokenWas(AdditionCharacter):
-		return t.CharacterOfNextTokenWas(AdditionCharacter)
+		return t.TagValue() &&
+			/* */ t.TagValueAdditionety()
 
 	default:
 		return true
@@ -393,40 +375,40 @@ func (t *TBiBTeXStream) FieldValueAdditionety(fieldValue *string) bool {
 	}
 }
 
-func (t *TBiBTeXStream) FieldValue(fieldValue *string) bool {
+func (t *TBiBTeXStream) TagValue() bool {
 	switch {
 
 	case t.CharacterOfNextTokenWas(BeginGroupCharacter):
-		return t.GroupedFieldContentety(EndGroupCharacter, TeXMode, fieldValue) &&
+		return t.GroupedContentety(EndGroupCharacter, TeXMode, &t.currentTagValue) &&
 			/* */ t.CharacterOfNextTokenWas(EndGroupCharacter)
 
 	case t.CharacterOfNextTokenWas(DoubleQuotesCharacter):
-		return t.GroupedFieldContentety(DoubleQuotesCharacter, TeXMode, fieldValue) &&
+		return t.GroupedContentety(DoubleQuotesCharacter, TeXMode, &t.currentTagValue) &&
 			/* */ t.CharacterOfNextTokenWas(DoubleQuotesCharacter)
 
 	default:
-		return t.StringReference(fieldValue)
+		return t.StringReference()
 
 	}
 
 	return false
 }
 
-func (t *TBiBTeXStream) FieldDefinition() bool {
-	fieldType := ""
-	fieldValue := ""
+func (t *TBiBTeXStream) TagDefinition() bool {
+	t.currentTagName  = ""
+	t.currentTagValue = ""
 
-	return t.FieldType(&fieldType) &&
+	return t.Name(BiBTeXTagNameMap, &t.currentTagName) &&
 		/**/ t.CharacterOfNextTokenWas(AssignmentCharacter) &&
-		/*  */ t.FieldValue(&fieldValue) &&
-		/*    */ t.FieldValueAdditionety(&fieldValue) &&
-		/*      */ t.RecordFieldAssignment(fieldType, fieldValue)
+		/*  */ t.TagValue() &&
+		/*    */ t.TagValueAdditionety() &&
+		/*      */ t.RecordTagAssignment()
 }
 
-func (t *TBiBTeXStream) FieldDefinitionsety() bool {
-	t.FieldDefinition()
+func (t *TBiBTeXStream) TagDefinitionsety() bool {
+	t.TagDefinition()
 
-	for t.CharacterOfNextTokenWas(CommaCharacter) && t.FieldDefinition() {
+	for t.CharacterOfNextTokenWas(CommaCharacter) && t.TagDefinition() {
 		// Skip
 	}
 
@@ -435,33 +417,33 @@ func (t *TBiBTeXStream) FieldDefinitionsety() bool {
 	return true
 }
 
-func (t *TBiBTeXStream) EntryBodyProper(entryType string) bool {
+func (t *TBiBTeXStream) EntryBodyProper() bool {
 	content := ""
 
-	switch entryType {
+	switch t.currentEntryTypeName {
 	case PreambleEntryType:
-		return t.GroupedFieldContentety(EndGroupCharacter, TeXMode, &content)
+		return t.GroupedContentety(EndGroupCharacter, TeXMode, &content)
 
 	case CommentEntryType:
-		return t.GroupedFieldContentety(EndGroupCharacter, !TeXMode, &content)
+		return t.GroupedContentety(EndGroupCharacter, !TeXMode, &content)
 
 	case StringEntryType:
-		return t.FieldDefinitionsety()
+		return t.TagDefinitionsety()
 
 	default:
 		t.MoveToToken()
 		fmt.Println("General")
-		return true // Key() && FieldDefinitions()
+		return true // Key() && TagDefinitions()
 	}
 }
 
 func (t *TBiBTeXStream) Entry() bool {
-	entryType := ""
+	t.currentEntryTypeName = ""
 
 	return t.CharacterOfNextTokenWas(EntryStartCharacter) &&
-		/**/ t.EntryType(&entryType) &&
+		/**/ t.Name(BiBTeXEntryNameMap, &t.currentEntryTypeName) &&
 		/*  */ t.CharacterOfNextTokenWas(BeginGroupCharacter) &&
-		/*    */ t.EntryBodyProper(entryType) &&
+		/*    */ t.EntryBodyProper() &&
 		/*      */ t.CharacterOfNextTokenWas(EndGroupCharacter)
 }
 
@@ -621,12 +603,14 @@ func main() {
 		'®': "{\textregistered}",
 	}
 
-	BiBTeXEntryTypeNameMap = TBiBTeXNameMap{}
-	BiBTeXEntryTypeNameMap["conference"] = "inproceedings"
-	BiBTeXEntryTypeNameMap["softmisc"] = "misc"
-	BiBTeXEntryTypeNameMap["patent"] = "misc"
+	BiBTeXEmptyNameMap = TBiBTeXNameMap{}
 
-	//	BiBTeXFieldTypeNameMap
+	BiBTeXEntryNameMap = BiBTeXEmptyNameMap
+	BiBTeXEntryNameMap["conference"] = "inproceedings"
+	BiBTeXEntryNameMap["softmisc"] = "misc"
+	BiBTeXEntryNameMap["patent"] = "misc"
+
+	//	BiBTeXTagNameMap
 
 	BiBTeXParser.NewBiBTeXParser()
 
