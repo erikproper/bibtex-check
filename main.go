@@ -361,11 +361,9 @@ func (t *TBiBTeXStream) FieldType(fieldType *string) bool {
 	return result
 }
 
-// //// Then add field bodies with { } grouping.
-// //// Then add the " " option
 // //// Then allow for # between values ... .... not after values.
-// //// Then keys on regular entries, and, indeed, regular entries.
 // //// Then add semantics to strings
+// //// Then keys on regular entries, and, indeed, parse the rest of the regular entries.
 // //// Then create a {Field,Entry}Admin using byte, with (1) defaults (+ named/constant identifiers) based on the pre-defined types, and (2) allow for aliases
 
 func (t *TBiBTeXStream) RecordFieldAssignment(fieldType, fieldValue string) bool {
@@ -374,6 +372,12 @@ func (t *TBiBTeXStream) RecordFieldAssignment(fieldType, fieldValue string) bool
 	return true
 }
 
+func (t *TBiBTeXStream) StringReference(fieldValue string) bool {
+	stringName := ""
+	
+	return t.FieldType(&stringName)
+}
+	
 func (t *TBiBTeXStream) FieldValue(fieldType string) bool {
 	fieldValue := ""
 
@@ -389,8 +393,7 @@ func (t *TBiBTeXStream) FieldValue(fieldType string) bool {
 		/*      */ t.CharacterOfNextTokenWas(DoubleQuotesCharacter)
 
 	default:
-		variableName := ""
-		return t.FieldType(&variableName)
+		return t.StringReference(&fieldValue)
 	}
 
 	return false
@@ -401,7 +404,7 @@ func (t *TBiBTeXStream) FieldDefinition() bool {
 
 	return t.FieldType(&fieldType) &&
 		/**/ t.CharacterOfNextTokenWas(AssignmentCharacter) &&
-		/*  */ t.FieldValue(fieldType)
+		/*  */ t.FieldValue(fieldType) &&
 }
 
 func (t *TBiBTeXStream) FieldDefinitionsety() bool {
