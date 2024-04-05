@@ -162,13 +162,17 @@ func (t *TCharacterStream) ThisCharacter() byte {
 	return t.currentCharacter
 }
 
-func (t *TCharacterStream) CollectCharacter(s *string) bool {
-	*s += string(t.currentCharacter)
+func (t *TCharacterStream) AddCharacter(c byte, s *string) bool {
+	*s += string(c)
 
 	return true
 }
 
-func (t *TCharacterStream) CollectAnyCharacterThatWas(s *string) bool {
+func (t *TCharacterStream) CollectCharacter(s *string) bool {
+	return t.AddCharacter(t.currentCharacter, s)
+}
+
+func (t *TCharacterStream) CollectCharacterThatWasThere(s *string) bool {
 	return t.CollectCharacter(s) && t.NextCharacter()
 }
 
@@ -189,7 +193,7 @@ func (t *TCharacterStream) ThisCharacterWasNotIn(s TByteSet) bool {
 }
 
 func (t *TCharacterStream) CollectCharacterThatWasNot(c byte, s *string) bool {
-	return ! t.ThisCharacterIs(c) && t.CollectCharacter(s) && t.NextCharacter()
+	return !t.ThisCharacterIs(c) && t.CollectCharacter(s) && t.NextCharacter()
 }
 
 func (t *TCharacterStream) ThisCharacterIs(c byte) bool {
@@ -211,15 +215,18 @@ type TBiBTeXStream struct {
 }
 
 const (
-	EntryStartCharacter  = '@'
-	BeginGroupCharacter  = '{'
-	EndGroupCharacter    = '}'
-	DoubleQuoteCharacter = '"'
-	PercentCharacter     = '%'
-	EscapeCharacter      = '\\'
-	CommentEntryType     = "comment"
-	PreambleEntryType    = "preamble"
-	StringEntryType      = "string"
+	TeXMode               = true
+	EntryStartCharacter   = '@'
+	BeginGroupCharacter   = '{'
+	EndGroupCharacter     = '}'
+	DoubleQuotesCharacter = '"'
+	AssignmentCharacter   = '='
+	PercentCharacter      = '%'
+	CommaCharacter        = ','
+	EscapeCharacter       = '\\'
+	CommentEntryType      = "comment"
+	PreambleEntryType     = "preamble"
+	StringEntryType       = "string"
 )
 
 type TBiBTeXNameMap = map[string]string
@@ -227,8 +234,8 @@ type TBiBTeXNameMap = map[string]string
 var (
 	BiBTeXRuneMap TRuneMap
 
-	BiBTeXTypeNameMap,
-	BiBTeXFieldNameMap TBiBTeXNameMap
+	BiBTeXEntryTypeNameMap,
+	BiBTeXFieldTypeNameMap TBiBTeXNameMap
 
 	BiBTeXNameCharacters,
 	BiBTeXCommentStarters,
@@ -236,20 +243,20 @@ var (
 	BiBTeXSpaceCharacters TByteSet
 )
 
-func NormalizeBiBTeXTypeName(name *string) {
+func NormalizeEntryTypeName(name *string) {
 	*name = strings.ToLower(*name)
 
-	normalized, mapped := BiBTeXTypeNameMap[*name]
+	normalized, mapped := BiBTeXEntryTypeNameMap[*name]
 
 	if mapped {
 		*name = normalized
 	}
 }
 
-func NormalizeBiBTeXFieldName(name *string) {
+func NormalizeFieldTypeName(name *string) {
 	*name = strings.ToLower(*name)
 
-	normalized, mapped := BiBTeXFieldNameMap[*name]
+	normalized, mapped := BiBTeXFieldTypeNameMap[*name]
 
 	if mapped {
 		*name = normalized
@@ -264,7 +271,7 @@ func (t *TBiBTeXStream) NewBiBTeXParser() {
 
 func (t *TBiBTeXStream) CommentsClausety() bool {
 	for t.ThisCharacterWasNotIn(BiBTeXCommentEnders) {
-		// skip
+		// Skip
 	}
 
 	return true
@@ -276,7 +283,7 @@ func (t *TBiBTeXStream) Comments() bool {
 		/*  */ t.ThisCharacterWasIn(BiBTeXCommentEnders)
 }
 
-func (t *TBiBTeXStream) Spaces() bool {
+func (t *TBiBTeXStream) TeXSpaces() bool {
 	result := false
 
 	for t.ThisCharacterWasIn(BiBTeXSpaceCharacters) {
@@ -287,47 +294,140 @@ func (t *TBiBTeXStream) Spaces() bool {
 }
 
 func (t *TBiBTeXStream) MoveToToken() bool {
-	for t.Spaces() || t.Comments() {
-		// skip
+	for t.TeXSpaces() || t.Comments() {
+		// Skip
 	}
 
 	return true
 }
 
-func (t *TBiBTeXStream) GroupedFieldElement(content *string) bool {
+func (t *TBiBTeXStream) CharacterOfNextTokenWas(character byte) bool {
+	return t.MoveToToken() &&
+		/**/ t.ThisCharacterWas(character)
+}
+
+func (t *TBiBTeXStream) CollectCharacterOfNextTokenThatWasIn(characters TByteSet, s *string) bool {
+	return t.MoveToToken() &&
+		/**/ t.CollectCharacterThatWasIn(characters, s)
+}
+
+func (t *TBiBTeXStream) GroupedFieldElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
 	switch {
 	case t.CollectCharacterThatWas(BeginGroupCharacter, content):
-		return t.GroupedFieldContentety(content)
-			/**/ t.CollectCharacterThatWas(EndGroupCharacter, content)
+		return t.GroupedFieldContentety(EndGroupCharacter, inTeXMode, content)
+		/*    */ t.CollectCharacterThatWas(EndGroupCharacter, content)
 
 	case t.CollectCharacterThatWas(EscapeCharacter, content):
-		return t.CollectAnyCharacterThatWas(content)
+		return t.CollectCharacterThatWasThere(content)
+
+	case inTeXMode && t.TeXSpaces():
+		return t.AddCharacter(SpaceCharacter, content)
 	}
-	
-	return t.CollectCharacterThatWasNot(EndGroupCharacter, content)
+
+	return t.CollectCharacterThatWasNot(groupEndCharacter, content)
 }
 
-func (t *TBiBTeXStream) GroupedFieldContentety(content *string) bool {
-	for t.GroupedFieldElement(content) {
-		// skip
+func (t *TBiBTeXStream) GroupedFieldContentety(groupEndCharacter byte, inTeXMode bool, content *string) bool {
+	for t.GroupedFieldElement(groupEndCharacter, inTeXMode, content) {
+		// Skip
 	}
 
 	return true
 }
 
-func (t *TBiBTeXStream) EntryFields(entryType string) bool {
+func (t *TBiBTeXStream) EntryType(entryType *string) bool {
+	result := t.CollectCharacterOfNextTokenThatWasIn(BiBTeXNameCharacters, entryType)
+
+	for t.CollectCharacterThatWasIn(BiBTeXNameCharacters, entryType) {
+		// Skip
+	}
+
+	NormalizeEntryTypeName(entryType)
+
+	fmt.Println("[E[" + *entryType + "]]")
+
+	return result
+}
+
+func (t *TBiBTeXStream) FieldType(fieldType *string) bool {
+	result := t.CollectCharacterOfNextTokenThatWasIn(BiBTeXNameCharacters, fieldType)
+
+	for t.CollectCharacterThatWasIn(BiBTeXNameCharacters, fieldType) {
+		// Skip
+	}
+
+	NormalizeFieldTypeName(fieldType)
+
+	return result
+}
+
+// //// Then add field bodies with { } grouping.
+// //// Then add the " " option
+// //// Then allow for # between values ... .... not after values.
+// //// Then keys on regular entries, and, indeed, regular entries.
+// //// Then add semantics to strings
+// //// Then create a {Field,Entry}Admin using byte, with (1) defaults (+ named/constant identifiers) based on the pre-defined types, and (2) allow for aliases
+
+func (t *TBiBTeXStream) RecordFieldAssignment(fieldType, fieldValue string) bool {
+	fmt.Println("[F["+fieldType+"={"+fieldValue+"}]")
+	
+	return true
+}
+
+func (t *TBiBTeXStream) FieldValue(fieldType string) bool {
+	fieldValue := ""
+
+	switch {
+	case t.CharacterOfNextTokenWas(BeginGroupCharacter):
+		return t.GroupedFieldContentety(EndGroupCharacter, TeXMode, &fieldValue) &&
+		/*    */ t.RecordFieldAssignment(fieldType, fieldValue) && 
+		/*      */ t.CharacterOfNextTokenWas(EndGroupCharacter)
+
+	case t.CharacterOfNextTokenWas(DoubleQuotesCharacter):
+		return t.GroupedFieldContentety(DoubleQuotesCharacter, TeXMode, &fieldValue) &&
+		/*    */ t.RecordFieldAssignment(fieldType, fieldValue) && 
+		/*      */ t.CharacterOfNextTokenWas(DoubleQuotesCharacter)
+
+	default:
+		variableName := ""
+		return t.FieldType(&variableName)
+	}
+
+	return false
+}
+
+func (t *TBiBTeXStream) FieldDefinition() bool {
+	fieldType := ""
+
+	return t.FieldType(&fieldType) &&
+		/**/ t.CharacterOfNextTokenWas(AssignmentCharacter) &&
+		/*  */ t.FieldValue(fieldType)
+}
+
+func (t *TBiBTeXStream) FieldDefinitionsety() bool {
+	t.FieldDefinition()
+
+	for t.CharacterOfNextTokenWas(CommaCharacter) && t.FieldDefinition() {
+		// Skip
+	}
+
+	t.CharacterOfNextTokenWas(CommaCharacter)
+
+	return true
+}
+
+func (t *TBiBTeXStream) EntryBodyProper(entryType string) bool {
 	content := ""
+
 	switch entryType {
 	case PreambleEntryType:
-		return t.GroupedFieldContentety(&content)
+		return t.GroupedFieldContentety(EndGroupCharacter, TeXMode, &content)
 
 	case CommentEntryType:
-		return t.GroupedFieldContentety(&content)
+		return t.GroupedFieldContentety(EndGroupCharacter, !TeXMode, &content)
 
 	case StringEntryType:
-		t.MoveToToken()
-		fmt.Println("Stringssss")
-		return true
+		return t.FieldDefinitionsety()
 
 	default:
 		t.MoveToToken()
@@ -336,46 +436,14 @@ func (t *TBiBTeXStream) EntryFields(entryType string) bool {
 	}
 }
 
-func (t *TBiBTeXStream) EntryBodyBegin() bool {
-	return t.MoveToToken() && t.ThisCharacterWas(BeginGroupCharacter)
-}
-
-func (t *TBiBTeXStream) EntryBodyEnd() bool {
-	return t.MoveToToken() && t.ThisCharacterWas(EndGroupCharacter)
-}
-
-func (t *TBiBTeXStream) BiBTeXName(name *string) bool {
-	result := t.MoveToToken() &&
-		/*   */ t.CollectCharacterThatWasIn(BiBTeXNameCharacters, name)
-
-	for t.CollectCharacterThatWasIn(BiBTeXNameCharacters, name) {
-		// Skip
-	}
-
-	NormalizeBiBTeXTypeName(name)
-
-	fmt.Println("[[" + *name + "]]")
-
-	return result
-}
-
-func (t *TBiBTeXStream) EntryType(entryType *string) bool {
-	return t.BiBTeXName(entryType)
-}
-
-func (t *TBiBTeXStream) EntryStarter() bool {
-	return t.MoveToToken() &&
-		/**/ t.ThisCharacterWas(EntryStartCharacter)
-}
-
 func (t *TBiBTeXStream) Entry() bool {
 	entryType := ""
 
-	return t.EntryStarter() &&
+	return t.CharacterOfNextTokenWas(EntryStartCharacter) &&
 		/**/ t.EntryType(&entryType) &&
-		/*  */ t.EntryBodyBegin() &&
-		/*    */ t.EntryFields(entryType) &&
-		/*      */ t.EntryBodyEnd()
+		/*  */ t.CharacterOfNextTokenWas(BeginGroupCharacter) &&
+		/*    */ t.EntryBodyProper(entryType) &&
+		/*      */ t.CharacterOfNextTokenWas(EndGroupCharacter)
 }
 
 func (t *TBiBTeXStream) Entriesety() bool {
@@ -534,12 +602,12 @@ func main() {
 		'®': "{\textregistered}",
 	}
 
-	BiBTeXTypeNameMap = TBiBTeXNameMap{}
-	BiBTeXTypeNameMap["conference"] = "inproceedings"
-	BiBTeXTypeNameMap["softmisc"] = "misc"
-	BiBTeXTypeNameMap["patent"] = "misc"
+	BiBTeXEntryTypeNameMap = TBiBTeXNameMap{}
+	BiBTeXEntryTypeNameMap["conference"] = "inproceedings"
+	BiBTeXEntryTypeNameMap["softmisc"] = "misc"
+	BiBTeXEntryTypeNameMap["patent"] = "misc"
 
-	//	BiBTeXFieldNameMap
+	//	BiBTeXFieldTypeNameMap
 
 	BiBTeXParser.NewBiBTeXParser()
 
@@ -591,7 +659,8 @@ func main() {
 //    isbn
 //    issn
 //    journal
-/// eprinttype / eprint??
+//    eprinttype
+//    eprint??
 //    key
 //    month
 //    note
