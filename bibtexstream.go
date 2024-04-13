@@ -240,10 +240,10 @@ func (b *TBiBTeXStream) RecordTagAssignment(tagName, tagValue string, tagMap TSt
 	return true
 }
 
-func OK (m string) bool {
- fmt.Println("OK: "+m)
- 
- return true
+func OK(m string) bool {
+	fmt.Println("OK: " + m)
+
+	return true
 }
 
 func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
@@ -251,7 +251,7 @@ func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, 
 	tagValue := ""
 
 	return b.Name(nameMap, &tagName) && (
-		/**/ b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
+	/**/ b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
 		/*  */ b.TagValue(&tagValue) &&
 		/*    */ b.TagValueAdditionety(&tagValue) &&
 		/*      */ b.RecordTagAssignment(tagName, tagValue, tagMap, tagNames) ||
@@ -290,7 +290,6 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 
 	default:
 		return b.Name(BiBTeXEmptyNameMap, &content) &&
-		OK("Key: " + content) &&
 			/**/ b.TagDefinitionsety(BiBTeXTagNameMap, tagsMap, tagsSet)
 	}
 }
