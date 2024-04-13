@@ -7,11 +7,9 @@ import (
 
 //import "io"
 
-/// Split off when they have their own operators.
-
 /// Enable logging/error reporting
 /// Error messages for parser and "ForcedXXXX"
-/// Split Streaming file + replace t by b at BiBTeX level
+/// Check Forced vs non-forced ... do we always need both?
 /// Then create a {Tag,Entry}Admin using byte, with (1) defaults (+ named/constant identifiers) based on the pre-defined types, and (2) allow for aliases
 /// Split files further
 /// Add comments ... also to the already splitted files.

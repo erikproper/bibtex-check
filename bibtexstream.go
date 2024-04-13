@@ -246,16 +246,22 @@ func OK(m string) bool {
 	return true
 }
 
-func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
-	tagName := ""
+func (b *TBiBTeXStream) ForcedTagDefinitionProper (tagName string, nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
 	tagValue := ""
 
-	return b.Name(nameMap, &tagName) && (
-	/**/ b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
-		/*  */ b.TagValue(&tagValue) &&
-		/*    */ b.TagValueAdditionety(&tagValue) &&
-		/*      */ b.RecordTagAssignment(tagName, tagValue, tagMap, tagNames) ||
-		b.SkipToNextEntry(fromTagDefinition)) || true
+	return b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
+		/**/ b.TagValue(&tagValue) &&
+		/*  */ b.TagValueAdditionety(&tagValue) &&
+		/*    */ b.RecordTagAssignment(tagName, tagValue, tagMap, tagNames) ||
+		b.SkipToNextEntry(fromTagDefinition)
+}
+
+func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
+	tagName := ""
+
+	return b.Name(nameMap, &tagName) && 
+		/**/ b.ForcedTagDefinitionProper(tagName, tagMap, tagNames) ||
+	true
 }
 
 // =====
