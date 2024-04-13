@@ -65,13 +65,18 @@ func (b *TBiBTeXStream) NewBiBTeXParser(reporting TReporting) bool {
 }
 
 func (b *TBiBTeXStream) MaybeReportError(message string, context ...any) bool {
-	// return b.skippingEntry || b.ReportError(message, context...)
-	return b.ReportError(message, context...)
+	return b.skippingEntry ||
+		b.ReportError(message, context...)
 }
 
 func (b *TBiBTeXStream) SkipToNextEntry(from string) bool {
 	b.skippingEntry = true
-	b.ReportWarning(warningSkippingToNextEntry + " from " + from)
+
+	if from != "" {
+		b.ReportWarning(warningSkippingToNextEntry + " from " + from)
+	} else {
+		b.ReportWarning(warningSkippingToNextEntry)
+	}
 
 	for !b.ThisTokenIsCharacter(EntryStartCharacter) && !b.EndOfStream() {
 		b.NextCharacter()
@@ -91,7 +96,7 @@ func (b *TBiBTeXStream) CommentsClausety() bool {
 func (b *TBiBTeXStream) Comments() bool {
 	return b.ThisCharacterWasIn(BiBTeXCommentStarters) &&
 		/**/ b.CommentsClausety() &&
-		/*  */ b.ForcedThisCharacterWasIn(BiBTeXCommentEnders)
+		/*  */ b.ForcedThisTokenWasCharacterIn(BiBTeXCommentEnders)
 }
 
 func (b *TBiBTeXStream) TeXSpaces() bool {
@@ -122,8 +127,16 @@ func (b *TBiBTeXStream) ThisTokenWasCharacter(character byte) bool {
 		/**/ b.ThisCharacterWas(character)
 }
 
+func (b *TBiBTeXStream) ForcedThisTokenWasCharacterIn(S TByteSet) bool {
+	return b.ThisCharacterWasIn(S) ||
+		b.MaybeReportError(errorCharacterNotIn, S.String()) ||
+		b.SkipToNextEntry("")
+}
+
 func (b *TBiBTeXStream) ForcedThisTokenWasCharacter(character byte) bool {
-	return b.ThisTokenWasCharacter(character) || b.MaybeReportError(errorMissingCharacter, string(character))
+	return b.ThisTokenWasCharacter(character) ||
+		b.MaybeReportError(errorMissingCharacter, string(character)) ||
+		b.SkipToNextEntry("")
 }
 
 func (b *TBiBTeXStream) CollectCharacterOfNextTokenThatWasIn(characters TByteSet, s *string) bool {
@@ -246,7 +259,7 @@ func OK(m string) bool {
 	return true
 }
 
-func (b *TBiBTeXStream) ForcedTagDefinitionProper (tagName string, nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
+func (b *TBiBTeXStream) ForcedTagDefinitionProper(tagName string, nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
 	tagValue := ""
 
 	return b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
@@ -259,9 +272,9 @@ func (b *TBiBTeXStream) ForcedTagDefinitionProper (tagName string, nameMap TStri
 func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
 	tagName := ""
 
-	return b.Name(nameMap, &tagName) && 
-		/**/ b.ForcedTagDefinitionProper(tagName, tagMap, tagNames) ||
-	true
+	return b.Name(nameMap, &tagName) &&
+		/**/ b.ForcedTagDefinitionProper(tagName, nameMap, tagMap, tagNames) ||
+		true
 }
 
 // =====

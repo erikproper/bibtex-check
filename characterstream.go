@@ -6,8 +6,6 @@ import (
 	"os"
 )
 
-// Negation of ForcedXXX to trigger error message.
-
 const errorCharacterNotIn = "expected character from %s"
 
 type (
@@ -99,7 +97,8 @@ func (t *TCharacterStream) TextfileOpen(fileName string) bool {
 }
 
 func (t *TCharacterStream) ForcedTextfileOpen(fileName, errorMessage string) bool {
-	return t.TextfileOpen(fileName) || t.ReportError(errorMessage, fileName)
+	return t.TextfileOpen(fileName) ||
+		t.ReportError(errorMessage, fileName)
 }
 
 func (t *TCharacterStream) TextfileClose() bool {
@@ -196,10 +195,6 @@ func (t *TCharacterStream) ThisCharacterIsIn(S TByteSet) bool {
 
 func (t *TCharacterStream) ThisCharacterWasIn(S TByteSet) bool {
 	return t.ThisCharacterIsIn(S) && t.NextCharacter()
-}
-
-func (t *TCharacterStream) ForcedThisCharacterWasIn(S TByteSet) bool {
-	return t.ThisCharacterWasIn(S) || t.ReportError(errorCharacterNotIn, S.String())
 }
 
 func (t *TCharacterStream) CollectCharacterThatWasIn(S TByteSet, s *string) bool {
