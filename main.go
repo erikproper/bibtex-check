@@ -8,7 +8,7 @@ import (
 //import "io"
 
 /// Then create a {Tag,Entry}Admin using byte, with (1) defaults (+ named/constant identifiers) based on the pre-defined types, and (2) allow for aliases
-/// Add comments ... also to the already splitted files.
+/// Add comments + inspect ... also to the already splitted files.
 /// Make things robust and reporting when file is not found
 
 /// First App
