@@ -10,6 +10,9 @@ const (
 	errorOpeningFile           = "Could not open file '%s'"
 	errorUnknownString         = "Unknown string '%s' referenced"
 	warningSkippingToNextEntry = "Skipping to next entry"
+	fromTagDefinition          = "TagDefinition"
+	fromEntryBody              = "EntryBody"
+	fromName                   = "Name"
 	TeXMode                    = true
 	EntryStartCharacter        = '@'
 	BeginGroupCharacter        = '{'
@@ -66,9 +69,9 @@ func (b *TBiBTeXStream) MaybeReportError(message string, context ...any) bool {
 	return b.ReportError(message, context...)
 }
 
-func (b *TBiBTeXStream) SkipToNextEntry() bool {
+func (b *TBiBTeXStream) SkipToNextEntry(from string) bool {
 	b.skippingEntry = true
-	b.ReportWarning(warningSkippingToNextEntry)
+	b.ReportWarning(warningSkippingToNextEntry + " from " + from)
 
 	for !b.ThisTokenIsCharacter(EntryStartCharacter) && !b.EndOfStream() {
 		b.NextCharacter()
@@ -172,7 +175,7 @@ func (b *TBiBTeXStream) Name(nameMap TStringMap, name *string) bool {
 func (b *TBiBTeXStream) ForcedName(nameMap TStringMap, name *string) bool {
 	return b.Name(nameMap, name) ||
 		b.MaybeReportError(errorMissingName) ||
-		b.SkipToNextEntry()
+		b.SkipToNextEntry(fromName)
 }
 
 func (b *TBiBTeXStream) AddStringDefinition(name string, s *string) bool {
@@ -237,25 +240,31 @@ func (b *TBiBTeXStream) RecordTagAssignment(tagName, tagValue string, tagMap TSt
 	return true
 }
 
-func (b *TBiBTeXStream) TagDefinition(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
+func OK (m string) bool {
+ fmt.Println("OK: "+m)
+ 
+ return true
+}
+
+func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
 	tagName := ""
 	tagValue := ""
 
-	return b.Name(nameMap, &tagName) &&
+	return b.Name(nameMap, &tagName) && (
 		/**/ b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
 		/*  */ b.TagValue(&tagValue) &&
 		/*    */ b.TagValueAdditionety(&tagValue) &&
 		/*      */ b.RecordTagAssignment(tagName, tagValue, tagMap, tagNames) ||
-		b.SkipToNextEntry()
+		b.SkipToNextEntry(fromTagDefinition)) || true
 }
 
 // =====
 
 func (b *TBiBTeXStream) TagDefinitionsety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
-	b.TagDefinition(nameMap, tagMap, tagNames)
+	b.TagDefinitionety(nameMap, tagMap, tagNames)
 
 	for b.ThisTokenWasCharacter(CommaCharacter) {
-		b.TagDefinition(nameMap, tagMap, tagNames)
+		b.TagDefinitionety(nameMap, tagMap, tagNames)
 	}
 
 	return true
@@ -281,14 +290,15 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 
 	default:
 		return b.Name(BiBTeXEmptyNameMap, &content) &&
-			b.TagDefinitionsety(BiBTeXTagNameMap, tagsMap, tagsSet)
+		OK("Key: " + content) &&
+			/**/ b.TagDefinitionsety(BiBTeXTagNameMap, tagsMap, tagsSet)
 	}
 }
 
 func (b *TBiBTeXStream) ForcedEntryBodyProper() bool {
 	return b.EntryBodyProper() ||
 		b.MaybeReportError(errorMissingEntryBody) ||
-		b.SkipToNextEntry()
+		b.SkipToNextEntry(fromEntryBody)
 }
 
 func (b *TBiBTeXStream) Entry() bool {
