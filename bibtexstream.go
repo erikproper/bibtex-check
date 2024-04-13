@@ -5,14 +5,15 @@ import "fmt" // Development only
 
 const (
 	errorMissingCharacter      = "Missing character '%s'"
-	errorMissingEntryBody      = "Missing entry body"
-	errorMissingName           = "Missing name"
+	errorMissingEntryBody      = "Missing EntryBody"
+	errorMissingName           = "Missing Name"
+	errorMissingTagValue       = "Missing TagValue"
 	errorOpeningFile           = "Could not open file '%s'"
 	errorUnknownString         = "Unknown string '%s' referenced"
 	warningSkippingToNextEntry = "Skipping to next entry"
-	fromTagDefinition          = "TagDefinition"
 	fromEntryBody              = "EntryBody"
 	fromName                   = "Name"
+	fromTagValue               = "TagValue"
 	TeXMode                    = true
 	EntryStartCharacter        = '@'
 	BeginGroupCharacter        = '{'
@@ -214,7 +215,7 @@ func (b *TBiBTeXStream) TagValueAdditionety(value *string) bool {
 	switch {
 
 	case b.ThisTokenWasCharacter(AdditionCharacter):
-		return b.TagValue(value) &&
+		return b.ForcedTagValue(value) &&
 			/* */ b.TagValueAdditionety(value)
 
 	default:
@@ -228,11 +229,11 @@ func (b *TBiBTeXStream) TagValue(value *string) bool {
 
 	case b.ThisTokenWasCharacter(BeginGroupCharacter):
 		return b.GroupedContentety(EndGroupCharacter, TeXMode, value) &&
-			/* */ b.ThisTokenWasCharacter(EndGroupCharacter)
+			/* */ b.ForcedThisTokenWasCharacter(EndGroupCharacter)
 
 	case b.ThisTokenWasCharacter(DoubleQuotesCharacter):
 		return b.GroupedContentety(DoubleQuotesCharacter, TeXMode, value) &&
-			/* */ b.ThisTokenWasCharacter(DoubleQuotesCharacter)
+			/* */ b.ForcedThisTokenWasCharacter(DoubleQuotesCharacter)
 
 	default:
 		return b.StringReference(value)
@@ -240,6 +241,12 @@ func (b *TBiBTeXStream) TagValue(value *string) bool {
 	}
 
 	return false
+}
+
+func (b *TBiBTeXStream) ForcedTagValue(value *string) bool {
+	return b.TagValue(value) ||
+		b.MaybeReportError(errorMissingTagValue) ||
+		b.SkipToNextEntry(fromTagValue)
 }
 
 func (b *TBiBTeXStream) RecordTagAssignment(tagName, tagValue string, tagMap TStringMap, tagNames TStringSet) bool {
@@ -253,20 +260,13 @@ func (b *TBiBTeXStream) RecordTagAssignment(tagName, tagValue string, tagMap TSt
 	return true
 }
 
-func OK(m string) bool {
-	fmt.Println("OK: " + m)
-
-	return true
-}
-
 func (b *TBiBTeXStream) ForcedTagDefinitionProper(tagName string, nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
 	tagValue := ""
 
 	return b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
-		/**/ b.TagValue(&tagValue) &&
+		/**/ b.ForcedTagValue(&tagValue) &&
 		/*  */ b.TagValueAdditionety(&tagValue) &&
-		/*    */ b.RecordTagAssignment(tagName, tagValue, tagMap, tagNames) ||
-		b.SkipToNextEntry(fromTagDefinition)
+		/*    */ b.RecordTagAssignment(tagName, tagValue, tagMap, tagNames)
 }
 
 func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
@@ -276,8 +276,6 @@ func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, 
 		/**/ b.ForcedTagDefinitionProper(tagName, nameMap, tagMap, tagNames) ||
 		true
 }
-
-// =====
 
 func (b *TBiBTeXStream) TagDefinitionsety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
 	b.TagDefinitionety(nameMap, tagMap, tagNames)

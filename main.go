@@ -7,11 +7,7 @@ import (
 
 //import "io"
 
-/// Enable logging/error reporting
-/// Error messages for parser and "ForcedXXXX"
-/// Check Forced vs non-forced ... do we always need both?
 /// Then create a {Tag,Entry}Admin using byte, with (1) defaults (+ named/constant identifiers) based on the pre-defined types, and (2) allow for aliases
-/// Split files further
 /// Add comments ... also to the already splitted files.
 /// Make things robust and reporting when file is not found
 
@@ -41,10 +37,7 @@ func main() {
 
 	fmt.Printf("Count: " + strconv.Itoa(count) + "\n")
 
-	//			fmt.Print("[" + runeToString(runes[i]) + "]")
-
 	// log import ...
-	//
 	//	log.Fatal(err)
 }
 
