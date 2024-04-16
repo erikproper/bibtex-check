@@ -1,18 +1,19 @@
 package main
 
 import "strings"
-import "fmt" // Development only
 
 const (
 	errorMissingCharacter      = "Missing character '%s'"
 	errorMissingEntryBody      = "Missing EntryBody"
-	errorMissingName           = "Missing Name"
+	errorMissingEntryType      = "Missing EntryType"
+	errorMissingTagName        = "Missing TagName"
 	errorMissingTagValue       = "Missing TagValue"
 	errorOpeningFile           = "Could not open file '%s'"
 	errorUnknownString         = "Unknown string '%s' referenced"
 	warningSkippingToNextEntry = "Skipping to next entry"
 	fromEntryBody              = "EntryBody"
-	fromName                   = "Name"
+	fromTagName                = "TagName"
+	fromEntryType              = "EntryType"
 	fromTagValue               = "TagValue"
 	TeXMode                    = true
 	EntryStartCharacter        = '@'
@@ -37,8 +38,9 @@ type (
 		currentTagName,
 		currentTagValue,
 		currentEntryTypeName string
-		stringMap     TStringMap
 		skippingEntry bool
+		stringMap     TStringMap
+		library       TBiBTeXLibrary
 	}
 )
 
@@ -50,19 +52,23 @@ var (
 	BiBTeXEntryNameMap TStringMap
 
 	BiBTeXCommentEnders,
-	BiBTeXNameCharacters,
+	BiBTeXKeyCharacters,
+	BiBTeXSpaceCharacters,
 	BiBTeXCommentStarters,
-	BiBTeXSpaceCharacters TByteSet
+	BiBTeXTagNameStarters,
+	BiBTeXNumberCharacters,
+	BiBTeXTagNameCharacters,
+	BiBTeXEntryTypeStarters,
+	BiBTeXEntryTypeCharacters TByteSet
 )
 
-func (b *TBiBTeXStream) NewBiBTeXParser(reporting TReporting) bool {
+func (b *TBiBTeXStream) NewBiBTeXParser(reporting TReporting, library TBiBTeXLibrary) {
 	b.NewCharacterStream(reporting)
 	b.SetRuneMap(BiBTeXRuneMap)
 	b.stringMap = TStringMap{}
 	b.currentEntryTypeName = ""
 	b.skippingEntry = false
-
-	return true
+	b.library = library
 }
 
 func (b *TBiBTeXStream) MaybeReportError(message string, context ...any) bool {
@@ -145,6 +151,18 @@ func (b *TBiBTeXStream) CollectCharacterOfNextTokenThatWasIn(characters TByteSet
 		/**/ b.CollectCharacterThatWasIn(characters, s)
 }
 
+func (b *TBiBTeXStream) CharacterSequence(starters, characters TByteSet, sequence *string) bool {
+	result := b.CollectCharacterOfNextTokenThatWasIn(starters, sequence)
+
+	if result {
+		for b.CollectCharacterThatWasIn(characters, sequence) {
+			// Skip
+		}
+	}
+
+	return result
+}
+
 func (b *TBiBTeXStream) GroupedTagElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
 	switch {
 	case b.CollectCharacterThatWas(BeginGroupCharacter, content):
@@ -169,12 +187,16 @@ func (b *TBiBTeXStream) GroupedContentety(groupEndCharacter byte, inTeXMode bool
 	return true
 }
 
-func (b *TBiBTeXStream) Name(nameMap TStringMap, name *string) bool {
-	result := b.CollectCharacterOfNextTokenThatWasIn(BiBTeXNameCharacters, name)
+func (b *TBiBTeXStream) Key(key *string) bool {
+	return b.CharacterSequence(BiBTeXKeyCharacters, BiBTeXKeyCharacters, key)
+}
 
-	for b.CollectCharacterThatWasIn(BiBTeXNameCharacters, name) {
-		// Skip
-	}
+func (b *TBiBTeXStream) Number(number *string) bool {
+	return b.CharacterSequence(BiBTeXNumberCharacters, BiBTeXNumberCharacters, number)
+}
+
+func (b *TBiBTeXStream) TagTypeName(starters, characters TByteSet, nameMap TStringMap, name *string) bool {
+	result := b.CharacterSequence(starters, characters, name)
 
 	*name = strings.ToLower(*name)
 
@@ -186,10 +208,24 @@ func (b *TBiBTeXStream) Name(nameMap TStringMap, name *string) bool {
 	return result
 }
 
-func (b *TBiBTeXStream) ForcedName(nameMap TStringMap, name *string) bool {
-	return b.Name(nameMap, name) ||
-		b.MaybeReportError(errorMissingName) ||
-		b.SkipToNextEntry(fromName)
+func (b *TBiBTeXStream) TagName(nameMap TStringMap, name *string) bool {
+	return b.TagTypeName(BiBTeXTagNameStarters, BiBTeXTagNameCharacters, nameMap, name)
+}
+
+func (b *TBiBTeXStream) ForcedTagName(nameMap TStringMap, name *string) bool {
+	return b.TagName(nameMap, name) ||
+		b.MaybeReportError(errorMissingTagName) ||
+		b.SkipToNextEntry(fromTagName)
+}
+
+func (b *TBiBTeXStream) EntryType() bool {
+	return b.TagTypeName(BiBTeXEntryTypeStarters, BiBTeXEntryTypeCharacters, BiBTeXEntryNameMap, &b.currentEntryTypeName)
+}
+
+func (b *TBiBTeXStream) ForcedEntryType() bool {
+	return b.EntryType() ||
+		b.MaybeReportError(errorMissingEntryType) ||
+		b.SkipToNextEntry(fromEntryType)
 }
 
 func (b *TBiBTeXStream) AddStringDefinition(name string, s *string) bool {
@@ -202,13 +238,6 @@ func (b *TBiBTeXStream) AddStringDefinition(name string, s *string) bool {
 	}
 
 	return true
-}
-
-func (b *TBiBTeXStream) StringReference(value *string) bool {
-	stringName := ""
-
-	return b.Name(BiBTeXEmptyNameMap, &stringName) &&
-		/**/ b.AddStringDefinition(stringName, value)
 }
 
 func (b *TBiBTeXStream) TagValueAdditionety(value *string) bool {
@@ -225,6 +254,8 @@ func (b *TBiBTeXStream) TagValueAdditionety(value *string) bool {
 }
 
 func (b *TBiBTeXStream) TagValue(value *string) bool {
+	stringName := ""
+
 	switch {
 
 	case b.ThisTokenWasCharacter(BeginGroupCharacter):
@@ -235,9 +266,11 @@ func (b *TBiBTeXStream) TagValue(value *string) bool {
 		return b.GroupedContentety(DoubleQuotesCharacter, TeXMode, value) &&
 			/* */ b.ForcedThisTokenWasCharacter(DoubleQuotesCharacter)
 
-	default:
-		return b.StringReference(value)
+	case b.TagName(BiBTeXEmptyNameMap, &stringName):
+		return b.AddStringDefinition(stringName, value)
 
+	default:
+		return b.Number(value)
 	}
 
 	return false
@@ -256,7 +289,6 @@ func (b *TBiBTeXStream) RecordTagAssignment(tagName, tagValue string, tagMap TSt
 		tagNames[tagName] = true
 	}
 
-	fmt.Println(tagName, ":=", tagValue)
 	return true
 }
 
@@ -272,7 +304,7 @@ func (b *TBiBTeXStream) ForcedTagDefinitionProper(tagName string, nameMap TStrin
 func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
 	tagName := ""
 
-	return b.Name(nameMap, &tagName) &&
+	return b.TagName(nameMap, &tagName) &&
 		/**/ b.ForcedTagDefinitionProper(tagName, nameMap, tagMap, tagNames) ||
 		true
 }
@@ -288,26 +320,27 @@ func (b *TBiBTeXStream) TagDefinitionsety(nameMap TStringMap, tagMap TStringMap,
 }
 
 func (b *TBiBTeXStream) EntryBodyProper() bool {
-	content := ""
-
-	tagsMap := TStringMap{}
-	tagsSet := TStringSet{}
 
 	switch b.currentEntryTypeName {
 	case PreambleEntryType:
-		return b.GroupedContentety(EndGroupCharacter, TeXMode, &content)
+		ignore := ""
+		return b.GroupedContentety(EndGroupCharacter, TeXMode, &ignore)
 
 		/// Store/write as well
 	case CommentEntryType:
-		return b.GroupedContentety(EndGroupCharacter, !TeXMode, &content)
+		comment := ""
+		return b.GroupedContentety(EndGroupCharacter, !TeXMode, &comment)
 
 	case StringEntryType:
 		return b.TagDefinitionsety(BiBTeXEmptyNameMap, b.stringMap, nil)
 		// StringMap
 
 	default:
-		return b.Name(BiBTeXEmptyNameMap, &content) &&
-			/**/ b.TagDefinitionsety(BiBTeXTagNameMap, tagsMap, tagsSet)
+		key := ""
+
+		return b.Key(&key) &&
+			/**/ b.library.NewLibraryEntry(key) &&
+			/*  */ b.TagDefinitionsety(BiBTeXTagNameMap, b.library.SelectedEntry.Tags, b.library.UsedTags)
 	}
 }
 
@@ -321,7 +354,7 @@ func (b *TBiBTeXStream) Entry() bool {
 	b.currentEntryTypeName = ""
 
 	return b.ThisTokenWasCharacter(EntryStartCharacter) &&
-		/**/ b.ForcedName(BiBTeXEntryNameMap, &b.currentEntryTypeName) &&
+		/**/ b.ForcedEntryType() &&
 		/*  */ b.ForcedThisTokenWasCharacter(BeginGroupCharacter) &&
 		/*    */ b.ForcedEntryBodyProper() &&
 		/*      */ b.ForcedThisTokenWasCharacter(EndGroupCharacter)
@@ -504,9 +537,31 @@ func init() {
 
 	BiBTeXCommentEnders.Add(NewlineCharacter).TreatAsCharacters()
 
-	BiBTeXNameCharacters.AddString(
+	BiBTeXNumberCharacters.AddString("0123456789").TreatAsCharacters()
+
+	BiBTeXKeyCharacters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 			"0123456789" +
 			"<>;\\|!*+?&#$-_:/.`").TreatAsCharacters()
+
+	BiBTeXTagNameStarters.AddString(
+		"abcdefghijklmnopqrstuvwxyz" +
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZ").TreatAsCharacters()
+
+	BiBTeXTagNameCharacters.AddString(
+		"abcdefghijklmnopqrstuvwxyz" +
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
+			"0123456789" +
+			"-").TreatAsCharacters()
+
+	BiBTeXEntryTypeStarters.AddString(
+		"abcdefghijklmnopqrstuvwxyz" +
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZ").TreatAsCharacters()
+
+	BiBTeXEntryTypeCharacters.AddString(
+		"abcdefghijklmnopqrstuvwxyz" +
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
+			"0123456789" +
+			"-").TreatAsCharacters()
 }

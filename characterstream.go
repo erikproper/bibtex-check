@@ -29,84 +29,84 @@ type (
 	}
 )
 
-func (t *TCharacterStream) NewCharacterStream(reporting TReporting) {
-	t.textfileIsOpen = false
-	t.endOfStream = true
-	t.runeMap = TRuneMap{}
-	t.reporting = reporting
+func (c *TCharacterStream) NewCharacterStream(reporting TReporting) {
+	c.textfileIsOpen = false
+	c.endOfStream = true
+	c.runeMap = TRuneMap{}
+	c.reporting = reporting
 }
 
-func (t *TCharacterStream) SetRuneMap(runeMap TRuneMap) bool {
-	t.runeMap = runeMap
+func (c *TCharacterStream) SetRuneMap(runeMap TRuneMap) bool {
+	c.runeMap = runeMap
 
 	return true
 }
 
-func (t *TCharacterStream) initializeStream(s string) {
-	t.endOfStream = false
+func (c *TCharacterStream) initializeStream(s string) {
+	c.endOfStream = false
 
-	t.textRunes = []rune(s)
-	t.textRunesPosition = 0
+	c.textRunes = []rune(s)
+	c.textRunesPosition = 0
 
-	t.runeString = ""
-	t.runeStringPosition = 0
+	c.runeString = ""
+	c.runeStringPosition = 0
 
-	t.linePosition = 1
-	t.runePosition = 0
+	c.linePosition = 1
+	c.runePosition = 0
 
-	t.currentCharacter = ' '
+	c.currentCharacter = ' '
 }
 
-func (t *TCharacterStream) positionReportety() string {
-	if t.endOfStream {
+func (c *TCharacterStream) positionReportety() string {
+	if c.endOfStream {
 		return ""
 	} else {
-		return fmt.Sprintf(" (L:%d, C:%d)", t.linePosition, t.runePosition)
+		return fmt.Sprintf(" (L:%d, C:%d)", c.linePosition, c.runePosition)
 	}
 }
 
-func (t *TCharacterStream) ReportError(message string, context ...any) bool {
-	t.reporting.Error(message+t.positionReportety(), context...)
+func (c *TCharacterStream) ReportError(message string, context ...any) bool {
+	c.reporting.Error(message+c.positionReportety(), context...)
 
 	return false
 }
 
-func (t *TCharacterStream) ReportWarning(message string, context ...any) bool {
-	t.reporting.Warning(message+t.positionReportety(), context...)
+func (c *TCharacterStream) ReportWarning(message string, context ...any) bool {
+	c.reporting.Warning(message+c.positionReportety(), context...)
 
 	return false
 }
 
-func (t *TCharacterStream) TextfileOpen(fileName string) bool {
+func (c *TCharacterStream) TextfileOpen(fileName string) bool {
 	var err error
 
-	t.textfile, err = os.Open(fileName)
-	t.textfileIsOpen = true
+	c.textfile, err = os.Open(fileName)
+	c.textfileIsOpen = true
 
-	t.initializeStream("")
+	c.initializeStream("")
 
 	if err == nil {
-		t.textScanner = bufio.NewScanner(t.textfile)
+		c.textScanner = bufio.NewScanner(c.textfile)
 
-		return t.NextCharacter()
+		return c.NextCharacter()
 	} else {
-		t.endOfStream = true
+		c.endOfStream = true
 
-		return t.TextfileClose()
+		return c.TextfileClose()
 	}
 }
 
-func (t *TCharacterStream) ForcedTextfileOpen(fileName, errorMessage string) bool {
-	return t.TextfileOpen(fileName) ||
-		t.ReportError(errorMessage, fileName)
+func (c *TCharacterStream) ForcedTextfileOpen(fileName, errorMessage string) bool {
+	return c.TextfileOpen(fileName) ||
+		c.ReportError(errorMessage, fileName)
 }
 
-func (t *TCharacterStream) TextfileClose() bool {
-	if t.textfileIsOpen {
-		err := t.textfile.Close()
+func (c *TCharacterStream) TextfileClose() bool {
+	if c.textfileIsOpen {
+		err := c.textfile.Close()
 
-		t.textfileIsOpen = false
-		t.endOfStream = true
+		c.textfileIsOpen = false
+		c.endOfStream = true
 
 		return err == nil
 	} else {
@@ -114,117 +114,117 @@ func (t *TCharacterStream) TextfileClose() bool {
 	}
 }
 
-func (t *TCharacterStream) TextString(s string) bool {
-	if t.textfileIsOpen {
-		t.TextfileClose()
+func (c *TCharacterStream) TextString(s string) bool {
+	if c.textfileIsOpen {
+		c.TextfileClose()
 	}
 
-	t.initializeStream(s)
+	c.initializeStream(s)
 
-	return t.NextCharacter()
+	return c.NextCharacter()
 }
 
-func (t *TCharacterStream) EndOfStream() bool {
-	return t.endOfStream
+func (c *TCharacterStream) EndOfStream() bool {
+	return c.endOfStream
 }
 
-func (t *TCharacterStream) NextCharacter() bool {
-	if t.endOfStream {
+func (c *TCharacterStream) NextCharacter() bool {
+	if c.endOfStream {
 		return false
-	} else if t.runeStringPosition < len(t.runeString) {
-		t.currentCharacter = byte(t.runeString[t.runeStringPosition])
-		t.runeStringPosition++
+	} else if c.runeStringPosition < len(c.runeString) {
+		c.currentCharacter = byte(c.runeString[c.runeStringPosition])
+		c.runeStringPosition++
 
 		return true
-	} else if t.textRunesPosition < len(t.textRunes) {
+	} else if c.textRunesPosition < len(c.textRunes) {
 		var mapped bool
 
-		t.currentCharacter = byte(t.textRunes[t.textRunesPosition])
+		c.currentCharacter = byte(c.textRunes[c.textRunesPosition])
 
 		// As we can be working with inputs from strings, newlines can occur
 		// in the middle of strings. So, we need to check this to ensure the
 		// positioning is right for error messages.
-		t.runePosition++
-		if t.currentCharacter == NewlineCharacter {
-			t.linePosition++
-			t.runePosition = 0
+		c.runePosition++
+		if c.currentCharacter == NewlineCharacter {
+			c.linePosition++
+			c.runePosition = 0
 		}
 
-		t.runeStringPosition = 0
-		t.runeString, mapped = t.runeMap[t.textRunes[t.textRunesPosition]]
+		c.runeStringPosition = 0
+		c.runeString, mapped = c.runeMap[c.textRunes[c.textRunesPosition]]
 
-		t.textRunesPosition++
+		c.textRunesPosition++
 
-		return !mapped || t.NextCharacter()
-	} else if t.textfileIsOpen && t.textScanner.Scan() {
-		t.textRunesPosition = 0
-		t.textRunes = []rune(t.textScanner.Text() + "\n")
+		return !mapped || c.NextCharacter()
+	} else if c.textfileIsOpen && c.textScanner.Scan() {
+		c.textRunesPosition = 0
+		c.textRunes = []rune(c.textScanner.Text() + "\n")
 
-		t.runeString = ""
-		t.runeStringPosition = 0
+		c.runeString = ""
+		c.runeStringPosition = 0
 
-		return t.NextCharacter()
+		return c.NextCharacter()
 	} else {
-		t.endOfStream = true
+		c.endOfStream = true
 
 		return false
 	}
 }
 
-func (t *TCharacterStream) ThisCharacter() byte {
-	return t.currentCharacter
+func (c *TCharacterStream) ThisCharacter() byte {
+	return c.currentCharacter
 }
 
-func (t *TCharacterStream) AddCharacter(c byte, s *string) bool {
-	*s += string(c)
+func (c *TCharacterStream) AddCharacter(ch byte, s *string) bool {
+	*s += string(ch)
 
 	return true
 }
 
-func (t *TCharacterStream) CollectCharacter(s *string) bool {
-	return t.AddCharacter(t.currentCharacter, s)
+func (c *TCharacterStream) CollectCharacter(s *string) bool {
+	return c.AddCharacter(c.currentCharacter, s)
 }
 
-func (t *TCharacterStream) CollectCharacterThatWasThere(s *string) bool {
-	return t.CollectCharacter(s) && t.NextCharacter()
+func (c *TCharacterStream) CollectCharacterThatWasThere(s *string) bool {
+	return c.CollectCharacter(s) && c.NextCharacter()
 }
 
-func (t *TCharacterStream) ThisCharacterIsIn(S TByteSet) bool {
-	return S.Contains(t.ThisCharacter())
+func (c *TCharacterStream) ThisCharacterIsIn(S TByteSet) bool {
+	return S.Contains(c.ThisCharacter())
 }
 
-func (t *TCharacterStream) ThisCharacterWasIn(S TByteSet) bool {
-	return t.ThisCharacterIsIn(S) && t.NextCharacter()
+func (c *TCharacterStream) ThisCharacterWasIn(S TByteSet) bool {
+	return c.ThisCharacterIsIn(S) && c.NextCharacter()
 }
 
-func (t *TCharacterStream) CollectCharacterThatWasIn(S TByteSet, s *string) bool {
-	return t.ThisCharacterIsIn(S) && t.CollectCharacter(s) && t.NextCharacter()
+func (c *TCharacterStream) CollectCharacterThatWasIn(S TByteSet, s *string) bool {
+	return c.ThisCharacterIsIn(S) && c.CollectCharacter(s) && c.NextCharacter()
 }
 
-func (t *TCharacterStream) ThisCharacterWasNotIn(s TByteSet) bool {
-	return (!t.ThisCharacterIsIn(s)) && t.NextCharacter()
+func (c *TCharacterStream) ThisCharacterWasNotIn(s TByteSet) bool {
+	return (!c.ThisCharacterIsIn(s)) && c.NextCharacter()
 }
 
-func (t *TCharacterStream) CollectCharacterThatWasNot(c byte, s *string) bool {
-	return !t.ThisCharacterIs(c) && t.CollectCharacter(s) && t.NextCharacter()
+func (c *TCharacterStream) CollectCharacterThatWasNot(ch byte, s *string) bool {
+	return !c.ThisCharacterIs(ch) && c.CollectCharacter(s) && c.NextCharacter()
 }
 
-func (t *TCharacterStream) SkipToCharacter(c byte) bool {
-	for !t.ThisCharacterIs(c) && !t.EndOfStream() {
-		t.NextCharacter()
+func (c *TCharacterStream) SkipToCharacter(ch byte) bool {
+	for !c.ThisCharacterIs(ch) && !c.EndOfStream() {
+		c.NextCharacter()
 	}
 
-	return t.ThisCharacterIs(c)
+	return c.ThisCharacterIs(ch)
 }
 
-func (t *TCharacterStream) ThisCharacterIs(c byte) bool {
-	return t.ThisCharacter() == c
+func (c *TCharacterStream) ThisCharacterIs(ch byte) bool {
+	return c.ThisCharacter() == ch
 }
 
-func (t *TCharacterStream) ThisCharacterWas(c byte) bool {
-	return t.ThisCharacterIs(c) && t.NextCharacter()
+func (c *TCharacterStream) ThisCharacterWas(ch byte) bool {
+	return c.ThisCharacterIs(ch) && c.NextCharacter()
 }
 
-func (t *TCharacterStream) CollectCharacterThatWas(c byte, s *string) bool {
-	return t.ThisCharacterIs(c) && t.CollectCharacter(s) && t.NextCharacter()
+func (c *TCharacterStream) CollectCharacterThatWas(ch byte, s *string) bool {
+	return c.ThisCharacterIs(ch) && c.CollectCharacter(s) && c.NextCharacter()
 }
