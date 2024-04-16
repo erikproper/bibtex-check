@@ -34,13 +34,13 @@ type (
 	TStringMap    map[string]string
 	TStringSet    map[string]bool
 	TBiBTeXStream struct {
-		TCharacterStream
-		TBiBTeXLibrary
-		currentTagName,
-		currentTagValue,
-		currentEntryTypeName string
-		skippingEntry bool
-		stringMap     TStringMap
+		TCharacterStream //         // The underlying stream of characters
+		TBiBTeXLibrary   //         // The BiBTeX Library this parser will contribute to
+		currentTagName,  //         // The name of the tag that is currently being defined
+		currentTagValue, //         // The value ...
+		currentEntryTypeName string // The tyoe ...
+		skippingEntry bool       // // If we're skipping
+		stringMap     TStringMap // // The mapping of strings ...
 	}
 )
 
@@ -49,7 +49,8 @@ var (
 
 	BiBTeXTagNameMap,
 	BiBTeXEmptyNameMap,
-	BiBTeXEntryNameMap TStringMap
+	BiBTeXEntryNameMap,
+	BiBTeXDefaultStrings TStringMap
 
 	BiBTeXCommentEnders,
 	BiBTeXKeyCharacters,
@@ -65,7 +66,7 @@ var (
 func (b *TBiBTeXStream) NewBiBTeXParser(reporting TReporting, library TBiBTeXLibrary) {
 	b.NewCharacterStream(reporting)
 	b.SetRuneMap(BiBTeXRuneMap)
-	b.stringMap = TStringMap{}
+	b.stringMap = BiBTeXDefaultStrings
 	b.currentEntryTypeName = ""
 	b.skippingEntry = false
 	b.TBiBTeXLibrary = library
@@ -382,6 +383,12 @@ func init() {
 	// Settings should be an environment variable ...
 	// see https://gobyexample.com/environment-variables
 	// If settings file does not exist, then create one and push this as default into ib.
+
+	BiBTeXDefaultStrings = TStringMap{
+		"jan": "January",
+		"feb": "February",
+	}
+
 	BiBTeXRuneMap = TRuneMap{
 		'À': "{\\`A}",
 		'Á': "{\\'A}",
