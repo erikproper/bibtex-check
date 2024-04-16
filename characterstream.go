@@ -13,6 +13,7 @@ type (
 	TCharacterMap [256]byte       // Type for mappings of characters to characters
 
 	TCharacterStream struct {
+		TReporting                        // Error reporting channel
 		endOfStream        bool           // Set to true when we've reached the end of the stream
 		textfile           *os.File       // The text file from which we're streaming
 		textScanner        *bufio.Scanner // The scanner used to collect input from the file
@@ -25,7 +26,6 @@ type (
 		currentCharacter   byte           // The actual current character
 		linePosition       int            // The line within the original input, in terms of newlines
 		runePosition       int            // Position within the present line within the original input
-		TReporting                        // Error reporting channel
 	}
 )
 
