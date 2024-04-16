@@ -8,10 +8,8 @@ import (
 
 //import "io"
 
-/// @string{a1998={1998}} ... when only numbers, then illegal tag name
-/// string names must start with letter.
-///
-/// b.library.NewLibraryEntry(key)
+/// b.library.NewLibraryEntry(key) ... etc ... ugly
+/// b.library.SelectedEntry.Tags, b.library.UsedTags
 
 /// TCharSet via anonymous struct?
 

@@ -25,7 +25,7 @@ type (
 		currentCharacter   byte           // The actual current character
 		linePosition       int            // The line within the original input, in terms of newlines
 		runePosition       int            // Position within the present line within the original input
-		reporting          TReporting     // Error reporting channel
+		TReporting                        // Error reporting channel
 	}
 )
 
@@ -33,7 +33,7 @@ func (c *TCharacterStream) NewCharacterStream(reporting TReporting) {
 	c.textfileIsOpen = false
 	c.endOfStream = true
 	c.runeMap = TRuneMap{}
-	c.reporting = reporting
+	c.TReporting = reporting
 }
 
 func (c *TCharacterStream) SetRuneMap(runeMap TRuneMap) bool {
@@ -66,13 +66,13 @@ func (c *TCharacterStream) positionReportety() string {
 }
 
 func (c *TCharacterStream) ReportError(message string, context ...any) bool {
-	c.reporting.Error(message+c.positionReportety(), context...)
+	c.Error(message+c.positionReportety(), context...)
 
 	return false
 }
 
 func (c *TCharacterStream) ReportWarning(message string, context ...any) bool {
-	c.reporting.Warning(message+c.positionReportety(), context...)
+	c.Warning(message+c.positionReportety(), context...)
 
 	return false
 }

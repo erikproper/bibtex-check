@@ -35,12 +35,12 @@ type (
 	TStringSet    map[string]bool
 	TBiBTeXStream struct {
 		TCharacterStream
+		TBiBTeXLibrary
 		currentTagName,
 		currentTagValue,
 		currentEntryTypeName string
 		skippingEntry bool
 		stringMap     TStringMap
-		library       TBiBTeXLibrary
 	}
 )
 
@@ -68,7 +68,11 @@ func (b *TBiBTeXStream) NewBiBTeXParser(reporting TReporting, library TBiBTeXLib
 	b.stringMap = TStringMap{}
 	b.currentEntryTypeName = ""
 	b.skippingEntry = false
-	b.library = library
+	b.TBiBTeXLibrary = library
+}
+
+func (b *TBiBTeXStream) RegisterNewLibraryEntry(key string) bool {
+	return b.NewLibraryEntry(key)
 }
 
 func (b *TBiBTeXStream) MaybeReportError(message string, context ...any) bool {
@@ -339,8 +343,8 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 		key := ""
 
 		return b.Key(&key) &&
-			/**/ b.library.NewLibraryEntry(key) &&
-			/*  */ b.TagDefinitionsety(BiBTeXTagNameMap, b.library.SelectedEntry.Tags, b.library.UsedTags)
+			/**/ b.RegisterNewLibraryEntry(key) &&
+			/*  */ b.TagDefinitionsety(BiBTeXTagNameMap, b.SelectedEntry.Tags, b.UsedTags)
 	}
 }
 
