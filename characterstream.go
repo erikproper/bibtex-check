@@ -20,7 +20,7 @@ type (
 		textfileIsOpen     bool           // Set to true if the text file is open
 		textRunes          []rune         // The buffer of runes we're working from
 		textRunesPosition  int            // The position of the current rune within the rune map
-		runeMap            TRuneMap       // Map to map runes to underlying TeX strings
+		runeMap            TRuneMap       // Map to translate runes to underlying (TeX) strings
 		runeString         string         // The string belonging to the runeMap-ed version of the current rune
 		runeStringPosition int            // The position of the current character within the runeString
 		currentCharacter   byte           // The actual current character

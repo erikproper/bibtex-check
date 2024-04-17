@@ -125,7 +125,7 @@ func (s TByteSet) Contains(elements ...byte) bool {
 	return elementSet.SubsetEq(s)
 }
 
-var ByteToString [255]string
+var ByteToString [256]string
 
 func (s TByteSet) String() string {
 	var buf bytes.Buffer
@@ -156,7 +156,7 @@ func (s TByteSet) String() string {
 }
 
 func init() {
-	for i := 0; i < 255; i++ {
+	for i := 0; i < 256; i++ {
 		ByteToString[i] = string(i)
 	}
 

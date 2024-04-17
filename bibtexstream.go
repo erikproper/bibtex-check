@@ -3,18 +3,20 @@ package main
 import "strings"
 
 const (
-	errorMissingCharacter      = "Missing character '%s'"
-	errorMissingEntryBody      = "Missing EntryBody"
-	errorMissingEntryType      = "Missing EntryType"
-	errorMissingTagName        = "Missing TagName"
-	errorMissingTagValue       = "Missing TagValue"
-	errorOpeningFile           = "Could not open file '%s'"
-	errorUnknownString         = "Unknown string '%s' referenced"
-	warningSkippingToNextEntry = "Skipping to next entry"
-	fromEntryBody              = "EntryBody"
-	fromTagName                = "TagName"
-	fromEntryType              = "EntryType"
-	fromTagValue               = "TagValue"
+	CharacterClass             = "Character"
+	EntryBodyClass             = "EntryBody"
+	TagNameClass               = "TagName"
+	EntryTypeClass             = "EntryType"
+	TagValueClass              = "TagValue"
+	ErrorMissing               = "Missing"
+	ErrorMissingCharacter      = ErrorMissing + " " + CharacterClass + "'%s', found '%s'"
+	ErrorMissingEntryBody      = ErrorMissing + " " + EntryBodyClass
+	ErrorMissingEntryType      = ErrorMissing + " " + EntryTypeClass
+	ErrorMissingTagName        = ErrorMissing + " " + TagNameClass
+	ErrorMissingTagValue       = ErrorMissing + " " + TagValueClass
+	ErrorOpeningFile           = "Could not open file '%s'"
+	ErrorUnknownString         = "Unknown string '%s' referenced"
+	WarningSkippingToNextEntry = "Skipping to next entry"
 	TeXMode                    = true
 	EntryStartCharacter        = '@'
 	BeginGroupCharacter        = '{'
@@ -77,17 +79,16 @@ func (b *TBiBTeXStream) RegisterNewLibraryEntry(key string) bool {
 }
 
 func (b *TBiBTeXStream) MaybeReportError(message string, context ...any) bool {
-	return b.skippingEntry ||
-		b.ReportError(message, context...)
+	return b.skippingEntry || b.ReportError(message, context...)
 }
 
 func (b *TBiBTeXStream) SkipToNextEntry(from string) bool {
 	b.skippingEntry = true
 
 	if from != "" {
-		b.ReportWarning(warningSkippingToNextEntry + " from " + from)
+		b.ReportWarning(WarningSkippingToNextEntry + " from " + from)
 	} else {
-		b.ReportWarning(warningSkippingToNextEntry)
+		b.ReportWarning(WarningSkippingToNextEntry)
 	}
 
 	for !b.ThisTokenIsCharacter(EntryStartCharacter) && !b.EndOfStream() {
@@ -147,7 +148,7 @@ func (b *TBiBTeXStream) ForcedThisTokenWasCharacterIn(S TByteSet) bool {
 
 func (b *TBiBTeXStream) ForcedThisTokenWasCharacter(character byte) bool {
 	return b.ThisTokenWasCharacter(character) ||
-		b.MaybeReportError(errorMissingCharacter, string(character)) ||
+		b.MaybeReportError(ErrorMissingCharacter, string(character), string(b.ThisCharacter())) ||
 		b.SkipToNextEntry("")
 }
 
@@ -219,8 +220,8 @@ func (b *TBiBTeXStream) TagName(nameMap TStringMap, name *string) bool {
 
 func (b *TBiBTeXStream) ForcedTagName(nameMap TStringMap, name *string) bool {
 	return b.TagName(nameMap, name) ||
-		b.MaybeReportError(errorMissingTagName) ||
-		b.SkipToNextEntry(fromTagName)
+		b.MaybeReportError(ErrorMissingTagName) ||
+		b.SkipToNextEntry(TagNameClass)
 }
 
 func (b *TBiBTeXStream) EntryType() bool {
@@ -229,8 +230,8 @@ func (b *TBiBTeXStream) EntryType() bool {
 
 func (b *TBiBTeXStream) ForcedEntryType() bool {
 	return b.EntryType() ||
-		b.MaybeReportError(errorMissingEntryType) ||
-		b.SkipToNextEntry(fromEntryType)
+		b.MaybeReportError(ErrorMissingEntryType) ||
+		b.SkipToNextEntry(EntryTypeClass)
 }
 
 func (b *TBiBTeXStream) AddStringDefinition(name string, s *string) bool {
@@ -239,7 +240,7 @@ func (b *TBiBTeXStream) AddStringDefinition(name string, s *string) bool {
 	if defined {
 		*s += value
 	} else {
-		b.ReportError(errorUnknownString, name)
+		b.ReportError(ErrorUnknownString, name)
 	}
 
 	return true
@@ -283,8 +284,8 @@ func (b *TBiBTeXStream) TagValue(value *string) bool {
 
 func (b *TBiBTeXStream) ForcedTagValue(value *string) bool {
 	return b.TagValue(value) ||
-		b.MaybeReportError(errorMissingTagValue) ||
-		b.SkipToNextEntry(fromTagValue)
+		b.MaybeReportError(ErrorMissingTagValue) ||
+		b.SkipToNextEntry(TagValueClass)
 }
 
 func (b *TBiBTeXStream) RecordTagAssignment(tagName, tagValue string, tagMap TStringMap, tagNames TStringSet) bool {
@@ -351,8 +352,8 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 
 func (b *TBiBTeXStream) ForcedEntryBodyProper() bool {
 	return b.EntryBodyProper() ||
-		b.MaybeReportError(errorMissingEntryBody) ||
-		b.SkipToNextEntry(fromEntryBody)
+		b.MaybeReportError(ErrorMissingEntryBody) ||
+		b.SkipToNextEntry(EntryBodyClass)
 }
 
 func (b *TBiBTeXStream) Entry() bool {
@@ -374,7 +375,7 @@ func (b *TBiBTeXStream) Entriesety() bool {
 }
 
 func (b *TBiBTeXStream) ParseBiBFile(file string) bool {
-	return b.ForcedTextfileOpen(file, errorOpeningFile) &&
+	return b.ForcedTextfileOpen(file, ErrorOpeningFile) &&
 		/**/ b.Entriesety()
 }
 
@@ -387,6 +388,16 @@ func init() {
 	BiBTeXDefaultStrings = TStringMap{
 		"jan": "January",
 		"feb": "February",
+		"mar": "March",
+		"apr": "April",
+		"may": "May",
+		"jun": "June",
+		"jul": "July",
+		"aug": "August",
+		"sep": "September",
+		"oct": "October",
+		"nov": "November",
+		"dec": "December",
 	}
 
 	BiBTeXRuneMap = TRuneMap{
@@ -523,15 +534,18 @@ func init() {
 		'ȍ': "{\\H o}",
 		'Ẽ': "{\\~E}",
 		'ẽ': "{\\~e}",
+		'–': "--",
 		'©': "{\textcopyright}",
 		'®': "{\textregistered}",
 	}
 
 	BiBTeXEmptyNameMap = TStringMap{}
+	
 	BiBTeXEntryNameMap = BiBTeXEmptyNameMap
 	BiBTeXEntryNameMap["conference"] = "inproceedings"
 	BiBTeXEntryNameMap["softmisc"] = "misc"
 	BiBTeXEntryNameMap["patent"] = "misc"
+	BiBTeXEntryNameMap["unpublished"] = "misc"
 
 	BiBTeXTagNameMap = BiBTeXEmptyNameMap
 	BiBTeXTagNameMap["editors"] = "editor"
@@ -554,17 +568,15 @@ func init() {
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 			"0123456789" +
-			"<>;\\|!*+?&#$-_:/.`").TreatAsCharacters()
+			"<>()[];|!*+?&#$-_:/.'`").TreatAsCharacters()
 
 	BiBTeXTagNameStarters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
-			"ABCDEFGHIJKLMNOPQRSTUVWXYZ").TreatAsCharacters()
-
-	BiBTeXTagNameCharacters.AddString(
-		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
-			"0123456789" +
-			"-").TreatAsCharacters()
+			"-_").TreatAsCharacters()
+    
+    BiBTeXTagNameCharacters=BiBTeXTagNameStarters
+    BiBTeXTagNameCharacters.Unite(BiBTeXNumberCharacters)
 
 	BiBTeXEntryTypeStarters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
@@ -574,5 +586,5 @@ func init() {
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 			"0123456789" +
-			"-").TreatAsCharacters()
+			"-_").TreatAsCharacters()
 }

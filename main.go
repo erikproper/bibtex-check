@@ -6,27 +6,39 @@ import (
 	"io"
 )
 
-//import "io"
-
-/// b.library.NewLibraryEntry(key) ... etc ... ugly
-/// b.library.SelectedEntry.Tags, b.library.UsedTags
-
-/// TCharSet via anonymous struct?
-
-/// Missing/from cleanup (no Missing; fromXXX -> XXXClass)
-/// Pattern:
-///   b.MaybeReportError(errorMissingTagName) ||
-///   b.SkipToNextEntry(fromTagName)
-/// via function
 
 /// Print library (content + tags)
-/// pre-defined strings ... jan/feb/etc
 
 /// Test
-/// Split off library file
+/// Entry create before adding
+/// Switch to fill entry (selectedEntry ... NewEntry) before adding it to the library.
+
+/// Split off library.go file
 /// Add comments + inspect ... also to the already splitted files.
 /// Make things robust and reporting when file is not found
 /// Save library + comments(!!)
+
+/// Create an "AllowedTags" set
+/// Dito an "AllowedTypes"
+/// Check the consistency of the Maps to these allowed sets ...
+///
+/// If a Tag is not in this, set then try and apply the mapping
+/// As such, the BiBTeXTagNameMap should be used by adding an order in which we try to apply.
+/// If it leads to a possible synonym, then delete + warn about the unknown tag.
+/// If it (after mapping) exists, we need user input ...
+/// By the way, do check the consistency 
+/// But only try to do so after having created the full entry
+///
+/// Deal with _XXX fields after entry is finished. 
+/// Same with xXXX fields
+/// publisheD
+/// Use a MaybeMapTags map with potential mappings
+/// Should have an order though ....
+/// 
+/// 
+/// Should be the start of a CleanEntry function. 
+/// Should be called from the bibtexstream side. 
+/// This function should then also report the actually UsedTags ...
 
 /// First App
 
@@ -115,15 +127,19 @@ var Reporting TReporting
 
 func main() {
 	Reporting.NewReporting()
-	Library.NewLibrary(Reporting, true)
+	Library.NewLibrary(Reporting, false)
 	BiBTeXParser.NewBiBTeXParser(Reporting, Library)
 	BiBTeXParser.ParseBiBFile("Test.bib")
 
-	fmt.Println(Library)
+//	fmt.Println(Library)
 
+	for t, _ := range Library.UsedTags {
+    	fmt.Println(t)
+	}
+	
 	h := md5.New()
 	io.WriteString(h, "zot:IJ6KKKAQ\n")
-	fmt.Printf("%x\n", h.Sum(nil))
+//	fmt.Printf("%x\n", h.Sum(nil))
 
 	// log import ...
 	//	log.Fatal(err)
