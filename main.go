@@ -2,16 +2,15 @@ package main
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 )
 
+/// Comments list
 
-/// Print library (content + tags)
-
-/// Test
-/// Entry create before adding
-/// Switch to fill entry (selectedEntry ... NewEntry) before adding it to the library.
+/// Export library
 
 /// Split off library.go file
 /// Add comments + inspect ... also to the already splitted files.
@@ -26,19 +25,19 @@ import (
 /// As such, the BiBTeXTagNameMap should be used by adding an order in which we try to apply.
 /// If it leads to a possible synonym, then delete + warn about the unknown tag.
 /// If it (after mapping) exists, we need user input ...
-/// By the way, do check the consistency 
+/// By the way, do check the consistency
 /// But only try to do so after having created the full entry
 ///
-/// Deal with _XXX fields after entry is finished. 
+/// Deal with _XXX fields after entry is finished.
 /// Same with xXXX fields
 /// publisheD
 /// Use a MaybeMapTags map with potential mappings
 /// Should have an order though ....
-/// 
-/// 
-/// Should be the start of a CleanEntry function. 
-/// Should be called from the bibtexstream side. 
-/// This function should then also report the actually UsedTags ...
+///
+///
+/// Should be the start of a CleanEntry function.
+/// Should be called from the bibtexstream side.
+/// This function should then also report the actually usedTags ...
 
 /// First App
 
@@ -58,68 +57,62 @@ import (
 
 const (
 	WarningEntryAlreadyExists = "Entry '%s' already exists"
-	WarningNoSelectedEntry    = "No entry selected. Can't really happen .."
 )
 
 type (
 	TBiBTeXLibrary struct {
 		entries       map[string]TBiBTeXEntry
-		SelectedEntry *TBiBTeXEntry
-		UsedTags      TStringSet
+		newKey        string
+		newEntry      TBiBTeXEntry
+		usedTags      TStringSet
 		warnOnDoubles bool
-		reporting     TReporting // Error reporting channel
+		TReporting    // Error reporting channel
 	}
 
 	TBiBTeXEntry struct {
-		Tags TStringMap
+		tags TStringMap
 	}
 )
 
 func (l *TBiBTeXLibrary) NewLibrary(reporting TReporting, warnOnDoubles bool) {
 	l.entries = map[string]TBiBTeXEntry{}
-	l.UsedTags = TStringSet{}
-	l.SelectedEntry = nil
-	l.reporting = reporting
+	l.usedTags = TStringSet{}
+	l.newEntry = TBiBTeXEntry{}
+	l.newKey = ""
+	l.TReporting = reporting
 	l.warnOnDoubles = warnOnDoubles
 }
 
-func (l *TBiBTeXLibrary) maybeNewLibraryEntry(key string, warnOnDoubles bool) bool {
-	entry, exists := l.entries[key]
-	if exists {
-		if warnOnDoubles {
-			l.reporting.Warning(WarningEntryAlreadyExists, key)
-
-			return true
-		}
-	} else {
-		entry.NewBiBTeXEntry()
-		l.entries[key] = entry
-	}
-
-	l.SelectedEntry = &entry
+func (l *TBiBTeXLibrary) StartNewLibraryEntry(key string) bool {
+	l.newKey = key
+	l.newEntry = TBiBTeXEntry{}
+	l.newEntry.tags = TStringMap{}
 
 	return true
 }
 
-func (l *TBiBTeXLibrary) NewLibraryEntry(key string) bool {
-	return l.maybeNewLibraryEntry(key, l.warnOnDoubles)
+func (l *TBiBTeXLibrary) AssignTag(tag, value string) bool {
+	l.newEntry.tags[tag] = value
+	l.usedTags[tag] = true
+
+	return true
 }
 
-func (l *TBiBTeXLibrary) EnforceEntrySelection() bool {
-	if l.SelectedEntry == nil {
-		l.reporting.Warning(WarningNoSelectedEntry)
+func (l *TBiBTeXLibrary) FinishNewLibraryEntry() bool {
+	_, exists := l.entries[l.newKey]
 
-		l.maybeNewLibraryEntry("", false)
+	if exists && l.warnOnDoubles {
+		l.Warning(WarningEntryAlreadyExists, l.newKey)
+
+		return true
 	}
+
+	l.entries[l.newKey] = l.newEntry
 
 	return true
 }
 
 /////
-
-func (e *TBiBTeXEntry) NewBiBTeXEntry() {
-	e.Tags = TStringMap{}
-}
 
 var BiBTeXParser TBiBTeXStream
 var Library TBiBTeXLibrary
@@ -131,17 +124,24 @@ func main() {
 	BiBTeXParser.NewBiBTeXParser(Reporting, Library)
 	BiBTeXParser.ParseBiBFile("Test.bib")
 
-//	fmt.Println(Library)
+	fmt.Println(Library)
 
-	for t, _ := range Library.UsedTags {
-    	fmt.Println(t)
+	for t, _ := range Library.usedTags {
+		fmt.Println(t)
 	}
-	
+
 	h := md5.New()
 	io.WriteString(h, "zot:IJ6KKKAQ\n")
-//	fmt.Printf("%x\n", h.Sum(nil))
+	//	fmt.Printf("%x\n", h.Sum(nil))
+
+	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
+	data, _ := base64.StdEncoding.DecodeString(Test)
+	Str := string(data)
+	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
+	fmt.Printf("%q\n", Start)
 
 	// log import ...
+	//
 	//	log.Fatal(err)
 }
 

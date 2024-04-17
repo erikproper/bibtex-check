@@ -33,6 +33,7 @@ const (
 )
 
 type (
+	TMapTag       func(string, string) bool
 	TStringMap    map[string]string
 	TStringSet    map[string]bool
 	TBiBTeXStream struct {
@@ -74,8 +75,10 @@ func (b *TBiBTeXStream) NewBiBTeXParser(reporting TReporting, library TBiBTeXLib
 	b.TBiBTeXLibrary = library
 }
 
-func (b *TBiBTeXStream) RegisterNewLibraryEntry(key string) bool {
-	return b.NewLibraryEntry(key)
+func (b *TBiBTeXStream) AssignString(str, value string) bool {
+	b.stringMap[str] = value
+
+	return true
 }
 
 func (b *TBiBTeXStream) MaybeReportError(message string, context ...any) bool {
@@ -298,35 +301,34 @@ func (b *TBiBTeXStream) RecordTagAssignment(tagName, tagValue string, tagMap TSt
 	return true
 }
 
-func (b *TBiBTeXStream) ForcedTagDefinitionProper(tagName string, nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
+func (b *TBiBTeXStream) ForcedTagDefinitionProper(tagName string, nameMap TStringMap, tagMapper TMapTag) bool {
 	tagValue := ""
 
 	return b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
 		/**/ b.ForcedTagValue(&tagValue) &&
 		/*  */ b.TagValueAdditionety(&tagValue) &&
-		/*    */ b.RecordTagAssignment(tagName, tagValue, tagMap, tagNames)
+		/*    */ tagMapper(tagName, tagValue)
 }
 
-func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
+func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMapper TMapTag) bool {
 	tagName := ""
 
 	return b.TagName(nameMap, &tagName) &&
-		/**/ b.ForcedTagDefinitionProper(tagName, nameMap, tagMap, tagNames) ||
+		/**/ b.ForcedTagDefinitionProper(tagName, nameMap, tagMapper) ||
 		true
 }
 
-func (b *TBiBTeXStream) TagDefinitionsety(nameMap TStringMap, tagMap TStringMap, tagNames TStringSet) bool {
-	b.TagDefinitionety(nameMap, tagMap, tagNames)
+func (b *TBiBTeXStream) TagDefinitionsety(nameMap TStringMap, tagMapper TMapTag) bool {
+	b.TagDefinitionety(nameMap, tagMapper)
 
 	for b.ThisTokenWasCharacter(CommaCharacter) {
-		b.TagDefinitionety(nameMap, tagMap, tagNames)
+		b.TagDefinitionety(nameMap, tagMapper)
 	}
 
 	return true
 }
 
 func (b *TBiBTeXStream) EntryBodyProper() bool {
-
 	switch b.currentEntryTypeName {
 	case PreambleEntryType:
 		ignore := ""
@@ -338,15 +340,14 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 		return b.GroupedContentety(EndGroupCharacter, !TeXMode, &comment)
 
 	case StringEntryType:
-		return b.TagDefinitionsety(BiBTeXEmptyNameMap, b.stringMap, nil)
-		// StringMap
+		return b.TagDefinitionsety(BiBTeXEmptyNameMap, b.AssignString)
 
 	default:
 		key := ""
-
 		return b.Key(&key) &&
-			/**/ b.RegisterNewLibraryEntry(key) &&
-			/*  */ b.TagDefinitionsety(BiBTeXTagNameMap, b.SelectedEntry.Tags, b.UsedTags)
+			/**/ b.StartNewLibraryEntry(key) &&
+			/*  */ b.TagDefinitionsety(BiBTeXTagNameMap, b.AssignTag) &&
+			/*    */ b.FinishNewLibraryEntry()
 	}
 }
 
@@ -540,7 +541,7 @@ func init() {
 	}
 
 	BiBTeXEmptyNameMap = TStringMap{}
-	
+
 	BiBTeXEntryNameMap = BiBTeXEmptyNameMap
 	BiBTeXEntryNameMap["conference"] = "inproceedings"
 	BiBTeXEntryNameMap["softmisc"] = "misc"
@@ -574,9 +575,9 @@ func init() {
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 			"-_").TreatAsCharacters()
-    
-    BiBTeXTagNameCharacters=BiBTeXTagNameStarters
-    BiBTeXTagNameCharacters.Unite(BiBTeXNumberCharacters)
+
+	BiBTeXTagNameCharacters = BiBTeXTagNameStarters
+	BiBTeXTagNameCharacters.Unite(BiBTeXNumberCharacters)
 
 	BiBTeXEntryTypeStarters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
