@@ -8,12 +8,29 @@ import (
 	"strings"
 )
 
+/// Move library functions to adminitration
+
 /// Comments list
+
+//func main() {
+//	var s []int
+//	printSlice(s)
+
+//	// append works on nil slices.
+//	s = append(s, 0)
+//	printSlice(s)
+
+//	// The slice grows as needed.
+//	s = append(s, 1)
+//	printSlice(s)
+
+//	// We can add more than one element at a time.
+//	s = append(s, 2, 3, 4)
+//	printSlice(s)
+//}
 
 /// Export library
 /// Save library + comments(!!)
-
-/// Split off library.go file
 
 /// Add comments + inspect ... also to the already splitted files.
 
@@ -24,12 +41,12 @@ import (
 /// - AllowedTypes
 /// - OptionalTypeTags
 /// - MandatoryTypeTags
-/// 
+///
 /// TypeAlias(type, alias)
 /// TagAlias(tag, alias)
 /// publisheD
 /// For each AllowedTag:
-/// - _XXX  
+/// - _XXX
 /// - xXXX
 ///
 /// This should actually be read/seeded from a config file
@@ -39,17 +56,17 @@ import (
 ///   if unknown then
 ///      if exists new_tag = TagAliasesMap[tag] then
 ///         if new_tag already has value then
-///            ask 
+///            ask
 ///         else
 ///            rename
 ///         fi
 ///      else
 ///         Add to UnknownTags list for current stream
 ///      fi
-/// 
+///
 ///   if resulting tag is AllowedTags, but not in AllowedTags list for this type
 ///      then warning
-///  
+///
 /// for each tag in MandatoryTypeTags[type]
 ///   if missing then warning
 ///
@@ -83,53 +100,47 @@ const (
 
 type (
 	TBiBTeXLibrary struct {
-		entries       map[string]TBiBTeXEntry
-		newKey        string
-		newEntry      TBiBTeXEntry
+		entries       map[string]TStringMap
+		currentKey    string
 		usedTags      TStringSet
 		warnOnDoubles bool
 		TReporting    // Error reporting channel
 	}
-
-	TBiBTeXEntry struct {
-		tags TStringMap
-	}
 )
 
 func (l *TBiBTeXLibrary) NewLibrary(reporting TReporting, warnOnDoubles bool) {
-	l.entries = map[string]TBiBTeXEntry{}
+	l.entries = map[string]TStringMap{}
 	l.usedTags = TStringSet{}
-	l.newEntry = TBiBTeXEntry{}
-	l.newKey = ""
+	l.currentKey = ""
 	l.TReporting = reporting
 	l.warnOnDoubles = warnOnDoubles
 }
 
-func (l *TBiBTeXLibrary) StartNewLibraryEntry(key string) bool {
-	l.newKey = key
-	l.newEntry = TBiBTeXEntry{}
-	l.newEntry.tags = TStringMap{}
+func (l *TBiBTeXLibrary) StartRecordingLibraryEntry(key string) bool {
+	l.currentKey = key
+
+	_, exists := l.entries[l.currentKey]
+
+	if exists {
+		if l.warnOnDoubles {
+			l.Warning(WarningEntryAlreadyExists, l.currentKey)
+		}
+	} else {
+		l.entries[l.currentKey] = TStringMap{}
+	}
 
 	return true
 }
 
 func (l *TBiBTeXLibrary) AssignTag(tag, value string) bool {
-	l.newEntry.tags[tag] = value
+	l.entries[l.currentKey][tag] = value
 	l.usedTags[tag] = true
 
 	return true
 }
 
-func (l *TBiBTeXLibrary) FinishNewLibraryEntry() bool {
-	_, exists := l.entries[l.newKey]
-
-	if exists && l.warnOnDoubles {
-		l.Warning(WarningEntryAlreadyExists, l.newKey)
-
-		return true
-	}
-
-	l.entries[l.newKey] = l.newEntry
+func (l *TBiBTeXLibrary) FinishRecordingLibraryEntry() bool {
+	// This is where we need to do a lot of checks ...
 
 	return true
 }

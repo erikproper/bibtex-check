@@ -34,8 +34,6 @@ const (
 
 type (
 	TMapTag       func(string, string) bool
-	TStringMap    map[string]string
-	TStringSet    map[string]bool
 	TBiBTeXStream struct {
 		TCharacterStream //         // The underlying stream of characters
 		TBiBTeXLibrary   //         // The BiBTeX Library this parser will contribute to
@@ -49,11 +47,6 @@ type (
 
 var (
 	BiBTeXRuneMap TRuneMap
-
-	BiBTeXTagNameMap,
-	BiBTeXEmptyNameMap,
-	BiBTeXEntryNameMap,
-	BiBTeXDefaultStrings TStringMap
 
 	BiBTeXCommentEnders,
 	BiBTeXKeyCharacters,
@@ -345,9 +338,9 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 	default:
 		key := ""
 		return b.Key(&key) &&
-			/**/ b.StartNewLibraryEntry(key) &&
+			/**/ b.StartRecordingLibraryEntry(key) &&
 			/*  */ b.TagDefinitionsety(BiBTeXTagNameMap, b.AssignTag) &&
-			/*    */ b.FinishNewLibraryEntry()
+			/*    */ b.FinishRecordingLibraryEntry()
 	}
 }
 
@@ -381,26 +374,6 @@ func (b *TBiBTeXStream) ParseBiBFile(file string) bool {
 }
 
 func init() {
-	// Should move into a settings file.
-	// Settings should be an environment variable ...
-	// see https://gobyexample.com/environment-variables
-	// If settings file does not exist, then create one and push this as default into ib.
-
-	BiBTeXDefaultStrings = TStringMap{
-		"jan": "January",
-		"feb": "February",
-		"mar": "March",
-		"apr": "April",
-		"may": "May",
-		"jun": "June",
-		"jul": "July",
-		"aug": "August",
-		"sep": "September",
-		"oct": "October",
-		"nov": "November",
-		"dec": "December",
-	}
-
 	BiBTeXRuneMap = TRuneMap{
 		'À': "{\\`A}",
 		'Á': "{\\'A}",
@@ -539,20 +512,6 @@ func init() {
 		'©': "{\textcopyright}",
 		'®': "{\textregistered}",
 	}
-
-	BiBTeXEmptyNameMap = TStringMap{}
-
-	BiBTeXEntryNameMap = BiBTeXEmptyNameMap
-	BiBTeXEntryNameMap["conference"] = "inproceedings"
-	BiBTeXEntryNameMap["softmisc"] = "misc"
-	BiBTeXEntryNameMap["patent"] = "misc"
-	BiBTeXEntryNameMap["unpublished"] = "misc"
-
-	BiBTeXTagNameMap = BiBTeXEmptyNameMap
-	BiBTeXTagNameMap["editors"] = "editor"
-	BiBTeXTagNameMap["authors"] = "author"
-	BiBTeXTagNameMap["contributor"] = "author"
-	BiBTeXTagNameMap["contributors"] = "author"
 
 	BiBTeXSpaceCharacters.Add(
 		SpaceCharacter, NewlineCharacter, BackspaceCharacter, BellCharacter,
