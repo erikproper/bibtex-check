@@ -11,36 +11,58 @@ import (
 /// Comments list
 
 /// Export library
-
-/// Split off library.go file
-/// Add comments + inspect ... also to the already splitted files.
-/// Make things robust and reporting when file is not found
 /// Save library + comments(!!)
 
-/// Create an "AllowedTags" set
-/// Dito an "AllowedTypes"
-/// Check the consistency of the Maps to these allowed sets ...
-///
-/// If a Tag is not in this, set then try and apply the mapping
-/// As such, the BiBTeXTagNameMap should be used by adding an order in which we try to apply.
-/// If it leads to a possible synonym, then delete + warn about the unknown tag.
-/// If it (after mapping) exists, we need user input ...
-/// By the way, do check the consistency
-/// But only try to do so after having created the full entry
-///
-/// Deal with _XXX fields after entry is finished.
-/// Same with xXXX fields
+/// Split off library.go file
+
+/// Add comments + inspect ... also to the already splitted files.
+
+/// Make things robust and reporting when file is not found
+
+/// An KnownTypeTags(type, tag, IsMandatory) sequence, that populate the maps:
+/// - AllowedTags
+/// - AllowedTypes
+/// - OptionalTypeTags
+/// - MandatoryTypeTags
+/// 
+/// TypeAlias(type, alias)
+/// TagAlias(tag, alias)
 /// publisheD
-/// Use a MaybeMapTags map with potential mappings
-/// Should have an order though ....
+/// For each AllowedTag:
+/// - _XXX  
+/// - xXXX
+///
+/// This should actually be read/seeded from a config file
+/// Create a config.go file for now. Later we can see what needs to be read or not.
+///
+/// for each tag used in entry:
+///   if unknown then
+///      if exists new_tag = TagAliasesMap[tag] then
+///         if new_tag already has value then
+///            ask 
+///         else
+///            rename
+///         fi
+///      else
+///         Add to UnknownTags list for current stream
+///      fi
+/// 
+///   if resulting tag is AllowedTags, but not in AllowedTags list for this type
+///      then warning
+///  
+/// for each tag in MandatoryTypeTags[type]
+///   if missing then warning
+///
+/// Per stream parse round:
+///   for each UnknownTag report
 ///
 ///
-/// Should be the start of a CleanEntry function.
-/// Should be called from the bibtexstream side.
-/// This function should then also report the actually usedTags ...
 
 /// First App
 
+/// KInd[tag] = Which kind of cleaning/nornalisation needed
+/// Should also go into config.go
+///
 /// Field specific normalisation/cleaning
 /// - (Book)titles, series,
 /// - addresses
