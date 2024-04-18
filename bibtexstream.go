@@ -5,15 +5,15 @@ import "strings"
 const (
 	CharacterClass             = "Character"
 	EntryBodyClass             = "EntryBody"
-	TagNameClass               = "TagName"
+	FieldNameClass             = "FieldName"
 	EntryTypeClass             = "EntryType"
-	TagValueClass              = "TagValue"
+	FieldValueClass            = "FieldValue"
 	ErrorMissing               = "Missing"
 	ErrorMissingCharacter      = ErrorMissing + " " + CharacterClass + "'%s', found '%s'"
 	ErrorMissingEntryBody      = ErrorMissing + " " + EntryBodyClass
 	ErrorMissingEntryType      = ErrorMissing + " " + EntryTypeClass
-	ErrorMissingTagName        = ErrorMissing + " " + TagNameClass
-	ErrorMissingTagValue       = ErrorMissing + " " + TagValueClass
+	ErrorMissingFieldName      = ErrorMissing + " " + FieldNameClass
+	ErrorMissingFieldValue     = ErrorMissing + " " + FieldValueClass
 	ErrorOpeningFile           = "Could not open file '%s'"
 	ErrorUnknownString         = "Unknown string '%s' referenced"
 	WarningSkippingToNextEntry = "Skipping to next entry"
@@ -33,12 +33,12 @@ const (
 )
 
 type (
-	TMapTag       func(string, string) bool
+	TMapField     func(string, string) bool
 	TBiBTeXStream struct {
-		TCharacterStream //         // The underlying stream of characters
-		TBiBTeXLibrary   //         // The BiBTeX Library this parser will contribute to
-		currentTagName,  //         // The name of the tag that is currently being defined
-		currentTagValue, //         // The value ...
+		TCharacterStream  //         // The underlying stream of characters
+		TBiBTeXLibrary    //         // The BiBTeX Library this parser will contribute to
+		currentFieldName, //         // The name of the field that is currently being defined
+		currentFieldValue, //         // The value ...
 		currentEntryTypeName string // The tyoe ...
 		skippingEntry bool       // // If we're skipping
 		stringMap     TStringMap // // The mapping of strings ...
@@ -49,14 +49,14 @@ var (
 	BiBTeXRuneMap TRuneMap
 
 	BiBTeXEmptyNameMap = TStringMap{}
-	
+
 	BiBTeXCommentEnders,
 	BiBTeXKeyCharacters,
 	BiBTeXSpaceCharacters,
 	BiBTeXCommentStarters,
-	BiBTeXTagNameStarters,
+	BiBTeXFieldNameStarters,
 	BiBTeXNumberCharacters,
-	BiBTeXTagNameCharacters,
+	BiBTeXFieldNameCharacters,
 	BiBTeXEntryTypeStarters,
 	BiBTeXEntryTypeCharacters TByteSet
 )
@@ -167,7 +167,7 @@ func (b *TBiBTeXStream) CharacterSequence(starters, characters TByteSet, sequenc
 	return result
 }
 
-func (b *TBiBTeXStream) GroupedTagElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
+func (b *TBiBTeXStream) GroupedFieldElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
 	switch {
 	case b.CollectCharacterThatWas(BeginGroupCharacter, content):
 		return b.GroupedContentety(EndGroupCharacter, inTeXMode, content) &&
@@ -184,7 +184,7 @@ func (b *TBiBTeXStream) GroupedTagElement(groupEndCharacter byte, inTeXMode bool
 }
 
 func (b *TBiBTeXStream) GroupedContentety(groupEndCharacter byte, inTeXMode bool, content *string) bool {
-	for b.GroupedTagElement(groupEndCharacter, inTeXMode, content) {
+	for b.GroupedFieldElement(groupEndCharacter, inTeXMode, content) {
 		// Skip
 	}
 
@@ -199,7 +199,7 @@ func (b *TBiBTeXStream) Number(number *string) bool {
 	return b.CharacterSequence(BiBTeXNumberCharacters, BiBTeXNumberCharacters, number)
 }
 
-func (b *TBiBTeXStream) TagTypeName(starters, characters TByteSet, nameMap TStringMap, name *string) bool {
+func (b *TBiBTeXStream) FieldTypeName(starters, characters TByteSet, nameMap TStringMap, name *string) bool {
 	result := b.CharacterSequence(starters, characters, name)
 
 	*name = strings.ToLower(*name)
@@ -212,18 +212,18 @@ func (b *TBiBTeXStream) TagTypeName(starters, characters TByteSet, nameMap TStri
 	return result
 }
 
-func (b *TBiBTeXStream) TagName(nameMap TStringMap, name *string) bool {
-	return b.TagTypeName(BiBTeXTagNameStarters, BiBTeXTagNameCharacters, nameMap, name)
+func (b *TBiBTeXStream) FieldName(nameMap TStringMap, name *string) bool {
+	return b.FieldTypeName(BiBTeXFieldNameStarters, BiBTeXFieldNameCharacters, nameMap, name)
 }
 
-func (b *TBiBTeXStream) ForcedTagName(nameMap TStringMap, name *string) bool {
-	return b.TagName(nameMap, name) ||
-		b.MaybeReportError(ErrorMissingTagName) ||
-		b.SkipToNextEntry(TagNameClass)
+func (b *TBiBTeXStream) ForcedFieldName(nameMap TStringMap, name *string) bool {
+	return b.FieldName(nameMap, name) ||
+		b.MaybeReportError(ErrorMissingFieldName) ||
+		b.SkipToNextEntry(FieldNameClass)
 }
 
 func (b *TBiBTeXStream) EntryType() bool {
-	return b.TagTypeName(BiBTeXEntryTypeStarters, BiBTeXEntryTypeCharacters, BiBTeXEntryNameMap, &b.currentEntryTypeName)
+	return b.FieldTypeName(BiBTeXEntryTypeStarters, BiBTeXEntryTypeCharacters, BiBTeXEntryNameMap, &b.currentEntryTypeName)
 }
 
 func (b *TBiBTeXStream) ForcedEntryType() bool {
@@ -244,12 +244,12 @@ func (b *TBiBTeXStream) AddStringDefinition(name string, s *string) bool {
 	return true
 }
 
-func (b *TBiBTeXStream) TagValueAdditionety(value *string) bool {
+func (b *TBiBTeXStream) FieldValueAdditionety(value *string) bool {
 	switch {
 
 	case b.ThisTokenWasCharacter(AdditionCharacter):
-		return b.ForcedTagValue(value) &&
-			/* */ b.TagValueAdditionety(value)
+		return b.ForcedFieldValue(value) &&
+			/* */ b.FieldValueAdditionety(value)
 
 	default:
 		return true
@@ -257,7 +257,7 @@ func (b *TBiBTeXStream) TagValueAdditionety(value *string) bool {
 	}
 }
 
-func (b *TBiBTeXStream) TagValue(value *string) bool {
+func (b *TBiBTeXStream) FieldValue(value *string) bool {
 	stringName := ""
 
 	switch {
@@ -270,7 +270,7 @@ func (b *TBiBTeXStream) TagValue(value *string) bool {
 		return b.GroupedContentety(DoubleQuotesCharacter, TeXMode, value) &&
 			/* */ b.ForcedThisTokenWasCharacter(DoubleQuotesCharacter)
 
-	case b.TagName(BiBTeXEmptyNameMap, &stringName):
+	case b.FieldName(BiBTeXEmptyNameMap, &stringName):
 		return b.AddStringDefinition(stringName, value)
 
 	default:
@@ -280,44 +280,44 @@ func (b *TBiBTeXStream) TagValue(value *string) bool {
 	return false
 }
 
-func (b *TBiBTeXStream) ForcedTagValue(value *string) bool {
-	return b.TagValue(value) ||
-		b.MaybeReportError(ErrorMissingTagValue) ||
-		b.SkipToNextEntry(TagValueClass)
+func (b *TBiBTeXStream) ForcedFieldValue(value *string) bool {
+	return b.FieldValue(value) ||
+		b.MaybeReportError(ErrorMissingFieldValue) ||
+		b.SkipToNextEntry(FieldValueClass)
 }
 
-func (b *TBiBTeXStream) RecordTagAssignment(tagName, tagValue string, tagMap TStringMap, tagNames TStringSet) bool {
-	tagMap[tagName] = tagValue
+func (b *TBiBTeXStream) RecordFieldAssignment(fieldName, fieldValue string, fieldMap TStringMap, fieldNames TStringSet) bool {
+	fieldMap[fieldName] = fieldValue
 
-	if tagNames != nil {
-		tagNames[tagName] = true
+	if fieldNames != nil {
+		fieldNames[fieldName] = true
 	}
 
 	return true
 }
 
-func (b *TBiBTeXStream) ForcedTagDefinitionProper(tagName string, nameMap TStringMap, tagMapper TMapTag) bool {
-	tagValue := ""
+func (b *TBiBTeXStream) ForcedFieldDefinitionProper(fieldName string, nameMap TStringMap, fieldMapper TMapField) bool {
+	fieldValue := ""
 
 	return b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
-		/**/ b.ForcedTagValue(&tagValue) &&
-		/*  */ b.TagValueAdditionety(&tagValue) &&
-		/*    */ tagMapper(tagName, tagValue)
+		/**/ b.ForcedFieldValue(&fieldValue) &&
+		/*  */ b.FieldValueAdditionety(&fieldValue) &&
+		/*    */ fieldMapper(fieldName, fieldValue)
 }
 
-func (b *TBiBTeXStream) TagDefinitionety(nameMap TStringMap, tagMapper TMapTag) bool {
-	tagName := ""
+func (b *TBiBTeXStream) FieldDefinitionety(nameMap TStringMap, fieldMapper TMapField) bool {
+	fieldName := ""
 
-	return b.TagName(nameMap, &tagName) &&
-		/**/ b.ForcedTagDefinitionProper(tagName, nameMap, tagMapper) ||
+	return b.FieldName(nameMap, &fieldName) &&
+		/**/ b.ForcedFieldDefinitionProper(fieldName, nameMap, fieldMapper) ||
 		true
 }
 
-func (b *TBiBTeXStream) TagDefinitionsety(nameMap TStringMap, tagMapper TMapTag) bool {
-	b.TagDefinitionety(nameMap, tagMapper)
+func (b *TBiBTeXStream) FieldDefinitionsety(nameMap TStringMap, fieldMapper TMapField) bool {
+	b.FieldDefinitionety(nameMap, fieldMapper)
 
 	for b.ThisTokenWasCharacter(CommaCharacter) {
-		b.TagDefinitionety(nameMap, tagMapper)
+		b.FieldDefinitionety(nameMap, fieldMapper)
 	}
 
 	return true
@@ -335,13 +335,13 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 		return b.GroupedContentety(EndGroupCharacter, !TeXMode, &comment)
 
 	case StringEntryType:
-		return b.TagDefinitionsety(BiBTeXEmptyNameMap, b.AssignString)
+		return b.FieldDefinitionsety(BiBTeXEmptyNameMap, b.AssignString)
 
 	default:
 		key := ""
 		return b.Key(&key) &&
 			/**/ b.StartRecordingLibraryEntry(key) &&
-			/*  */ b.TagDefinitionsety(BiBTeXTagNameMap, b.AssignTag) &&
+			/*  */ b.FieldDefinitionsety(BiBTeXFieldNameMap, b.AssignField) &&
 			/*    */ b.FinishRecordingLibraryEntry()
 	}
 }
@@ -532,13 +532,13 @@ func init() {
 			"0123456789" +
 			"<>()[];|!*+?&#$-_:/.'`").TreatAsCharacters()
 
-	BiBTeXTagNameStarters.AddString(
+	BiBTeXFieldNameStarters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 			"-_").TreatAsCharacters()
 
-	BiBTeXTagNameCharacters = BiBTeXTagNameStarters
-	BiBTeXTagNameCharacters.Unite(BiBTeXNumberCharacters)
+	BiBTeXFieldNameCharacters = BiBTeXFieldNameStarters
+	BiBTeXFieldNameCharacters.Unite(BiBTeXNumberCharacters)
 
 	BiBTeXEntryTypeStarters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +

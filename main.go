@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-/// Move library functions to adminitration
+/// Field -> Field
 
 /// Comments list
 
@@ -36,48 +36,35 @@ import (
 
 /// Make things robust and reporting when file is not found
 
-/// An KnownTypeTags(type, tag, IsMandatory) sequence, that populate the maps:
-/// - AllowedTags
-/// - AllowedTypes
-/// - OptionalTypeTags
-/// - MandatoryTypeTags
-///
-/// TypeAlias(type, alias)
-/// TagAlias(tag, alias)
-/// publisheD
-/// For each AllowedTag:
-/// - _XXX
-/// - xXXX
-///
 /// This should actually be read/seeded from a config file
 /// Create a config.go file for now. Later we can see what needs to be read or not.
 ///
-/// for each tag used in entry:
+/// for each field used in entry:
 ///   if unknown then
-///      if exists new_tag = TagAliasesMap[tag] then
-///         if new_tag already has value then
+///      if exists new_field = FieldAliasesMap[field] then
+///         if new_field already has value then
 ///            ask
 ///         else
 ///            rename
 ///         fi
 ///      else
-///         Add to UnknownTags list for current stream
+///         Add to UnknownFields list for current stream
 ///      fi
 ///
-///   if resulting tag is AllowedTags, but not in AllowedTags list for this type
+///   if resulting field is AllowedFields, but not in AllowedFields list for this type
 ///      then warning
 ///
-/// for each tag in MandatoryTypeTags[type]
+/// for each field in MandatoryTypeFields[type]
 ///   if missing then warning
 ///
 /// Per stream parse round:
-///   for each UnknownTag report
+///   for each UnknownField report
 ///
 ///
 
 /// First App
 
-/// KInd[tag] = Which kind of cleaning/nornalisation needed
+/// KInd[field] = Which kind of cleaning/nornalisation needed
 /// Should also go into config.go
 ///
 /// Field specific normalisation/cleaning
@@ -91,8 +78,6 @@ import (
 /// - Read names file first {<name>} {<alias>}
 /// -  name from bibtext
 /// - Use normalised string representatation to lookup in a string to string map
-
-
 
 /////
 
@@ -108,7 +93,7 @@ func main() {
 
 	fmt.Println(Library)
 
-	for t, _ := range Library.usedTags {
+	for t, _ := range Library.usedFields {
 		fmt.Println(t)
 	}
 
@@ -126,34 +111,3 @@ func main() {
 	//
 	//	log.Fatal(err)
 }
-
-//  { address
-//    author
-//    booktitle
-//    chapter
-//    doi
-//    edition
-//    editor
-//    howpublished
-//    institution
-//    isbn
-//    issn
-//    journal
-//    eprinttype
-//    eprint??
-//    key
-//    month
-//    note
-//    number
-//    occasion
-//    organization
-//    pages
-//    publisher
-//    school
-//    series
-//    title
-//    type
-//    url
-//    volume
-//    year
-//
