@@ -92,58 +92,7 @@ import (
 /// -  name from bibtext
 /// - Use normalised string representatation to lookup in a string to string map
 
-// Check usage of "New"
 
-const (
-	WarningEntryAlreadyExists = "Entry '%s' already exists"
-)
-
-type (
-	TBiBTeXLibrary struct {
-		entries       map[string]TStringMap
-		currentKey    string
-		usedTags      TStringSet
-		warnOnDoubles bool
-		TReporting    // Error reporting channel
-	}
-)
-
-func (l *TBiBTeXLibrary) NewLibrary(reporting TReporting, warnOnDoubles bool) {
-	l.entries = map[string]TStringMap{}
-	l.usedTags = TStringSet{}
-	l.currentKey = ""
-	l.TReporting = reporting
-	l.warnOnDoubles = warnOnDoubles
-}
-
-func (l *TBiBTeXLibrary) StartRecordingLibraryEntry(key string) bool {
-	l.currentKey = key
-
-	_, exists := l.entries[l.currentKey]
-
-	if exists {
-		if l.warnOnDoubles {
-			l.Warning(WarningEntryAlreadyExists, l.currentKey)
-		}
-	} else {
-		l.entries[l.currentKey] = TStringMap{}
-	}
-
-	return true
-}
-
-func (l *TBiBTeXLibrary) AssignTag(tag, value string) bool {
-	l.entries[l.currentKey][tag] = value
-	l.usedTags[tag] = true
-
-	return true
-}
-
-func (l *TBiBTeXLibrary) FinishRecordingLibraryEntry() bool {
-	// This is where we need to do a lot of checks ...
-
-	return true
-}
 
 /////
 

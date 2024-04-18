@@ -48,6 +48,8 @@ type (
 var (
 	BiBTeXRuneMap TRuneMap
 
+	BiBTeXEmptyNameMap = TSTringMap{}
+	
 	BiBTeXCommentEnders,
 	BiBTeXKeyCharacters,
 	BiBTeXSpaceCharacters,
