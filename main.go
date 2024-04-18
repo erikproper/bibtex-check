@@ -9,9 +9,15 @@ import (
 )
 
 // config.go
-// - Aliases
+// - Aliases ... in config, and ... use ...
+// - IgnoreFields ... and ... ensure they are disjoint ...
+/// TStringSet operators ... also String-ify ...
 
 // Test AllowedXX on entries and fields
+// - Make these tests (also on double entries) switchable.
+/// Per stream parse round:
+///   for each UnknownField report ... optional, like warning on doubles.
+/// Make these two setable using functions.
 
 // Comments list
 //func main() {
@@ -28,7 +34,6 @@ import (
 //	printSlice(s)
 //}
 
-/// TStringSet operators ... also String-ify ...
 
 /// Export library
 /// Save library + comments(!!)
@@ -36,10 +41,6 @@ import (
 /// Add comments + inspect ... also to the already splitted files.
 
 /// Make things robust and reporting when file is not found
-
-/// Per stream parse round:
-///   for each UnknownField report ... optional, like warning on doubles.
-/// Make these two setable using functions.
 
 /// First App
 
