@@ -9,9 +9,9 @@ import (
 )
 
 // config.go
+// - Aliases
 
 // Test AllowedXX on entries and fields
-
 
 // Comments list
 //func main() {
@@ -28,6 +28,8 @@ import (
 //	printSlice(s)
 //}
 
+/// TStringSet operators ... also String-ify ...
+
 /// Export library
 /// Save library + comments(!!)
 
@@ -35,31 +37,9 @@ import (
 
 /// Make things robust and reporting when file is not found
 
-/// This should actually be read/seeded from a config file
-/// Create a config.go file for now. Later we can see what needs to be read or not.
-///
-/// for each field used in entry:
-///   if unknown then
-///      if exists new_field = FieldAliasesMap[field] then
-///         if new_field already has value then
-///            ask
-///         else
-///            rename
-///         fi
-///      else
-///         Add to UnknownFields list for current stream
-///      fi
-///
-///   if resulting field is AllowedFields, but not in AllowedFields list for this type
-///      then warning
-///
-/// for each field in MandatoryTypeFields[type]
-///   if missing then warning
-///
 /// Per stream parse round:
-///   for each UnknownField report
-///
-///
+///   for each UnknownField report ... optional, like warning on doubles.
+/// Make these two setable using functions.
 
 /// First App
 
@@ -91,10 +71,6 @@ func main() {
 	BiBTeXParser.ParseBiBFile("Test.bib")
 
 	fmt.Println(Library)
-
-	for t, _ := range Library.usedFields {
-		fmt.Println(t)
-	}
 
 	h := md5.New()
 	io.WriteString(h, "zot:IJ6KKKAQ\n")

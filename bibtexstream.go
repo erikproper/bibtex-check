@@ -340,7 +340,7 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 	default:
 		key := ""
 		return b.Key(&key) &&
-			/**/ b.StartRecordingLibraryEntry(key) &&
+			/**/ b.StartRecordingLibraryEntry(key, b.currentEntryTypeName) &&
 			/*  */ b.FieldDefinitionsety(BiBTeXFieldNameMap, b.AssignField) &&
 			/*    */ b.FinishRecordingLibraryEntry()
 	}
@@ -363,9 +363,13 @@ func (b *TBiBTeXStream) Entry() bool {
 }
 
 func (b *TBiBTeXStream) Entriesety() bool {
+	b.StartRecordingToLibrary()
+
 	for b.Entry() {
 		b.skippingEntry = false
 	}
+
+	b.FinishRecordingToLibrary()
 
 	return true
 }
