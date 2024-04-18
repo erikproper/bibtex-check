@@ -10,7 +10,7 @@ import (
 
 // config.go
 
-// Test allowed on entries and fields
+// Test AllowedXX on entries and fields
 
 
 // Comments list
