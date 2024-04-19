@@ -1,5 +1,7 @@
 package main
 
+import "fmt"
+
 const (
 	WarningEntryAlreadyExists = "Entry '%s' already exists"
 	WarningUnknownFields      = "Unknown field(s) used: %s"
@@ -15,6 +17,7 @@ type (
 		unknownFields TStringSet
 		currentKey    string
 		warnOnDoubles bool
+		legacyMode    bool
 		TReporting    // Error reporting channel
 	}
 )
@@ -83,7 +86,7 @@ func (l *TBiBTeXLibrary) StartRecordingToLibrary() bool {
 }
 
 func (l *TBiBTeXLibrary) FinishRecordingToLibrary() bool {
-	if len(l.unknownFields) > 0 {
+	if !l.legacyMode && len(l.unknownFields) > 0 {
 		unknownFields := ""
 		comma := ""
 
@@ -108,6 +111,16 @@ func (l *TBiBTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 		if l.warnOnDoubles {
 			l.Warning(WarningEntryAlreadyExists, l.currentKey)
 		}
+
+		if l.legacyMode {
+			if l.entryType[l.currentKey] != entryType {
+				fmt.Println("KK", l.currentKey, l.entryType[l.currentKey])
+				fmt.Println("KK", l.currentKey, entryType)
+	//			fmt.Println("Ambiguous types. From:", l.entryType[l.currentKey], "to: ", entryType)
+//				fmt.Println(l.entryFields[l.currentKey])
+//				fmt.Println()
+			}
+		}
 	} else {
 		l.entryFields[l.currentKey] = TStringMap{}
 	}
@@ -118,6 +131,13 @@ func (l *TBiBTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 }
 
 func (l *TBiBTeXLibrary) AssignField(field, value string) bool {
+	//
+	// Needed for the import of the legacy files.
+	//
+	if l.legacyMode && field == "file" {
+		fmt.Println("CHECK FILE!", value)
+	}
+
 	l.entryFields[l.currentKey][field] = value
 
 	return true

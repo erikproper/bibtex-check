@@ -1,10 +1,10 @@
 package main
 
 import (
-	"crypto/md5"
+	//	"crypto/md5"
 	"encoding/base64"
 	"fmt"
-	"io"
+	//	"io"
 	"strings"
 )
 
@@ -14,10 +14,18 @@ import (
 /// TStringSet operators ... also String-ify ...
 
 // Test AllowedXX on entries and fields
+// - test file = for zotero inport ... even before overwriting ...
+// -
 // - Make these tests (also on double entries) switchable.
 /// Per stream parse round:
 ///   for each UnknownField report ... optional, like warning on doubles.
 /// Make these two setable using functions.
+
+// Clean KEY/Types
+// Do Keymapper first before legacy import
+// Then cross check Key/Types again on legacy files
+// Then balance key/types between current and legacy
+// Then start on the rest matching legacy and new
 
 // Comments list
 //func main() {
@@ -33,7 +41,6 @@ import (
 //	s = append(s, 2, 3, 4)
 //	printSlice(s)
 //}
-
 
 /// Export library
 /// Save library + comments(!!)
@@ -62,19 +69,28 @@ import (
 /////
 
 var BiBTeXParser TBiBTeXStream
-var Library TBiBTeXLibrary
+var OldLibrary, Library TBiBTeXLibrary
 var Reporting TReporting
 
 func main() {
 	Reporting.NewReporting()
-	Library.NewLibrary(Reporting, false)
-	BiBTeXParser.NewBiBTeXParser(Reporting, Library)
-	BiBTeXParser.ParseBiBFile("Test.bib")
 
-	fmt.Println(Library)
+	Library.NewLibrary(Reporting, true)
+	Library.legacyMode = false
 
-	h := md5.New()
-	io.WriteString(h, "zot:IJ6KKKAQ\n")
+	OldLibrary.NewLibrary(Reporting, false)
+	OldLibrary.legacyMode = true
+
+	BiBTeXParser.NewBiBTeXParser(Reporting, OldLibrary)
+	BiBTeXParser.ParseBiBFile("/Users/erikproper/BiBTeX/MyLibrary.bib")
+	BiBTeXParser.ParseBiBFile("Convert.bib")
+
+	//	BiBTeXParser.ParseBiBFile("Test.bib")
+
+	//	fmt.Println(Library)
+
+	//	h := md5.New()
+	//	io.WriteString(h, "zot:IJ6KKKAQ\n")
 	//	fmt.Printf("%x\n", h.Sum(nil))
 
 	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
