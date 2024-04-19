@@ -4,10 +4,9 @@ const (
 	WarningEntryAlreadyExists = "Entry '%s' already exists"
 	WarningUnknownFields      = "Unknown field(s) used: %s"
 	WarningAmbiguousAlias     = "Ambiguous alias; for %s we have %s and %s"
-	WarningAliasIsKey	      = "Alias %s is already known to be a key %s"
+	WarningAliasIsKey         = "Alias %s is already known to be a key %s"
 	WarningPreferredNotExist  = "Can't select a non existing alias %s as preferred alias"
 	WarningAliasTargetIsAlias = "Alias %s has a target $s, which is actually an alias for $s"
-
 )
 
 type (
@@ -124,16 +123,7 @@ func (l *TBiBTeXLibrary) StartRecordingToLibrary() bool {
 
 func (l *TBiBTeXLibrary) FinishRecordingToLibrary() bool {
 	if !l.legacyMode && len(l.unknownFields) > 0 {
-		unknownFields := ""
-		comma := ""
-
-		// No general function to do this?
-		for field, _ := range l.unknownFields {
-			unknownFields += comma + field
-			comma = ", "
-		}
-
-		l.Warning(WarningUnknownFields, unknownFields)
+		l.Warning(WarningUnknownFields, l.unknownFields.String())
 	}
 
 	return true

@@ -21,3 +21,26 @@ func (s *TStringSet) Add(elements ...string) *TStringSet {
 
 	return s
 }
+
+func (s *TStringSet) String() string {
+	head := ""
+	tail := ""
+
+	for element, isIn := range *s {
+		if isIn {
+			if head != "" {
+				head += ", " + tail
+				tail = element
+			} else {
+				head = tail
+				tail = element
+			}
+		}
+	}
+
+	if head != "" {
+		return head + " and " + tail
+	} else {
+		return tail
+	}
+}

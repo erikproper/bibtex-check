@@ -9,9 +9,6 @@ import (
 	"strings"
 )
 
-// Make into WARNING
-// AddKeyAlias ==> Warning + clean
-
 // stringSet concatenation for the unknown ones when reporting
 
 // config.go
@@ -49,7 +46,6 @@ import (
 // Then cross check Key/Types again on legacy files
 // Then balance key/types between current and legacy
 // Then start on the rest matching legacy and new
-
 
 /// Add comments + inspect ... also to the already splitted files.
 
