@@ -12,14 +12,6 @@ func (s *TByteSet) split(b byte) (byte, uint64) {
 	return b / 64, 1 << byte(b%64)
 }
 
-func ByteSet(elements ...byte) TByteSet {
-	var newSet TByteSet
-
-	newSet.add(elements)
-
-	return newSet
-}
-
 func (s *TByteSet) TreatAsCharacters() *TByteSet {
 	s.treatAsChar = true
 

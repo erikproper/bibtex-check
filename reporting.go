@@ -4,9 +4,6 @@ import "fmt"
 
 type TReporting struct{}
 
-func (r *TReporting) NewReporting() {
-}
-
 func (r *TReporting) Error(errorMessage string, context ...any) bool {
 	fmt.Printf("ERROR: "+errorMessage+".\n", context...)
 

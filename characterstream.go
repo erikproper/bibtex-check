@@ -16,6 +16,7 @@ type (
 		TReporting                        // Error reporting channel
 		endOfStream        bool           // Set to true when we've reached the end of the stream
 		textfile           *os.File       // The text file from which we're streaming
+		fileName           string         // LEGACY!!
 		textScanner        *bufio.Scanner // The scanner used to collect input from the file
 		textfileIsOpen     bool           // Set to true if the text file is open
 		textRunes          []rune         // The buffer of runes we're working from
@@ -29,7 +30,7 @@ type (
 	}
 )
 
-func (c *TCharacterStream) NewCharacterStream(reporting TReporting) {
+func (c *TCharacterStream) Initialise(reporting TReporting) {
 	c.textfileIsOpen = false
 	c.endOfStream = true
 	c.runeMap = TRuneMap{}
@@ -81,6 +82,7 @@ func (c *TCharacterStream) TextfileOpen(fileName string) bool {
 	var err error
 
 	c.textfile, err = os.Open(fileName)
+	c.fileName = fileName
 	c.textfileIsOpen = true
 
 	c.initializeStream("")
@@ -97,6 +99,8 @@ func (c *TCharacterStream) TextfileOpen(fileName string) bool {
 }
 
 func (c *TCharacterStream) ForcedTextfileOpen(fileName, errorMessage string) bool {
+	fmt.Println("Opening bib file:", fileName)
+
 	return c.TextfileOpen(fileName) ||
 		c.ReportError(errorMessage, fileName)
 }

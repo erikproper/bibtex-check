@@ -61,8 +61,8 @@ var (
 	BiBTeXEntryTypeCharacters TByteSet
 )
 
-func (b *TBiBTeXStream) NewBiBTeXParser(reporting TReporting, library TBiBTeXLibrary) {
-	b.NewCharacterStream(reporting)
+func (b *TBiBTeXStream) Initialise(reporting TReporting, library TBiBTeXLibrary) {
+	b.TCharacterStream.Initialise(reporting)
 	b.SetRuneMap(BiBTeXRuneMap)
 	b.stringMap = BiBTeXDefaultStrings
 	b.currentEntryTypeName = ""

@@ -11,12 +11,19 @@ const (
 	VerticalTabCharacter    = '\v'
 )
 
-var SpecialCharacters TByteSet
-var NumberCharacters TByteSet
-var UpperCaseASCIILetterCharacters TByteSet
-var LowerCaseASCIILetterCharacters TByteSet
+var (
+	SpecialCharacters,
+	NumberCharacters,
+	UpperCaseASCIILetterCharacters,
+	LowerCaseASCIILetterCharacters TByteSet
+)
 
 func init() {
+	SpecialCharacters = TByteSet{}
+	NumberCharacters = TByteSet{}
+	UpperCaseASCIILetterCharacters = TByteSet{}
+	LowerCaseASCIILetterCharacters = TByteSet{}
+
 	NumberCharacters.AddString("0123456789").TreatAsCharacters()
 	UpperCaseASCIILetterCharacters.AddString("ABCDEFGHIJKLMNOPQRSTUVWXYZ").TreatAsCharacters()
 	LowerCaseASCIILetterCharacters.AddString("abcdefghijklmnopqrstuvwxyz").TreatAsCharacters()

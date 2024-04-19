@@ -21,18 +21,6 @@ func init() {
 		"dec": "December",
 	}
 
-	BiBTeXEntryNameMap = TStringMap{}
-	BiBTeXEntryNameMap["conference"] = "inproceedings"
-	BiBTeXEntryNameMap["softmisc"] = "misc"
-	BiBTeXEntryNameMap["patent"] = "misc"
-	BiBTeXEntryNameMap["unpublished"] = "misc"
-
-	BiBTeXFieldNameMap = TStringMap{}
-	BiBTeXFieldNameMap["editors"] = "editor"
-	BiBTeXFieldNameMap["authors"] = "author"
-	BiBTeXFieldNameMap["contributor"] = "author"
-	BiBTeXFieldNameMap["contributors"] = "author"
-
 	AllowedEntryFields(
 		"article", "journal", "volume", "number", "pages", "month", "issn")
 	AllowedEntryFields(
@@ -76,11 +64,24 @@ func init() {
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9",
 		"bdsk-file-1", "bdsk-file-2", "bdsk-file-3", "bdsk-file-4", "bdsk-file-5",
 		"bdsk-file-6", "bdsk-file-7", "bdsk-file-8", "bdsk-file-9")
-}
 
-/// FieldAlias(field, alias)
-/// publisheD
-/// For each AllowedField:
-/// - _XXX
-/// - xXXX
-///
+	BiBTeXEntryNameMap = TStringMap{}
+	BiBTeXEntryNameMap["conference"] = "inproceedings"
+	BiBTeXEntryNameMap["softmisc"] = "misc"
+	BiBTeXEntryNameMap["patent"] = "misc"
+	BiBTeXEntryNameMap["unpublished"] = "misc"
+
+	BiBTeXFieldNameMap = TStringMap{}
+	BiBTeXFieldNameMap["editors"] = "editor"
+	BiBTeXFieldNameMap["authors"] = "author"
+	BiBTeXFieldNameMap["contributor"] = "author"
+	BiBTeXFieldNameMap["contributors"] = "author"
+	BiBTeXFieldNameMap["file"] = "local-url"
+
+	for field, isIn := range BiBTeXAllowedFields {
+		if isIn {
+			BiBTeXFieldNameMap["x"+field] = field
+			BiBTeXFieldNameMap["_"+field] = field
+		}
+	}
+}

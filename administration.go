@@ -9,16 +9,18 @@ const (
 
 type (
 	TStringMap map[string]string
-	TStringSet map[string]bool
 
 	TBiBTeXLibrary struct {
-		entryFields   map[string]TStringMap
-		entryType     TStringMap
-		unknownFields TStringSet
-		currentKey    string
-		warnOnDoubles bool
-		legacyMode    bool
-		TReporting    // Error reporting channel
+		entryFields      map[string]TStringMap
+		entryType        TStringMap
+		deAlias          TStringMap
+		aliasedKeys      TStringSet
+		preferredAliases TStringMap
+		unknownFields    TStringSet
+		currentKey       string
+		warnOnDoubles    bool
+		legacyMode       bool
+		TReporting       // Error reporting channel
 	}
 )
 
@@ -63,17 +65,54 @@ func AllowedFields(fields ...string) {
 	}
 }
 
-func EntryAlias(entry, alias string) {
+func EntryTypeAlias(entry, alias string) {
 	BiBTeXEntryNameMap[entry] = alias
 }
 
-func FieldAlias(entry, alias string) {
+func FieldTypeAlias(entry, alias string) {
 	BiBTeXEntryNameMap[entry] = alias
 }
 
-func (l *TBiBTeXLibrary) NewLibrary(reporting TReporting, warnOnDoubles bool) {
+func (l *TBiBTeXLibrary) AddKeyAlias(alias, key string) {
+	currentKey, exists := l.deAlias[alias]
+	if exists && currentKey != key {
+		// Make into WARNING
+		fmt.Println("Ambiguous alias. For", alias, "we would have", currentKey, "and", key)
+	} else {
+		aliasedKey, isAliasedKey := l.deAlias[key]
+
+		if isAliasedKey {
+			// Make into WARNING
+			fmt.Println("Alias target is an alias itself. ", alias, " -> ", key, " -> ", aliasedKey)
+		} else {
+			if l.aliasedKeys.Contains(alias) {
+				// Make into WARNING
+				fmt.Println("Alias is already known to be a key. ", alias, " -> ", key)
+			} else {
+				//fmt.Println(alias, "==>", key)
+				l.deAlias[alias] = key
+				l.aliasedKeys[key] = true
+			}
+		}
+	}
+}
+
+func (l *TBiBTeXLibrary) AddPreferredAlias(alias string) {
+	key, exists := l.deAlias[alias]
+	if !exists {
+		// Make into WARNING
+		fmt.Println("Can't select a non existing alias as preferred alias:", key)
+	} else {
+		l.preferredAliases[key] = alias
+	}
+}
+
+func (l *TBiBTeXLibrary) Initialise(reporting TReporting, warnOnDoubles bool) {
 	l.entryFields = map[string]TStringMap{}
 	l.entryType = TStringMap{}
+	l.deAlias = TStringMap{}
+	l.preferredAliases = TStringMap{}
+	l.aliasedKeys = TStringSet{}
 	l.currentKey = ""
 	l.TReporting = reporting
 	l.warnOnDoubles = warnOnDoubles
@@ -105,25 +144,41 @@ func (l *TBiBTeXLibrary) FinishRecordingToLibrary() bool {
 func (l *TBiBTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
 	l.currentKey = key
 
+	alias, aliased := l.deAlias[l.currentKey]
+	if aliased {
+		l.currentKey = alias
+		//		fmt.Println("Mapped: ", key, "->", alias)
+	}
+
 	_, exists := l.entryType[l.currentKey]
+
+	//	computedEntryType := entryType
 
 	if exists {
 		if l.warnOnDoubles {
 			l.Warning(WarningEntryAlreadyExists, l.currentKey)
 		}
 
-		if l.legacyMode {
-			if l.entryType[l.currentKey] != entryType {
-				fmt.Println("KK", l.currentKey, l.entryType[l.currentKey])
-				fmt.Println("KK", l.currentKey, entryType)
-	//			fmt.Println("Ambiguous types. From:", l.entryType[l.currentKey], "to: ", entryType)
-//				fmt.Println(l.entryFields[l.currentKey])
-//				fmt.Println()
-			}
-		}
+		//		if l.legacyMode {
+		//			if l.entryType[l.currentKey] != entryType {
+		//				_, known := Library.entryType[l.currentKey]
+		//				if !known {
+		//					fmt.Println("KK", l.currentKey, l.entryType[l.currentKey])
+		//					fmt.Println("KK", l.currentKey, entryType)
+		//					//				fmt.Println("Ambiguous types. From:", l.entryType[l.currentKey], "to: ", entryType)
+		//					//				fmt.Println(l.entryFields[l.currentKey])
+		//					//				fmt.Println()
+		//				} else {
+		//					computedEntryType = Library.entryType[l.currentKey]
+		//					fmt.Println("DD", computedEntryType, "from", entryType, "of", key)
+		//				}
+		//			}
+		//		}
 	} else {
 		l.entryFields[l.currentKey] = TStringMap{}
 	}
+
+	//	l.entryType[l.currentKey] = computedEntryType
 
 	l.entryType[l.currentKey] = entryType
 
@@ -134,11 +189,21 @@ func (l *TBiBTeXLibrary) AssignField(field, value string) bool {
 	//
 	// Needed for the import of the legacy files.
 	//
-	if l.legacyMode && field == "file" {
-		fmt.Println("CHECK FILE!", value)
-	}
+	//	if l.legacyMode && field == "file" {
+	//		fmt.Println("CHECK FILE!", value)
+	//	}
 
+	//currentValue, hasValue := l.entryFields[l.currentKey][field]
+	//	if hasValue && currentValue != value {
+	//		fmt.Println("Changed value for", l.currentKey, "field", field)
+	//		fmt.Println(" from:", currentValue)
+	//		fmt.Println("   to:", value)
+	//	}
 	l.entryFields[l.currentKey][field] = value
+
+	if field == "dblp" && !l.legacyMode {
+		l.AddKeyAlias("DBLP:"+value, l.currentKey)
+	}
 
 	return true
 }
@@ -155,7 +220,7 @@ func (l *TBiBTeXLibrary) FinishRecordingLibraryEntry() bool {
 
 	/// for each field used in entry:
 	///   if unknown then
-	///      if exists new_field = FieldAliasesMap[field] then
+	///      if exists new_field = FieldTypeAliasesMap[field] then
 	///         if new_field already has value then
 	///            ask
 	///         else
