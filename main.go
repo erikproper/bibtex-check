@@ -12,23 +12,11 @@ import (
 // Make into WARNING
 // AddKeyAlias ==> Warning + clean
 
+// stringSet concatenation for the unknown ones when reporting
+
 // config.go
 // - Aliases ... in config, and ... use ...
 // - IgnoreFields ... and ... ensure they are disjoint ...
-
-// Test AllowedXX on entries and fields
-// - test file = for zotero inport ... even before overwriting ...
-// - Make these tests (also on double entries) switchable.
-// 82CVJ2UD
-/// Per stream parse round:
-///   for each UnknownField report ... optional, like warning on doubles.
-/// Make these two setable using functions.
-
-// Clean KEY/Types
-// Do Keymapper first before legacy import
-// Then cross check Key/Types again on legacy files
-// Then balance key/types between current and legacy
-// Then start on the rest matching legacy and new
 
 // Comments list
 //func main() {
@@ -47,6 +35,21 @@ import (
 
 /// Export library
 /// Save library + comments(!!)
+
+// Test AllowedXX on entries and fields
+// - test file = for zotero inport ... even before overwriting ...
+// - Make these tests (also on double entries) switchable.
+// 82CVJ2UD for files ...
+/// Per stream parse round:
+///   for each UnknownField report ... optional, like warning on doubles.
+/// Make these two setable using functions.
+
+// Clean KEY/Types
+// Do Keymapper first before legacy import
+// Then cross check Key/Types again on legacy files
+// Then balance key/types between current and legacy
+// Then start on the rest matching legacy and new
+
 
 /// Add comments + inspect ... also to the already splitted files.
 

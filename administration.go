@@ -1,10 +1,13 @@
 package main
 
-import "fmt"
-
 const (
 	WarningEntryAlreadyExists = "Entry '%s' already exists"
 	WarningUnknownFields      = "Unknown field(s) used: %s"
+	WarningAmbiguousAlias     = "Ambiguous alias; for %s we have %s and %s"
+	WarningAliasIsKey	      = "Alias %s is already known to be a key %s"
+	WarningPreferredNotExist  = "Can't select a non existing alias %s as preferred alias"
+	WarningAliasTargetIsAlias = "Alias %s has a target $s, which is actually an alias for $s"
+
 )
 
 type (
@@ -76,20 +79,16 @@ func FieldTypeAlias(entry, alias string) {
 func (l *TBiBTeXLibrary) AddKeyAlias(alias, key string) {
 	currentKey, exists := l.deAlias[alias]
 	if exists && currentKey != key {
-		// Make into WARNING
-		fmt.Println("Ambiguous alias. For", alias, "we would have", currentKey, "and", key)
+		l.Warning(WarningAmbiguousAlias, alias, currentKey, key)
 	} else {
 		aliasedKey, isAliasedKey := l.deAlias[key]
 
 		if isAliasedKey {
-			// Make into WARNING
-			fmt.Println("Alias target is an alias itself. ", alias, " -> ", key, " -> ", aliasedKey)
+			l.Warning(WarningAliasIsKey, alias, key, aliasedKey)
 		} else {
 			if l.aliasedKeys.Contains(alias) {
-				// Make into WARNING
-				fmt.Println("Alias is already known to be a key. ", alias, " -> ", key)
+				l.Warning(WarningPreferredNotExist, alias, key)
 			} else {
-				//fmt.Println(alias, "==>", key)
 				l.deAlias[alias] = key
 				l.aliasedKeys[key] = true
 			}
@@ -100,8 +99,7 @@ func (l *TBiBTeXLibrary) AddKeyAlias(alias, key string) {
 func (l *TBiBTeXLibrary) AddPreferredAlias(alias string) {
 	key, exists := l.deAlias[alias]
 	if !exists {
-		// Make into WARNING
-		fmt.Println("Can't select a non existing alias as preferred alias:", key)
+		l.Warning(WarningAliasTargetIsAlias, key)
 	} else {
 		l.preferredAliases[key] = alias
 	}
