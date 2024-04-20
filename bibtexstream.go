@@ -35,10 +35,10 @@ const (
 type (
 	TMapField     func(string, string) bool
 	TBiBTeXStream struct {
-		TCharacterStream  //         // The underlying stream of characters
-		TBiBTeXLibrary    //         // The BiBTeX Library this parser will contribute to
-		currentFieldName, //         // The name of the field that is currently being defined
-		currentFieldValue, //         // The value ...
+		TCharacterStream                  //        // The underlying stream of characters
+		library           *TBiBTeXLibrary //        // The BiBTeX Library this parser will contribute to
+		currentFieldName, //        // The name of the field that is currently being defined
+		currentFieldValue, //       // The value ...
 		currentEntryTypeName string // The tyoe ...
 		skippingEntry bool       // // If we're skipping
 		stringMap     TStringMap // // The mapping of strings ...
@@ -61,13 +61,13 @@ var (
 	BiBTeXEntryTypeCharacters TByteSet
 )
 
-func (b *TBiBTeXStream) Initialise(reporting TReporting, library TBiBTeXLibrary) {
+func (b *TBiBTeXStream) Initialise(reporting TReporting, library *TBiBTeXLibrary) {
 	b.TCharacterStream.Initialise(reporting)
 	b.SetRuneMap(BiBTeXRuneMap)
 	b.stringMap = BiBTeXDefaultStrings
 	b.currentEntryTypeName = ""
 	b.skippingEntry = false
-	b.TBiBTeXLibrary = library
+	b.library = library
 }
 
 func (b *TBiBTeXStream) AssignString(str, value string) bool {
@@ -329,10 +329,10 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 		ignore := ""
 		return b.GroupedContentety(EndGroupCharacter, TeXMode, &ignore)
 
-		/// Store/write as well
 	case CommentEntryType:
 		comment := ""
-		return b.GroupedContentety(EndGroupCharacter, !TeXMode, &comment)
+		return b.GroupedContentety(EndGroupCharacter, !TeXMode, &comment) &&
+			/**/ b.library.AddComment(comment)
 
 	case StringEntryType:
 		return b.FieldDefinitionsety(BiBTeXEmptyNameMap, b.AssignString)
@@ -340,9 +340,11 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 	default:
 		key := ""
 		return b.Key(&key) &&
-			/**/ b.StartRecordingLibraryEntry(key, b.currentEntryTypeName) &&
-			/*  */ b.FieldDefinitionsety(BiBTeXFieldNameMap, b.AssignField) &&
-			/*    */ b.FinishRecordingLibraryEntry()
+			// Encapsulate this library. stuff
+			/**/
+			b.library.StartRecordingLibraryEntry(key, b.currentEntryTypeName) &&
+			/*  */ b.FieldDefinitionsety(BiBTeXFieldNameMap, b.library.AssignField) &&
+			/*    */ b.library.FinishRecordingLibraryEntry()
 	}
 }
 
@@ -363,13 +365,14 @@ func (b *TBiBTeXStream) Entry() bool {
 }
 
 func (b *TBiBTeXStream) Entriesety() bool {
-	b.StartRecordingToLibrary()
+	// b.StartRecordingToLibrary() should encapsulate this.
+	b.library.StartRecordingToLibrary()
 
 	for b.Entry() {
 		b.skippingEntry = false
 	}
 
-	b.FinishRecordingToLibrary()
+	b.library.FinishRecordingToLibrary()
 
 	return true
 }

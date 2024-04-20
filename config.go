@@ -58,7 +58,7 @@ func init() {
 		"alias", "dblp", "researchgate",
 		"eprinttype", "eprint",
 		"local-url", "langid",
-		"url", "urldate",
+		"url", "urldate", "urloriginal",
 		"date-added", "date-modified",
 		"bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9",
@@ -76,7 +76,7 @@ func init() {
 	BiBTeXFieldNameMap["authors"] = "author"
 	BiBTeXFieldNameMap["contributor"] = "author"
 	BiBTeXFieldNameMap["contributors"] = "author"
-	BiBTeXFieldNameMap["file"] = "local-url"
+	BiBTeXFieldNameMap["ee"] = "url"
 
 	for field, isIn := range BiBTeXAllowedFields {
 		if isIn {

@@ -1,45 +1,48 @@
 package main
 
 import (
+	"bufio"
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
-// stringSet concatenation for the unknown ones when reporting
+/// Cleanup writing of BiBTeX library
+/// BACKUP & update preferred.aliases and keys.map files
+/// Same with ErikProper.bib actually ...
 
-// config.go
-// - Aliases ... in config, and ... use ...
-// - IgnoreFields ... and ... ensure they are disjoint ...
+/// Make things robust and reporting when file is not found
 
-// Comments list
-//func main() {
-//	var s []int
-//	printSlice(s)
-//	// append works on nil slices.
-//	s = append(s, 0)
-//	printSlice(s)
-//	// The slice grows as needed.
-//	s = append(s, 1)
-//	printSlice(s)
-//	// We can add more than one element at a time.
-//	s = append(s, 2, 3, 4)
-//	printSlice(s)
-//}
+/// Add comments + inspect ... also to the already splitted files.
 
-/// Export library
-/// Save library + comments(!!)
+// Checks on ErikProper.bib:
+// - Enable level of checks (legacy versus ErikProper.bib)
+//   Make these tests (also on double entries) switchable via explicit functions.
+//   So, not a list of true/false when initializing.
+// - Test AllowedXX on entries and fields
+// - BIBDESK files
+// - Crossrefs
+// - Redundancy of URLs vs DOIs
+// - Auto download for ceur PDFs?
 
-// Test AllowedXX on entries and fields
-// - test file = for zotero inport ... even before overwriting ...
-// - Make these tests (also on double entries) switchable.
-// 82CVJ2UD for files ...
-/// Per stream parse round:
-///   for each UnknownField report ... optional, like warning on doubles.
-/// Make these two setable using functions.
+/// map[string]func()
+/// (l Lib) func ProcessXXX { works on XXX field of current entry }
+/// Check file for bibdsk
+/// FILE 82CVJ2UD for files ...
+/// when BiBDesk opened libary has a local-url, then warn.
+/// when BiBDesk opened libary has a file, then warn, and try to fix.
+
+/// Kind[field] = Which kind of cleaning/nornalisation needed
+/// Should also go into config.go
+
+/// Check consistency of fields and their use.
+/// When assigning a func to a field, this field must be allowed
+
+/// First App
 
 // Clean KEY/Types
 // Do Keymapper first before legacy import
@@ -47,14 +50,19 @@ import (
 // Then balance key/types between current and legacy
 // Then start on the rest matching legacy and new
 
-/// Add comments + inspect ... also to the already splitted files.
+/// Stringset via set package
 
-/// Make things robust and reporting when file is not found
+/// SequenceOfXX = struct{ members map[XX]bool, Element []XX }
+/// s.Add(elements... XX)
+/// s.AddAt(i int, elements... XX)
+/// s.InsertAt(i int, t SeqOfXX)
+/// s.Concat
+/// s.Contains(elements... XX)
+/// s.ContainsSet(t SetOfXX)
+/// s.ContainsSequence(t SeqOfXX)
+/// https://pkg.go.dev/slices
+/// https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/slices/slices.go
 
-/// First App
-
-/// KInd[field] = Which kind of cleaning/nornalisation needed
-/// Should also go into config.go
 ///
 /// Field specific normalisation/cleaning
 /// - (Book)titles, series,
@@ -73,9 +81,13 @@ import (
 var Library TBiBTeXLibrary
 
 const (
-	PreferredAliasesFile = "/Users/erikproper/BiBTeX/preferred.aliases"
-	KeysMapFile          = "/Users/erikproper/BiBTeX/keys.map"
-	PreferredAliases     = "/Users/erikproper/BiBTeX/PreferredAliases"
+	BiBTeXFolder         = "/Users/erikproper/BiBTeX/"
+	PreferredAliasesFile = BiBTeXFolder + "preferred.aliases"
+	KeysMapFile          = BiBTeXFolder + "keys.map"
+	PreferredAliases     = BiBTeXFolder + "PreferredAliases"
+	AliasKeys            = BiBTeXFolder + "Keys"
+	ErikProperBib        = BiBTeXFolder + "ErikProper.bib"
+	NewBib               = BiBTeXFolder + "New.bib"
 )
 
 func main() {
@@ -95,8 +107,8 @@ func main() {
 
 	///// -update or -check as commandline
 	fmt.Println("Reading new library")
-	BiBTeXParser.Initialise(Reporting, Library)
-	BiBTeXParser.ParseBiBFile("/Users/erikproper/BiBTeX/ErikProper.bib")
+	BiBTeXParser.Initialise(Reporting, &Library)
+	BiBTeXParser.ParseBiBFile(ErikProperBib)
 	fmt.Println("Size new:", len(Library.entryType))
 
 	////// -check as commandline
@@ -110,16 +122,20 @@ func main() {
 
 	//	BiBTeXParser.ParseBiBFile("Test.bib")
 
-	fmt.Println("Exporting preferred aliases")
+	fmt.Println("Cleaning preferred aliases")
 	os.RemoveAll(PreferredAliases)
+
+	fmt.Println("Exporting fresh preferred aliases")
+
 	for a := range Library.preferredAliases {
 		os.MkdirAll(PreferredAliases+"/"+a, os.ModePerm)
 		os.WriteFile(PreferredAliases+"/"+a+"/alias", []byte(string(Library.preferredAliases[a])), 0644)
 	}
 
-	fmt.Println("Exporting alias mapping")
-	AliasKeys := "/Users/erikproper/BiBTeX/Keys"
+	fmt.Println("Cleaning alias mapping")
 	os.RemoveAll(AliasKeys)
+
+	fmt.Println("Exporting fresh alias mapping")
 	for a := range Library.deAlias {
 		h := md5.New()
 		io.WriteString(h, a+"\n")
@@ -134,6 +150,39 @@ func main() {
 	Str := string(data)
 	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
 	fmt.Printf("%q\n", Start)
+
+	// Create a file for writing
+	f, _ := os.Create(NewBib)
+
+	now := time.Now()
+	fmt.Printf("%04d-%02d-%02d-%02d-%02d-%02d.%05d\n",
+		now.Year(),
+		int(now.Month()),
+		now.Day(),
+		now.Hour(),
+		now.Minute(),
+		now.Second(),
+		now.Nanosecond()/1000)
+
+	// Create a writer
+	w := bufio.NewWriter(f)
+
+	for key, fields := range Library.entryFields {
+		w.WriteString("@" + Library.entryType[key] + "{" + key + ",\n")
+		for field, value := range fields {
+			w.WriteString("   " + field + " = {" + value + "},\n")
+		}
+		w.WriteString("}\n")
+		w.WriteString("\n")
+	}
+
+	for _, comment := range Library.comments {
+		w.WriteString("@comment{" + comment + "}\n")
+		w.WriteString("\n")
+	}
+
+	// Very important to invoke after writing a large number of lines
+	w.Flush()
 
 	// log import ...
 	//

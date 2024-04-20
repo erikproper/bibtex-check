@@ -22,6 +22,7 @@ func (s *TStringSet) Add(elements ...string) *TStringSet {
 	return s
 }
 
+// verbalize mode or not. In the latter case "{ 1, 2, 3 }"
 func (s *TStringSet) String() string {
 	head := ""
 	tail := ""
