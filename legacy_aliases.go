@@ -67,6 +67,8 @@ func (l *TBiBTeXLibrary) WriteLegacyAliases() {
 	}
 	paWriter.Flush()
 
+	fmt.Println("Writing aliases map")
+
 	BackupFile(KeysMapFile)
 	os.RemoveAll(AliasKeys)
 
