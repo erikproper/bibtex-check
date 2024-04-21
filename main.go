@@ -1,12 +1,8 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/base64"
+//	"encoding/base64"
 	"fmt"
-	"io"
-	"os"
-	"strings"
 )
 
 /// BACKUP & update preferred.aliases and keys.map files
