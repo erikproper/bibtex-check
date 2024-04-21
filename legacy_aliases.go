@@ -2,11 +2,11 @@ package main
 
 import (
 	"bufio"
-	"log"
-	"fmt"
-	"os"
-	"io"
 	"crypto/md5"
+	"fmt"
+	"io"
+	"log"
+	"os"
 	"strings"
 )
 
@@ -62,7 +62,7 @@ func (l *TBiBTeXLibrary) WriteLegacyAliases() {
 	for key, alias := range l.preferredAliases {
 		os.MkdirAll(PreferredAliases+"/"+key, os.ModePerm)
 		os.WriteFile(PreferredAliases+"/"+key+"/alias", []byte(alias), 0644)
-		
+
 		paWriter.WriteString(alias + "\n")
 	}
 	paWriter.Flush()
@@ -90,4 +90,14 @@ func (l *TBiBTeXLibrary) WriteLegacyAliases() {
 		kmWriter.WriteString(alias + " " + key + "\n")
 	}
 	kmWriter.Flush()
+
+	// Identify mapping for the keys. Makes the scripts simpler for now.
+	for key := range Library.entryType {
+		hash := md5.New()
+		io.WriteString(hash, key+"\n")
+		aa := fmt.Sprintf("%x", hash.Sum(nil))
+		os.MkdirAll(AliasKeys+"/"+aa, os.ModePerm)
+		os.WriteFile(AliasKeys+"/"+aa+"/key", []byte(key), 0644)
+		os.WriteFile(AliasKeys+"/"+aa+"/alias", []byte(key), 0644)
+	}
 }

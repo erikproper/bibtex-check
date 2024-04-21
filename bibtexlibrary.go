@@ -1,6 +1,12 @@
 package main
 
+import (
+	"fmt"
+	"time"
+)
+
 const (
+	KeyPrefix                 = "EP"
 	WarningEntryAlreadyExists = "Entry '%s' already exists"
 	WarningUnknownFields      = "Unknown field(s) used: %s"
 	WarningAmbiguousAlias     = "Ambiguous alias; for %s we have %s and %s"
@@ -23,6 +29,7 @@ type (
 		currentKey       string
 		warnOnDoubles    bool
 		legacyMode       bool
+		lastNewKey       string
 		TReporting       // Error reporting channel
 	}
 )
@@ -35,6 +42,87 @@ var (
 	BiBTeXEntryNameMap,
 	BiBTeXDefaultStrings TStringMap
 )
+
+func CheckPreferredAlias(alias string) bool {
+	pre_year := 0
+	in_year := 0
+	post_year := 0
+
+	for _, character := range alias {
+		switch {
+		case pre_year == 0:
+			if 'a' <= character && character <= 'z' {
+				pre_year++
+			} else {
+				return false
+			}
+
+		case pre_year > 0 && in_year == 0:
+			if 'a' <= character && character <= 'z' {
+				pre_year++
+			} else if '0' <= character && character <= '9' {
+				in_year++
+			} else {
+				return false
+			}
+
+		case 1 <= in_year && in_year < 4:
+			if '0' <= character && character <= '9' {
+				in_year++
+			} else {
+				return false
+			}
+
+		case in_year == 4 && post_year == 0:
+			if 'a' <= character && character <= 'z' {
+				post_year++
+			} else {
+				return false
+			}
+
+		case in_year == 4 && post_year > 0:
+			if ('a' <= character && character <= 'z') ||
+			   ('0' <= character && character <= '9') {
+				post_year++
+			} else {
+				return false
+			}
+
+		default:
+			return false
+		}
+	}
+
+	return true
+}
+
+func (l *TBiBTeXLibrary) CheckPreferredAliases() {
+	for key, alias := range l.preferredAliases {
+		if !CheckPreferredAlias(alias) {
+			fmt.Println("Alias", alias, "for", key, "does not comply to the rules")
+		}
+	}
+}
+
+func (l *TBiBTeXLibrary) NewKey() string {
+	key := l.lastNewKey
+	for key == l.lastNewKey {
+		now := time.Now()
+		key = fmt.Sprintf(
+			"%s-%04d-%02d-%02d-%02d-%02d-%02d",
+			KeyPrefix,
+			now.Year(),
+			int(now.Month()),
+			now.Day(),
+			now.Hour(),
+			now.Minute(),
+			now.Second())
+	}
+
+	l.lastNewKey = key
+
+	return key
+}
 
 func (l *TBiBTeXLibrary) AddComment(comment string) bool {
 	l.comments = append(l.comments, comment)
@@ -120,6 +208,7 @@ func (l *TBiBTeXLibrary) Initialise(reporting TReporting, warnOnDoubles bool) {
 	l.aliasedKeys = TStringSet{}
 	l.currentKey = ""
 	l.TReporting = reporting
+	l.lastNewKey = ""
 	l.warnOnDoubles = warnOnDoubles
 }
 
