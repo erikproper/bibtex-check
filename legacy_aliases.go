@@ -85,7 +85,7 @@ func (l *TBiBTeXLibrary) WriteLegacyAliases() {
 		os.WriteFile(AliasKeys+"/"+aa+"/key", []byte(key), 0644)
 		os.WriteFile(AliasKeys+"/"+aa+"/alias", []byte(alias), 0644)
 
-		kmWriter.WriteString(alias + "\n")
+		kmWriter.WriteString(alias + " " + key + "\n")
 	}
 	kmWriter.Flush()
 }
