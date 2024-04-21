@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
@@ -10,9 +9,17 @@ import (
 	"strings"
 )
 
-/// Cleanup writing of BiBTeX library
 /// BACKUP & update preferred.aliases and keys.map files
-/// Same with ErikProper.bib actually ...
+/// Write/update preferredaliases and keys.map
+
+/// Do checks on preferredaliases and aliases:
+/// func l.CheckAliases
+/// - CollectEntryAliases
+/// - Check Uniqueness ... should be done by Add already ...
+/// - Check quality of the name [a-z]^+[9-9]^4[a-z]^+ ... auto fix if possible
+/// - Completeness ... take shortest from the aliases it has
+/// - If no suitable ones are found, first convert to lower
+/// - DBLP completeness
 
 /// Make things robust and reporting when file is not found
 
@@ -95,20 +102,18 @@ func main() {
 	Library = TBiBTeXLibrary{}
 	Library.Initialise(Reporting, true)
 	Library.legacyMode = false
-	Library.LegacyAliases()
+	Library.ReadLegacyAliases()
 
 	OldLibrary := TBiBTeXLibrary{}
 	OldLibrary.Initialise(Reporting, false)
 	OldLibrary.legacyMode = true
-	OldLibrary.LegacyAliases()
+	OldLibrary.ReadLegacyAliases()
 
+	fmt.Println("Reading main library")
 	BiBTeXParser := TBiBTeXStream{}
-
-	///// -update or -check as commandline
-	fmt.Println("Reading new library")
 	BiBTeXParser.Initialise(Reporting, &Library)
 	BiBTeXParser.ParseBiBFile(ErikProperBib)
-	fmt.Println("Size new:", len(Library.entryType))
+	fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
 
 	////// -check as commandline
 	//	fmt.Println("Reading old libraries")
@@ -119,63 +124,16 @@ func main() {
 	//	BiBTeXParser.ParseBiBFile("Convert.bib")
 	//	fmt.Println("Size old:", len(OldLibrary.entryType))
 
-	//	BiBTeXParser.ParseBiBFile("Test.bib")
+//	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
+//	data, _ := base64.StdEncoding.DecodeString(Test)
+//	Str := string(data)
+//	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
+//	fmt.Printf("%q\n", Start)
 
-	fmt.Println("Cleaning preferred aliases")
-	os.RemoveAll(PreferredAliases)
+	fmt.Println("Exporting updated library", ErikProperBib)
+	Library.WriteBiBTeXFile(ErikProperBib)
 
-	fmt.Println("Exporting fresh preferred aliases")
-
-	for a := range Library.preferredAliases {
-		os.MkdirAll(PreferredAliases+"/"+a, os.ModePerm)
-		os.WriteFile(PreferredAliases+"/"+a+"/alias", []byte(string(Library.preferredAliases[a])), 0644)
-	}
-
-	fmt.Println("Cleaning alias mapping")
-	os.RemoveAll(AliasKeys)
-
-	fmt.Println("Exporting fresh alias mapping")
-	for a := range Library.deAlias {
-		h := md5.New()
-		io.WriteString(h, a+"\n")
-		aa := fmt.Sprintf("%x", h.Sum(nil))
-		os.MkdirAll(AliasKeys+"/"+aa, os.ModePerm)
-		os.WriteFile(AliasKeys+"/"+aa+"/key", []byte(string(Library.deAlias[a])), 0644)
-		os.WriteFile(AliasKeys+"/"+aa+"/alias", []byte(string(a)), 0644)
-	}
-
-
-	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
-	data, _ := base64.StdEncoding.DecodeString(Test)
-	Str := string(data)
-	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
-	fmt.Printf("%q\n", Start)
-
-	fmt.Println("Exporting fresh bib file")
-	BackupFile(NewBib)
-
-	// Create a file for writing
-	f, _ := os.Create(NewBib)
-
-	// Create a writer
-	w := bufio.NewWriter(f)
-
-	for key, fields := range Library.entryFields {
-		w.WriteString("@" + Library.entryType[key] + "{" + key + ",\n")
-		for field, value := range fields {
-			w.WriteString("   " + field + " = {" + value + "},\n")
-		}
-		w.WriteString("}\n")
-		w.WriteString("\n")
-	}
-
-	for _, comment := range Library.comments {
-		w.WriteString("@comment{" + comment + "}\n")
-		w.WriteString("\n")
-	}
-
-	// Very important to invoke after writing a large number of lines
-	w.Flush()
+	Library.WriteLegacyAliases()
 
 	// log import ...
 	//

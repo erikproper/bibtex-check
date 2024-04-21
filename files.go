@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"time"
-	"os"
 	"io"
+	"os"
+	"time"
 )
 
 func timestamp() string {
@@ -22,25 +22,25 @@ func timestamp() string {
 	return result
 }
 
-func BackupFile (sourceFile string) bool {
-   destinationFile := sourceFile + "." + timestamp()
+func BackupFile(sourceFile string) bool {
+	destinationFile := sourceFile + "." + timestamp()
 
-   source, err := os.Open(sourceFile)  //open the source file 
-   if err != nil {
-      return false
-   }
-   defer source.Close()
+	source, err := os.Open(sourceFile) //open the source file
+	if err != nil {
+		return false
+	}
+	defer source.Close()
 
-   destination, err := os.Create(destinationFile)  //create the destination file
-   if err != nil {
-      return false
-   }
-   defer destination.Close()
+	destination, err := os.Create(destinationFile) //create the destination file
+	if err != nil {
+		return false
+	}
+	defer destination.Close()
 
-   _, err = io.Copy(destination, source)  //copy the contents of source to destination file
-   if err != nil {
-      return false
-   }
+	_, err = io.Copy(destination, source) //copy the contents of source to destination file
+	if err != nil {
+		return false
+	}
 
-   return true
+	return true
 }
