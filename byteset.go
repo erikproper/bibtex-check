@@ -107,7 +107,7 @@ func (s *TByteSet) Strings() *TStringSet {
 	return t
 }
 
-// Internal function to encode a byte into a bit and the right uint64 word
+// Internal function to encode a byte into the combination of a bit and the right uint64 word
 func (s *TByteSet) split(b byte) (byte, uint64) {
 	return b / 64, 1 << byte(b%64)
 }
@@ -117,6 +117,7 @@ func (s *TByteSet) add(elements []byte) *TByteSet {
 	for _, element := range elements {
 		word, bit := s.split(element)
 
+		// This is where we actually add the element by OR-ing it.
 		s.words[word] |= bit
 	}
 
@@ -138,6 +139,7 @@ func (s *TByteSet) delete(elements []byte) *TByteSet {
 	for _, element := range elements {
 		word, bit := s.split(element)
 
+		// This is where we actually delete the element by AND-NOT-ing it.
 		s.words[word] &^= bit
 	}
 
@@ -156,6 +158,7 @@ func (s *TByteSet) DeleteString(elements string) *TByteSet {
 
 // Combine with another set.
 func (s *TByteSet) Unite(t TByteSet) *TByteSet {
+	// Unite the sets by OR-ing things bit-wise
 	s.words[0] |= t.words[0]
 	s.words[1] |= t.words[1]
 	s.words[2] |= t.words[2]
@@ -166,6 +169,7 @@ func (s *TByteSet) Unite(t TByteSet) *TByteSet {
 
 // Intersect with another set.
 func (s *TByteSet) Intersect(t TByteSet) *TByteSet {
+	// Intersect the sets by AND-ing things bit-wise
 	s.words[0] &= t.words[0]
 	s.words[1] &= t.words[1]
 	s.words[2] &= t.words[2]
@@ -176,6 +180,7 @@ func (s *TByteSet) Intersect(t TByteSet) *TByteSet {
 
 // Subtract another set.
 func (s *TByteSet) Subtract(t TByteSet) *TByteSet {
+	// Intersect the sets by AND-NOT-ing things bit-wise
 	s.words[0] &^= t.words[0]
 	s.words[1] &^= t.words[1]
 	s.words[2] &^= t.words[2]
@@ -186,12 +191,14 @@ func (s *TByteSet) Subtract(t TByteSet) *TByteSet {
 
 // Check if the set is equal to another set.
 func (s TByteSet) Eq(t TByteSet) bool {
+	// If all words are equal, then the sets are equal
 	return s.words[0] == t.words[0] && s.words[1] == t.words[1] &&
 		s.words[2] == t.words[2] && s.words[3] == t.words[3]
 }
 
 // Check if the set is a subset, or equal, to another set
 func (s TByteSet) SubsetEq(t TByteSet) bool {
+	// If all AND-NOT nots of t result in "blending out" the bits of set s, then s is a subset of (or equal to) t
 	return s.words[0]&^t.words[0] == 0 && (s.words[1]&^t.words[1] == 0) &&
 		(s.words[2]&^t.words[2] == 0) && (s.words[3]&^t.words[3] == 0)
 }
@@ -220,10 +227,10 @@ func (s TByteSet) Contains(elements ...byte) bool {
 	return elementSet.SubsetEq(s)
 }
 
-// Convert strings sets to a string.
+// Convert byte sets to a string.
 // Depending on the settings regarding Verbalised/Mathematical, different styles of strings will be created:
-// - Verbalised:   "june", juli", and "august"
-// - Mathematical: { "june", juli", "august" }
+// - Verbalised:   'a', 'b', and 'c'
+// - Mathematical: { 'a', 'b', 'c' }
 func (s TByteSet) String() string {
 	head := ""
 	tail := ""
