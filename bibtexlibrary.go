@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -14,7 +13,7 @@ const (
 	WarningAliasIsKey         = "Alias %s is already known to be a key"
 	WarningPreferredNotExist  = "Can't select a non existing alias %s as preferred alias"
 	WarningAliasTargetIsAlias = "Alias %s has a target $s, which is actually an alias for $s"
-	WarningBadAlias 		  = "Alias %s for %s does not comply to the rules"
+	WarningBadAlias           = "Alias %s for %s does not comply to the rules"
 )
 
 type (
@@ -33,15 +32,6 @@ type (
 		lastNewKey       string
 		TReporting       // Error reporting channel
 	}
-)
-
-var (
-	BiBTeXAllowedEntryFields map[string]TStringSet
-	BiBTeXAllowedFields,
-	BiBTeXAllowedEntries TStringSet
-	BiBTeXFieldNameMap,
-	BiBTeXEntryNameMap,
-	BiBTeXDefaultStrings TStringMap
 )
 
 // / UP!!
@@ -98,28 +88,6 @@ func CheckPreferredAlias(alias string) bool {
 	return post_year > 0
 }
 
-func (l *TBiBTeXLibrary) CheckPreferredAliases() {
-	for key, alias := range l.preferredAliases {
-		if !CheckPreferredAlias(alias) {
-			l.Warning(WarningBadAlias, alias, key)
-		}
-	}
-
-	for alias, key := range l.deAlias {
-		if l.preferredAliases[key] == "" {
-			if CheckPreferredAlias(alias) {
-				l.AddPreferredAlias(alias)
-			} else {
-				loweredAlias := strings.ToLower(alias)
-				if l.deAlias[loweredAlias] == "" && loweredAlias != key && CheckPreferredAlias(loweredAlias) {
-					l.AddKeyAlias(loweredAlias, key)
-					l.AddPreferredAlias(loweredAlias)
-				}
-			}
-		}
-	}
-}
-
 func (l *TBiBTeXLibrary) NewKey() string {
 	key := l.lastNewKey
 	for key == l.lastNewKey {
@@ -144,46 +112,6 @@ func (l *TBiBTeXLibrary) AddComment(comment string) bool {
 	l.comments = append(l.comments, comment)
 
 	return true
-}
-
-func AllowedEntryFields(entry string, fields ...string) {
-	if BiBTeXAllowedEntries == nil {
-		BiBTeXAllowedEntries = TStringSet{}
-	}
-	BiBTeXAllowedEntries[entry] = true
-
-	if BiBTeXAllowedFields == nil {
-		BiBTeXAllowedFields = TStringSet{}
-	}
-
-	if BiBTeXAllowedEntryFields == nil {
-		BiBTeXAllowedEntryFields = map[string]TStringSet{}
-	}
-
-	for _, field := range fields {
-		BiBTeXAllowedFields[field] = true
-
-		if BiBTeXAllowedEntryFields[entry] == nil {
-			BiBTeXAllowedEntryFields[entry] = TStringSet{}
-		}
-		BiBTeXAllowedEntryFields[entry][field] = true
-	}
-}
-
-func AllowedFields(fields ...string) {
-	for entry, allowed := range BiBTeXAllowedEntries {
-		if allowed {
-			AllowedEntryFields(entry, fields...)
-		}
-	}
-}
-
-func EntryTypeAlias(entry, alias string) {
-	BiBTeXEntryNameMap[entry] = alias
-}
-
-func FieldTypeAlias(entry, alias string) {
-	BiBTeXEntryNameMap[entry] = alias
 }
 
 func (l *TBiBTeXLibrary) AddKeyAlias(alias, key string) {
@@ -230,7 +158,7 @@ func (l *TBiBTeXLibrary) StartRecordingToLibrary() bool {
 }
 
 func (l *TBiBTeXLibrary) FinishRecordingToLibrary() bool {
-	if !l.legacyMode && len(l.unknownFields) > 0 {
+	if !l.legacyMode && l.unknownFields.Size() > 0 {
 		l.Warning(WarningUnknownFields, l.unknownFields.String())
 	}
 
@@ -310,9 +238,8 @@ func (l *TBiBTeXLibrary) FinishRecordingLibraryEntry() bool {
 	// Make more abstract by adding field to set.
 
 	for field, _ := range l.entryFields[l.currentKey] {
-		allowed, _ := BiBTeXAllowedFields[field]
-		if !allowed {
-			l.unknownFields[field] = true
+		if !BiBTeXAllowedFields.Contains(field) {
+			l.unknownFields.Add(field)
 		}
 	}
 

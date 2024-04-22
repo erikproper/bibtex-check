@@ -10,6 +10,43 @@ import (
 	"strings"
 )
 
+func (l *TBiBTeXLibrary) CheckPreferredAliases() {
+	for key, alias := range l.preferredAliases {
+		if !CheckPreferredAlias(alias) {
+			l.Warning(WarningBadAlias, alias, key)
+		}
+	}
+
+	for alias, key := range l.deAlias {
+		if l.preferredAliases[key] == "" {
+			if CheckPreferredAlias(alias) {
+				l.AddPreferredAlias(alias)
+			} else {
+				loweredAlias := strings.ToLower(alias)
+				if l.deAlias[loweredAlias] == "" && loweredAlias != key && CheckPreferredAlias(loweredAlias) {
+					l.AddKeyAlias(loweredAlias, key)
+					l.AddPreferredAlias(loweredAlias)
+				}
+			}
+		}
+	}
+}
+
+func (l *TBiBTeXLibrary) CheckDBLPAliases() {
+	for alias, key := range l.deAlias {
+		if strings.Index(alias, "DBLP:") == 0 {
+			dblp := alias[5:]
+			if l.entryFields[key] != nil && dblp != l.entryFields[key]["dblp"] {
+				if l.entryFields[key]["dblp"] != "" {
+					fmt.Println("Found:", dblp, "from", alias, "while", l.entryFields[key]["dblp"])
+				} else {
+					l.entryFields[key]["dblp"] = dblp
+				}
+			}
+		}
+	}
+}
+
 func (l *TBiBTeXLibrary) ReadLegacyAliases() {
 	file, err := os.Open(KeysMapFile)
 	if err != nil {

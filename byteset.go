@@ -119,6 +119,7 @@ func (s TByteSet) Contains(elements ...byte) bool {
 
 var ByteToString [256]string
 
+// / Verbalised option
 func (s TByteSet) String() string {
 	var buf bytes.Buffer
 	var item byte

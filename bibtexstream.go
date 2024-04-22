@@ -289,9 +289,10 @@ func (b *TBiBTeXStream) ForcedFieldValue(value *string) bool {
 func (b *TBiBTeXStream) RecordFieldAssignment(fieldName, fieldValue string, fieldMap TStringMap, fieldNames TStringSet) bool {
 	fieldMap[fieldName] = fieldValue
 
-	if fieldNames != nil {
-		fieldNames[fieldName] = true
-	}
+	//	if fieldNames != nil {
+	//		fieldNames[fieldName] = true
+	//	}
+	fieldNames.Add(fieldName)
 
 	return true
 }
