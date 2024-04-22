@@ -1,10 +1,9 @@
 //
 // Module: byteset
 //
-// This module provides basic operations to manage sets of bytes / characters based on
-// uint64 vectors. The assumption is that using such vectors is faster than using maps.
-// In the future this module may become (part of) a sets package.
-// Possibly even generalised using generics.
+// This module provides basic operations to manage sets of bytes / characters based on uint64 vectors.
+// The assumption is that using such vectors is faster than e.g. using maps from byte to empty structs.
+// In the future this module may become (part of) a sets & sequences package.
 //
 // Creator: Henderik A. Proper (erikproper@fastmail.com)
 //
@@ -15,21 +14,19 @@ package main
 
 import "fmt"
 
-// Functions that create/add/remove/unite/etc sets, return a pointer to the given set, 
-// to enable concatenation of operators.
+// Functions that create/add/remove/unite/etc sets, return a pointer to the given set to enable concatenation of operators.
 // For instance s.Initialise().Add(1).Add(2).Delete(1)
 
 type TByteSetElements map[byte]struct{}
 type TByteSet struct {
 	words       [4]uint64 // Representation of the (encoding) of the elements.
-	treatAsChar bool      // Set to true if the elements should be treated as characters.
-	verbalise   bool      // Setting to determine the style used in converting
-	//                    // sets to strings:
+	treatAsChar bool      // Set to true if the elements should be treated as characters when converting the set to a string.
+	verbalise   bool      // Setting to determine the style used in converting sets to strings:
 	//                    // - Verbalised:   'a', 'b', and 'c'
 	//                    // - Mathematical: { 'a', 'b', 'c' }
 }
 
-// Verbalisation of special characters (see init function below)
+// String representation of (special!) characters; see init function below.
 var ByteToString [256]string
 
 // Create a new byte set.
@@ -81,8 +78,7 @@ func (s *TByteSet) TreatAsBytes() *TByteSet {
 }
 
 // The size of a set.
-// Note: As a set does not have an order, it would not make sense to speak of
-// its "Length"
+// Note: As a set does not have an order, it would not make sense to speak of its "Length"
 func (s *TByteSet) Size() int {
 	return len(s.Elements())
 }
@@ -101,14 +97,9 @@ func (s *TByteSet) Elements() TByteSetElements {
 	return elements
 }
 
-// Synonym for Elements function.
-func (s *TByteSet) Bytes() TByteSetElements {
-	return s.Elements()
-}
-
 // Returns a string set with strings representing the elements contained in the set.
 func (s *TByteSet) Strings() *TStringSet {
-	t := TStringSetNew()	
+	t := TStringSetNew()
 	for e := range s.Elements() {
 		t.Add(ByteToString[e])
 	}
@@ -230,11 +221,9 @@ func (s TByteSet) Contains(elements ...byte) bool {
 }
 
 // Convert strings sets to a string.
-// Depending on the settings regarding Verbalised/Mathematical, different styles of
-// strings will be created:
-//
-//	Verbalised:   "june", juli", and "august"
-//	Mathematical: { "june", juli", "august" }
+// Depending on the settings regarding Verbalised/Mathematical, different styles of strings will be created:
+// - Verbalised:   "june", juli", and "august"
+// - Mathematical: { "june", juli", "august" }
 func (s TByteSet) String() string {
 	head := ""
 	tail := ""

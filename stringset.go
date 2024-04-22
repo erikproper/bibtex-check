@@ -2,8 +2,7 @@
 // Module: stringset
 //
 // This module provides basic operations to manage sets of strings.
-// In the future this module may become (part of) a sets package.
-// Possibly even generalised using generics.
+// In the future this module may become (part of) a sets & sequences package.
 //
 // Creator: Henderik A. Proper (erikproper@fastmail.com)
 //
@@ -14,8 +13,7 @@ package main
 
 import "maps"
 
-// Functions that create/add/remove/unite/etc sets, return a pointer to the given set, 
-// to enable concatenation of operators.
+// Functions that create/add/remove/unite/etc sets, return a pointer to the given set to enable concatenation of operators.
 // For instance s.Initialise().Add("Hello").Add("World").Delete("Hello")
 
 // String sets are essentially defined as a mapping to an empty struct.
@@ -24,8 +22,7 @@ import "maps"
 type TStringSetElements map[string]struct{}
 type TStringSet struct {
 	elements  TStringSetElements // The elements in the set
-	verbalise bool               // Setting to determine the style used in converting
-	//                           // sets to strings:
+	verbalise bool               // Setting to determine the style used in converting sets to strings:
 	//                           // - Verbalised:   "june", "juli", and "august"
 	//                           // - Mathematical: { "june", "juli", "august" }
 }
@@ -61,8 +58,7 @@ func (s *TStringSet) Mathematical() *TStringSet {
 }
 
 // The size of a set.
-// Note: As a set does not have an order, it would not make sense to speak of
-// its "Length"
+// Note: As a set does not have an order, it would not make sense to speak of its "Length"
 func (s *TStringSet) Size() int {
 	return len(s.elements)
 }
@@ -163,8 +159,7 @@ func (s *TStringSet) Contains(elements ...string) bool {
 	for _, element := range elements {
 		_, isIn := s.elements[element]
 
-		// As soon as we find one element which is not in the set of strings, we can
-		// safely stop and return false
+		// As soon as we find one element which is not in the set of strings, we can safely stop and return false
 		if !isIn {
 			return false
 		}
@@ -174,10 +169,9 @@ func (s *TStringSet) Contains(elements ...string) bool {
 }
 
 // Convert strings sets to a string.
-// Depending on the settings regarding Verbalised/Mathematical, different styles of
-// strings will be created:
-//	Verbalised:   "june", juli", and "august"
-//	Mathematical: { "june", juli", "august" }
+// Depending on the settings regarding Verbalised/Mathematical, different styles of strings will be created:
+// - Verbalised:   "june", juli", and "august"
+// - Mathematical: { "june", juli", "august" }
 func (s TStringSet) String() string {
 	head := ""
 	tail := ""
