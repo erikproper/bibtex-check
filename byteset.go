@@ -1,29 +1,127 @@
+//
+// Module: byteset
+//
+// This module provides basic operations to manage sets of bytes / characters based on
+// uint64 vectors. The assumption is that using such vectors is faster than using maps.
+// In the future this module may become (part of) a sets package.
+// Possibly even generalised using generics.
+//
+// Creator: Henderik A. Proper (erikproper@fastmail.com)
+//
+// Version of: 22.04.2024
+//
+
 package main
 
-import "bytes"
 import "fmt"
 
+// Functions that create/add/remove/unite/etc sets, return a pointer to the given set, 
+// to enable concatenation of operators.
+// For instance s.Initialise().Add(1).Add(2).Delete(1)
+
+type TByteSetElements map[byte]struct{}
 type TByteSet struct {
-	words       [4]uint64
-	treatAsChar bool
+	words       [4]uint64 // Representation of the (encoding) of the elements.
+	treatAsChar bool      // Set to true if the elements should be treated as characters.
+	verbalise   bool      // Setting to determine the style used in converting
+	//                    // sets to strings:
+	//                    // - Verbalised:   'a', 'b', and 'c'
+	//                    // - Mathematical: { 'a', 'b', 'c' }
 }
 
-func (s *TByteSet) split(b byte) (byte, uint64) {
-	return b / 64, 1 << byte(b%64)
+// Verbalisation of special characters (see init function below)
+var ByteToString [256]string
+
+// Create a new byte set.
+func TByteSetNew() *TByteSet {
+	fresh := TByteSet{}
+	fresh.Initialise()
+
+	return &(fresh)
 }
 
+// (Re)initialise byte sets.
+func (s *TByteSet) Initialise() *TByteSet {
+	s.words[0] = uint64(0)
+	s.words[1] = uint64(0)
+	s.words[2] = uint64(0)
+	s.words[3] = uint64(0)
+	s.verbalise = false
+	s.treatAsChar = false
+
+	return s
+}
+
+// Set the string representation of byte sets to verbalisation mode.
+func (s *TByteSet) Verbalised() *TByteSet {
+	s.verbalise = true
+
+	return s
+}
+
+// Set the string representation of byte sets to mathematical mode.
+func (s *TByteSet) Mathematical() *TByteSet {
+	s.verbalise = false
+
+	return s
+}
+
+// Set the string representation of byte sets to treat elements as characters.
 func (s *TByteSet) TreatAsCharacters() *TByteSet {
 	s.treatAsChar = true
 
 	return s
 }
 
-func (s *TByteSet) TreatAsByte() *TByteSet {
+// Set the string representation of byte sets to treat elements as bytes.
+func (s *TByteSet) TreatAsBytes() *TByteSet {
 	s.treatAsChar = false
 
 	return s
 }
 
+// The size of a set.
+// Note: As a set does not have an order, it would not make sense to speak of
+// its "Length"
+func (s *TByteSet) Size() int {
+	return len(s.Elements())
+}
+
+// Returns a map with the elements contained in the set.
+func (s *TByteSet) Elements() TByteSetElements {
+	elements := TByteSetElements{}
+	for w := 0; w < 4; w++ {
+		for b := 0; b < 64; b++ {
+			if (s.words[w] & (1 << b)) > 0 {
+				elements[byte(w*64+b)] = struct{}{}
+			}
+		}
+	}
+
+	return elements
+}
+
+// Synonym for Elements function.
+func (s *TByteSet) Bytes() TByteSetElements {
+	return s.Elements()
+}
+
+// Returns a string set with strings representing the elements contained in the set.
+func (s *TByteSet) Strings() *TStringSet {
+	t := TStringSetNew()	
+	for e := range s.Elements() {
+		t.Add(ByteToString[e])
+	}
+
+	return t
+}
+
+// Internal function to encode a byte into a bit and the right uint64 word
+func (s *TByteSet) split(b byte) (byte, uint64) {
+	return b / 64, 1 << byte(b%64)
+}
+
+// Internal function to add elements from a byte slice to the byte set
 func (s *TByteSet) add(elements []byte) *TByteSet {
 	for _, element := range elements {
 		word, bit := s.split(element)
@@ -34,14 +132,17 @@ func (s *TByteSet) add(elements []byte) *TByteSet {
 	return s
 }
 
+// Add elements to a byte set.
 func (s *TByteSet) Add(elements ...byte) *TByteSet {
 	return s.add(elements)
 }
 
+// Add characters of a string as elements to a byte set.
 func (s *TByteSet) AddString(elements string) *TByteSet {
-	return s.add([]byte(elements))
+	return s.add([]byte(elements)).TreatAsCharacters()
 }
 
+// Internal function to delete elements from a byte slice to the byte set
 func (s *TByteSet) delete(elements []byte) *TByteSet {
 	for _, element := range elements {
 		word, bit := s.split(element)
@@ -52,14 +153,17 @@ func (s *TByteSet) delete(elements []byte) *TByteSet {
 	return s
 }
 
+// Delete elements from a byte set.
 func (s *TByteSet) Delete(elements ...byte) *TByteSet {
 	return s.delete(elements)
 }
 
+// Delete characters from a string as elements from a byte set.
 func (s *TByteSet) DeleteString(elements string) *TByteSet {
 	return s.delete([]byte(elements))
 }
 
+// Combine with another set.
 func (s *TByteSet) Unite(t TByteSet) *TByteSet {
 	s.words[0] |= t.words[0]
 	s.words[1] |= t.words[1]
@@ -69,6 +173,7 @@ func (s *TByteSet) Unite(t TByteSet) *TByteSet {
 	return s
 }
 
+// Intersect with another set.
 func (s *TByteSet) Intersect(t TByteSet) *TByteSet {
 	s.words[0] &= t.words[0]
 	s.words[1] &= t.words[1]
@@ -78,6 +183,7 @@ func (s *TByteSet) Intersect(t TByteSet) *TByteSet {
 	return s
 }
 
+// Subtract another set.
 func (s *TByteSet) Subtract(t TByteSet) *TByteSet {
 	s.words[0] &^= t.words[0]
 	s.words[1] &^= t.words[1]
@@ -87,28 +193,34 @@ func (s *TByteSet) Subtract(t TByteSet) *TByteSet {
 	return s
 }
 
+// Check if the set is equal to another set.
 func (s TByteSet) Eq(t TByteSet) bool {
 	return s.words[0] == t.words[0] && s.words[1] == t.words[1] &&
 		s.words[2] == t.words[2] && s.words[3] == t.words[3]
 }
 
+// Check if the set is a subset, or equal, to another set
 func (s TByteSet) SubsetEq(t TByteSet) bool {
 	return s.words[0]&^t.words[0] == 0 && (s.words[1]&^t.words[1] == 0) &&
 		(s.words[2]&^t.words[2] == 0) && (s.words[3]&^t.words[3] == 0)
 }
 
+// Check if the set is a subset to another set
 func (s TByteSet) Subset(t TByteSet) bool {
 	return s.SubsetEq(t) && !s.Eq(t)
 }
 
+// Check if the set is a superset, or equal, to another set
 func (s TByteSet) SupersetEq(t TByteSet) bool {
 	return t.SubsetEq(s)
 }
 
+// Check if the set is a superset to another set
 func (s TByteSet) Superset(t TByteSet) bool {
 	return s.SupersetEq(t) && !s.Eq(t)
 }
 
+// Check if the provided element(s) are in the set of strings
 func (s TByteSet) Contains(elements ...byte) bool {
 	var elementSet TByteSet
 
@@ -117,35 +229,45 @@ func (s TByteSet) Contains(elements ...byte) bool {
 	return elementSet.SubsetEq(s)
 }
 
-var ByteToString [256]string
-
-// / Verbalised option
+// Convert strings sets to a string.
+// Depending on the settings regarding Verbalised/Mathematical, different styles of
+// strings will be created:
+//
+//	Verbalised:   "june", juli", and "august"
+//	Mathematical: { "june", juli", "august" }
 func (s TByteSet) String() string {
-	var buf bytes.Buffer
-	var item byte
+	head := ""
+	tail := ""
 
-	fmt.Fprint(&buf, "{")
-
-	for w := 0; w < 4; w++ {
-		for b := 0; b < 64; b++ {
-			if (s.words[w] & (1 << b)) > 0 {
-				if buf.Len() > 1 {
-					fmt.Fprint(&buf, ", ")
-				}
-
-				item = byte(w*64 + b)
-				if s.treatAsChar {
-					fmt.Fprint(&buf, "'", ByteToString[item], "'")
-				} else {
-					fmt.Fprintf(&buf, "%d", item)
-				}
-			}
+	for rawElement := range s.Elements() {
+		element := ""
+		if s.treatAsChar {
+			element = "'" + ByteToString[rawElement] + "'"
+		} else {
+			element = fmt.Sprintf("%d", rawElement)
 		}
+
+		if head == "" {
+			head = tail
+		} else {
+			head += ", " + tail
+		}
+		tail = element
 	}
 
-	fmt.Fprint(&buf, "}")
-
-	return buf.String()
+	if s.verbalise {
+		if head == "" {
+			return tail
+		} else {
+			return head + " and " + tail
+		}
+	} else {
+		if head == "" {
+			return "{ " + tail + " }"
+		} else {
+			return "{ " + head + ", " + tail + " }"
+		}
+	}
 }
 
 func init() {

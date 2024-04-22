@@ -2,7 +2,7 @@
 // Module: stringset
 //
 // This module provides basic operations to manage sets of strings.
-// In the future this module may become (part of) a package.
+// In the future this module may become (part of) a sets package.
 // Possibly even generalised using generics.
 //
 // Creator: Henderik A. Proper (erikproper@fastmail.com)
@@ -14,8 +14,8 @@ package main
 
 import "maps"
 
-// Functions that create/add/remove/unite/etc string sets, return a pointer to the given
-// set, to enable concatenation of operators.
+// Functions that create/add/remove/unite/etc sets, return a pointer to the given set, 
+// to enable concatenation of operators.
 // For instance s.Initialise().Add("Hello").Add("World").Delete("Hello")
 
 // String sets are essentially defined as a mapping to an empty struct.
@@ -129,33 +129,33 @@ func (s *TStringSet) Eq(t *TStringSet) bool {
 // Check if the set is a subset, or equal, to another set
 func (s *TStringSet) SubsetEq(t *TStringSet) bool {
 	// Makes uses of the maps.Equal function, where we know:
-    //    t UNION s = t ==> s SUBSETEQ t
-    // which could also be written as:
-    //    (u = t UNION s) AND u = t ==> s SUBSETEQ t
+	//    t UNION s = t ==> s SUBSETEQ t
+	// which could also be written as:
+	//    (u = t UNION s) AND u = t ==> s SUBSETEQ t
 
 	u := TStringSetElements{}
 	maps.Copy(u, t.elements)
 	maps.Copy(u, s.elements)
-	
+
 	return maps.Equal(u, t.elements)
 }
 
 // Check if the set is a subset to another set
 func (s *TStringSet) Subset(t *TStringSet) bool {
-	
+
 	return s.SubsetEq(t) && !s.Eq(t)
 }
 
 // Check if the set is a superset, or equal, to another set
 func (s *TStringSet) SupersetEq(t *TStringSet) bool {
-	
-	return t.SubsetEq(s) 
+
+	return t.SubsetEq(s)
 }
 
 // Check if the set is a superset to another set
 func (s *TStringSet) Superset(t *TStringSet) bool {
-	
-	return t.Subset(s) 
+
+	return t.Subset(s)
 }
 
 // Check if the provided element(s) are in the set of strings
@@ -176,8 +176,8 @@ func (s *TStringSet) Contains(elements ...string) bool {
 // Convert strings sets to a string.
 // Depending on the settings regarding Verbalised/Mathematical, different styles of
 // strings will be created:
-//	 Verbalised:   "june", juli", and "august"
-//	 Mathematical: { "june", juli", "august" }
+//	Verbalised:   "june", juli", and "august"
+//	Mathematical: { "june", juli", "august" }
 func (s TStringSet) String() string {
 	head := ""
 	tail := ""
