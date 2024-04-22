@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
+	"strings"
 )
 
 const (
@@ -43,6 +44,7 @@ var (
 	BiBTeXDefaultStrings TStringMap
 )
 
+/// UP!!
 func CheckPreferredAlias(alias string) bool {
 	pre_year := 0
 	in_year := 0
@@ -93,13 +95,30 @@ func CheckPreferredAlias(alias string) bool {
 		}
 	}
 
-	return true
+	return post_year > 0
 }
 
 func (l *TBiBTeXLibrary) CheckPreferredAliases() {
 	for key, alias := range l.preferredAliases {
 		if !CheckPreferredAlias(alias) {
+		//// WARNING!
 			fmt.Println("Alias", alias, "for", key, "does not comply to the rules")
+		}
+	}
+	
+	for alias, key := range l.deAlias {
+		if l.preferredAliases[key] == "" {
+			if CheckPreferredAlias(alias) {
+				fmt.Println("Found preferred alias", alias, "for", key)
+				l.AddPreferredAlias(alias)
+			} else {
+				loweredAlias := strings.ToLower(alias)
+				if l.deAlias[loweredAlias] == "" && loweredAlias != key && CheckPreferredAlias(loweredAlias) {
+					fmt.Println("Found alternative preferred alias", loweredAlias, "for", key)
+					l.AddKeyAlias(loweredAlias, key)
+					l.AddPreferredAlias(loweredAlias)
+				}
+			}
 		}
 	}
 }

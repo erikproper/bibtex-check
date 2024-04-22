@@ -5,18 +5,11 @@ import (
 	"fmt"
 )
 
+/// %!(EXTRA string=lewis2005smart)WARNING: Alias  has a target $s, which is actually an alias for $s.
+
 /// Library.CheckPreferredAliases()
-/// - correct check of post year
-/// - gordijn2003e3value
-/// - poels2022dt4gitm 
-/// - fix the other two
-/// Do checks on preferredaliases and aliases:
-/// func l.CheckAliases
-/// - CollectEntryAliases
-/// - Check quality of the name [a-z]^+[0x-9]^4[a-z]^+ ... auto fix if possible
-/// - Completeness ... take shortest from the aliases it has
-/// - If no suitable ones are found, first convert to lower
-/// - DBLP completeness
+/// - DBLP completeness (legacy!)
+/// - Cleaning ...
 
 /// Make things robust and reporting when file is not found
 
