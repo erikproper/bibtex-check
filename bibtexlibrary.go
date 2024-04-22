@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"time"
 	"strings"
+	"time"
 )
 
 const (
@@ -11,9 +11,10 @@ const (
 	WarningEntryAlreadyExists = "Entry '%s' already exists"
 	WarningUnknownFields      = "Unknown field(s) used: %s"
 	WarningAmbiguousAlias     = "Ambiguous alias; for %s we have %s and %s"
-	WarningAliasIsKey         = "Alias %s is already known to be a key %s"
+	WarningAliasIsKey         = "Alias %s is already known to be a key"
 	WarningPreferredNotExist  = "Can't select a non existing alias %s as preferred alias"
 	WarningAliasTargetIsAlias = "Alias %s has a target $s, which is actually an alias for $s"
+	WarningBadAlias 		  = "Alias %s for %s does not comply to the rules"
 )
 
 type (
@@ -24,7 +25,6 @@ type (
 		entryFields      map[string]TStringMap
 		entryType        TStringMap
 		deAlias          TStringMap
-		aliasedKeys      TStringSet
 		preferredAliases TStringMap
 		unknownFields    TStringSet
 		currentKey       string
@@ -44,7 +44,7 @@ var (
 	BiBTeXDefaultStrings TStringMap
 )
 
-/// UP!!
+// / UP!!
 func CheckPreferredAlias(alias string) bool {
 	pre_year := 0
 	in_year := 0
@@ -84,7 +84,7 @@ func CheckPreferredAlias(alias string) bool {
 
 		case in_year == 4 && post_year > 0:
 			if ('a' <= character && character <= 'z') ||
-			   ('0' <= character && character <= '9') {
+				('0' <= character && character <= '9') {
 				post_year++
 			} else {
 				return false
@@ -101,20 +101,17 @@ func CheckPreferredAlias(alias string) bool {
 func (l *TBiBTeXLibrary) CheckPreferredAliases() {
 	for key, alias := range l.preferredAliases {
 		if !CheckPreferredAlias(alias) {
-		//// WARNING!
-			fmt.Println("Alias", alias, "for", key, "does not comply to the rules")
+			l.Warning(WarningBadAlias, alias, key)
 		}
 	}
-	
+
 	for alias, key := range l.deAlias {
 		if l.preferredAliases[key] == "" {
 			if CheckPreferredAlias(alias) {
-				fmt.Println("Found preferred alias", alias, "for", key)
 				l.AddPreferredAlias(alias)
 			} else {
 				loweredAlias := strings.ToLower(alias)
 				if l.deAlias[loweredAlias] == "" && loweredAlias != key && CheckPreferredAlias(loweredAlias) {
-					fmt.Println("Found alternative preferred alias", loweredAlias, "for", key)
 					l.AddKeyAlias(loweredAlias, key)
 					l.AddPreferredAlias(loweredAlias)
 				}
@@ -190,29 +187,25 @@ func FieldTypeAlias(entry, alias string) {
 }
 
 func (l *TBiBTeXLibrary) AddKeyAlias(alias, key string) {
-	currentKey, exists := l.deAlias[alias]
-	if exists && currentKey != key {
-		l.Warning(WarningAmbiguousAlias, alias, currentKey, key)
-	} else {
-		aliasedKey, isAliasedKey := l.deAlias[key]
+	currentKey, aliasIsAlreadyAliased := l.deAlias[alias]
+	_, aliasIsActuallyKey := l.entryFields[alias]
+	aliasedKey, keyIsActuallyAlias := l.deAlias[key]
 
-		if isAliasedKey {
-			l.Warning(WarningAliasIsKey, alias, key, aliasedKey)
-		} else {
-			if l.aliasedKeys.Contains(alias) {
-				l.Warning(WarningPreferredNotExist, alias, key)
-			} else {
-				l.deAlias[alias] = key
-				l.aliasedKeys[key] = true
-			}
-		}
+	if aliasIsAlreadyAliased && currentKey != key {
+		l.Warning(WarningAmbiguousAlias, alias, currentKey, key)
+	} else if aliasIsActuallyKey {
+		l.Warning(WarningAliasIsKey, alias)
+	} else if keyIsActuallyAlias {
+		l.Warning(WarningAliasTargetIsAlias, alias, key, aliasedKey)
+	} else {
+		l.deAlias[alias] = key
 	}
 }
 
 func (l *TBiBTeXLibrary) AddPreferredAlias(alias string) {
 	key, exists := l.deAlias[alias]
 	if !exists {
-		l.Warning(WarningAliasTargetIsAlias, key)
+		l.Warning(WarningPreferredNotExist, key)
 	} else {
 		l.preferredAliases[key] = alias
 	}
@@ -224,7 +217,6 @@ func (l *TBiBTeXLibrary) Initialise(reporting TReporting, warnOnDoubles bool) {
 	l.entryType = TStringMap{}
 	l.deAlias = TStringMap{}
 	l.preferredAliases = TStringMap{}
-	l.aliasedKeys = TStringSet{}
 	l.currentKey = ""
 	l.TReporting = reporting
 	l.lastNewKey = ""

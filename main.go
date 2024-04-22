@@ -5,15 +5,14 @@ import (
 	"fmt"
 )
 
-/// %!(EXTRA string=lewis2005smart)WARNING: Alias  has a target $s, which is actually an alias for $s.
-
 /// Library.CheckPreferredAliases()
 /// - DBLP completeness (legacy!)
 /// - Cleaning ...
 
+/// Add comments + inspect ... also to the already splitted files.
+
 /// Make things robust and reporting when file is not found
 
-/// Add comments + inspect ... also to the already splitted files.
 
 // Checks on ErikProper.bib:
 // - Enable level of checks (legacy versus ErikProper.bib)
