@@ -1,3 +1,16 @@
+//
+// Module: legacy_aliases
+//
+// This module is only intended to deal with the legacy situation.
+// Due to my Zotero experiment, I now have:
+// - Files in a Zotero folder
+// - Older BIB files (referring to PDFs in the latter Zotero folder) with multiple occurrences
+//
+// Creator: Henderik A. Proper (erikproper@fastmail.com)
+//
+// Version of: 23.04.2024
+//
+
 package main
 
 import (
@@ -10,6 +23,10 @@ import (
 	"strings"
 )
 
+// Check the compliance of preferred aliases.
+// For the moment, the preferred aliases are stored in a separate file.
+// Later, these will simply be the first entry in a "aliases" field in the BIB file.
+// Once we've reached that point, we can integrate this check into the regular checks per field.
 func (l *TBiBTeXLibrary) CheckPreferredAliases() {
 	for key, alias := range l.preferredAliases {
 		if !CheckPreferredAlias(alias) {
@@ -32,6 +49,8 @@ func (l *TBiBTeXLibrary) CheckPreferredAliases() {
 	}
 }
 
+// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced entry.
+// These dblp fields are important for the future functionality of syncing with the dblp.org database.
 func (l *TBiBTeXLibrary) CheckDBLPAliases() {
 	for alias, key := range l.deAlias {
 		if strings.Index(alias, "DBLP:") == 0 {
@@ -47,6 +66,8 @@ func (l *TBiBTeXLibrary) CheckDBLPAliases() {
 	}
 }
 
+// Quick and dirty reading of the keys.map and preferred.aliases file.
+// As soon as we're finished with the legacy migration, we can integrate the aliases into the bib file.
 func (l *TBiBTeXLibrary) ReadLegacyAliases() {
 	file, err := os.Open(KeysMapFile)
 	if err != nil {
@@ -83,6 +104,9 @@ func (l *TBiBTeXLibrary) ReadLegacyAliases() {
 	file.Close()
 }
 
+// Quick and dirty write-out of:
+// - the preferred.aliases and keys.map files
+// - the creation of the "mapping" folders to enable the old scripts to still do their work
 func (l *TBiBTeXLibrary) WriteLegacyAliases() {
 	fmt.Println("Writing preferred aliases")
 

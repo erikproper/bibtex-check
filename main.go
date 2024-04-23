@@ -41,6 +41,7 @@ import (
 // Then balance key/types between current and legacy
 // Then start on the rest matching legacy and new
 
+/// organization field ... "abused" as publisher in proceedings??
 
 /// First App
 /// Field specific normalisation/cleaning
@@ -54,7 +55,6 @@ import (
 /// - Read names file first {<name>} {<alias>}
 /// -  name from bibtext
 /// - Use normalised string representatation to lookup in a string to string map
-
 
 /// BEFORE introducing Aliases and the first one as preferred alias ....
 /// Start using sequences for entries and the fields in general.
@@ -70,7 +70,6 @@ import (
 /// s.Elements() = range of elements
 /// https://pkg.go.dev/slices
 /// https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/slices/slices.go
-
 
 var Library TBiBTeXLibrary
 

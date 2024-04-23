@@ -1,3 +1,14 @@
+//
+// Module: files
+//
+// This module provides basic operations to manage files.
+// It, in particular, provides functionality to backup existing files.
+//
+// Creator: Henderik A. Proper (erikproper@fastmail.com)
+//
+// Version of: 23.04.2024
+//
+
 package main
 
 import (
@@ -7,6 +18,7 @@ import (
 	"time"
 )
 
+// Get a unique timestamp to be used as part of the filename of backups.
 func timestamp() string {
 	now := time.Now()
 	result := fmt.Sprintf(
@@ -22,22 +34,24 @@ func timestamp() string {
 	return result
 }
 
+// Create a backup of an existing file.
 func BackupFile(sourceFile string) bool {
-	destinationFile := sourceFile + "." + timestamp()
-
-	source, err := os.Open(sourceFile) //open the source file
+	// Open the source file
+	source, err := os.Open(sourceFile)
 	if err != nil {
 		return false
 	}
 	defer source.Close()
 
-	destination, err := os.Create(destinationFile) //create the destination file
+	// Create the backup file
+	destination, err := os.Create(sourceFile + "." + timestamp())
 	if err != nil {
 		return false
 	}
 	defer destination.Close()
 
-	_, err = io.Copy(destination, source) //copy the contents of source to destination file
+	// Copy the contents of the source file to the backup file
+	_, err = io.Copy(destination, source)
 	if err != nil {
 		return false
 	}
