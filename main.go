@@ -7,10 +7,9 @@ import (
 
 /// Add comments + inspect ... also to the already splitted files.
 /// Cleaning ...
-/// Make things robust and reporting when file is not found
 
 // Checks on ErikProper.bib:
-// - Enable level of checks (legacy versus ErikProper.bib)
+// - Enable level of checks (legacy/import versus ErikProper.bib)
 //   Make these tests (also on double entries) switchable via explicit functions.
 //   So, not a list of true/false when initializing.
 /////// CHECK legacy mode
@@ -42,9 +41,8 @@ import (
 // Then balance key/types between current and legacy
 // Then start on the rest matching legacy and new
 
-/// First App
-///
 
+/// First App
 /// Field specific normalisation/cleaning
 /// - (Book)titles, series,
 /// - addresses
@@ -57,6 +55,9 @@ import (
 /// -  name from bibtext
 /// - Use normalised string representatation to lookup in a string to string map
 
+
+/// BEFORE introducing Aliases and the first one as preferred alias ....
+/// Start using sequences for entries and the fields in general.
 /// SequenceOfXX = struct{ members map[XX]bool, Element []XX }
 /// s.Add(elements... XX)
 /// s.AddAt(i int, elements... XX)
@@ -70,7 +71,6 @@ import (
 /// https://pkg.go.dev/slices
 /// https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/slices/slices.go
 
-/////
 
 var Library TBiBTeXLibrary
 
