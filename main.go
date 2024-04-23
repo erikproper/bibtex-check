@@ -6,6 +6,7 @@ import (
 )
 
 /// Add comments + inspect + cleaning ...
+/// clean IO in this file as well. Add a "Progress" channel.
 
 // Checks on ErikProper.bib:
 // - Enable level of checks (legacy/import versus ErikProper.bib)
@@ -56,6 +57,38 @@ import (
 /// - Read names file first {<name>} {<alias>}
 /// -  name from bibtext
 /// - Use normalised string representatation to lookup in a string to string map
+
+/// Merging legacy:
+/// 1: Cluster based on mapped IDs
+///   - Ensure it is possible to do this comparison/update to ErikProper.bib's library as well as a future migration library.
+///   - Work with a per entry LibX.EntryA to LibY.EntryB mapper where one is the challenger, and the other is the master so-far.
+///   - Check missing information towards ErikProper.bib like presently
+///   - Do so, in a file-per-file way.
+///   - So, only include the presently included fields.
+///   - Create an OK file with "<id> <field> <md5_1> <md5_2>"
+///     - The first md5 is the present one from the champion.
+///     - The second md5 is the rejected one from the challenger
+///   ==> Now stop using the check.metadata script
+/// 2: Cluster based on mapped IDs
+///   - Check missing information towards ErikProper.bib with more fields
+///   - If entry is prefix of the other, take the longer one
+///   - Compare normalised name fields
+///   - Compare normalised title fields
+///   - Other strategies?
+/// 3: Cluster the entries from the legacy sources based keys
+///   - Read/write a migration.map file
+///   - For each key with mapping to ErikProper.bib:
+///     - Create a temporary ID
+///     - Add key mapping (also export to migration.map)
+///     - "Sync" to the Migrate Library in the same way as for ErikProper.bib
+///     - In doing so, add to the OK file as well.
+/// 4: Cluster the clustered entries based on additional heuristics
+///     - Titles, authors, etc. Requires user decision.
+///     - Requires the ability to change the alias to IDs mapping for the "winners"
+///     - Define the champion, and challenge this one from the old clustered entry.
+/// 5: Once stable, add the final new IDs to ErikProper.bib and extend the keys.map file accordingly
+///     - NOTE: Also rename the targets in keys.map that are now actually aliases!!
+/// 6: Re-use these techniques to look for doubles in ErikProper.bib
 
 /// BEFORE introducing Aliases and the first one as preferred alias ....
 /// Start using sequences for entries and the fields in general.
