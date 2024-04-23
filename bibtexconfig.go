@@ -1,7 +1,7 @@
 package main
 
 var (
-	BiBTeXAllowedEntryFields map[string]*TStringSet
+	BiBTeXAllowedEntryFields map[string]TStringSet
 	BiBTeXAllowedFields,
 	BiBTeXAllowedEntries TStringSet
 	BiBTeXFieldNameMap,
@@ -9,21 +9,18 @@ var (
 	BiBTeXDefaultStrings TStringMap
 )
 
+// / Set / Get !!
 func AllowedEntryFields(entry string, fields ...string) {
 	BiBTeXAllowedEntries.Add(entry)
 
 	for _, field := range fields {
 		BiBTeXAllowedFields.Add(field)
 
-		if BiBTeXAllowedEntryFields == nil {
-			BiBTeXAllowedEntryFields = map[string]*TStringSet{}
-		}
-
-		if BiBTeXAllowedEntryFields[entry] == nil {
+		_, exists := BiBTeXAllowedEntryFields[entry]
+		if !exists {
 			BiBTeXAllowedEntryFields[entry] = TStringSetNew()
-			BiBTeXAllowedEntryFields[entry].Initialise()
 		}
-		BiBTeXAllowedEntryFields[entry].Add(field)
+		BiBTeXAllowedEntryFields[entry].Set().Add(field)
 	}
 }
 
@@ -62,7 +59,7 @@ func init() {
 		"dec": "December",
 	}
 
-	BiBTeXAllowedEntryFields = map[string]*TStringSet{}
+	BiBTeXAllowedEntryFields = map[string]TStringSet{}
 
 	BiBTeXAllowedEntries.Initialise()
 	BiBTeXAllowedFields.Initialise()

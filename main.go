@@ -5,8 +5,7 @@ import (
 	"fmt"
 )
 
-/// Add comments + inspect ... also to the already splitted files.
-/// Cleaning ...
+/// Add comments + inspect + cleaning ...
 
 // Checks on ErikProper.bib:
 // - Enable level of checks (legacy/import versus ErikProper.bib)
@@ -34,6 +33,8 @@ import (
 
 /// Check consistency of fields and their use.
 /// When assigning a func to a field, this field must be allowed
+
+/// For aliases to new keys ... check if the entry is there ...
 
 // Clean KEY/Types
 // Do Keymapper first before legacy import
@@ -84,7 +85,7 @@ const (
 )
 
 func main() {
-	Reporting := TReporting{}
+	Reporting := TInteraction{}
 
 	Library = TBiBTeXLibrary{}
 	Library.Initialise(Reporting, true)

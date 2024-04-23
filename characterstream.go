@@ -13,7 +13,7 @@ type (
 	TCharacterMap [256]byte       // Type for mappings of characters to characters
 
 	TCharacterStream struct {
-		TReporting                        // Error reporting channel
+		TInteraction                      // Error reporting channel
 		endOfStream        bool           // Set to true when we've reached the end of the stream
 		textfile           *os.File       // The text file from which we're streaming
 		fileName           string         // LEGACY!!
@@ -30,11 +30,11 @@ type (
 	}
 )
 
-func (c *TCharacterStream) Initialise(reporting TReporting) {
+func (c *TCharacterStream) Initialise(reporting TInteraction) {
 	c.textfileIsOpen = false
 	c.endOfStream = true
 	c.runeMap = TRuneMap{}
-	c.TReporting = reporting
+	c.TInteraction = reporting
 }
 
 func (c *TCharacterStream) SetRuneMap(runeMap TRuneMap) bool {

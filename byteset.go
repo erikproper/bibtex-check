@@ -30,11 +30,17 @@ type TByteSet struct {
 var ByteToString [256]string
 
 // Create a new byte set.
-func TByteSetNew() *TByteSet {
+func TByteSetNew() TByteSet {
 	fresh := TByteSet{}
 	fresh.Initialise()
 
-	return &(fresh)
+	return fresh
+}
+
+// Return the pointer to the provided byte set.
+// Useful when using maps of byte sets.
+func (s TByteSet) Set() *TByteSet {
+	return &s
 }
 
 // (Re)initialise byte sets.
@@ -98,7 +104,7 @@ func (s *TByteSet) Elements() TByteSetElements {
 }
 
 // Returns a string set with strings representing the elements contained in the set.
-func (s *TByteSet) Strings() *TStringSet {
+func (s *TByteSet) Strings() TStringSet {
 	t := TStringSetNew()
 	for e := range s.Elements() {
 		t.Add(ByteToString[e])

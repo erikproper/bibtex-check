@@ -30,7 +30,7 @@ type (
 		warnOnDoubles    bool
 		legacyMode       bool
 		lastNewKey       string
-		TReporting       // Error reporting channel
+		TInteraction     // Error reporting channel
 	}
 )
 
@@ -139,20 +139,20 @@ func (l *TBiBTeXLibrary) AddPreferredAlias(alias string) {
 	}
 }
 
-func (l *TBiBTeXLibrary) Initialise(reporting TReporting, warnOnDoubles bool) {
+func (l *TBiBTeXLibrary) Initialise(reporting TInteraction, warnOnDoubles bool) {
 	l.comments = []string{}
 	l.entryFields = map[string]TStringMap{}
 	l.entryType = TStringMap{}
 	l.deAlias = TStringMap{}
 	l.preferredAliases = TStringMap{}
 	l.currentKey = ""
-	l.TReporting = reporting
+	l.TInteraction = reporting
 	l.lastNewKey = ""
 	l.warnOnDoubles = warnOnDoubles
 }
 
 func (l *TBiBTeXLibrary) StartRecordingToLibrary() bool {
-	l.unknownFields = TStringSet{}
+	l.unknownFields = TStringSetNew()
 
 	return true
 }

@@ -28,11 +28,17 @@ type TStringSet struct {
 }
 
 // Create a new string set.
-func TStringSetNew() *TStringSet {
+func TStringSetNew() TStringSet {
 	fresh := TStringSet{}
 	fresh.Initialise()
 
-	return &(fresh)
+	return fresh
+}
+
+// Return the pointer to the provided string set.
+// Useful when using maps of string sets.
+func (s TStringSet) Set() *TStringSet {
+	return &s
 }
 
 // (Re)initialise string sets.

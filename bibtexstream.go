@@ -61,7 +61,7 @@ var (
 	BiBTeXEntryTypeCharacters TByteSet
 )
 
-func (b *TBiBTeXStream) Initialise(reporting TReporting, library *TBiBTeXLibrary) {
+func (b *TBiBTeXStream) Initialise(reporting TInteraction, library *TBiBTeXLibrary) {
 	b.TCharacterStream.Initialise(reporting)
 	b.SetRuneMap(BiBTeXRuneMap)
 	b.stringMap = BiBTeXDefaultStrings
