@@ -1,3 +1,13 @@
+//
+// Module: bibtexlibrary
+//
+// This module is concerned with the storage of BiBTeX libraties
+//
+// Creator: Henderik A. Proper (erikproper@fastmail.com)
+//
+// Version of: 24.04.2024
+//
+
 package main
 
 import (
@@ -5,6 +15,7 @@ import (
 	"time"
 )
 
+// Warnings regarding the consistency of the libraries
 const (
 	WarningEntryAlreadyExists = "Entry '%s' already exists"
 	WarningUnknownFields      = "Unknown field(s) used: %s"
@@ -16,15 +27,16 @@ const (
 )
 
 type (
+	// We use several mappings from strings to strings
 	TStringMap map[string]string
 
 	TBiBTeXLibrary struct {
-		comments         []string
-		entryFields      map[string]TStringMap
-		entryType        TStringMap
-		deAlias          TStringMap
-		preferredAliases TStringMap
-		unknownFields    TStringSet
+		comments         []string				// The comments included in a BiBTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		entryFields      map[string]TStringMap	// Per entry key, the fields associated to the actual entries.
+		entryType        TStringMap				// Per entry key, the type of the enty.
+		deAlias          TStringMap				// Mapping from aliases to the actual entry key.
+		preferredAliases TStringMap				// Per entry key, the preferred alias
+		unknownFields    TStringSet				// 
 		currentKey       string
 		warnOnDoubles    bool
 		legacyMode       bool
@@ -157,6 +169,8 @@ func (l *TBiBTeXLibrary) StartRecordingToLibrary() bool {
 }
 
 func (l *TBiBTeXLibrary) FinishRecordingToLibrary() bool {
+	//////// This should be a function in itself
+	//////// Legacy model set by what???
 	if !l.legacyMode && l.unknownFields.Size() > 0 {
 		l.Warning(WarningUnknownFields, l.unknownFields.String())
 	}

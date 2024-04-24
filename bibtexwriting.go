@@ -17,7 +17,7 @@ import (
 
 // Does what its name says ... writing the library to the provided BiBTeX file
 // Notes:
-// - As we ignore preambles, these are not written. 
+// - As we ignore preambles, these are not written.
 // - When we start managing the groups (of keys) the way Bibdesk does, we need to ensure that their embedded as an XML structure embedded in a comment, is updated.
 func (l *TBiBTeXLibrary) WriteBiBTeXFile(fileName string) bool {
 	BackupFile(fileName)
