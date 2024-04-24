@@ -9,6 +9,8 @@ var (
 	BiBTeXDefaultStrings TStringMap
 )
 
+const KeyPrefix = "EP"
+
 // / Set / Get !!
 func AllowedEntryFields(entry string, fields ...string) {
 	BiBTeXAllowedEntries.Add(entry)

@@ -6,7 +6,6 @@ import (
 )
 
 const (
-	KeyPrefix                 = "EP"
 	WarningEntryAlreadyExists = "Entry '%s' already exists"
 	WarningUnknownFields      = "Unknown field(s) used: %s"
 	WarningAmbiguousAlias     = "Ambiguous alias; for %s we have %s and %s"

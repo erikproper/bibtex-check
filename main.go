@@ -7,7 +7,7 @@ import (
 
 /// Add comments + inspect + cleaning ...
 /// clean IO in this file as well. Add a "Progress" channel.
-
+/// Are PDF downloaded automatically??
 // Fix/merge notes and this into a Work.txt
 
 // Checks on ErikProper.bib:
@@ -21,7 +21,7 @@ import (
 // - Crossrefs
 // - Redundancy of URLs vs DOIs
 //   - If DOI exists and suffix to doi/handle URL, then drop the URL
-//   - If DOI URL exists, then convert to doi (doi.acm.org, dx.doi.org doi.ieeecomputersociety.org || 
+//   - If DOI URL exists, then convert to doi (doi.acm.org, dx.doi.org doi.ieeecomputersociety.org ||
 // - Auto download for ceur PDFs?
 
 /// map[string]func()
@@ -69,7 +69,7 @@ import (
 ///     - doi = {http://dx.doi.org
 ///	    - ee = {http://dx.doi.org/10.1007/978-3-642-31134-5{$_{4}$}},
 ///     - opturl _url bdsk-url-1 bdsk-url-2 citeulike-linkout-0 citeulike-linkout-1 doi ee eprint(!!!!) opturl uri url xbdsk-url-1 xurl
-///     - citeulike-linkout-? 
+///     - citeulike-linkout-?
 ///     - eprint = {http://dx.doi.org/10.1108/TLO-09-2013-0048}
 ///   - doi prefixes: doi.acm.org doi.apa.org doi.ieeecomputersociety.org doi.org dx.doi.org
 ///   - Ensure it is possible to do this comparison/update to ErikProper.bib's library as well as a future migration library.

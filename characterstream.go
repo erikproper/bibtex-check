@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	errorCharacterNotIn="expected character from %s"
-	progressOpeningFile="Opening file: %s"
+	errorCharacterNotIn = "expected character from %s"
+	progressOpeningFile = "Opening file: %s"
 )
 
 type (
@@ -46,15 +46,15 @@ type (
 	// - We can be creating the character stream from a file, or from a string of textRunes.
 	//   In the former case, textfile, textScanner, textfileIsOpen are used to manage the file, while textRunes is used as a reading buffer.
 	//   In the latter case, textRunes is used to contain the string of textRunes, which may actually span multiple (\n separated) lines.
-	// 
+	//
 	// - Where the textRunes slice contains the runes from the source file/string, the runeString is the actual sequence of characters.
 	//   The latter may involve the possible translation of non-ASCII characters to TeX commands.
 	//   The actual character stream is then based on this runeString.
 	//
 	// - The textRunesPosition and runeStringPosition variables are used to progress through the textRunes and runeString buffers.
 	//   In contrast, the linePosition and runePosition are used to administer the reading position in terms of actual (\n separated) lines in the input.
-	//   As mentioned above, when reading the character stream from a provided string, this string may contain multiple (\n separated) lines. 
-	//   As a result, the runePosition may not be the same as the textRunesPosition. 
+	//   As mentioned above, when reading the character stream from a provided string, this string may contain multiple (\n separated) lines.
+	//   As a result, the runePosition may not be the same as the textRunesPosition.
 	//   Hence the need for this "double" administration.
 )
 
@@ -158,14 +158,13 @@ func (c *TCharacterStream) TextfileOpen(fileName string) bool {
 }
 
 // Open a textfile, and if this fails, report an error.
-// The "Forced" prefix follows the convention as used in the actual parser, when expecting the presence of a given (non)terminal of grammar. 
+// The "Forced" prefix follows the convention as used in the actual parser, when expecting the presence of a given (non)terminal of grammar.
 func (c *TCharacterStream) ForcedTextfileOpen(fileName, errorMessage string) bool {
 	c.ReportProgress(progressOpeningFile, fileName)
 
 	return c.TextfileOpen(fileName) ||
 		c.ReportError(errorMessage, fileName)
 }
-
 
 // Use the provided string as the base for the character stream
 func (c *TCharacterStream) TextString(s string) bool {
@@ -183,7 +182,7 @@ func (c *TCharacterStream) EndOfStream() bool {
 	return c.endOfStream
 }
 
-// Now getting to the heart of things. 
+// Now getting to the heart of things.
 // The NextCharacter function moves to the next character in the character stream.
 // The function returns true, if we managed to find a next character.
 func (c *TCharacterStream) NextCharacter() bool {
@@ -204,7 +203,7 @@ func (c *TCharacterStream) NextCharacter() bool {
 		// We start by assuming that the next rune is actually a byte-based character
 		c.currentCharacter = byte(c.textRunes[c.textRunesPosition])
 
-		// As we can be working with inputs from strings, newlines can occur in the middle of strings. 
+		// As we can be working with inputs from strings, newlines can occur in the middle of strings.
 		// So, we need to check this to ensure the positioning is right for error/warning/progress messages.
 		c.runePosition++
 		if c.currentCharacter == NewlineCharacter {
@@ -222,11 +221,11 @@ func (c *TCharacterStream) NextCharacter() bool {
 
 		// If no translation of the current rune was provided, the runeString will be empty.
 		// In that case, the rune we just read as byte into the currentCharacter is indeed taken as the currentCharacter.
-		// If a translation of the current rune was provided, we now need to call NextCharacter again, to get the first character in the runeString. 
+		// If a translation of the current rune was provided, we now need to call NextCharacter again, to get the first character in the runeString.
 		return !mapped || c.NextCharacter()
 	} else if c.textfileIsOpen && c.textScanner.Scan() {
 		// In this case, we have reached the end of the present textRunes buffer.
-		// When we're streaming from a file, then we can now try and read the next line of textRunes.	
+		// When we're streaming from a file, then we can now try and read the next line of textRunes.
 		c.textRunesPosition = 0
 		c.textRunes = []rune(c.textScanner.Text() + "\n")
 		// Note that we need to add the newline (\n) to also pass this on to the character streaming.
@@ -238,7 +237,7 @@ func (c *TCharacterStream) NextCharacter() bool {
 		// Now we call NextCharacter again, to indeed select the new current character.
 		return c.NextCharacter()
 	} else {
-		// If we reach this point, we have nothing more to stream. 
+		// If we reach this point, we have nothing more to stream.
 		// So ... end of stream
 		c.endOfStream = true
 
@@ -246,61 +245,73 @@ func (c *TCharacterStream) NextCharacter() bool {
 	}
 }
 
-
+// Returns the currently selected character.
 func (c *TCharacterStream) ThisCharacter() byte {
 	return c.currentCharacter
 }
 
+// Adds the provided character to the provided string.
 func (c *TCharacterStream) AddCharacter(ch byte, s *string) bool {
 	*s += string(ch)
 
 	return true
 }
 
+// Adds the currently selected character to the providing string.
 func (c *TCharacterStream) CollectCharacter(s *string) bool {
 	return c.AddCharacter(c.currentCharacter, s)
 }
 
+// Adds the currently selected character to the providing string, and moves to the next character.
 func (c *TCharacterStream) CollectCharacterThatWasThere(s *string) bool {
 	return c.CollectCharacter(s) && c.NextCharacter()
 }
 
-func (c *TCharacterStream) ThisCharacterIsIn(S TByteSet) bool {
-	return S.Contains(c.ThisCharacter())
+// Tests if the currently selected character is (as byte) the provided character.
+func (c *TCharacterStream) ThisCharacterIs(ch byte) bool {
+	return c.currentCharacter == ch
 }
 
-func (c *TCharacterStream) ThisCharacterWasIn(S TByteSet) bool {
-	return c.ThisCharacterIsIn(S) && c.NextCharacter()
+// Tests if the currently selected character is (as byte) the provided character, and if so, moves to the next character.
+func (c *TCharacterStream) ThisCharacterWas(ch byte) bool {
+	return c.ThisCharacterIs(ch) && c.NextCharacter()
 }
 
-func (c *TCharacterStream) CollectCharacterThatWasIn(S TByteSet, s *string) bool {
-	return c.ThisCharacterIsIn(S) && c.CollectCharacter(s) && c.NextCharacter()
+// Tests if the currently selected character is (as byte) the provided character, and if so, adds it to the provided string as well as moves to the next character.
+func (c *TCharacterStream) CollectCharacterThatWas(ch byte, s *string) bool {
+	return c.ThisCharacterIs(ch) && c.CollectCharacter(s) && c.NextCharacter()
 }
 
-func (c *TCharacterStream) ThisCharacterWasNotIn(s TByteSet) bool {
-	return (!c.ThisCharacterIsIn(s)) && c.NextCharacter()
-}
-
+// Tests if the currently selected character (as byte) is NOT in the provided byte set, and if so, adds it to the provided string as well as moves to the next character.
 func (c *TCharacterStream) CollectCharacterThatWasNot(ch byte, s *string) bool {
 	return !c.ThisCharacterIs(ch) && c.CollectCharacter(s) && c.NextCharacter()
 }
 
+// Tests if the currently selected character (as byte) is in the provided byte set
+func (c *TCharacterStream) ThisCharacterIsIn(S TByteSet) bool {
+	return S.Contains(c.ThisCharacter())
+}
+
+// Tests if the currently selected character (as byte) is in the provided byte set, and if so, moves to the next character.
+func (c *TCharacterStream) ThisCharacterWasIn(S TByteSet) bool {
+	return c.ThisCharacterIsIn(S) && c.NextCharacter()
+}
+
+// Tests if the currently selected character (as byte) is in the provided byte set, and if so, adds it to the provided string as well as moves to the next character.
+func (c *TCharacterStream) CollectCharacterThatWasIn(S TByteSet, s *string) bool {
+	return c.ThisCharacterIsIn(S) && c.CollectCharacter(s) && c.NextCharacter()
+}
+
+// Tests if the currently selected character (as byte) is NOT in the provided byte set, and if so, moves to the next character.
+func (c *TCharacterStream) ThisCharacterWasNotIn(s TByteSet) bool {
+	return (!c.ThisCharacterIsIn(s)) && c.NextCharacter()
+}
+
+// Ignores all characters. until we arrive at the specified character.
 func (c *TCharacterStream) SkipToCharacter(ch byte) bool {
 	for !c.ThisCharacterIs(ch) && !c.EndOfStream() {
 		c.NextCharacter()
 	}
 
 	return c.ThisCharacterIs(ch)
-}
-
-func (c *TCharacterStream) ThisCharacterIs(ch byte) bool {
-	return c.ThisCharacter() == ch
-}
-
-func (c *TCharacterStream) ThisCharacterWas(ch byte) bool {
-	return c.ThisCharacterIs(ch) && c.NextCharacter()
-}
-
-func (c *TCharacterStream) CollectCharacterThatWas(ch byte, s *string) bool {
-	return c.ThisCharacterIs(ch) && c.CollectCharacter(s) && c.NextCharacter()
 }
