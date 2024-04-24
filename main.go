@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+const AllowLegacy = true
+
 /// Add comments + inspect + cleaning ...
 /// clean IO in this file as well. Add a "Progress" channel.
 /// Are PDF downloaded automatically??

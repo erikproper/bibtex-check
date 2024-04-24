@@ -1,5 +1,16 @@
+//
+// Module: bibtexcharacters
+//
+// This module defines characters and character sets that are needed for the parsing of BiBTeX files.
+//
+// Creator: Henderik A. Proper (erikproper@fastmail.com)
+//
+// Version of: 24.04.2024
+//
+
 package main
 
+// Special characters
 const (
 	SpaceCharacter          = ' '
 	BackspaceCharacter      = '\b'
@@ -11,22 +22,18 @@ const (
 	VerticalTabCharacter    = '\v'
 )
 
+// Variables that should be treated as constants
 var (
-	SpecialCharacters,
 	NumberCharacters,
-	UpperCaseASCIILetterCharacters,
-	LowerCaseASCIILetterCharacters TByteSet
+	SpecialCharacters TByteSet
 )
 
+// Initialising the variables
 func init() {
 	SpecialCharacters = TByteSetNew()
 	NumberCharacters = TByteSetNew()
-	UpperCaseASCIILetterCharacters = TByteSetNew()
-	LowerCaseASCIILetterCharacters = TByteSetNew()
 
 	NumberCharacters.AddString("0123456789").TreatAsCharacters()
-	UpperCaseASCIILetterCharacters.AddString("ABCDEFGHIJKLMNOPQRSTUVWXYZ").TreatAsCharacters()
-	LowerCaseASCIILetterCharacters.AddString("abcdefghijklmnopqrstuvwxyz").TreatAsCharacters()
 	SpecialCharacters.Add(
 		BackspaceCharacter, BellCharacter, CarriageReturnCharacter, FormFeedCharacter,
 		NewlineCharacter, TabCharacter, VerticalTabCharacter).TreatAsCharacters()

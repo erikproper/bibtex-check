@@ -223,7 +223,7 @@ func (b *TBiBTeXStream) ForcedFieldName(nameMap TStringMap, name *string) bool {
 }
 
 func (b *TBiBTeXStream) EntryType() bool {
-	return b.FieldTypeName(BiBTeXEntryTypeStarters, BiBTeXEntryTypeCharacters, BiBTeXEntryNameMap, &b.currentEntryTypeName)
+	return b.FieldTypeName(BiBTeXEntryTypeStarters, BiBTeXEntryTypeCharacters, BiBTeXEntryMap, &b.currentEntryTypeName)
 }
 
 func (b *TBiBTeXStream) ForcedEntryType() bool {
@@ -344,7 +344,7 @@ func (b *TBiBTeXStream) EntryBodyProper() bool {
 			// Encapsulate this library. stuff
 			/**/
 			b.library.StartRecordingLibraryEntry(key, b.currentEntryTypeName) &&
-			/*  */ b.FieldDefinitionsety(BiBTeXFieldNameMap, b.library.AssignField) &&
+			/*  */ b.FieldDefinitionsety(BiBTeXFieldMap, b.library.AssignField) &&
 			/*    */ b.library.FinishRecordingLibraryEntry()
 	}
 }
