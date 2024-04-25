@@ -26,26 +26,31 @@ const (
 	WarningBadAlias           = "Alias %s for %s does not comply to the rules"
 )
 
+// As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
+// By taking the time of starting the app as the based, we can at least generate keys from that point in time on.
+// However, we should never go beyond the present time, of course.
+var KeyTime time.Time
+
 type (
 	// We use several mappings from strings to strings
 	TStringMap map[string]string
 
 	TBiBTeXLibrary struct {
-		comments         []string				// The comments included in a BiBTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		entryFields      map[string]TStringMap	// Per entry key, the fields associated to the actual entries.
-		entryType        TStringMap				// Per entry key, the type of the enty.
-		deAlias          TStringMap				// Mapping from aliases to the actual entry key.
-		preferredAliases TStringMap				// Per entry key, the preferred alias
-		unknownFields    TStringSet				// 
-		currentKey       string
-		warnOnDoubles    bool
-		legacyMode       bool
-		lastNewKey       string
-		TInteraction     // Error reporting channel
+		comments         []string              // The comments included in a BiBTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		entryFields      map[string]TStringMap // Per entry key, the fields associated to the actual entries.
+		entryType        TStringMap            // Per entry key, the type of the enty.
+		deAlias          TStringMap            // Mapping from aliases to the actual entry key.
+		preferredAliases TStringMap            // Per entry key, the preferred alias
+		unknownFields    TStringSet            // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		currentKey       string                // The key of the entry we are currently working on.
+		warnOnDoubles    bool                  // If set, we need to warn when we try to record an entry which already exists.
+		legacyMode       bool                  // If set, we may switch off certain checks as we know we are importing from a legacy BiBTeX file.
+		TInteraction                           // Error reporting channel
 	}
 )
 
-// / UP!!
+// Checks if a given alias fits the desired format of [a-z][a-z]*[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
+// Examples: gordijn2002e3value, overbeek2010matchmaking, ...
 func CheckPreferredAlias(alias string) bool {
 	pre_year := 0
 	in_year := 0
@@ -53,14 +58,14 @@ func CheckPreferredAlias(alias string) bool {
 
 	for _, character := range alias {
 		switch {
-		case pre_year == 0:
+		case pre_year == 0: // [a-z]
 			if 'a' <= character && character <= 'z' {
 				pre_year++
 			} else {
 				return false
 			}
 
-		case pre_year > 0 && in_year == 0:
+		case pre_year > 0 && in_year == 0: // [a-z]*
 			if 'a' <= character && character <= 'z' {
 				pre_year++
 			} else if '0' <= character && character <= '9' {
@@ -69,21 +74,21 @@ func CheckPreferredAlias(alias string) bool {
 				return false
 			}
 
-		case 1 <= in_year && in_year < 4:
+		case 1 <= in_year && in_year < 4: // [0-9][0-9][0-9]
 			if '0' <= character && character <= '9' {
 				in_year++
 			} else {
 				return false
 			}
 
-		case in_year == 4 && post_year == 0:
+		case in_year == 4 && post_year == 0: // [a-z]
 			if 'a' <= character && character <= 'z' {
 				post_year++
 			} else {
 				return false
 			}
 
-		case in_year == 4 && post_year > 0:
+		case in_year == 4 && post_year > 0: // [a-z,0-9]*
 			if ('a' <= character && character <= 'z') ||
 				('0' <= character && character <= '9') {
 				post_year++
@@ -99,22 +104,30 @@ func CheckPreferredAlias(alias string) bool {
 	return post_year > 0
 }
 
+// Generate a new key based on the KeyTime.
 func (l *TBiBTeXLibrary) NewKey() string {
-	key := l.lastNewKey
-	for key == l.lastNewKey {
-		now := time.Now()
-		key = fmt.Sprintf(
-			"%s-%04d-%02d-%02d-%02d-%02d-%02d",
-			KeyPrefix,
-			now.Year(),
-			int(now.Month()),
-			now.Day(),
-			now.Hour(),
-			now.Minute(),
-			now.Second())
-	}
 
-	l.lastNewKey = key
+	// We're not allowed to move into the future.
+	if KeyTime.After(time.Now())
+	///////// WAAARNING
+		fmt.Println("Sleep on key generation")
+	for KeyTime.After(time.Now()) { 
+		// Sleep ...
+	}
+}
+	// Create the actual new key
+	key := fmt.Sprintf(
+		"%s-%04d-%02d-%02d-%02d-%02d-%02d",
+		KeyPrefix,
+		KeyTime.Year(),
+		int(KeyTime.Month()),
+		KeyTime.Day(),
+		KeyTime.Hour(),
+		KeyTime.Minute(),
+		KeyTime.Second())
+
+	// Move to the next time for which we can generate a key.
+	KeyTime = KeyTime.Add(time.Second)
 
 	return key
 }
@@ -158,7 +171,6 @@ func (l *TBiBTeXLibrary) Initialise(reporting TInteraction, warnOnDoubles bool) 
 	l.preferredAliases = TStringMap{}
 	l.currentKey = ""
 	l.TInteraction = reporting
-	l.lastNewKey = ""
 	l.warnOnDoubles = warnOnDoubles
 }
 
@@ -273,4 +285,8 @@ func (l *TBiBTeXLibrary) FinishRecordingLibraryEntry() bool {
 	///
 
 	return true
+}
+
+func init() {
+	KeyTime = time.Now()
 }
