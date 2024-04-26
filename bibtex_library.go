@@ -226,7 +226,7 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 			l.Warning(WarningEntryAlreadyExists, l.currentKey)
 			l.foundDoubles = true
 		}
-		l.entryType[l.currentKey] = ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.entryType[key])
+		l.entryType[l.currentKey] = l.ResolveFieldValue(EntryTypeField, entryType, l.entryType[key])
 	} else {
 		l.entryFields[l.currentKey] = TStringMap{}
 		l.entryType[l.currentKey] = entryType
@@ -243,14 +243,14 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	//   Renaming of author/editor names to their desired format.
 	//   Rewriting titles with proper protection and TeX accents:
 	//     {Hello WORLD {\" a}} ==> {Hello {WORLD} {\"a}}
-	newValue := NormaliseFieldValue(l, field, value)
+	newValue := l.NormaliseFieldValue(field, value)
 
 	// If the new value is empty, we assign nothing.
 	if newValue != "" {
 		currentValue, alreadyHasValue := l.entryFields[l.currentKey][field]
 		// If the field already has a value that is different from the new value, we need to resolve this.
 		if alreadyHasValue && newValue != currentValue {
-			l.entryFields[l.currentKey][field] = ResolveFieldValue(l.currentKey, field, newValue, currentValue)
+			l.entryFields[l.currentKey][field] = l.ResolveFieldValue(field, newValue, currentValue)
 		} else {
 			l.entryFields[l.currentKey][field] = newValue
 		}

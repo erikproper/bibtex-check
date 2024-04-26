@@ -32,11 +32,11 @@ func processDBLPValue(library *TBibTeXLibrary, value string) string {
 //	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
 //	fmt.Printf("%q\n", Start)
 
-func NormaliseFieldValue(library *TBibTeXLibrary, field, value string) string {
+func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 	valueNormaliser, hasNormaliser := fieldProcessors[field]
 
 	if hasNormaliser {
-		return valueNormaliser(library, strings.Trim(value, " "))
+		return valueNormaliser(l, strings.Trim(value, " "))
 	} else {
 		return strings.Trim(value, " ")
 	}
