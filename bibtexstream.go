@@ -1,86 +1,109 @@
+//
+// Module: bibtexwriting
+//
+// This module is defines the TBibTeXStream type as a parser of BibTeX entries
+//
+// Creator: Henderik A. Proper (erikproper@fastmail.com)
+//
+// Version of: 26.04.2024
+//
+
 package main
 
 import "strings"
 
 const (
-	CharacterClass             = "Character"
-	EntryBodyClass             = "EntryBody"
-	FieldNameClass             = "FieldName"
-	EntryTypeClass             = "EntryType"
-	FieldValueClass            = "FieldValue"
+	// Names of syntactic classes as used in error messages
+	CharacterClass  = "Character"
+	EntryBodyClass  = "EntryBody"
+	EntryTypeClass  = "EntryType"
+	FieldValueClass = "FieldValue"
+
+	// Error messages & warnings
 	ErrorMissing               = "Missing"
 	ErrorMissingCharacter      = ErrorMissing + " " + CharacterClass + "'%s', found '%s'"
 	ErrorMissingEntryBody      = ErrorMissing + " " + EntryBodyClass
 	ErrorMissingEntryType      = ErrorMissing + " " + EntryTypeClass
-	ErrorMissingFieldName      = ErrorMissing + " " + FieldNameClass
 	ErrorMissingFieldValue     = ErrorMissing + " " + FieldValueClass
 	ErrorOpeningFile           = "Could not open file '%s'"
 	ErrorUnknownString         = "Unknown string '%s' referenced"
 	WarningSkippingToNextEntry = "Skipping to next entry"
-	TeXMode                    = true
-	EntryStartCharacter        = '@'
-	BeginGroupCharacter        = '{'
-	EndGroupCharacter          = '}'
-	DoubleQuotesCharacter      = '"'
-	AssignmentCharacter        = '='
-	AdditionCharacter          = '#'
-	PercentCharacter           = '%'
-	CommaCharacter             = ','
-	EscapeCharacter            = '\\'
-	CommentEntryType           = "comment"
-	PreambleEntryType          = "preamble"
-	StringEntryType            = "string"
+
+	// TeXMode on
+	TeXMode = true
+
+	// Different characters
+	EntryStartCharacter   = '@'
+	BeginGroupCharacter   = '{'
+	EndGroupCharacter     = '}'
+	DoubleQuotesCharacter = '"'
+	AssignmentCharacter   = '='
+	AdditionCharacter     = '#'
+	PercentCharacter      = '%'
+	CommaCharacter        = ','
+	EscapeCharacter       = '\\'
+
+	// Entry types with a hard-wired meaning
+	CommentEntryType  = "comment"
+	PreambleEntryType = "preamble"
+	StringEntryType   = "string"
 )
 
 type (
-	TMapField     func(string, string) bool
-	TBiBTeXStream struct {
-		TCharacterStream                  //        // The underlying stream of characters
-		library           *TBiBTeXLibrary //        // The BiBTeX Library this parser will contribute to
-		currentFieldName, //        // The name of the field that is currently being defined
-		currentFieldValue, //       // The value ...
-		currentEntryTypeName string // The tyoe ...
-		skippingEntry bool       // // If we're skipping
-		stringMap     TStringMap // // The mapping of strings ...
+	// As we need to cater for the fact that values for fields in BibTeX entries need to be assigned differently depending on the fact if it concerns an @string entry, or an actual publication, we will use a function as parameter to take care of the correct assignment.
+	TFieldAssigner func(string, string) bool
+
+	// The actual TBibTeXStream type
+	TBibTeXStream struct {
+		TCharacterStream                     // The underlying stream of characters
+		library              *TBibTeXLibrary // The BibTeX Library this parser will contribute to
+		currentFieldName     string          // The name of the field assignment that is currently being parsed
+		currentFieldValue    string          // The value of the field assignment that is currently being parsed
+		currentEntryTypeName string          // The type of the entry we're currently parsing
+		skippingEntry        bool            // Set to true if we need to be skipping things to the next entry
+		stringMap            TStringMap      // The mapping of the defined strings
 	}
 )
 
 var (
-	BiBTeXRuneMap TRuneMap
+	// Translation from runes to TeX strings
+	BibTeXRuneMap TRuneMap
 
-	BiBTeXEmptyNameMap = TStringMap{}
+	// The empty name mapping
+	BibTeXEmptyNameMap = TStringMap{}
 
-	BiBTeXCommentEnders,
-	BiBTeXKeyCharacters,
-	BiBTeXSpaceCharacters,
-	BiBTeXCommentStarters,
-	BiBTeXFieldNameStarters,
-	BiBTeXNumberCharacters,
-	BiBTeXFieldNameCharacters,
-	BiBTeXEntryTypeStarters,
-	BiBTeXEntryTypeCharacters TByteSet
+	// Character sets used by the parser.
+	// These are defined in the init() function
+	BibTeXCommentEnders,
+	BibTeXKeyCharacters,
+	BibTeXSpaceCharacters,
+	BibTeXCommentStarters,
+	BibTeXNumberCharacters,
+	BibTeXEntryTypeStarters,
+	BibTeXFieldNameStarters,
+	BibTeXFieldNameCharacters,
+	BibTeXEntryTypeCharacters TByteSet
 )
 
-func (b *TBiBTeXStream) Initialise(reporting TInteraction, library *TBiBTeXLibrary) {
+// Initialise a BibTeXStream-er.
+func (b *TBibTeXStream) Initialise(reporting TInteraction, library *TBibTeXLibrary) {
 	b.TCharacterStream.Initialise(reporting)
-	b.SetRuneMap(BiBTeXRuneMap)
-	b.stringMap = BiBTeXDefaultStrings
+	b.SetRuneMap(BibTeXRuneMap)
+	b.stringMap = BibTeXDefaultStrings
 	b.currentEntryTypeName = ""
 	b.skippingEntry = false
 	b.library = library
 }
 
-func (b *TBiBTeXStream) AssignString(str, value string) bool {
+// Assignment of a string definition.
+func (b *TBibTeXStream) AssignString(str, value string) bool {
 	b.stringMap[str] = value
 
 	return true
 }
 
-func (b *TBiBTeXStream) MaybeReportError(message string, context ...any) bool {
-	return b.skippingEntry || b.ReportError(message, context...)
-}
-
-func (b *TBiBTeXStream) SkipToNextEntry(from string) bool {
+// If we're stuck in parsing an entry (due to syntax errors), we need to the next entry.
+func (b *TBibTeXStream) SkipToNextEntry(from string) bool {
 	b.skippingEntry = true
 
 	if from != "" {
@@ -96,31 +119,76 @@ func (b *TBiBTeXStream) SkipToNextEntry(from string) bool {
 	return b.ThisCharacterIs(EntryStartCharacter)
 }
 
-func (b *TBiBTeXStream) CommentsClausety() bool {
-	for b.ThisCharacterWasNotIn(BiBTeXCommentEnders) {
+// CONVENTIONS regarding the parser
+//
+// In defining the parser, we use the short-cut AND and OR operators.
+// Doing so, allows us to translate a grammar rule such as:
+//   A: ( B, C ) | D
+// into:
+//   func A() bool {
+//      return ( B() && C() ) || D()
+//   }
+//
+// This convention is inspired by the work on the compiler description language:
+//    https://en.wikipedia.org/wiki/Compiler_Description_Language
+// and CDL1 in particular.
+//
+// A further convention is the use of the "ety" ending of the name of a grammatical class.
+// For instance, CommentsClausety.
+// The "CommentsClause" is a grammatical class, where the "ety" ending indicates that it could example be empty.
+// So, CommentsClausety should be read as "CommentsClausety or Empty".
+// If course, the function CommentsClausety() should cater for the "or Empty" part.
+//
+// Furthermore, when we want to signify that syntactically something is required to be present, we will prefix "Forced" to the function name.
+// So, in terms of the above example:
+//   A: ( B, C ) | D
+// We would actually use
+//   func A() bool {
+//      return ( B() && ForcedC() ) || D()
+//   }
+// Since, after the B, we *must* have a C.
+// Of course, the ForcedC() function would need to report an error, when no C is found.
+
+// When we run into a syntax error, we need to report this.
+// However, when we're in the process of skipping to a next entry, we need to remain silent about further errors, until we have reached the next entry.
+// Therefore, we will use MaybeReportError with the skippingEntry condition
+func (b *TBibTeXStream) MaybeReportError(message string, context ...any) bool {
+	if !b.skippingEntry {
+		b.ReportError(message, context...)
+	}
+
+	return true
+}
+
+// Dealing with comments.
+func (b *TBibTeXStream) Comments() bool {
+	return b.ThisCharacterWasIn(BibTeXCommentStarters) &&
+		/**/ b.CommentsClausety() &&
+		/*  */ b.ForcedThisTokenWasCharacterIn(BibTeXCommentEnders)
+}
+
+// The actual comment, which could be empty.
+func (b *TBibTeXStream) CommentsClausety() bool {
+	for b.ThisCharacterWasNotIn(BibTeXCommentEnders) {
 		// Skip
 	}
 
 	return true
 }
 
-func (b *TBiBTeXStream) Comments() bool {
-	return b.ThisCharacterWasIn(BiBTeXCommentStarters) &&
-		/**/ b.CommentsClausety() &&
-		/*  */ b.ForcedThisTokenWasCharacterIn(BiBTeXCommentEnders)
-}
-
-func (b *TBiBTeXStream) TeXSpaces() bool {
+// Gobbling up characters that are treated as (a single!) space by TeX.
+func (b *TBibTeXStream) TeXSpaces() bool {
 	result := false
 
-	for b.ThisCharacterWasIn(BiBTeXSpaceCharacters) {
+	for b.ThisCharacterWasIn(BibTeXSpaceCharacters) {
 		result = true
 	}
 
 	return result
 }
 
-func (b *TBiBTeXStream) MoveToToken() bool {
+// Move to the next token, while gobbling up TeXSpaces and Comments.
+func (b *TBibTeXStream) MoveToToken() bool {
 	for b.TeXSpaces() || b.Comments() {
 		// Skip
 	}
@@ -128,34 +196,43 @@ func (b *TBiBTeXStream) MoveToToken() bool {
 	return true
 }
 
-func (b *TBiBTeXStream) ThisTokenIsCharacter(character byte) bool {
+// Check if the present token is equal to the given character.
+// As we're not certain we're already "at" the token, we need to do a MoveToToken first.
+func (b *TBibTeXStream) ThisTokenIsCharacter(character byte) bool {
 	return b.MoveToToken() &&
 		/**/ b.ThisCharacterIs(character)
 }
 
-func (b *TBiBTeXStream) ThisTokenWasCharacter(character byte) bool {
+// Check if the present token is equal to the given character.
+// As we're not certain we're already "at" the token, we need to do a MoveToToken first.
+func (b *TBibTeXStream) ThisTokenWasCharacter(character byte) bool {
 	return b.MoveToToken() &&
 		/**/ b.ThisCharacterWas(character)
 }
 
-func (b *TBiBTeXStream) ForcedThisTokenWasCharacterIn(S TByteSet) bool {
+// The Forced version of ThisTokenWasCharacterIn, with an error message if not found.
+func (b *TBibTeXStream) ForcedThisTokenWasCharacterIn(S TByteSet) bool {
 	return b.ThisCharacterWasIn(S) ||
 		b.MaybeReportError(errorCharacterNotIn, S.String()) ||
 		b.SkipToNextEntry("")
 }
 
-func (b *TBiBTeXStream) ForcedThisTokenWasCharacter(character byte) bool {
+// The Forced version of ThisTokenWasCharacter, with an error message if not found.
+func (b *TBibTeXStream) ForcedThisTokenWasCharacter(character byte) bool {
 	return b.ThisTokenWasCharacter(character) ||
 		b.MaybeReportError(ErrorMissingCharacter, string(character), string(b.ThisCharacter())) ||
 		b.SkipToNextEntry("")
 }
 
-func (b *TBiBTeXStream) CollectCharacterOfNextTokenThatWasIn(characters TByteSet, s *string) bool {
+// Collect characters from the stream that are in a given set.
+// Before doing so, we need to make sure we're at the start of the current ((Bib)TeX) Token.
+func (b *TBibTeXStream) CollectCharacterOfNextTokenThatWasIn(characters TByteSet, s *string) bool {
 	return b.MoveToToken() &&
 		/**/ b.CollectCharacterThatWasIn(characters, s)
 }
 
-func (b *TBiBTeXStream) CharacterSequence(starters, characters TByteSet, sequence *string) bool {
+// Parse a (non-empty) character sequence, where the characters must be from a given set.
+func (b *TBibTeXStream) CharacterSequence(starters, characters TByteSet, sequence *string) bool {
 	result := b.CollectCharacterOfNextTokenThatWasIn(starters, sequence)
 
 	if result {
@@ -167,23 +244,31 @@ func (b *TBiBTeXStream) CharacterSequence(starters, characters TByteSet, sequenc
 	return result
 }
 
-func (b *TBiBTeXStream) GroupedFieldElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
+// Elements (characters, spaces, or nested elements) of field values
+func (b *TBibTeXStream) GroupedFieldElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
 	switch {
+	// Elements nested between { }. For example {\" a} or {KLM}
 	case b.CollectCharacterThatWas(BeginGroupCharacter, content):
 		return b.GroupedContentety(EndGroupCharacter, inTeXMode, content) &&
-			/*    */ b.CollectCharacterThatWas(EndGroupCharacter, content)
+			/* */ b.CollectCharacterThatWas(EndGroupCharacter, content)
 
+	// Elements that involve an escape. For example \", \', or \vdash
 	case b.CollectCharacterThatWas(EscapeCharacter, content):
 		return b.CollectCharacterThatWasThere(content)
 
+	// When inTeXMode, then TeXSpaces count as one space
 	case inTeXMode && b.TeXSpaces():
 		return b.AddCharacter(SpaceCharacter, content)
-	}
 
-	return b.CollectCharacterThatWasNot(groupEndCharacter, content)
+	// Otherwise, collect any character that is not the provided groupEndCharacter
+	// Since LaTeX allows the values of fields to be enclosed by { and }, or by " and ", we need to use this as a parameter.
+	default:
+		return b.CollectCharacterThatWasNot(groupEndCharacter, content)
+	}
 }
 
-func (b *TBiBTeXStream) GroupedContentety(groupEndCharacter byte, inTeXMode bool, content *string) bool {
+// Collect the (grouped) content of a field value.
+func (b *TBibTeXStream) GroupedContentety(groupEndCharacter byte, inTeXMode bool, content *string) bool {
 	for b.GroupedFieldElement(groupEndCharacter, inTeXMode, content) {
 		// Skip
 	}
@@ -191,48 +276,54 @@ func (b *TBiBTeXStream) GroupedContentety(groupEndCharacter byte, inTeXMode bool
 	return true
 }
 
-func (b *TBiBTeXStream) Key(key *string) bool {
-	return b.CharacterSequence(BiBTeXKeyCharacters, BiBTeXKeyCharacters, key)
+// Keys of BibTeX entries
+func (b *TBibTeXStream) Key(key *string) bool {
+	return b.CharacterSequence(BibTeXKeyCharacters, BibTeXKeyCharacters, key)
 }
 
-func (b *TBiBTeXStream) Number(number *string) bool {
-	return b.CharacterSequence(BiBTeXNumberCharacters, BiBTeXNumberCharacters, number)
+// Numbers can be used as field values, without grouping them using { and } or " and "
+func (b *TBibTeXStream) Number(number *string) bool {
+	return b.CharacterSequence(BibTeXNumberCharacters, BibTeXNumberCharacters, number)
 }
 
-func (b *TBiBTeXStream) FieldTypeName(starters, characters TByteSet, nameMap TStringMap, name *string) bool {
+// BibTeX names: i.e. entry types or field names.
+// Both of these need to be normalised towards lowercase characters.
+func (b *TBibTeXStream) BibTeXName(starters, characters TByteSet, nameMap TStringMap, name *string) bool {
 	result := b.CharacterSequence(starters, characters, name)
 
 	*name = strings.ToLower(*name)
 
-	normalized, mapped := nameMap[*name]
-	if mapped {
-		*name = normalized
+	mappedName, isMapped := nameMap[*name]
+	if isMapped {
+		*name = mappedName
 	}
 
 	return result
 }
 
-func (b *TBiBTeXStream) FieldName(nameMap TStringMap, name *string) bool {
-	return b.FieldTypeName(BiBTeXFieldNameStarters, BiBTeXFieldNameCharacters, nameMap, name)
+// Note: we cannot leave this nameMap-ing to the Library functionality, since the mapped name influences the behaviour of the parser.
+
+// FieldNames
+func (b *TBibTeXStream) FieldName(nameMap TStringMap, name *string) bool {
+	return b.BibTeXName(BibTeXFieldNameStarters, BibTeXFieldNameCharacters, nameMap, name)
 }
 
-func (b *TBiBTeXStream) ForcedFieldName(nameMap TStringMap, name *string) bool {
-	return b.FieldName(nameMap, name) ||
-		b.MaybeReportError(ErrorMissingFieldName) ||
-		b.SkipToNextEntry(FieldNameClass)
+// EntryTypes
+func (b *TBibTeXStream) EntryType() bool {
+	return b.BibTeXName(BibTeXEntryTypeStarters, BibTeXEntryTypeCharacters, BibTeXEntryMap, &b.currentEntryTypeName)
 }
 
-func (b *TBiBTeXStream) EntryType() bool {
-	return b.FieldTypeName(BiBTeXEntryTypeStarters, BiBTeXEntryTypeCharacters, BiBTeXEntryMap, &b.currentEntryTypeName)
-}
-
-func (b *TBiBTeXStream) ForcedEntryType() bool {
+// Forced EntryTypes
+func (b *TBibTeXStream) ForcedEntryType() bool {
 	return b.EntryType() ||
 		b.MaybeReportError(ErrorMissingEntryType) ||
 		b.SkipToNextEntry(EntryTypeClass)
 }
 
-func (b *TBiBTeXStream) AddStringDefinition(name string, s *string) bool {
+// We do not "keep" string definitions in BibTeX files we write out.
+// Therefore, string definition need to be added to the parser's administration, and they are not stored in the actual library.
+// So, when the definition of a field value refers to a string definition, the value of that string needs to be added.
+func (b *TBibTeXStream) AddStringDefinition(name string, s *string) bool {
 	value, defined := b.stringMap[name]
 
 	if defined {
@@ -244,7 +335,8 @@ func (b *TBiBTeXStream) AddStringDefinition(name string, s *string) bool {
 	return true
 }
 
-func (b *TBiBTeXStream) FieldValueAdditionety(value *string) bool {
+// Values of the fields of BibTeX entries may be composed. For example: "{Hello} # { } # {World}".
+func (b *TBibTeXStream) FieldValueAdditionety(value *string) bool {
 	switch {
 
 	case b.ThisTokenWasCharacter(AdditionCharacter):
@@ -257,22 +349,26 @@ func (b *TBiBTeXStream) FieldValueAdditionety(value *string) bool {
 	}
 }
 
-func (b *TBiBTeXStream) FieldValue(value *string) bool {
+// Field values
+func (b *TBibTeXStream) FieldValue(value *string) bool {
 	stringName := ""
 
 	switch {
-
+	// A "normal" field value enclosed by { and }
 	case b.ThisTokenWasCharacter(BeginGroupCharacter):
 		return b.GroupedContentety(EndGroupCharacter, TeXMode, value) &&
 			/* */ b.ForcedThisTokenWasCharacter(EndGroupCharacter)
 
+	// A "normal" field value enclosed by " and "
 	case b.ThisTokenWasCharacter(DoubleQuotesCharacter):
 		return b.GroupedContentety(DoubleQuotesCharacter, TeXMode, value) &&
 			/* */ b.ForcedThisTokenWasCharacter(DoubleQuotesCharacter)
 
-	case b.FieldName(BiBTeXEmptyNameMap, &stringName):
+	// The reference to a string definition.
+	case b.FieldName(BibTeXEmptyNameMap, &stringName):
 		return b.AddStringDefinition(stringName, value)
 
+	// A (non enclosed) number.
 	default:
 		return b.Number(value)
 	}
@@ -280,111 +376,117 @@ func (b *TBiBTeXStream) FieldValue(value *string) bool {
 	return false
 }
 
-func (b *TBiBTeXStream) ForcedFieldValue(value *string) bool {
+// Forced FieldValue
+func (b *TBibTeXStream) ForcedFieldValue(value *string) bool {
 	return b.FieldValue(value) ||
 		b.MaybeReportError(ErrorMissingFieldValue) ||
 		b.SkipToNextEntry(FieldValueClass)
 }
 
-func (b *TBiBTeXStream) RecordFieldAssignment(fieldName, fieldValue string, fieldMap TStringMap, fieldNames TStringSet) bool {
-	fieldMap[fieldName] = fieldValue
-
-	//	if fieldNames != nil {
-	//		fieldNames[fieldName] = true
-	//	}
-	fieldNames.Add(fieldName)
-
-	return true
-}
-
-func (b *TBiBTeXStream) ForcedFieldDefinitionProper(fieldName string, nameMap TStringMap, fieldMapper TMapField) bool {
+// Forced FieldDefinitionBody
+func (b *TBibTeXStream) ForcedFieldDefinitionBody(fieldName string, nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
 	fieldValue := ""
 
 	return b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
 		/**/ b.ForcedFieldValue(&fieldValue) &&
 		/*  */ b.FieldValueAdditionety(&fieldValue) &&
-		/*    */ fieldMapper(fieldName, fieldValue)
+		/*    */ fieldAssigner(fieldName, fieldValue)
 }
 
-func (b *TBiBTeXStream) FieldDefinitionety(nameMap TStringMap, fieldMapper TMapField) bool {
+// The FieldDefinition.
+// We do allow for empty field definitions, when the BibTeXFile e.g. contains ", ," in the middel, or ", }" at the end.
+func (b *TBibTeXStream) FieldDefinitionety(nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
 	fieldName := ""
 
 	return b.FieldName(nameMap, &fieldName) &&
-		/**/ b.ForcedFieldDefinitionProper(fieldName, nameMap, fieldMapper) ||
+		/**/ b.ForcedFieldDefinitionBody(fieldName, nameMap, fieldAssigner) ||
 		true
 }
 
-func (b *TBiBTeXStream) FieldDefinitionsety(nameMap TStringMap, fieldMapper TMapField) bool {
-	b.FieldDefinitionety(nameMap, fieldMapper)
+// A sequence of FieldDefinitions, separated by a ","
+func (b *TBibTeXStream) FieldDefinitionsety(nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
+	b.FieldDefinitionety(nameMap, fieldAssigner)
 
 	for b.ThisTokenWasCharacter(CommaCharacter) {
-		b.FieldDefinitionety(nameMap, fieldMapper)
+		b.FieldDefinitionety(nameMap, fieldAssigner)
 	}
 
 	return true
 }
 
-func (b *TBiBTeXStream) EntryBodyProper() bool {
+// EntryDefinitionBodies.
+// Depending on the EntryType, we need to allow for four variations.
+func (b *TBibTeXStream) EntryDefinitionBody() bool {
 	switch b.currentEntryTypeName {
+
+	// LaTeX preambles.
+	// For the moment, we actually completely ignore these.
 	case PreambleEntryType:
 		ignore := ""
 		return b.GroupedContentety(EndGroupCharacter, TeXMode, &ignore)
 
+	// Comments.
+	// As BibDesk uses the comments to store static group, etc, we cannot ignore these.
+	// In future versions, we would actually need to parse these, while switching to XML mode.
 	case CommentEntryType:
 		comment := ""
 		return b.GroupedContentety(EndGroupCharacter, !TeXMode, &comment) &&
 			/**/ b.library.AddComment(comment)
 
+	// String definitions.
 	case StringEntryType:
-		return b.FieldDefinitionsety(BiBTeXEmptyNameMap, b.AssignString)
+		return b.FieldDefinitionsety(BibTeXEmptyNameMap, b.AssignString)
 
+	// Regular entries.
 	default:
 		key := ""
 		return b.Key(&key) &&
-			// Encapsulate this library. stuff
-			/**/
-			b.library.StartRecordingLibraryEntry(key, b.currentEntryTypeName) &&
-			/*  */ b.FieldDefinitionsety(BiBTeXFieldMap, b.library.AssignField) &&
+			/**/ b.library.StartRecordingLibraryEntry(key, b.currentEntryTypeName) &&
+			/*  */ b.FieldDefinitionsety(BibTeXFieldMap, b.library.AssignField) &&
 			/*    */ b.library.FinishRecordingLibraryEntry()
 	}
 }
 
-func (b *TBiBTeXStream) ForcedEntryBodyProper() bool {
-	return b.EntryBodyProper() ||
+// ForcedEntryDefinitionBody
+func (b *TBibTeXStream) ForcedEntryDefinitionBody() bool {
+	return b.EntryDefinitionBody() ||
 		b.MaybeReportError(ErrorMissingEntryBody) ||
 		b.SkipToNextEntry(EntryBodyClass)
 }
 
-func (b *TBiBTeXStream) Entry() bool {
+// The actual Entries
+func (b *TBibTeXStream) Entry() bool {
 	b.currentEntryTypeName = ""
 
 	return b.ThisTokenWasCharacter(EntryStartCharacter) &&
 		/**/ b.ForcedEntryType() &&
 		/*  */ b.ForcedThisTokenWasCharacter(BeginGroupCharacter) &&
-		/*    */ b.ForcedEntryBodyProper() &&
+		/*    */ b.ForcedEntryDefinitionBody() &&
 		/*      */ b.ForcedThisTokenWasCharacter(EndGroupCharacter)
 }
 
-func (b *TBiBTeXStream) Entriesety() bool {
-	// b.StartRecordingToLibrary() should encapsulate this.
-	b.library.StartRecordingToLibrary()
-
+// The possibly empty series of Entries included in tha BibTeX file.
+func (b *TBibTeXStream) Entriesety() bool {
 	for b.Entry() {
+		// Reset this to false after each (possibly skipped) entry
 		b.skippingEntry = false
 	}
-
-	b.library.FinishRecordingToLibrary()
 
 	return true
 }
 
-func (b *TBiBTeXStream) ParseBiBFile(file string) bool {
+// Opening a BibTeX file, and then parse it (and add it to the selected Library.)
+func (b *TBibTeXStream) ParseBibFile(file string) bool {
 	return b.ForcedTextfileOpen(file, ErrorOpeningFile) &&
-		/**/ b.Entriesety()
+		/**/ b.library.StartRecordingToLibrary() &&
+		/*  */ b.Entriesety() &&
+		/*    */ b.library.FinishRecordingToLibrary()
 }
 
+// Things to be initialised
 func init() {
-	BiBTeXRuneMap = TRuneMap{
+	// Define the RuneMap for the BibTeX parser.
+	BibTeXRuneMap = TRuneMap{
 		'À': "{\\`A}",
 		'Á': "{\\'A}",
 		'Â': "{\\^A}",
@@ -523,38 +625,42 @@ func init() {
 		'®': "{\textregistered}",
 	}
 
-	BiBTeXSpaceCharacters.Add(
+	// Characters that count as spaces from a TeX perspective.
+	BibTeXSpaceCharacters.Add(
 		SpaceCharacter, NewlineCharacter, BackspaceCharacter, BellCharacter,
 		CarriageReturnCharacter, FormFeedCharacter, TabCharacter,
 		VerticalTabCharacter).TreatAsCharacters()
 
-	BiBTeXCommentStarters.Add(PercentCharacter).TreatAsCharacters()
+	// Start of comments.
+	BibTeXCommentStarters.Add(PercentCharacter).TreatAsCharacters()
 
-	BiBTeXCommentEnders.Add(NewlineCharacter).TreatAsCharacters()
+	// End of comments.
+	BibTeXCommentEnders.Add(NewlineCharacter).TreatAsCharacters()
 
-	BiBTeXNumberCharacters.AddString("0123456789").TreatAsCharacters()
+	// Numbers
+	BibTeXNumberCharacters.AddString("0123456789").TreatAsCharacters()
 
-	BiBTeXKeyCharacters.AddString(
+	// Characters allowed in BibTeX keys
+	BibTeXKeyCharacters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 			"0123456789" +
 			"<>()[];|!*+?&#$-_:/.'`").TreatAsCharacters()
 
-	BiBTeXFieldNameStarters.AddString(
+	// Characters allowed at the start of field names
+	BibTeXFieldNameStarters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
 			"-_").TreatAsCharacters()
 
-	BiBTeXFieldNameCharacters = BiBTeXFieldNameStarters
-	BiBTeXFieldNameCharacters.Unite(BiBTeXNumberCharacters)
+	// Characters allowed in the remainder of field names
+	BibTeXFieldNameCharacters.Unite(BibTeXFieldNameStarters).Unite(BibTeXNumberCharacters).TreatAsCharacters()
 
-	BiBTeXEntryTypeStarters.AddString(
+	// Characters allowed at the start of entry types
+	BibTeXEntryTypeStarters.AddString(
 		"abcdefghijklmnopqrstuvwxyz" +
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ").TreatAsCharacters()
 
-	BiBTeXEntryTypeCharacters.AddString(
-		"abcdefghijklmnopqrstuvwxyz" +
-			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
-			"0123456789" +
-			"-_").TreatAsCharacters()
+	// Characters allowed in the remainder of field names
+	BibTeXEntryTypeCharacters.Unite(BibTeXFieldNameCharacters).TreatAsCharacters()
 }

@@ -27,7 +27,7 @@ import (
 // For the moment, the preferred aliases are stored in a separate file.
 // Later, these will simply be the first entry in a "aliases" field in the BIB file.
 // Once we've reached that point, we can integrate this check into the regular checks per field.
-func (l *TBiBTeXLibrary) CheckPreferredAliases() {
+func (l *TBibTeXLibrary) CheckPreferredAliases() {
 	for key, alias := range l.preferredAliases {
 		if !CheckPreferredAlias(alias) {
 			l.Warning(WarningBadAlias, alias, key)
@@ -51,7 +51,7 @@ func (l *TBiBTeXLibrary) CheckPreferredAliases() {
 
 // Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced entry.
 // These dblp fields are important for the future functionality of syncing with the dblp.org database.
-func (l *TBiBTeXLibrary) CheckDBLPAliases() {
+func (l *TBibTeXLibrary) CheckDBLPAliases() {
 	for alias, key := range l.deAlias {
 		if strings.Index(alias, "DBLP:") == 0 {
 			dblp := alias[5:]
@@ -68,7 +68,7 @@ func (l *TBiBTeXLibrary) CheckDBLPAliases() {
 
 // Quick and dirty reading of the keys.map and preferred.aliases file.
 // As soon as we're finished with the legacy migration, we can integrate the aliases into the bib file.
-func (l *TBiBTeXLibrary) ReadLegacyAliases() {
+func (l *TBibTeXLibrary) ReadLegacyAliases() {
 	file, err := os.Open(KeysMapFile)
 	if err != nil {
 		log.Fatal(err)
@@ -107,7 +107,7 @@ func (l *TBiBTeXLibrary) ReadLegacyAliases() {
 // Quick and dirty write-out of:
 // - the preferred.aliases and keys.map files
 // - the creation of the "mapping" folders to enable the old scripts to still do their work
-func (l *TBiBTeXLibrary) WriteLegacyAliases() {
+func (l *TBibTeXLibrary) WriteLegacyAliases() {
 	fmt.Println("Writing preferred aliases")
 
 	BackupFile(PreferredAliasesFile)

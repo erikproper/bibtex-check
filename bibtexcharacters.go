@@ -1,7 +1,7 @@
 //
 // Module: bibtexcharacters
 //
-// This module defines characters and character sets that are needed for the parsing of BiBTeX files.
+// This module defines characters and character sets that are needed for the parsing of BibTeX files.
 //
 // Creator: Henderik A. Proper (erikproper@fastmail.com)
 //

@@ -1,7 +1,7 @@
 //
 // Module: bibtexwriting
 //
-// This module is adds the functionality (for TBiBTeXLibrary) to write out BiBTeX files
+// This module is adds the functionality (for TBibTeXLibrary) to write out BibTeX files
 //
 // Creator: Henderik A. Proper (erikproper@fastmail.com)
 //
@@ -15,11 +15,11 @@ import (
 	"os"
 )
 
-// Does what its name says ... writing the library to the provided BiBTeX file
+// Does what its name says ... writing the library to the provided BibTeX file
 // Notes:
 // - As we ignore preambles, these are not written.
 // - When we start managing the groups (of keys) the way Bibdesk does, we need to ensure that their embedded as an XML structure embedded in a comment, is updated.
-func (l *TBiBTeXLibrary) WriteBiBTeXFile(fileName string) bool {
+func (l *TBibTeXLibrary) WriteBibTeXFile(fileName string) bool {
 	BackupFile(fileName)
 
 	bibFile, err := os.Create(fileName)

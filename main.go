@@ -5,11 +5,14 @@ import (
 	"fmt"
 )
 
+// Remove this one as soon as we have migrated the legacy files
 const AllowLegacy = true
 
 /// Add comments + inspect + cleaning ...
 /// clean IO in this file as well. Add a "Progress" channel.
+
 /// Are PDF downloaded automatically??
+
 // Fix/merge notes and this into a Work.txt
 
 // Checks on ErikProper.bib:
@@ -65,6 +68,9 @@ const AllowLegacy = true
 /// -  name from bibtext
 /// - Use normalised string representatation to lookup in a string to string map
 
+/// Title normalisation: ": AA" => ": {AA}"
+/// Title normalisation: "-- AA" => "-- {AA}"
+
 /// Merging legacy:
 /// 1: Cluster based on mapped IDs
 ///   - Cleanup old libs:
@@ -119,53 +125,49 @@ const AllowLegacy = true
 /// https://pkg.go.dev/slices
 /// https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/slices/slices.go
 
-var Library TBiBTeXLibrary
+var Library TBibTeXLibrary
 
 const (
-	BiBTeXFolder         = "/Users/erikproper/BiBTeX/"
-	PreferredAliasesFile = BiBTeXFolder + "preferred.aliases"
-	KeysMapFile          = BiBTeXFolder + "keys.map"
-	PreferredAliases     = BiBTeXFolder + "PreferredAliases"
-	AliasKeys            = BiBTeXFolder + "Keys"
-	ErikProperBib        = BiBTeXFolder + "ErikProper.bib"
-	NewBib               = BiBTeXFolder + "New.bib"
+	BibTeXFolder         = "/Users/erikproper/BibTeX/"
+	PreferredAliasesFile = BibTeXFolder + "preferred.aliases"
+	KeysMapFile          = BibTeXFolder + "keys.map"
+	PreferredAliases     = BibTeXFolder + "PreferredAliases"
+	AliasKeys            = BibTeXFolder + "Keys"
+	ErikProperBib        = BibTeXFolder + "ErikProper.bib"
+	NewBib               = BibTeXFolder + "New.bib"
 )
 
 func main() {
 	Reporting := TInteraction{}
 
-	Library = TBiBTeXLibrary{}
-	Library.Initialise(Reporting, true)
-	Library.legacyMode = false
+	Library = TBibTeXLibrary{}
+	Library.Initialise(Reporting)
 	Library.ReadLegacyAliases()
 
-	OldLibrary := TBiBTeXLibrary{}
-	OldLibrary.Initialise(Reporting, false)
+	OldLibrary := TBibTeXLibrary{}
+	OldLibrary.Initialise(Reporting)
 	OldLibrary.legacyMode = true
 	OldLibrary.ReadLegacyAliases()
 
-	fmt.Println(Library.NewKey())
-	fmt.Println(Library.NewKey())
-
 	fmt.Println("Reading main library")
-	BiBTeXParser := TBiBTeXStream{}
-	BiBTeXParser.Initialise(Reporting, &Library)
-	BiBTeXParser.ParseBiBFile(ErikProperBib)
+	BibTeXParser := TBibTeXStream{}
+	BibTeXParser.Initialise(Reporting, &Library)
+	BibTeXParser.ParseBibFile(ErikProperBib)
 	fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
 
 	Library.CheckPreferredAliases()
 	Library.CheckDBLPAliases()
 
 	//	fmt.Println("Reading old libraries")
-	//	BiBTeXParser.Initialise(Reporting, OldLibrary)
+	//	BibTeXParser.Initialise(Reporting, &OldLibrary)
 	//  NOTE: Ignore DSK fields. Only use file fields. If the file is there.
 	//  Maybe import date-added/modified fields, if not exists yet.
 	//
-	//	BiBTeXParser.ParseBiBFile("/Users/erikproper/BiBTeX/Old/ErikProper.bib")
-	//	BiBTeXParser.ParseBiBFile("/Users/erikproper/BiBTeX/Old/Old.bib")
+	//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/ErikProper.bib")
+	//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/Old.bib")
 	//
-	//	BiBTeXParser.ParseBiBFile("Convert.bib")
-	//	BiBTeXParser.ParseBiBFile("/Users/erikproper/BiBTeX/MyLibrary.bib")
+	//	BibTeXParser.ParseBiBFile("Convert.bib")
+	//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/MyLibrary.bib")
 	//	fmt.Println("Size old:", len(OldLibrary.entryType))
 
 	//	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
@@ -175,13 +177,8 @@ func main() {
 	//	fmt.Printf("%q\n", Start)
 
 	fmt.Println("Exporting updated library", ErikProperBib)
-	Library.WriteBiBTeXFile(ErikProperBib)
+	Library.WriteBibTeXFile(ErikProperBib)
 	Library.WriteLegacyAliases()
-
-	fmt.Println(Library.NewKey())
-	fmt.Println(Library.NewKey())
-	fmt.Println(Library.NewKey())
-	fmt.Println(Library.NewKey())
 
 	// log import ...
 	//

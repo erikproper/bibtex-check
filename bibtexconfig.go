@@ -1,7 +1,7 @@
 //
 // Module: bibtexconfig
 //
-// This module is concerned with general configuration parameters for handling BiBTeX libraries.
+// This module is concerned with general configuration parameters for handling BibTeX libraries.
 // Some of the things as presently set may be (partially) moved to a config file that is read when the application is started.
 // These are marked with (*)
 //
@@ -13,52 +13,56 @@
 package main
 
 var (
-	BiBTeXAllowedEntryFields map[string]TStringSet // Per entry type, the allowed field
-	BiBTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
-	BiBTeXAllowedEntries     TStringSet            // Aggregation of the allowed entries.
-	BiBTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
-	BiBTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
-	BiBTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BiBTeX file
+	BibTeXAllowedEntryFields map[string]TStringSet // Per entry type, the allowed field
+	BibTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
+	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entries.
+	BibTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
+	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
+	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
 )
 
 // The prefix used for the generated keys
 // (*) Should go into a config file.
 const KeyPrefix = "EP"
 
+// When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field
+// To avoid confusion with normal fields, use "illegal" field names
+const EntryTypeField = "$entry-type$"
+
 // Add the allowed fields for an entry, while updating the aggregations of allowed entries and fields.
 func AddAllowedEntryFields(entry string, fields ...string) {
-	BiBTeXAllowedEntries.Add(entry)
+	BibTeXAllowedEntries.Add(entry)
 
 	for _, field := range fields {
-		BiBTeXAllowedFields.Add(field)
+		BibTeXAllowedFields.Add(field)
 
-		_, exists := BiBTeXAllowedEntryFields[entry]
+		_, exists := BibTeXAllowedEntryFields[entry]
 		if !exists {
-			BiBTeXAllowedEntryFields[entry] = TStringSetNew()
+			BibTeXAllowedEntryFields[entry] = TStringSetNew()
 		}
-		BiBTeXAllowedEntryFields[entry].Set().Add(field)
+		BibTeXAllowedEntryFields[entry].Set().Add(field)
 	}
 }
 
 // Add the provided allowed fields to all of the (known so-far) allowed entries
 func AddAllowedFields(fields ...string) {
-	for entry := range BiBTeXAllowedEntries.Elements() {
+	for entry := range BibTeXAllowedEntries.Elements() {
 		AddAllowedEntryFields(entry, fields...)
 	}
 }
 
 // Add an alias/correction for the provided entry
 func AddEntryAlias(entry, alias string) {
-	BiBTeXEntryMap[entry] = alias
+	BibTeXEntryMap[entry] = alias
 }
 
 // Add an alias/correction for the provided field
 func FieldAlias(field, alias string) {
-	BiBTeXFieldMap[field] = alias
+	BibTeXFieldMap[field] = alias
 }
 
 func init() {
-	BiBTeXDefaultStrings = TStringMap{
+	BibTeXDefaultStrings = TStringMap{
 		"jan": "January",
 		"feb": "February",
 		"mar": "March",
@@ -73,10 +77,10 @@ func init() {
 		"dec": "December",
 	}
 
-	BiBTeXAllowedEntryFields = map[string]TStringSet{}
+	BibTeXAllowedEntryFields = map[string]TStringSet{}
 
-	BiBTeXAllowedEntries.Initialise()
-	BiBTeXAllowedFields.Initialise()
+	BibTeXAllowedEntries.Initialise()
+	BibTeXAllowedFields.Initialise()
 
 	AddAllowedEntryFields(
 		"article", "journal", "volume", "number", "pages", "month", "issn")
@@ -126,28 +130,31 @@ func init() {
 	// It makes sense to allow a config file to add to these, and move some of the above to this config file as well.
 	// For instance "researchgate" and "urloriginal"
 
-	BiBTeXEntryMap = TStringMap{}
-	BiBTeXEntryMap["conference"] = "inproceedings"
+	BibTeXEntryMap = TStringMap{}
+	BibTeXEntryMap["conference"] = "inproceedings"
 	// (*) The above one is an official alias.
 	// The ones below are not, and should be moved to a config file.
-	BiBTeXEntryMap["softmisc"] = "misc"
-	BiBTeXEntryMap["patent"] = "misc"
-	BiBTeXEntryMap["unpublished"] = "misc"
+	BibTeXEntryMap["softmisc"] = "misc"
+	BibTeXEntryMap["patent"] = "misc"
+	BibTeXEntryMap["unpublished"] = "misc"
 
-	BiBTeXFieldMap = TStringMap{}
-	// (*) These ones should all be moved to a config file.
-	BiBTeXFieldMap["editors"] = "editor"
-	BiBTeXFieldMap["authors"] = "author"
-	BiBTeXFieldMap["contributor"] = "author"
-	BiBTeXFieldMap["contributors"] = "author"
-	BiBTeXFieldMap["ee"] = "url"
+	BibTeXFieldMap = TStringMap{}
+	// (*) The ones below should all be moved to a config file.
+	BibTeXFieldMap["editors"] = "editor"
+	BibTeXFieldMap["authors"] = "author"
+	BibTeXFieldMap["contributor"] = "author"
+	BibTeXFieldMap["contributors"] = "author"
+	BibTeXFieldMap["ee"] = "url"
+	BibTeXFieldMap["language"] = "langid"
 
 	// We probably want to get rid of these, as soon as we're finished with the legacy migration.
 	// Although the "_" seems to occur in "harvested" libraries as well.
 	if AllowLegacy {
-		for field := range BiBTeXAllowedFields.Elements() {
-			BiBTeXFieldMap["x"+field] = field
-			BiBTeXFieldMap["_"+field] = field
+		AddAllowedFields("file")
+
+		for field := range BibTeXAllowedFields.Elements() {
+			BibTeXFieldMap["x"+field] = field
+			BibTeXFieldMap["_"+field] = field
 		}
 	}
 }
