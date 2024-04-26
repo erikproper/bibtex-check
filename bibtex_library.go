@@ -1,5 +1,5 @@
 //
-// Module: bibtexlibrary
+// Module: bibtex_library
 //
 // This module is concerned with the storage of BibTeX libraties
 //
@@ -256,14 +256,6 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 		}
 	}
 
-	/////////// HERE!!!
-	// Implicitly add dblp to the aliases.
-	// After the legacy migration, we may want to do this more elegantly
-	//////////////////////////////
-	if field == "dblp" && !l.legacyMode {
-		l.AddKeyAlias("DBLP:"+l.entryFields[l.currentKey][field], l.currentKey)
-	}
-
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {
 		l.illegalFields.Add(field)
@@ -274,6 +266,10 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 
 // Finish recording the current library entry
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
+	/////////// HERE!!!
+	/////////// HERE!!!
+	/////////// HERE!!!
+	/////////// HERE!!!
 
 	///   if resulting field is AllowedFields, but not in AllowedFields list for this type
 	///      then warning

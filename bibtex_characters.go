@@ -1,5 +1,5 @@
 //
-// Module: bibtexcharacters
+// Module: bibtex_characters
 //
 // This module defines characters and character sets that are needed for the parsing of BibTeX files.
 //

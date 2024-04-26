@@ -1,5 +1,5 @@
 //
-// Module: bibtexwriting
+// Module: bibtex_library_writing
 //
 // This module is adds the functionality (for TBibTeXLibrary) to write out BibTeX files
 //

@@ -1,5 +1,5 @@
 //
-// Module: bibtexwriting
+// Module: bibtex_writing
 //
 // This module is defines the TBibTeXStream type as a parser of BibTeX entries
 //
