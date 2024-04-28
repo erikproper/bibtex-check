@@ -84,10 +84,17 @@ func Titles(title string) {
 }
 
 func ISBN (rawISBN string) string {
-	var trimISBNStart = regexp.MustCompile(`^ *ISBN[-]*[1,0,3]*[:*] *`)
+	var (
+		trimISBNStart = regexp.MustCompile(`^ *ISBN[-]*[1,0,3]*[:*] *`)
+		validISBN10 = regexp.MustCompile(`^[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9,X]$`)
+		validISBN13 = regexp.MustCompile(`^[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9,X]$`)
+	)
 
 	trimmedISBN := strings.TrimSpace(trimISBNStart.ReplaceAllString(rawISBN, ""))
 	
+	fmt.Println(validISBN10.MatchString(trimmedISBN))
+	fmt.Println(validISBN13.MatchString(trimmedISBN))
+
 	return trimmedISBN
 }
 
@@ -97,8 +104,9 @@ func main() {
 	// validID.MatchString("adam[23]")
 	fmt.Println(ISBN(" ISBN10:  123-45 "),"!")
 	fmt.Println(ISBN(" ISBN-10: 123-45 "),"!")
-	fmt.Println(ISBN(" ISBN-13: 123-45 "),"!")
-	fmt.Println(ISBN(" ISBN: 123-45 "),"!")
+	fmt.Println(ISBN(" ISBN-13: 9782839905800 "),"!")
+	fmt.Println(ISBN(" ISBN: 0805836098 "),"!")
+	fmt.Println(ISBN(" ISBN 0805836098 "),"!")
 
 //	strings.TrimSpace
 		// Play
