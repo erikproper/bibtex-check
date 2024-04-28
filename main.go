@@ -95,10 +95,10 @@ func main() {
 	if Play {
 	
 	// validID.MatchString("adam[23]")
-	fmt.Println(ISBN(" ISBN10:  123-45 "))
-	fmt.Println(ISBN(" ISBN-10: 123-45 "))
-	fmt.Println(ISBN(" ISBN-13: 123-45 "))
-	fmt.Println(ISBN(" ISBN: 123-45 "))
+	fmt.Println(ISBN(" ISBN10:  123-45 ","!"))
+	fmt.Println(ISBN(" ISBN-10: 123-45 ","!"))
+	fmt.Println(ISBN(" ISBN-13: 123-45 ","!"))
+	fmt.Println(ISBN(" ISBN: 123-45 ","!"))
 
 //	strings.TrimSpace
 		// Play
