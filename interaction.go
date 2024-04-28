@@ -12,7 +12,11 @@
 
 package main
 
-import "fmt"
+import (
+	"bufio"
+	"fmt"
+	"os"
+)
 
 type TInteraction struct{}
 
@@ -30,6 +34,18 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 	fmt.Printf("WARNING:  "+warning+".\n", context...)
 
 	return true
+}
+
+// Reporting warnings that involve a choice on how to proceed.
+// The warning message should provide the formatting.
+func (r *TInteraction) WarningBoolQuestion(question, warning string, context ...any) bool {
+	r.Warning(warning, context...)
+	fmt.Printf("QUESTION: " + question + " (y/n): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	char, _, _ := reader.ReadRune()
+
+	return char == 'y'
 }
 
 // Reporting progres.

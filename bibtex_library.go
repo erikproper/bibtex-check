@@ -24,6 +24,8 @@ const (
 	WarningPreferredNotExist  = "Can't select a non existing alias %s as preferred alias"
 	WarningAliasTargetIsAlias = "Alias %s has a target $s, which is actually an alias for $s"
 	WarningBadAlias           = "Alias %s for %s does not comply to the rules"
+	WarningIllegalField       = "Field \"%s\", with value \"%s\", is not allowed for entry %s of type %s"
+	QuestionIgnore            = "Ignore this field?"
 )
 
 // As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
@@ -37,6 +39,7 @@ type (
 
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
+		files            string                // Path to root of folder with PDF files of the entries
 		comments         []string              // The comments included in a BibTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		entryFields      map[string]TStringMap // Per entry key, the fields associated to the actual entries.
 		entryType        TStringMap            // Per entry key, the type of the enty.
@@ -103,6 +106,12 @@ func CheckPreferredAlias(alias string) bool {
 	}
 
 	return post_year > 0
+}
+
+func (l *TBibTeXLibrary) SetFilePath(path string) bool {
+	l.files = path
+
+	return true
 }
 
 // Generate a new key based on the KeyTime.
@@ -180,6 +189,7 @@ func (l *TBibTeXLibrary) AddPreferredAlias(alias string) {
 
 // Initialise a library
 func (l *TBibTeXLibrary) Initialise(reporting TInteraction) {
+	l.files = ""
 	l.comments = []string{}
 	l.entryFields = map[string]TStringMap{}
 	l.entryType = TStringMap{}
@@ -266,14 +276,18 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 
 // Finish recording the current library entry
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
-	/////////// HERE!!!
-	/////////// HERE!!!
-	/////////// HERE!!!
-	/////////// HERE!!!
-
-	///   if resulting field is AllowedFields, but not in AllowedFields list for this type
-	///      then warning
-	///
+	if !l.legacyMode {
+		// Check if no illegal fields were used
+		key := l.currentKey
+		entryType := l.entryType[key]
+		for field, value := range l.entryFields[key] {
+			if !BibTeXAllowedEntryFields[entryType].Set().Contains(field) {
+				if l.WarningBoolQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entryType) {
+					delete(l.entryFields[key], field)
+				}
+			}
+		}
+	}
 
 	return true
 }

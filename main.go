@@ -1,129 +1,15 @@
 package main
 
 import (
-	//	"encoding/base64"
+	"strings"
 	"fmt"
+	"regexp"
 )
 
 // Remove this one as soon as we have migrated the legacy files
 const AllowLegacy = true
 
-/// Add comments + inspect + cleaning ...
-/// clean IO in this file as well. Add a "Progress" channel.
-
-/// Are PDF downloaded automatically??
-
-// Fix/merge notes and this into a Work.txt
-
-// Checks on ErikProper.bib:
-// - Enable level of checks (legacy/import versus ErikProper.bib)
-//   Make these tests (also on double entries) switchable via explicit functions.
-//   So, not a list of true/false when initializing.
-/////// CHECK legacy mode
-// - Test AllowedXX on entries and fields
-// - BIBDESK files
-// -BIBDESK URLs vs URLs
-// - Crossrefs
-// - Redundancy of URLs vs DOIs
-//   - If DOI exists and suffix to doi/handle URL, then drop the URL
-//   - If DOI URL exists, then convert to doi (doi.acm.org, dx.doi.org doi.ieeecomputersociety.org ||
-// - Auto download for ceur PDFs?
-
-/// map[string]func()
-/// (l Lib) func ProcessXXX { works on XXX field of current entry }
-/// Check file for bibdsk
-/// FILE 82CVJ2UD for files ...
-/// when BiBDesk opened libary has a local-url, then warn.
-/// when BiBDesk opened libary has a file, then warn, and try to fix.
-
-/// check.files BIBDSK bi-directional!
-/// ISBN/ISSN should not contain spaces
-
-/// Kind[field] = Which kind of cleaning/nornalisation needed
-/// Should also go into config.go
-
-/// Check consistency of fields and their use.
-/// When assigning a func to a field, this field must be allowed
-
-/// For aliases to new keys ... check if the entry is there ...
-
-// Clean KEY/Types
-// Do Keymapper first before legacy import
-// Then cross check Key/Types again on legacy files
-// Then balance key/types between current and legacy
-// Then start on the rest matching legacy and new
-
-/// organization field ... "abused" as publisher in proceedings??
-
-/// First App
-/// Field specific normalisation/cleaning
-/// - (Book)titles, series,
-/// - addresses
-/// - institutions
-/// - Person names
-/// - Pages
-
-/// Reading person names:
-/// - Read names file first {<name>} {<alias>}
-/// -  name from bibtext
-/// - Use normalised string representatation to lookup in a string to string map
-
-/// Title normalisation: ": AA" => ": {AA}"
-/// Title normalisation: "-- AA" => "-- {AA}"
-
-/// Merging legacy:
-/// 1: Cluster based on mapped IDs
-///   - Cleanup old libs:
-///     - doi = {http://dx.doi.org
-///	    - ee = {http://dx.doi.org/10.1007/978-3-642-31134-5{$_{4}$}},
-///     - opturl _url bdsk-url-1 bdsk-url-2 citeulike-linkout-0 citeulike-linkout-1 doi ee eprint(!!!!) opturl uri url xbdsk-url-1 xurl
-///     - citeulike-linkout-?
-///     - eprint = {http://dx.doi.org/10.1108/TLO-09-2013-0048}
-///   - doi prefixes: doi.acm.org doi.apa.org doi.ieeecomputersociety.org doi.org dx.doi.org
-///   - Ensure it is possible to do this comparison/update to ErikProper.bib's library as well as a future migration library.
-///   - Work with a per entry LibX.EntryA to LibY.EntryB mapper where one is the challenger, and the other is the master so-far.
-///   - Check missing information towards ErikProper.bib like presently
-///   - Do so, in a file-per-file way.
-///   - So, only include the presently included fields.
-///   - Create an OK file with "<id> <field> <md5_1> <md5_2>"
-///     - The first md5 is the present one from the champion.
-///     - The second md5 is the rejected one from the challenger
-///   ==> Now stop using the check.metadata script
-/// 2: Cluster based on mapped IDs
-///   - Check missing information towards ErikProper.bib with more fields
-///   - If entry is prefix of the other, take the longer one
-///   - Compare normalised name fields
-///   - Compare normalised title fields
-///   - Other strategies?
-/// 3: Cluster the entries from the legacy sources based keys
-///   - Read/write a migration.map file
-///   - For each key with mapping to ErikProper.bib:
-///     - Create a temporary ID
-///     - Add key mapping (also export to migration.map)
-///     - "Sync" to the Migrate Library in the same way as for ErikProper.bib
-///     - In doing so, add to the OK file as well.
-/// 4: Cluster the clustered entries based on additional heuristics
-///     - Titles, authors, etc. Requires user decision.
-///     - Requires the ability to change the alias to IDs mapping for the "winners"
-///     - Define the champion, and challenge this one from the old clustered entry.
-/// 5: Once stable, add the final new IDs to ErikProper.bib and extend the keys.map file accordingly
-///     - NOTE: Also rename the targets in keys.map that are now actually aliases!!
-/// 6: Re-use these techniques to look for doubles in ErikProper.bib
-
-/// BEFORE introducing Aliases and the first one as preferred alias ....
-/// Start using sequences for entries and the fields in general.
-/// SequenceOfXX = struct{ members map[XX]bool, Element []XX }
-/// s.Add(elements... XX)
-/// s.AddAt(i int, elements... XX)
-/// s.InsertAt(i int, t SeqOfXX)
-/// s.Concat
-/// s.Contains(elements... XX)
-/// s.ContainsSet(t SetOfXX)
-/// s.ContainsSequence(t SeqOfXX)
-/// s.Sequence() = range of index, elements
-/// s.Elements() = range of elements
-/// https://pkg.go.dev/slices
-/// https://cs.opensource.google/go/go/+/refs/tags/go1.22.2:src/slices/slices.go
+const Play = true
 
 var Library TBibTeXLibrary
 
@@ -137,50 +23,150 @@ const (
 	NewBib               = BibTeXFolder + "New.bib"
 )
 
+func Titles(title string) {
+	nesting := 0
+	normalised := map[int]string{}
+	inSpaces := true
+	needsProtection := false
+
+	fmt.Println("---")
+
+	normalised[nesting] = ""
+	for _, character := range title {
+		if character == '{' {
+			nesting++
+			normalised[nesting] = ""
+		} else if character == '}' {
+			normalised[nesting-1] += normalised[nesting]
+			nesting--
+		} else if character == ' ' && inSpaces {
+			// Skip
+		} else if character == ' ' && !inSpaces {
+			if needsProtection {
+				normalised[nesting-1] += "[" + normalised[nesting] + "]"
+			} else {
+				normalised[nesting-1] += normalised[nesting]
+			}
+			normalised[nesting-1] += " "
+			needsProtection = false
+			nesting--
+			inSpaces = true
+		} else if inSpaces {
+			nesting++
+			normalised[nesting] = string(character)
+			inSpaces = false
+		} else {
+			normalised[nesting] += string(character)
+			if !inSpaces && 'A' <= character && character <= 'Z' {
+				needsProtection = true
+			}
+		}
+		fmt.Printf("%s", string(character))
+	}
+
+	fmt.Println()
+	result := title
+	if nesting < 1 {
+		fmt.Println("Nesting already at 0. THis can't happen")
+	} else {
+		if nesting > 1 {
+			fmt.Println("Missing }")
+		}
+
+		result = ""
+		for index := nesting; index >= 0; index-- {
+			result = normalised[index] + result
+		}
+	}
+
+	fmt.Println(normalised)
+	fmt.Println(result)
+}
+
+func ISBN (rawISBN string) string {
+	var trimISBNStart = regexp.MustCompile(`^ *ISBN[-]*[1,0,3]*[:*] *`)
+
+	trimmedISBN := strings.TrimSpace(trimISBNStart.ReplaceAllString(rawISBN, ""))
+	
+	return trimmedISBN
+}
+
 func main() {
-	Reporting := TInteraction{}
+	if Play {
+	
+	// validID.MatchString("adam[23]")
+	fmt.Println(ISBN(" ISBN10:  123-45 "))
+	fmt.Println(ISBN(" ISBN-10: 123-45 "))
+	fmt.Println(ISBN(" ISBN-13: 123-45 "))
+	fmt.Println(ISBN(" ISBN: 123-45 "))
 
-	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting)
-	Library.ReadLegacyAliases()
+//	strings.TrimSpace
+		// Play
+		// TITLES
+		// Macro calls always protected.
+		// { => nest
+		// \ => in macro name to next space
+		// \{, \&, => no protection needed
+		// \', \^, etc ==> no space to next char needed
+		// \x Y ==> keep space
+		// " -- " ==> Sub title mode
+		// ": " ==> Sub title mode
+		// [nonspace]+[A-Z]+[nonspace]* => protect
+		//
+//		Titles("{Hello {{World}}   HOW {aRe} Things}")
+//		Titles("{ Hello {{World}} HOW   a{R}e Things}")
+//		Titles("{Hello {{World}} HOW a{R}e Things")
+//		Titles("Hello { { Wo   rld}} HOW a{R}e Things")
+		// Braces can prevent kerning between letters, so it is in general preferable to enclose entire words and not just single letters in braces to protect them.
 
-	OldLibrary := TBibTeXLibrary{}
-	OldLibrary.Initialise(Reporting)
-	OldLibrary.legacyMode = true
-	OldLibrary.ReadLegacyAliases()
+	} else {
+		Reporting := TInteraction{}
 
-	fmt.Println("Reading main library")
-	BibTeXParser := TBibTeXStream{}
-	BibTeXParser.Initialise(Reporting, &Library)
-	BibTeXParser.ParseBibFile(ErikProperBib)
-	fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
+		Library = TBibTeXLibrary{}
+		Library.Initialise(Reporting)
+		Library.SetFilePath(BibTeXFolder)
+		Library.ReadLegacyAliases()
 
-	Library.CheckPreferredAliases()
-	Library.CheckDBLPAliases()
+		OldLibrary := TBibTeXLibrary{}
+		OldLibrary.Initialise(Reporting)
+		OldLibrary.legacyMode = true
+		OldLibrary.ReadLegacyAliases()
 
-	//	fmt.Println("Reading old libraries")
-	//	BibTeXParser.Initialise(Reporting, &OldLibrary)
-	//  NOTE: Ignore DSK fields. Only use file fields. If the file is there.
-	//  Maybe import date-added/modified fields, if not exists yet.
-	//
-	//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/ErikProper.bib")
-	//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/Old.bib")
-	//
-	//	BibTeXParser.ParseBiBFile("Convert.bib")
-	//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/MyLibrary.bib")
-	//	fmt.Println("Size old:", len(OldLibrary.entryType))
+		// Use Progress call
+		fmt.Println("Reading main library")
+		BibTeXParser := TBibTeXStream{}
+		BibTeXParser.Initialise(Reporting, &Library)
+		BibTeXParser.ParseBibFile(ErikProperBib)
+		fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
 
-	//	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
-	//	data, _ := base64.StdEncoding.DecodeString(Test)
-	//	Str := string(data)
-	//	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
-	//	fmt.Printf("%q\n", Start)
+		Library.CheckPreferredAliases()
+		Library.CheckDBLPAliases()
 
-	fmt.Println("Exporting updated library", ErikProperBib)
-	Library.WriteBibTeXFile(ErikProperBib)
-	Library.WriteLegacyAliases()
+		//	fmt.Println("Reading old libraries")
+		//	BibTeXParser.Initialise(Reporting, &OldLibrary)
+		//  NOTE: Ignore DSK fields. Only use file fields. If the file is there.
+		//  Maybe import date-added/modified fields, if not exists yet.
+		//
+		//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/ErikProper.bib")
+		//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/Old.bib")
+		//
+		//	BibTeXParser.ParseBiBFile("Convert.bib")
+		//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/MyLibrary.bib")
+		//	fmt.Println("Size old:", len(OldLibrary.entryType))
 
-	// log import ...
-	//
-	//	log.Fatal(err)
+		//	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
+		//	data, _ := base64.StdEncoding.DecodeString(Test)
+		//	Str := string(data)
+		//	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
+		//	fmt.Printf("%q\n", Start)
+
+		// Use Progress call
+		fmt.Println("Exporting updated library", ErikProperBib)
+		Library.WriteBibTeXFile(ErikProperBib)
+		Library.WriteLegacyAliases()
+
+		// log import ...
+		//
+		//	log.Fatal(err)
+	}
 }
