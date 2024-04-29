@@ -18,21 +18,30 @@ import (
 	"os"
 )
 
-type TInteraction struct{}
+type TInteraction struct {
+	silenced bool
+}
+
+// Surpress any output to standard out.
+func (r *TInteraction) Silenced() {
+	r.silenced = true
+}
 
 // Reporting errors.
 // The error message should provide the formatting.
 func (r *TInteraction) Error(errorMessage string, context ...any) bool {
-	fmt.Printf("ERROR:    "+errorMessage+".\n", context...)
-
+	if !r.silenced {
+		fmt.Printf("ERROR:    "+errorMessage+".\n", context...)
+	}
 	return true
 }
 
 // Reporting warnings.
 // The warning message should provide the formatting.
 func (r *TInteraction) Warning(warning string, context ...any) bool {
-	fmt.Printf("WARNING:  "+warning+".\n", context...)
-
+	if !r.silenced {
+		fmt.Printf("WARNING:  "+warning+".\n", context...)
+	}
 	return true
 }
 
@@ -51,7 +60,8 @@ func (r *TInteraction) WarningBoolQuestion(question, warning string, context ...
 // Reporting progres.
 // The progress message should provide the formatting.
 func (r *TInteraction) Progress(progress string, context ...any) bool {
-	fmt.Printf("PROGRESS: "+progress+".\n", context...)
-
+	if !r.silenced {
+		fmt.Printf("PROGRESS: "+progress+".\n", context...)
+	}
 	return true
 }

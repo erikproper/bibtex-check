@@ -12,6 +12,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 )
 
@@ -44,6 +45,7 @@ type (
 		entryFields      map[string]TStringMap // Per entry key, the fields associated to the actual entries.
 		entryType        TStringMap            // Per entry key, the type of the enty.
 		deAlias          TStringMap            // Mapping from aliases to the actual entry key.
+		aliases          map[string]TStringSet // The inverted version of deAlias.
 		preferredAliases TStringMap            // Per entry key, the preferred alias
 		illegalFields    TStringSet            // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
 		currentKey       string                // The key of the entry we are currently working on.
@@ -53,59 +55,12 @@ type (
 	}
 )
 
-// Checks if a given alias fits the desired format of [a-z][a-z]*[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
+// Checks if a given alias fits the desired format of [a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
 // Examples: gordijn2002e3value, overbeek2010matchmaking, ...
-func CheckPreferredAlias(alias string) bool {
-	pre_year := 0
-	in_year := 0
-	post_year := 0
+func (l *TBibTeXLibrary) IsValidPreferredAlias(alias string) bool {
+	var validPreferredAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
 
-	for _, character := range alias {
-		switch {
-		case pre_year == 0: // [a-z]
-			if 'a' <= character && character <= 'z' {
-				pre_year++
-			} else {
-				return false
-			}
-
-		case pre_year > 0 && in_year == 0: // [a-z]*
-			if 'a' <= character && character <= 'z' {
-				pre_year++
-			} else if '0' <= character && character <= '9' {
-				in_year++
-			} else {
-				return false
-			}
-
-		case 1 <= in_year && in_year < 4: // [0-9][0-9][0-9]
-			if '0' <= character && character <= '9' {
-				in_year++
-			} else {
-				return false
-			}
-
-		case in_year == 4 && post_year == 0: // [a-z]
-			if 'a' <= character && character <= 'z' {
-				post_year++
-			} else {
-				return false
-			}
-
-		case in_year == 4 && post_year > 0: // [a-z,0-9]*
-			if ('a' <= character && character <= 'z') ||
-				('0' <= character && character <= '9') {
-				post_year++
-			} else {
-				return false
-			}
-
-		default:
-			return false
-		}
-	}
-
-	return post_year > 0
+	return validPreferredAlias.MatchString(alias)
 }
 
 func (l *TBibTeXLibrary) SetFilePath(path string) bool {
@@ -150,28 +105,77 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 	return true
 }
 
-// Add an alias to a key to the current library.
-func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
+// The low level registering of the alias for a key.
+// Also takes care of registering the inverse mapping.
+func (l *TBibTeXLibrary) registerAlias(alias, key string) {
+	l.deAlias[alias] = key
+
+	// Also create and/or update the inverse mapping
+	_, hasAliases := l.aliases[key]
+	if !hasAliases && AllowLegacy {
+		l.aliases[key] = TStringSetNew()
+	}
+	l.aliases[key].Set().Add(alias)
+}
+
+func (l *TBibTeXLibrary) moveAliasPreference(alias, currentKey, key string) {
+	if l.preferredAliases[currentKey] == alias && AllowLegacy {
+		delete(l.preferredAliases, currentKey)
+		l.preferredAliases[key] = alias
+	}
+}
+
+// Adds an alias to a key in the current library.
+// If allowRemap is true then we allow for a situation where the alias is actually a (former) key.
+// In the latter situation, we would need to update the aliases to that former key as well.
+// Note: The present complexity is caused due to the legacy libraries. The present mapping file refers to keys that are not yet in the main library.
+// Once that is solved, the checks here can be simpler:
+// - Aliasses cannot be keys
+// - Keys must be actual keys of entries
+// - The latter check can be deferred until after (actually) reading the library
+// - The latter might not always be necessary. E.g. when simply doing a "-alias" call
+func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 	// Check if the provided is already used.
 	currentKey, aliasIsAlreadyAliased := l.deAlias[alias]
 
-	// Check if the provided alias is itself not a key that is in use.
-	_, aliasIsActuallyKey := l.entryFields[alias]
+	// Check if the provided alias is itself not a key that is in use by an entry.
+	_, aliasIsActuallyKeyToEntry := l.entryFields[alias]
+
+	// Check if the provided alias is itself not the target of an alias mapping.
+	_, aliasIsActuallyKeyForAlias := l.aliases[alias]
 
 	// Check if the provided key is itself not an alias.
 	aliasedKey, keyIsActuallyAlias := l.deAlias[key]
 
 	if aliasIsAlreadyAliased && currentKey != key {
-		// No ambiguous aliases allowed.
-		l.Warning(WarningAmbiguousAlias, alias, currentKey, key)
-	} else if aliasIsActuallyKey {
-		// Aliases cannot be keys themsleves.
+		if allowRemap && AllowLegacy {
+			l.aliases[currentKey].Set().Delete(key)
+			l.registerAlias(alias, key)
+			l.moveAliasPreference(alias, currentKey, key)
+		} else {
+			// No ambiguous aliases allowed
+			l.Warning(WarningAmbiguousAlias, alias, currentKey, key)
+		}
+	} else if aliasIsActuallyKeyToEntry {
+		// Aliases cannot be keys of actual themselves.
 		l.Warning(WarningAliasIsKey, alias)
+	} else if aliasIsActuallyKeyForAlias && AllowLegacy {
+		if allowRemap && AllowLegacy { // After the migration, this can only happen when merging two entries.
+			for old_alias := range l.aliases[alias].Set().Elements() {
+				l.registerAlias(old_alias, key)
+				l.moveAliasPreference(old_alias, alias, key)
+			}
+			l.registerAlias(alias, key)
+			delete(l.aliases, alias)
+		} else {
+			// Unless we allow for a remap of existing aliases, aliases cannot be keys themselves.
+			l.Warning(WarningAliasIsKey, alias)
+		}
 	} else if keyIsActuallyAlias {
 		// We cannot alias aliases.
 		l.Warning(WarningAliasTargetIsAlias, alias, key, aliasedKey)
 	} else {
-		l.deAlias[alias] = key
+		l.registerAlias(alias, key)
 	}
 }
 
@@ -195,6 +199,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction) {
 	l.entryType = TStringMap{}
 	l.deAlias = TStringMap{}
 	l.preferredAliases = TStringMap{}
+	l.aliases = map[string]TStringSet{}
 	l.currentKey = ""
 	l.TInteraction = reporting
 	l.foundDoubles = false
@@ -247,17 +252,15 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 
 // Assign a value to a field
 func (l *TBibTeXLibrary) AssignField(field, value string) bool {
-	// Note: The parser for BibTeX streams is responsible for the mapping of field names.
-	// Here we do need to take care of the normalisation of the field values.
-	// This includes e.g.:
-	//   Renaming of author/editor names to their desired format.
-	//   Rewriting titles with proper protection and TeX accents:
-	//     {Hello WORLD {\" a}} ==> {Hello {WORLD} {\"a}}
-	newValue := l.NormaliseFieldValue(field, value)
+	// Note: The parser for BibTeX streams is responsible for the mapping of field name aliases.
+	// Here we need to take care of the normalisation and processing of field values.
+	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
+	newValue := l.ProcessFieldValue(field, value)
 
 	// If the new value is empty, we assign nothing.
 	if newValue != "" {
 		currentValue, alreadyHasValue := l.entryFields[l.currentKey][field]
+
 		// If the field already has a value that is different from the new value, we need to resolve this.
 		if alreadyHasValue && newValue != currentValue {
 			l.entryFields[l.currentKey][field] = l.ResolveFieldValue(field, newValue, currentValue)

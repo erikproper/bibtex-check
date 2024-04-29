@@ -3,81 +3,71 @@ package main
 import (
 	"encoding/base64"
 	"os"
-	//	"fmt"
+	"regexp"
 	"strings"
 )
 
 type TFieldProcessors = map[string]func(*TBibTeXLibrary, string) string
 
 const (
-	WarningMissingFile   = "File %s for key %s seems not to exist"
-	WarningBadISBN       = "Found wrong ISBN \"%s\" for key %s"
-	WarningBadISSN       = "Found wrong ISSN \"%s\" for key %s"
-	WarningBadISBNRepair = "Found wrong ISBN \"%s\" for key %s, will repair to \"%s\""
-	WarningBadISSNRepair = "Found wrong ISBN \"%s\" for key %s, will repair to \"%s\""
+	WarningMissingFile = "File %s for key %s seems not to exist"
+	WarningBad         = "Found wrong "
+	WarningForKey      = " for key %s"
+	WarningBadISBN     = WarningBad + "ISBN \"%s\"" + WarningForKey
+	WarningBadISSN     = WarningBad + "ISSN \"%s\"" + WarningForKey
+	WarningBadYear     = WarningBad + "year \"%s\"" + WarningForKey
 )
 
 var fieldProcessors TFieldProcessors
 
-func processISSNValue(library *TBibTeXLibrary, value string) string {
-	lastIndex := len(value)
-	digits := 0
-	for index, character := range value {
-		if ('0' <= character && character <= '9') || character == 'X' {
-			digits++
-		} else if character != '-' {
-			lastIndex = index - 1
-			break
-		}
-		lastIndex = index
+func processISSNValue(library *TBibTeXLibrary, rawISSN string) string {
+	var (
+		trimISSNStart = regexp.MustCompile(`^ *ISSN[:]? *`)
+		validISSN     = regexp.MustCompile(`^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9,X]$`)
+	)
+
+	trimmedISSN := strings.ReplaceAll(strings.TrimSpace(trimISSNStart.ReplaceAllString(rawISSN, "")), "-", "")
+
+	if validISSN.MatchString(trimmedISSN) {
+		return trimmedISSN[0:4] + "-" + trimmedISSN[4:8]
+	} else {
+		library.Warning(WarningBadISSN, rawISSN, library.currentKey)
+		return strings.TrimSpace(rawISSN)
 	}
-
-	ISSN := value
-
-	if digits != 8 {
-		library.Warning(WarningBadISSN, value, library.currentKey)
-	} else if lastIndex+1 < len(value) {
-		ISSN := value[0 : lastIndex+1]
-		library.Warning(WarningBadISSNRepair, value, library.currentKey, ISSN)
-	}
-
-	if len(ISSN) < 9 {
-		ISSN = ISSN[0:4] + "-" + ISSN[4:8]
-	}
-
-	return ISSN
 }
 
-func processISBNValue(library *TBibTeXLibrary, value string) string {
-	lastIndex := len(value)
-	digits := 0
-	for index, character := range value {
-		if ('0' <= character && character <= '9') || character == 'X' {
-			digits++
-		} else if character != '-' {
-			lastIndex = index - 1
-			break
-		}
-		lastIndex = index
+func processISBNValue(library *TBibTeXLibrary, rawISBN string) string {
+	var (
+		trimISBNStart = regexp.MustCompile(`^ *ISBN[-]?(10|13|)[:]? *`)
+		validISBN10   = regexp.MustCompile(`^[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9,X]$`)
+		validISBN13   = regexp.MustCompile(`^[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9,X]$`)
+	)
+
+	trimmedISBN := strings.TrimSpace(trimISBNStart.ReplaceAllString(rawISBN, ""))
+
+	if validISBN10.MatchString(trimmedISBN) || validISBN13.MatchString(trimmedISBN) {
+		return trimmedISBN
+	} else {
+		library.Warning(WarningBadISBN, rawISBN, library.currentKey)
+		return strings.TrimSpace(rawISBN)
+	}
+}
+
+func processYearValue(library *TBibTeXLibrary, rawYear string) string {
+	var validYear = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]$`)
+
+	trimmedYear := strings.TrimSpace(rawYear)
+
+	if !validYear.MatchString(trimmedYear) {
+		library.Warning(WarningBadYear, trimmedYear, library.currentKey)
 	}
 
-	if digits != 10 && digits != 13 {
-		library.Warning(WarningBadISBN, value, library.currentKey)
-
-		return value
-	} else if lastIndex+1 < len(value) {
-		repairedValue := value[0 : lastIndex+1]
-		library.Warning(WarningBadISBNRepair, value, library.currentKey, repairedValue)
-
-		return repairedValue
-	}
-
-	return value
+	return trimmedYear
 }
 
 func processDBLPValue(library *TBibTeXLibrary, value string) string {
 	if !library.legacyMode {
-		library.AddKeyAlias("DBLP:"+value, library.currentKey)
+		library.AddKeyAlias("DBLP:"+value, library.currentKey, false)
 	}
 
 	return value
@@ -103,7 +93,7 @@ func processBDSKFileValue(library *TBibTeXLibrary, value string) string {
 	return value
 }
 
-func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
+func (l *TBibTeXLibrary) ProcessFieldValue(field, value string) string {
 	valueNormaliser, hasNormaliser := fieldProcessors[field]
 
 	if hasNormaliser {
@@ -127,4 +117,44 @@ func init() {
 	fieldProcessors["dblp"] = processDBLPValue
 	fieldProcessors["isbn"] = processISBNValue
 	fieldProcessors["issn"] = processISSNValue
+	fieldProcessors["year"] = processYearValue
+
+	// "address"
+	// "author"
+	// "bdsk-url-1"
+	// "bdsk-url-2"
+	// "bdsk-url-3"
+	// "bdsk-url-4"
+	// "bdsk-url-5"
+	// "bdsk-url-6"
+	// "bdsk-url-7"
+	// "bdsk-url-8"
+	// "bdsk-url-9"
+	// "booktitle"
+	// "chapter"
+	// "crossref"
+	// "edition"
+	// "editor"
+	// "file"
+	// "howpublished"
+	// "institution"
+	// "journal"
+	// "key"
+	// "langid"
+	// "local-url"
+	// "month"
+	// "note"
+	// "number"
+	// "organization"
+	// "pages"
+	// "publisher"
+	// "researchgate"
+	// "school"
+	// "series"
+	// "title"
+	// "type"
+	// "url"
+	// "urldate"
+	// "urloriginal"
+	// "volume"
 }

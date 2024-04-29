@@ -28,21 +28,20 @@ import (
 // Later, these will simply be the first entry in a "aliases" field in the BIB file.
 // Once we've reached that point, we can integrate this check into the regular checks per field.
 func (l *TBibTeXLibrary) CheckPreferredAliases() {
-	for key, alias := range l.preferredAliases {
-		if !CheckPreferredAlias(alias) {
-			l.Warning(WarningBadAlias, alias, key)
-		}
-	}
-
+	// This actually still makes sense after we wrapup the legacy stuff.
+	// Well .. for imports ... so ... add it to the import functionality
+	// Only the lowercase part ...
 	for alias, key := range l.deAlias {
 		if l.preferredAliases[key] == "" {
-			if CheckPreferredAlias(alias) {
+			if l.IsValidPreferredAlias(alias) {
 				l.AddPreferredAlias(alias)
 			} else {
 				loweredAlias := strings.ToLower(alias)
-				if l.deAlias[loweredAlias] == "" && loweredAlias != key && CheckPreferredAlias(loweredAlias) {
-					l.AddKeyAlias(loweredAlias, key)
+				if l.deAlias[loweredAlias] == "" && loweredAlias != key && l.IsValidPreferredAlias(loweredAlias) {
+					l.AddKeyAlias(loweredAlias, key, false)
 					l.AddPreferredAlias(loweredAlias)
+					//				} else {
+					//					fmt.Println("No preferred alias for:", key)
 				}
 			}
 		}
@@ -67,18 +66,27 @@ func (l *TBibTeXLibrary) CheckDBLPAliases() {
 }
 
 // Quick and dirty reading of the keys.map and preferred.aliases file.
-// As soon as we're finished with the legacy migration, we can integrate the aliases into the bib file.
 func (l *TBibTeXLibrary) ReadLegacyAliases() {
 	file, err := os.Open(KeysMapFile)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err) /// Don't want to do it like this.
 	}
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		s := string(scanner.Text())
-		l.AddKeyAlias(s[:strings.Index(s, " ")], s[strings.Index(s, " ")+1:])
+		// Use split!!
+		alias := s[:strings.Index(s, " ")]
+		key := s[strings.Index(s, " ")+1:]
 
+		l.AddKeyAlias(alias, key, false)
+
+		// l.HasPreferredAlias
+		if l.preferredAliases[key] == "" && l.IsValidPreferredAlias(alias) {
+			l.AddPreferredAlias(alias)
+		} else {
+			// fmt.Println("No pref alias:", key)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -87,47 +95,29 @@ func (l *TBibTeXLibrary) ReadLegacyAliases() {
 
 	file.Close()
 
-	file, err = os.Open(PreferredAliasesFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	scanner = bufio.NewScanner(file)
-	for scanner.Scan() {
-		l.AddPreferredAlias(scanner.Text())
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	file.Close()
+	// file, err = os.Open(PreferredAliasesFile)
+	//
+	//	if err != nil {
+	//		log.Fatal(err)
+	//	}
+	//
+	// scanner = bufio.NewScanner(file)
+	//
+	//	for scanner.Scan() {
+	//		l.AddPreferredAlias(scanner.Text())
+	//	}
+	//
+	//	if err := scanner.Err(); err != nil {
+	//		log.Fatal(err)
+	//	}
+	//
+	// file.Close()
 }
 
 // Quick and dirty write-out of:
-// - the preferred.aliases and keys.map files
+// - the ErikProper.aliases files
 // - the creation of the "mapping" folders to enable the old scripts to still do their work
 func (l *TBibTeXLibrary) WriteLegacyAliases() {
-	fmt.Println("Writing preferred aliases")
-
-	BackupFile(PreferredAliasesFile)
-	os.RemoveAll(PreferredAliases)
-
-	paFile, err := os.Create(PreferredAliasesFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer paFile.Close()
-
-	paWriter := bufio.NewWriter(paFile)
-	for key, alias := range l.preferredAliases {
-		os.MkdirAll(PreferredAliases+"/"+key, os.ModePerm)
-		os.WriteFile(PreferredAliases+"/"+key+"/alias", []byte(alias), 0644)
-
-		paWriter.WriteString(alias + "\n")
-	}
-	paWriter.Flush()
-
 	fmt.Println("Writing aliases map")
 
 	BackupFile(KeysMapFile)
@@ -140,6 +130,9 @@ func (l *TBibTeXLibrary) WriteLegacyAliases() {
 	defer kmFile.Close()
 
 	kmWriter := bufio.NewWriter(kmFile)
+	for key, alias := range Library.preferredAliases {
+		kmWriter.WriteString(alias + " " + key + "\n")
+	}
 	for alias, key := range Library.deAlias {
 		hash := md5.New()
 		io.WriteString(hash, alias+"\n")
@@ -148,7 +141,9 @@ func (l *TBibTeXLibrary) WriteLegacyAliases() {
 		os.WriteFile(AliasKeys+"/"+aa+"/key", []byte(key), 0644)
 		os.WriteFile(AliasKeys+"/"+aa+"/alias", []byte(alias), 0644)
 
-		kmWriter.WriteString(alias + " " + key + "\n")
+		if alias != Library.preferredAliases[key] {
+			kmWriter.WriteString(alias + " " + key + "\n")
+		}
 	}
 	kmWriter.Flush()
 

@@ -21,7 +21,7 @@ const (
 
 	// Error messages & warnings
 	ErrorMissing               = "Missing"
-	ErrorMissingCharacter      = ErrorMissing + " " + CharacterClass + "'%s', found '%s'"
+	ErrorMissingCharacter      = ErrorMissing + " " + CharacterClass + " '%s', found '%s'"
 	ErrorMissingEntryBody      = ErrorMissing + " " + EntryBodyClass
 	ErrorMissingEntryType      = ErrorMissing + " " + EntryTypeClass
 	ErrorMissingFieldValue     = ErrorMissing + " " + FieldValueClass
@@ -55,13 +55,14 @@ type (
 
 	// The actual TBibTeXStream type
 	TBibTeXStream struct {
-		TCharacterStream                     // The underlying stream of characters
-		library              *TBibTeXLibrary // The BibTeX Library this parser will contribute to
-		currentFieldName     string          // The name of the field assignment that is currently being parsed
-		currentFieldValue    string          // The value of the field assignment that is currently being parsed
-		currentEntryTypeName string          // The type of the entry we're currently parsing
-		skippingEntry        bool            // Set to true if we need to be skipping things to the next entry
-		stringMap            TStringMap      // The mapping of the defined strings
+		TCharacterStream                     // The underlying stream of characters.
+		library              *TBibTeXLibrary // The BibTeX Library this parser will contribute to.
+		currentFieldName     string          // The name of the field assignment that is currently being parsed.
+		currentFieldValue    string          // The value of the field assignment that is currently being parsed.
+		currentEntryTypeName string          // The type of the entry we're currently parsing.
+		skippingEntry        bool            // Set to true if we need to be skipping things to the next entry.
+		stringMap            TStringMap      // The mapping of the defined strings.
+		succeeded            bool            // Set to false if we had a serious problem in parsing the stream.
 	}
 )
 
@@ -93,6 +94,7 @@ func (b *TBibTeXStream) Initialise(reporting TInteraction, library *TBibTeXLibra
 	b.currentEntryTypeName = ""
 	b.skippingEntry = false
 	b.library = library
+	b.succeeded = true
 }
 
 // Assignment of a string definition.
@@ -155,6 +157,7 @@ func (b *TBibTeXStream) SkipToNextEntry(from string) bool {
 func (b *TBibTeXStream) MaybeReportError(message string, context ...any) bool {
 	if !b.skippingEntry {
 		b.ReportError(message, context...)
+		b.succeeded = false
 	}
 
 	return true
@@ -247,7 +250,7 @@ func (b *TBibTeXStream) CharacterSequence(starters, characters TByteSet, sequenc
 // Elements (characters, spaces, or nested elements) of field values
 func (b *TBibTeXStream) GroupedFieldElement(groupEndCharacter byte, inTeXMode bool, content *string) bool {
 	switch {
-	// Elements nested between { }. For example {\" a} or {KLM}
+	// Elements nested between { }. For example {\"a} {\v O} or {KLM}
 	case b.CollectCharacterThatWas(BeginGroupCharacter, content):
 		return b.GroupedContentety(EndGroupCharacter, inTeXMode, content) &&
 			/* */ b.CollectCharacterThatWas(EndGroupCharacter, content)
@@ -329,7 +332,7 @@ func (b *TBibTeXStream) AddStringDefinition(name string, s *string) bool {
 	if defined {
 		*s += value
 	} else {
-		b.ReportError(ErrorUnknownString, name)
+		b.MaybeReportError(ErrorUnknownString, name)
 	}
 
 	return true
@@ -475,12 +478,24 @@ func (b *TBibTeXStream) Entriesety() bool {
 	return true
 }
 
+// Parse current stream to the library
+func (b *TBibTeXStream) ParseStream() bool {
+	return b.library.StartRecordingToLibrary() &&
+		/**/ b.Entriesety() &&
+		/*  */ b.library.FinishRecordingToLibrary() &&
+		/*    */ b.succeeded
+}
+
 // Opening a BibTeX file, and then parse it (and add it to the selected Library.)
 func (b *TBibTeXStream) ParseBibFile(file string) bool {
 	return b.ForcedTextfileOpen(file, ErrorOpeningFile) &&
-		/**/ b.library.StartRecordingToLibrary() &&
-		/*  */ b.Entriesety() &&
-		/*    */ b.library.FinishRecordingToLibrary()
+		/**/ b.ParseStream()
+}
+
+// Opening a string with BibTeX entries, and then parse it (and add it to the selected Library.)
+func (b *TBibTeXStream) ParseBibString(bibtex string) bool {
+	return b.TextString(bibtex) &&
+		/**/ b.ParseStream()
 }
 
 // Things to be initialised
@@ -521,7 +536,7 @@ func init() {
 		'â': "{\\^a}",
 		'ã': "{\\~a}",
 		'ä': "{\\\"a}",
-		'å': "{\\\aa}",
+		'å': "{\\aa}",
 		'æ': "{\\ae}",
 		'ç': "{\\c c}",
 		'è': "{\\`e}",

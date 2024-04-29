@@ -1,26 +1,25 @@
 package main
 
 import (
-	"strings"
 	"fmt"
-	"regexp"
+	"os"
+	"strings"
 )
 
 // Remove this one as soon as we have migrated the legacy files
 const AllowLegacy = true
 
-const Play = true
-
-var Library TBibTeXLibrary
+var (
+	Library   TBibTeXLibrary
+	Reporting TInteraction
+)
 
 const (
-	BibTeXFolder         = "/Users/erikproper/BibTeX/"
-	PreferredAliasesFile = BibTeXFolder + "preferred.aliases"
-	KeysMapFile          = BibTeXFolder + "keys.map"
-	PreferredAliases     = BibTeXFolder + "PreferredAliases"
-	AliasKeys            = BibTeXFolder + "Keys"
-	ErikProperBib        = BibTeXFolder + "ErikProper.bib"
-	NewBib               = BibTeXFolder + "New.bib"
+	BibTeXFolder     = "/Users/erikproper/BibTeX/"
+	PreferredAliases = BibTeXFolder + "PreferredAliases"
+	AliasKeys        = BibTeXFolder + "Keys"
+	ErikProperBib    = BibTeXFolder + "ErikProper.bib"
+	KeysMapFile      = BibTeXFolder + "ErikProper.aliases"
 )
 
 func Titles(title string) {
@@ -83,98 +82,152 @@ func Titles(title string) {
 	fmt.Println(result)
 }
 
-func ISBN (rawISBN string) string {
-	var (
-		trimISBNStart = regexp.MustCompile(`^ *ISBN[-]*[1,0,3]*[:*] *`)
-		validISBN10 = regexp.MustCompile(`^[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9,X]$`)
-		validISBN13 = regexp.MustCompile(`^[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9][-]*[0-9,X]$`)
-	)
-
-	trimmedISBN := strings.TrimSpace(trimISBNStart.ReplaceAllString(rawISBN, ""))
-	
-	fmt.Println(validISBN10.MatchString(trimmedISBN))
-	fmt.Println(validISBN13.MatchString(trimmedISBN))
-
-	return trimmedISBN
+func Play() {
+	//	strings.TrimSpace
+	// Play
+	// TITLES
+	// Macro calls always protected.
+	// { => nest
+	// \ => in macro name to next space
+	// \{, \&, => no protection needed
+	// \', \^, etc ==> no space to next char needed
+	// \x Y ==> keep space
+	// " -- " ==> Sub title mode
+	// ": " ==> Sub title mode
+	// [nonspace]+[A-Z]+[nonspace]* => protect
+	//
+	//		Titles("{Hello {{World}}   HOW {aRe} Things}")
+	//		Titles("{ Hello {{World}} HOW   a{R}e Things}")
+	//		Titles("{Hello {{World}} HOW a{R}e Things")
+	//		Titles("Hello { { Wo   rld}} HOW a{R}e Things")
+	// Braces can prevent kerning between letters, so it is in general preferable to enclose entire words and not just single letters in braces to protect them.
 }
 
-func main() {
-	if Play {
-	
-	// validID.MatchString("adam[23]")
-	fmt.Println(ISBN(" ISBN10:  123-45 "),"!")
-	fmt.Println(ISBN(" ISBN-10: 123-45 "),"!")
-	fmt.Println(ISBN(" ISBN-13: 9782839905800 "),"!")
-	fmt.Println(ISBN(" ISBN: 0805836098 "),"!")
-	fmt.Println(ISBN(" ISBN 0805836098 "),"!")
+func InitialiseLibrary() bool {
+	Library.Progress("Initialising main library")
+	Library = TBibTeXLibrary{}
+	Library.Initialise(Reporting)
+	Library.SetFilePath(BibTeXFolder)
+	Library.ReadLegacyAliases()
 
-//	strings.TrimSpace
-		// Play
-		// TITLES
-		// Macro calls always protected.
-		// { => nest
-		// \ => in macro name to next space
-		// \{, \&, => no protection needed
-		// \', \^, etc ==> no space to next char needed
-		// \x Y ==> keep space
-		// " -- " ==> Sub title mode
-		// ": " ==> Sub title mode
-		// [nonspace]+[A-Z]+[nonspace]* => protect
-		//
-//		Titles("{Hello {{World}}   HOW {aRe} Things}")
-//		Titles("{ Hello {{World}} HOW   a{R}e Things}")
-//		Titles("{Hello {{World}} HOW a{R}e Things")
-//		Titles("Hello { { Wo   rld}} HOW a{R}e Things")
-		// Braces can prevent kerning between letters, so it is in general preferable to enclose entire words and not just single letters in braces to protect them.
+	return true
+}
 
-	} else {
-		Reporting := TInteraction{}
+func OpenLibrary() bool {
+	InitialiseLibrary()
 
-		Library = TBibTeXLibrary{}
-		Library.Initialise(Reporting)
-		Library.SetFilePath(BibTeXFolder)
-		Library.ReadLegacyAliases()
-
-		OldLibrary := TBibTeXLibrary{}
-		OldLibrary.Initialise(Reporting)
-		OldLibrary.legacyMode = true
-		OldLibrary.ReadLegacyAliases()
-
-		// Use Progress call
-		fmt.Println("Reading main library")
-		BibTeXParser := TBibTeXStream{}
-		BibTeXParser.Initialise(Reporting, &Library)
-		BibTeXParser.ParseBibFile(ErikProperBib)
+	// Use Progress call
+	Library.Progress("Reading main library")
+	BibTeXParser := TBibTeXStream{}
+	BibTeXParser.Initialise(Reporting, &Library)
+	if BibTeXParser.ParseBibFile(ErikProperBib) {
 		fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
-
 		Library.CheckPreferredAliases()
 		Library.CheckDBLPAliases()
 
-		//	fmt.Println("Reading old libraries")
-		//	BibTeXParser.Initialise(Reporting, &OldLibrary)
-		//  NOTE: Ignore DSK fields. Only use file fields. If the file is there.
-		//  Maybe import date-added/modified fields, if not exists yet.
-		//
-		//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/ErikProper.bib")
-		//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/Old.bib")
-		//
-		//	BibTeXParser.ParseBiBFile("Convert.bib")
-		//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/MyLibrary.bib")
-		//	fmt.Println("Size old:", len(OldLibrary.entryType))
+		return true
+	} else {
+		return false
+	}
+}
 
-		//	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
-		//	data, _ := base64.StdEncoding.DecodeString(Test)
-		//	Str := string(data)
-		//	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
-		//	fmt.Printf("%q\n", Start)
+func main() {
+	Reporting := TInteraction{}
+	writeAliases := false
+	writeBibFile := false
 
-		// Use Progress call
+	switch {
+	case len(os.Args) == 1:
+		if OpenLibrary() {
+			writeBibFile = true
+			writeAliases = true
+
+			OldLibrary := TBibTeXLibrary{}
+			OldLibrary.Initialise(Reporting)
+			OldLibrary.legacyMode = true
+			OldLibrary.ReadLegacyAliases()
+			//	fmt.Println("Reading old libraries")
+			//	BibTeXParser.Initialise(Reporting, &OldLibrary)
+			//  NOTE: Ignore DSK fields. Only use file fields. If the file is there.
+			//  Maybe import date-added/modified fields, if not exists yet.
+			//
+			//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/ErikProper.bib")
+			//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/Old.bib")
+			//
+			//	BibTeXParser.ParseBiBFile("Convert.bib")
+			//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/MyLibrary.bib")
+			//	fmt.Println("Size old:", len(OldLibrary.entryType))
+
+			//	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
+			//	data, _ := base64.StdEncoding.DecodeString(Test)
+			//	Str := string(data)
+			//	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
+			//	fmt.Printf("%q\n", Start)
+		}
+
+	case len(os.Args) == 2 && os.Args[1] == "-play":
+		Play()
+
+	case len(os.Args) == 3 && os.Args[1] == "-alias":
+		Library.Silenced()
+
+		key := strings.ReplaceAll(strings.ReplaceAll(os.Args[2], "\\cite{", ""), "}", "")
+
+		InitialiseLibrary()
+
+		alias, ok := Library.preferredAliases[key]
+
+		if ok {
+			fmt.Println(alias)
+		}
+
+	case len(os.Args) > 3 && os.Args[1] == "-map":
+		if OpenLibrary() {
+			keysString := ""
+			writeAliases = true
+
+			for _, keyString := range os.Args[2:] {
+				keysString += "," + strings.ReplaceAll(strings.ReplaceAll(keyString, "\\cite{", ""), "}", "")
+			}
+			keyStrings := strings.Split(keysString, ",")
+
+			key := keyStrings[len(keyStrings)-1]
+			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
+				fmt.Println("Mapping", alias, "to", key)
+				Library.AddKeyAlias(alias, key, true)
+			}
+		}
+
+	case len(os.Args) > 2 && os.Args[1] == "-preferred":
+		alias := strings.ReplaceAll(strings.ReplaceAll(os.Args[2], "\\cite{", ""), "}", "")
+
+		if Library.IsValidPreferredAlias(alias) {
+			writeAliases = true
+
+			InitialiseLibrary()
+
+			if len(os.Args) == 4 {
+				key := strings.ReplaceAll(strings.ReplaceAll(os.Args[3], "\\cite{", ""), "}", "")
+				Library.AddKeyAlias(alias, key, true)
+			}
+
+			Library.AddPreferredAlias(alias)
+		} else {
+			fmt.Println("Not a valid preferred alias.")
+		}
+
+	default:
+		fmt.Println("Parameters:", len(os.Args))
+		fmt.Println(os.Args)
+	}
+
+	if writeBibFile {
 		fmt.Println("Exporting updated library", ErikProperBib)
 		Library.WriteBibTeXFile(ErikProperBib)
-		Library.WriteLegacyAliases()
+	}
 
-		// log import ...
-		//
-		//	log.Fatal(err)
+	if writeAliases {
+		fmt.Println("Exporting updated aliases", KeysMapFile)
+		Library.WriteLegacyAliases()
 	}
 }
