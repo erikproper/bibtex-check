@@ -142,6 +142,14 @@ func (l *TBibTeXLibrary) registerChallengeWinner(entry, field, challenger, winne
 	l.challengeWinners[entry][field][challenger] = winner
 }
 
+func (l *TBibTeXLibrary) updateChallengeWinner(entry, field, challenger, winner string) {
+	l.registerChallengeWinner(entry, field, challenger, winner)
+
+	for otherChallenger, _ := range l.challengeWinners[entry][field] {
+		l.challengeWinners[entry][field][otherChallenger] = winner
+	}
+}
+
 func (l *TBibTeXLibrary) checkChallengeWinner(entry, field, challenger, winner string) bool {
 	return l.challengeWinners[entry][field][challenger] == winner
 }
@@ -149,7 +157,7 @@ func (l *TBibTeXLibrary) checkChallengeWinner(entry, field, challenger, winner s
 func (l *TBibTeXLibrary) entryString(key string) string {
 	result := ""
 	fields, knownEntry := l.entryFields[key]
-	
+
 	if knownEntry {
 		result = "@" + l.entryType[key] + "{" + key + ",\n"
 		for field, value := range fields {

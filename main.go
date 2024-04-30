@@ -202,7 +202,7 @@ func main() {
 
 	case len(os.Args) == 2 && os.Args[1] == "-meta":
 		if OpenLibrary() {
-			writeBibFile = false
+			writeBibFile = true
 			writeAliases = false
 
 			OldLibrary := TBibTeXLibrary{}
@@ -214,11 +214,14 @@ func main() {
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
 
-			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/ErikProper.bib")
-			//			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old.bib")
-			//			BibTeXParser.ParseBibFile("Convert.bib")
-			//			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/MyLibrary.bib")
-			//			fmt.Println("Size of legacy pool is:", len(OldLibrary.entryType))
+			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old1.bib")
+			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old2.bib")
+			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old3.bib")
+			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old4.bib")
+			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old5.bib")
+			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old6.bib")
+			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old7.bib")
+			fmt.Println("Size of legacy pool is:", len(OldLibrary.entryType))
 
 			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
 			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA

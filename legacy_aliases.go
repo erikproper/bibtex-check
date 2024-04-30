@@ -159,6 +159,10 @@ func (l *TBibTeXLibrary) WriteChallenges() {
 
 	chWriter := bufio.NewWriter(chFile)
 	for key, fieldChallenges := range l.challengeWinners {
+		_, keyIsUsed := l.entryType[key]
+		if !keyIsUsed {
+			fmt.Println("Not in use:", key)
+		}
 		chWriter.WriteString("K " + key + "\n")
 		for field, challenges := range fieldChallenges {
 			chWriter.WriteString("F " + field + "\n")
