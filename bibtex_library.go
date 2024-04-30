@@ -40,18 +40,19 @@ type (
 
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		files            string                // Path to root of folder with PDF files of the entries
-		comments         []string              // The comments included in a BibTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		entryFields      map[string]TStringMap // Per entry key, the fields associated to the actual entries.
-		entryType        TStringMap            // Per entry key, the type of the enty.
-		deAlias          TStringMap            // Mapping from aliases to the actual entry key.
-		aliases          map[string]TStringSet // The inverted version of deAlias.
-		preferredAliases TStringMap            // Per entry key, the preferred alias
-		illegalFields    TStringSet            // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		currentKey       string                // The key of the entry we are currently working on.
-		foundDoubles     bool                  // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		legacyMode       bool                  // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		TInteraction                           // Error reporting channel
+		files            string                           // Path to root of folder with PDF files of the entries
+		comments         []string                         // The comments included in a BibTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		entryFields      map[string]TStringMap            // Per entry key, the fields associated to the actual entries.
+		entryType        TStringMap                       // Per entry key, the type of the enty.
+		deAlias          TStringMap                       // Mapping from aliases to the actual entry key.
+		aliases          map[string]TStringSet            // The inverted version of deAlias.
+		preferredAliases TStringMap                       // Per entry key, the preferred alias
+		illegalFields    TStringSet                       // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		currentKey       string                           // The key of the entry we are currently working on.
+		foundDoubles     bool                             // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		legacyMode       bool                             // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
+		challengeWinners map[string]map[string]TStringMap // A key and field specific mapping from challenged value to winner values
+		TInteraction                                      // Error reporting channel
 	}
 )
 
@@ -105,6 +106,61 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 	return true
 }
 
+// Lookup the entry key and type for a given key/alias
+func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) {
+	lookupKey, isAlias := l.deAlias[key]
+	if !isAlias {
+		lookupKey = key
+	}
+
+	entryType, isKey := l.entryType[lookupKey]
+	if isKey {
+		return lookupKey, entryType, true
+	} else {
+		return "", "", false
+	}
+}
+
+// Lookup the entry key for a given key/alias
+func (l *TBibTeXLibrary) LookupEntry(key string) (string, bool) {
+	entryKey, _, isKey := l.LookupEntryWithType(key)
+
+	return entryKey, isKey
+}
+
+func (l *TBibTeXLibrary) registerChallengeWinner(entry, field, challenger, winner string) {
+	_, isDefined := l.challengeWinners[entry]
+	if !isDefined {
+		l.challengeWinners[entry] = map[string]TStringMap{}
+	}
+
+	_, isDefined = l.challengeWinners[entry][field]
+	if !isDefined {
+		l.challengeWinners[entry][field] = TStringMap{}
+	}
+
+	l.challengeWinners[entry][field][challenger] = winner
+}
+
+func (l *TBibTeXLibrary) checkChallengeWinner(entry, field, challenger, winner string) bool {
+	return l.challengeWinners[entry][field][challenger] == winner
+}
+
+func (l *TBibTeXLibrary) entryString(key string) string {
+	result := ""
+	fields, knownEntry := l.entryFields[key]
+	
+	if knownEntry {
+		result = "@" + l.entryType[key] + "{" + key + ",\n"
+		for field, value := range fields {
+			result += "   " + field + " = {" + value + "},\n"
+		}
+		result += "}\n"
+	}
+
+	return result
+}
+
 // The low level registering of the alias for a key.
 // Also takes care of registering the inverse mapping.
 func (l *TBibTeXLibrary) registerAlias(alias, key string) {
@@ -118,6 +174,7 @@ func (l *TBibTeXLibrary) registerAlias(alias, key string) {
 	l.aliases[key].Set().Add(alias)
 }
 
+// Move the alias preference to another key
 func (l *TBibTeXLibrary) moveAliasPreference(alias, currentKey, key string) {
 	if l.preferredAliases[currentKey] == alias && AllowLegacy {
 		delete(l.preferredAliases, currentKey)
@@ -203,6 +260,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction) {
 	l.currentKey = ""
 	l.TInteraction = reporting
 	l.foundDoubles = false
+	l.challengeWinners = map[string]map[string]TStringMap{}
 	if AllowLegacy {
 		l.legacyMode = false
 	}
@@ -229,19 +287,25 @@ func (l *TBibTeXLibrary) FoundDoubles() bool {
 	return l.foundDoubles
 }
 
+var uniqueID int
+
 // Start to record a library entry
 func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
-	l.currentKey = key
+	if l.legacyMode {
+		// Post legacy question: Do we want to use currentKey or can this be kept on the parser side??
+		l.currentKey = fmt.Sprintf("%dAAAAA", uniqueID) + key
+		uniqueID++
+	} else {
+		l.currentKey = key
+	}
 
 	// Check if an entry with the given key already exists
 	_, exists := l.entryType[l.currentKey]
 	if exists {
 		// When the entry already exists, we need to report that we found doubles, as well as possibly resolve the entry type.
-		if !l.legacyMode {
-			l.Warning(WarningEntryAlreadyExists, l.currentKey)
-			l.foundDoubles = true
-		}
-		l.entryType[l.currentKey] = l.ResolveFieldValue(EntryTypeField, entryType, l.entryType[key])
+		l.Warning(WarningEntryAlreadyExists, l.currentKey)
+		l.foundDoubles = true
+		l.entryType[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.entryType[key])
 	} else {
 		l.entryFields[l.currentKey] = TStringMap{}
 		l.entryType[l.currentKey] = entryType
@@ -263,7 +327,7 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 
 		// If the field already has a value that is different from the new value, we need to resolve this.
 		if alreadyHasValue && newValue != currentValue {
-			l.entryFields[l.currentKey][field] = l.ResolveFieldValue(field, newValue, currentValue)
+			l.entryFields[l.currentKey][field] = l.ResolveFieldValue(l.currentKey, field, newValue, currentValue)
 		} else {
 			l.entryFields[l.currentKey][field] = newValue
 		}

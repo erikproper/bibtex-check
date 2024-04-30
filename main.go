@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -20,6 +21,7 @@ const (
 	AliasKeys        = BibTeXFolder + "Keys"
 	ErikProperBib    = BibTeXFolder + "ErikProper.bib"
 	KeysMapFile      = BibTeXFolder + "ErikProper.aliases"
+	ChallengesFile   = BibTeXFolder + "ErikProper.challenges"
 )
 
 func Titles(title string) {
@@ -82,7 +84,62 @@ func Titles(title string) {
 	fmt.Println(result)
 }
 
+func Page(pages string) string {
+	trimedPageRanges := ""
+
+	trimedPageRanges = strings.TrimSpace(pages)
+	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, " ", "")
+	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, "--", "-")
+
+	rangesList := ""
+	comma := ""
+
+	for _, pageRange := range strings.Split(trimedPageRanges, ",") {
+		trimedPagesList := strings.Split(pageRange, "-")
+		switch {
+		case len(trimedPagesList) == 0:
+			return pages
+
+		case len(trimedPagesList) == 1:
+			return trimedPagesList[0]
+
+		case len(trimedPagesList) == 2:
+			firstPagePair := strings.Split(trimedPagesList[0], ":")
+			secondPagePair := strings.Split(trimedPagesList[1], ":")
+
+			if len(firstPagePair) == 1 || len(secondPagePair) == 1 {
+				rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
+			} else if len(firstPagePair) == 2 && len(secondPagePair) == 2 {
+				if firstPagePair[0] == secondPagePair[0] {
+					rangesList += comma + trimedPagesList[0] + "--" + secondPagePair[1]
+				} else {
+					rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
+				}
+			} else {
+				return pages
+			}
+
+		default:
+			return pages
+		}
+
+		comma = ", "
+	}
+
+	return rangesList
+}
+
 func Play() {
+	fmt.Println(Page("379--423,6:23--656"))
+	fmt.Println(Page("10"))
+	fmt.Println(Page("3 :10"))
+	fmt.Println(Page("3: 10"))
+	fmt.Println(Page("3: 10"))
+	fmt.Println(Page("10-20--30"))
+	fmt.Println(Page("10-20"))
+	fmt.Println(Page("2:10-2:20"))
+	fmt.Println(Page("2:10--3:20"))
+
 	//	strings.TrimSpace
 	// Play
 	// TITLES
@@ -132,7 +189,7 @@ func OpenLibrary() bool {
 }
 
 func main() {
-	Reporting := TInteraction{}
+	Reporting = TInteraction{}
 	writeAliases := false
 	writeBibFile := false
 
@@ -141,28 +198,37 @@ func main() {
 		if OpenLibrary() {
 			writeBibFile = true
 			writeAliases = true
+		}
+
+	case len(os.Args) == 2 && os.Args[1] == "-meta":
+		if OpenLibrary() {
+			writeBibFile = false
+			writeAliases = false
 
 			OldLibrary := TBibTeXLibrary{}
+			OldLibrary.Progress("Reading legacy library")
 			OldLibrary.Initialise(Reporting)
 			OldLibrary.legacyMode = true
 			OldLibrary.ReadLegacyAliases()
-			//	fmt.Println("Reading old libraries")
-			//	BibTeXParser.Initialise(Reporting, &OldLibrary)
-			//  NOTE: Ignore DSK fields. Only use file fields. If the file is there.
-			//  Maybe import date-added/modified fields, if not exists yet.
-			//
-			//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/ErikProper.bib")
-			//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/Old/Old.bib")
-			//
-			//	BibTeXParser.ParseBiBFile("Convert.bib")
-			//	BibTeXParser.ParseBiBFile("/Users/erikproper/BibTeX/MyLibrary.bib")
-			//	fmt.Println("Size old:", len(OldLibrary.entryType))
 
-			//	Test := "YnBsaXN0MDDSAQIDBFxyZWxhdGl2ZVBhdGhYYm9va21hcmtfECBGaWxlcy9FUC0yMDI0LTA0LTAzLTIyLTA3LTMxLnBkZk8RBERib29rRAQAAAAABBAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAwAABQAAAAEBAABVc2VycwAAAAoAAAABAQAAZXJpa3Byb3BlcgAACQAAAAEBAABOZXh0Y2xvdWQAAAAHAAAAAQEAAExpYnJhcnkABgAAAAEBAABCaUJUZVgAAAUAAAABAQAARmlsZXMAAAAaAAAAAQEAAEVQLTIwMjQtMDQtMDMtMjItMDctMzEucGRmAAAcAAAAAQYAAAQAAAAUAAAAKAAAADwAAABMAAAAXAAAAGwAAAAIAAAABAMAABVdAAAAAAAACAAAAAQDAADeCAQAAAAAAAgAAAAEAwAAuMRlBwAAAAAIAAAABAMAAAEDjwcAAAAACAAAAAQDAAApz5oHAAAAAAgAAAAEAwAAxmdJCgAAAAAIAAAABAMAAOeBbQkAAAAAHAAAAAEGAAC0AAAAxAAAANQAAADkAAAA9AAAAAQBAAAUAQAACAAAAAAEAABBxTC0xIAAABgAAAABAgAAAQAAAAAAAAAPAAAAAAAAAAAAAAAAAAAACAAAAAQDAAAFAAAAAAAAAAQAAAADAwAA9QEAAAgAAAABCQAAZmlsZTovLy8MAAAAAQEAAE1hY2ludG9zaCBIRAgAAAAEAwAAAFChG3MAAAAIAAAAAAQAAEHFlk7IgAAAJAAAAAEBAABBQUY2QTJFRi01MTg0LTQ1OEItQTM2RC04QzJDMTU5MDBENUMYAAAAAQIAAIEAAAABAAAA7xMAAAEAAAAAAAAAAAAAAAEAAAABAQAALwAAAAAAAAABBQAA/QAAAAECAAAzNjllNzI1YTcyMTkxYmRhYjZlYzMwMzMxZjUyYTQyMjM1OTQ5YTUzZDdlZmNlNmMzYzc0NjUzZGFjZWIyODNkOzAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwOzAwMDAwMDAwMDAwMDAwMjA7Y29tLmFwcGxlLmFwcC1zYW5kYm94LnJlYWQtd3JpdGU7MDE7MDEwMDAwMTI7MDAwMDAwMDAwOTZkODFlNzswMTsvdXNlcnMvZXJpa3Byb3Blci9uZXh0Y2xvdWQvbGlicmFyeS9iaWJ0ZXgvZmlsZXMvZXAtMjAyNC0wNC0wMy0yMi0wNy0zMS5wZGYAAAAAzAAAAP7///8BAAAAAAAAABAAAAAEEAAAkAAAAAAAAAAFEAAAJAEAAAAAAAAQEAAAWAEAAAAAAABAEAAASAEAAAAAAAACIAAAJAIAAAAAAAAFIAAAlAEAAAAAAAAQIAAApAEAAAAAAAARIAAA2AEAAAAAAAASIAAAuAEAAAAAAAATIAAAyAEAAAAAAAAgIAAABAIAAAAAAAAwIAAAMAIAAAAAAAABwAAAeAEAAAAAAAARwAAAFAAAAAAAAAASwAAAiAEAAAAAAACA8AAAOAIAAAAAAAAACAANABoAIwBGAAAAAAAAAgEAAAAAAAAABQAAAAAAAAAAAAAAAAAABI4="
-			//	data, _ := base64.StdEncoding.DecodeString(Test)
-			//	Str := string(data)
-			//	Start := Str[strings.Index(Str, "relativePathXbookmark")+len("relativePathXbookmark")+3 : strings.Index(Str, "DbookD")-3]
-			//	fmt.Printf("%q\n", Start)
+			BibTeXParser := TBibTeXStream{}
+			BibTeXParser.Initialise(Reporting, &OldLibrary)
+
+			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/ErikProper.bib")
+			//			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old.bib")
+			//			BibTeXParser.ParseBibFile("Convert.bib")
+			//			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/MyLibrary.bib")
+			//			fmt.Println("Size of legacy pool is:", len(OldLibrary.entryType))
+
+			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
+			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA
+			for oldEntry, oldType := range OldLibrary.entryType {
+				newKey, newType, isEntry := Library.LookupEntryWithType(stripUniquePrefix.ReplaceAllString(oldEntry, ""))
+
+				if isEntry {
+					Library.entryType[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
+				}
+			}
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-play":

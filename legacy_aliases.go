@@ -74,10 +74,16 @@ func (l *TBibTeXLibrary) ReadLegacyAliases() {
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		s := string(scanner.Text())
-		// Use split!!
-		alias := s[:strings.Index(s, " ")]
-		key := s[strings.Index(s, " ")+1:]
+		s := strings.Split(string(scanner.Text()), " ")
+
+		if len(s) != 2 {
+			fmt.Println("Line does not have precisely two entries:", s)
+			log.Fatal(err)
+			return
+		}
+
+		alias := s[0]
+		key := s[1]
 
 		l.AddKeyAlias(alias, key, false)
 
@@ -95,28 +101,76 @@ func (l *TBibTeXLibrary) ReadLegacyAliases() {
 
 	file.Close()
 
-	// file, err = os.Open(PreferredAliasesFile)
-	//
-	//	if err != nil {
-	//		log.Fatal(err)
-	//	}
-	//
-	// scanner = bufio.NewScanner(file)
-	//
-	//	for scanner.Scan() {
-	//		l.AddPreferredAlias(scanner.Text())
-	//	}
-	//
-	//	if err := scanner.Err(); err != nil {
-	//		log.Fatal(err)
-	//	}
-	//
-	// file.Close()
+	file, err = os.Open(ChallengesFile)
+	if err != nil {
+		log.Fatal(err) /// Don't want to do it like this.
+	}
+
+	key := ""
+	field := ""
+	challenge := ""
+
+	scanner = bufio.NewScanner(file)
+	for scanner.Scan() {
+		s := string(scanner.Text())
+
+		if len(s) < 3 {
+			fmt.Println("Line is too short.", s)
+			log.Fatal(err)
+			return
+		}
+
+		switch s[0] {
+		case 'K':
+			key = s[2:]
+
+		case 'F':
+			field = s[2:]
+
+		case 'C':
+			challenge = s[2:]
+
+		case 'W':
+			l.registerChallengeWinner(key, field, challenge, s[2:])
+		}
+
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	file.Close()
 }
 
 // Quick and dirty write-out of:
 // - the ErikProper.aliases files
 // - the creation of the "mapping" folders to enable the old scripts to still do their work
+func (l *TBibTeXLibrary) WriteChallenges() {
+	fmt.Println("Writing challenges map")
+
+	BackupFile(ChallengesFile)
+
+	chFile, err := os.Create(ChallengesFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer chFile.Close()
+
+	chWriter := bufio.NewWriter(chFile)
+	for key, fieldChallenges := range l.challengeWinners {
+		chWriter.WriteString("K " + key + "\n")
+		for field, challenges := range fieldChallenges {
+			chWriter.WriteString("F " + field + "\n")
+			for challenger, winner := range challenges {
+				chWriter.WriteString("C " + challenger + "\n")
+				chWriter.WriteString("W " + winner + "\n")
+			}
+		}
+	}
+	chWriter.Flush()
+}
+
 func (l *TBibTeXLibrary) WriteLegacyAliases() {
 	fmt.Println("Writing aliases map")
 
@@ -156,4 +210,6 @@ func (l *TBibTeXLibrary) WriteLegacyAliases() {
 		os.WriteFile(AliasKeys+"/"+aa+"/key", []byte(key), 0644)
 		os.WriteFile(AliasKeys+"/"+aa+"/alias", []byte(key), 0644)
 	}
+
+	l.WriteChallenges()
 }

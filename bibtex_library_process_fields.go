@@ -24,31 +24,43 @@ func processISSNValue(library *TBibTeXLibrary, rawISSN string) string {
 	var (
 		trimISSNStart = regexp.MustCompile(`^ *ISSN[:]? *`)
 		validISSN     = regexp.MustCompile(`^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9,X]$`)
+		trimmedISSN   string
 	)
 
-	trimmedISSN := strings.ReplaceAll(strings.TrimSpace(trimISSNStart.ReplaceAllString(rawISSN, "")), "-", "")
+	trimmedISSN = trimISSNStart.ReplaceAllString(rawISSN, "")
+	trimmedISSN = strings.ReplaceAll(trimmedISSN, ",", " ")
+	trimmedISSN = strings.TrimSpace(trimmedISSN)
+	trimmedISSN = strings.Split(trimmedISSN, " ")[0]
+	trimmedISSN = strings.ReplaceAll(trimmedISSN, "-", "")
 
 	if validISSN.MatchString(trimmedISSN) {
 		return trimmedISSN[0:4] + "-" + trimmedISSN[4:8]
 	} else {
-		library.Warning(WarningBadISSN, rawISSN, library.currentKey)
+		if !library.legacyMode {
+			library.Warning(WarningBadISSN, rawISSN, library.currentKey)
+		}
 		return strings.TrimSpace(rawISSN)
 	}
 }
 
 func processISBNValue(library *TBibTeXLibrary, rawISBN string) string {
 	var (
+		trimmedISBN   string
 		trimISBNStart = regexp.MustCompile(`^ *ISBN[-]?(10|13|)[:]? *`)
-		validISBN10   = regexp.MustCompile(`^[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9,X]$`)
-		validISBN13   = regexp.MustCompile(`^[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9,X]$`)
+		validISBN     = regexp.MustCompile(`^([0-9][-]?[0-9][-]?[0-9][-]?|)[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9,X]$`)
 	)
 
-	trimmedISBN := strings.TrimSpace(trimISBNStart.ReplaceAllString(rawISBN, ""))
+	trimmedISBN = trimISBNStart.ReplaceAllString(rawISBN, "")
+	trimmedISBN = strings.ReplaceAll(trimmedISBN, ",", " ")
+	trimmedISBN = strings.TrimSpace(trimmedISBN)
+	trimmedISBN = strings.Split(trimmedISBN, " ")[0]
 
-	if validISBN10.MatchString(trimmedISBN) || validISBN13.MatchString(trimmedISBN) {
+	if validISBN.MatchString(trimmedISBN) {
 		return trimmedISBN
 	} else {
-		library.Warning(WarningBadISBN, rawISBN, library.currentKey)
+		if !library.legacyMode {
+			library.Warning(WarningBadISBN, rawISBN, library.currentKey)
+		}
 		return strings.TrimSpace(rawISBN)
 	}
 }
@@ -58,7 +70,7 @@ func processYearValue(library *TBibTeXLibrary, rawYear string) string {
 
 	trimmedYear := strings.TrimSpace(rawYear)
 
-	if !validYear.MatchString(trimmedYear) {
+	if !validYear.MatchString(trimmedYear) && !library.legacyMode {
 		library.Warning(WarningBadYear, trimmedYear, library.currentKey)
 	}
 
@@ -71,6 +83,51 @@ func processDBLPValue(library *TBibTeXLibrary, value string) string {
 	}
 
 	return value
+}
+
+func processPagesValue(library *TBibTeXLibrary, pages string) string {
+	trimedPageRanges := ""
+
+	trimedPageRanges = strings.TrimSpace(pages)
+	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, " ", "")
+	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, "--", "-")
+
+	rangesList := ""
+	comma := ""
+
+	for _, pageRange := range strings.Split(trimedPageRanges, ",") {
+		trimedPagesList := strings.Split(pageRange, "-")
+		switch {
+		case len(trimedPagesList) == 0:
+			return pages
+
+		case len(trimedPagesList) == 1:
+			return trimedPagesList[0]
+
+		case len(trimedPagesList) == 2:
+			firstPagePair := strings.Split(trimedPagesList[0], ":")
+			secondPagePair := strings.Split(trimedPagesList[1], ":")
+
+			if len(firstPagePair) == 1 || len(secondPagePair) == 1 {
+				rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
+			} else if len(firstPagePair) == 2 && len(secondPagePair) == 2 {
+				if firstPagePair[0] == secondPagePair[0] {
+					rangesList += comma + trimedPagesList[0] + "--" + secondPagePair[1]
+				} else {
+					rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
+				}
+			} else {
+				return pages
+			}
+
+		default:
+			return pages
+		}
+
+		comma = ", "
+	}
+
+	return rangesList
 }
 
 func processBDSKFileValue(library *TBibTeXLibrary, value string) string {
@@ -86,7 +143,7 @@ func processBDSKFileValue(library *TBibTeXLibrary, value string) string {
 	}
 
 	_, err := os.Stat(library.files + fileName)
-	if err != nil {
+	if err != nil && !library.legacyMode {
 		library.Warning(WarningMissingFile, fileName, library.currentKey)
 	}
 
@@ -117,6 +174,7 @@ func init() {
 	fieldProcessors["dblp"] = processDBLPValue
 	fieldProcessors["isbn"] = processISBNValue
 	fieldProcessors["issn"] = processISSNValue
+	fieldProcessors["pages"] = processPagesValue
 	fieldProcessors["year"] = processYearValue
 
 	// "address"
@@ -146,7 +204,6 @@ func init() {
 	// "note"
 	// "number"
 	// "organization"
-	// "pages"
 	// "publisher"
 	// "researchgate"
 	// "school"
