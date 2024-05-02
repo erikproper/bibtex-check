@@ -171,14 +171,14 @@ func InitialiseLibrary() bool {
 }
 
 func OpenLibrary() bool {
-	InitialiseLibrary()
-
-	// Use Progress call
 	Library.Progress("Reading main library")
 	BibTeXParser := TBibTeXStream{}
 	BibTeXParser.Initialise(Reporting, &Library)
+	BibTeXParser.silenced = Library.silenced
 	if BibTeXParser.ParseBibFile(ErikProperBib) {
-		fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
+		if !Library.silenced {
+			fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
+		}
 		Library.CheckPreferredAliases()
 		Library.CheckDBLPAliases()
 
@@ -195,13 +195,13 @@ func main() {
 
 	switch {
 	case len(os.Args) == 1:
-		if OpenLibrary() {
+		if InitialiseLibrary() && OpenLibrary() {
 			writeBibFile = true
 			writeAliases = true
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-meta":
-		if OpenLibrary() {
+		if InitialiseLibrary() && OpenLibrary() {
 			writeBibFile = true
 			writeAliases = false
 
@@ -229,7 +229,31 @@ func main() {
 				newKey, newType, isEntry := Library.LookupEntryWithType(stripUniquePrefix.ReplaceAllString(oldEntry, ""))
 
 				if isEntry {
+					// We don't have a set type function??
 					Library.entryType[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
+
+					// EntryFields function???
+					for oldField, oldValue := range OldLibrary.entryFields[oldEntry] {
+						if oldField == "file" {
+							if oldValue != "" && Library.entryFields[newKey]["bdsk-file-1"] == "" {
+								Library.entryFields[newKey]["local-url"] = "/Users/erikproper/BiBTeX/Zotero/" + oldValue
+							}
+						}
+
+						// The next test should be a nice function IsAllowedEntryField(Library.entryType[newKey], oldField)
+						if BibTeXAllowedEntryFields[Library.entryType[newKey]].Set().Contains(oldField) {
+							switch oldField {
+							case "dblp":
+								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+
+							case "crossref":
+								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+
+							case "doi":
+								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+							}
+						}
+					}
 				}
 			}
 		}
@@ -239,19 +263,31 @@ func main() {
 
 	case len(os.Args) == 3 && os.Args[1] == "-alias":
 		Library.Silenced()
-
-		key := strings.ReplaceAll(strings.ReplaceAll(os.Args[2], "\\cite{", ""), "}", "")
-
 		InitialiseLibrary()
 
+		key := strings.ReplaceAll(strings.ReplaceAll(os.Args[2], "\\cite{", ""), "}", "")
 		alias, ok := Library.preferredAliases[key]
 
 		if ok {
 			fmt.Println(alias)
 		}
 
-	case len(os.Args) > 3 && os.Args[1] == "-map":
+	case len(os.Args) > 2 && os.Args[1] == "-key":
+		Library.Silenced()
+		InitialiseLibrary()
+		Library.Silenced()
+
 		if OpenLibrary() {
+			key := strings.ReplaceAll(strings.ReplaceAll(os.Args[2], "\\cite{", ""), "}", "")
+
+			actualKey, ok := Library.LookupEntry(key)
+			if ok {
+				fmt.Println(actualKey)
+			}
+		}
+
+	case len(os.Args) > 3 && os.Args[1] == "-map":
+		if InitialiseLibrary() && OpenLibrary() {
 			keysString := ""
 			writeAliases = true
 

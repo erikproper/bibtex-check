@@ -86,13 +86,13 @@ func init() {
 		"article", "journal", "volume", "number", "pages", "month", "issn")
 	AddAllowedEntryFields(
 		"book", "booktitle", "editor", "publisher", "volume", "number", "series", "address",
-		"edition", "issn", "isbn")
+		"edition", "isbn")
 	AddAllowedEntryFields(
 		"inbook", "booktitle", "editor", "chapter", "pages", "publisher", "volume", "number",
-		"series", "type", "address", "edition", "issn", "isbn", "crossref")
+		"series", "type", "address", "edition", "isbn", "crossref")
 	AddAllowedEntryFields(
 		"incollection", "booktitle", "publisher", "editor", "volume", "number", "series",
-		"type", "chapter", "pages", "address", "edition", "issn", "isbn", "crossref")
+		"type", "chapter", "pages", "address", "edition", "isbn", "crossref")
 	AddAllowedEntryFields(
 		"inproceedings", "booktitle", "editor", "volume", "number", "series", "pages",
 		"address", "organization", "publisher", "issn", "isbn", "crossref")

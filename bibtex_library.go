@@ -123,9 +123,9 @@ func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) 
 
 // Lookup the entry key for a given key/alias
 func (l *TBibTeXLibrary) LookupEntry(key string) (string, bool) {
-	entryKey, _, isKey := l.LookupEntryWithType(key)
+	lookupKey, _, isKey := l.LookupEntryWithType(key)
 
-	return entryKey, isKey
+	return lookupKey, isKey
 }
 
 func (l *TBibTeXLibrary) registerChallengeWinner(entry, field, challenger, winner string) {
