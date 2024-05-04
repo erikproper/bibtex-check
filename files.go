@@ -4,7 +4,7 @@
 // This module provides basic operations to manage files.
 // It, in particular, provides functionality to backup existing files.
 //
-// Creator: Henderik A. Proper (erikproper@fastmail.com)
+// Creator: Henderik A. Proper (erikproper@gmail.com)
 //
 // Version of: 23.04.2024
 //
@@ -57,4 +57,10 @@ func BackupFile(sourceFile string) bool {
 	}
 
 	return true
+}
+
+func FileExists(fileName string) bool {
+	_, err := os.Stat(fileName)
+
+	return err == nil
 }

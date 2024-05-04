@@ -129,16 +129,28 @@ func Page(pages string) string {
 	return rangesList
 }
 
+var Tester1 TStringMap
+var Tester2 TStringStringMap
+var Tester3 TStringStringStringMap
+
 func Play() {
-	fmt.Println(Page("379--423,6:23--656"))
-	fmt.Println(Page("10"))
-	fmt.Println(Page("3 :10"))
-	fmt.Println(Page("3: 10"))
-	fmt.Println(Page("3: 10"))
-	fmt.Println(Page("10-20--30"))
-	fmt.Println(Page("10-20"))
-	fmt.Println(Page("2:10-2:20"))
-	fmt.Println(Page("2:10--3:20"))
+	Tester1.StringMapSetValue("hello", "world")
+	fmt.Println(Tester1)
+	fmt.Println(Tester1.StringMapGetValue("hello"))
+	fmt.Println(Tester1.StringMapGetValue("not"))
+
+	Tester2.StringStringMapSetValue("hello", "world", "erik")
+	fmt.Println(Tester2)
+	fmt.Println(Tester2.StringStringMapGetValue("hello", "world"))
+	fmt.Println(Tester2.StringStringMapGetValue("not", "world"))
+	fmt.Println(Tester2.StringStringMapGetValue("hello", "not"))
+
+	Tester3.StringStringStringMapSetValue("hello", "world", "erik", "proper")
+	fmt.Println(Tester3)
+	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "world", "erik"))
+	fmt.Println(Tester3.StringStringStringMapGetValue("not", "world", "erik"))
+	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "not", "erik"))
+	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "world", "not"))
 
 	//	strings.TrimSpace
 	// Play
@@ -179,13 +191,17 @@ func OpenLibrary() bool {
 		if !Library.silenced {
 			fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
 		}
-		Library.CheckPreferredAliases()
-		Library.CheckDBLPAliases()
+		Library.CheckAliases()
+		Library.CheckEntries()
 
 		return true
 	} else {
 		return false
 	}
+}
+
+func CleanKey(rawKey string) string {
+	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawKey, "\\cite{", ""), "}", ""))
 }
 
 func main() {
@@ -236,21 +252,28 @@ func main() {
 					for oldField, oldValue := range OldLibrary.entryFields[oldEntry] {
 						if oldField == "file" {
 							if oldValue != "" && Library.entryFields[newKey]["bdsk-file-1"] == "" {
-								Library.entryFields[newKey]["local-url"] = "/Users/erikproper/BiBTeX/Zotero/" + oldValue
+								Library.entryFields[newKey]["local-url"] = oldValue
 							}
 						}
 
 						// The next test should be a nice function IsAllowedEntryField(Library.entryType[newKey], oldField)
 						if BibTeXAllowedEntryFields[Library.entryType[newKey]].Set().Contains(oldField) {
 							switch oldField {
-							case "dblp":
+							case "crossref":
 								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
 
-							case "crossref":
+							case "chapter":
+								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+
+							case "dblp":
 								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
 
 							case "doi":
 								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+
+							case "pages":
+								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+
 							}
 						}
 					}
@@ -265,8 +288,8 @@ func main() {
 		Library.Silenced()
 		InitialiseLibrary()
 
-		key := strings.ReplaceAll(strings.ReplaceAll(os.Args[2], "\\cite{", ""), "}", "")
-		alias, ok := Library.preferredAliases[key]
+		// Function call.
+		alias, ok := Library.LookupEntry(CleanKey(os.Args[2]))
 
 		if ok {
 			fmt.Println(alias)
@@ -278,9 +301,8 @@ func main() {
 		Library.Silenced()
 
 		if OpenLibrary() {
-			key := strings.ReplaceAll(strings.ReplaceAll(os.Args[2], "\\cite{", ""), "}", "")
-
-			actualKey, ok := Library.LookupEntry(key)
+			// Function call.
+			actualKey, ok := Library.LookupEntry(CleanKey(os.Args[2]))
 			if ok {
 				fmt.Println(actualKey)
 			}
@@ -292,7 +314,7 @@ func main() {
 			writeAliases = true
 
 			for _, keyString := range os.Args[2:] {
-				keysString += "," + strings.ReplaceAll(strings.ReplaceAll(keyString, "\\cite{", ""), "}", "")
+				keysString += "," + CleanKey(keyString)
 			}
 			keyStrings := strings.Split(keysString, ",")
 
@@ -304,15 +326,15 @@ func main() {
 		}
 
 	case len(os.Args) > 2 && os.Args[1] == "-preferred":
-		alias := strings.ReplaceAll(strings.ReplaceAll(os.Args[2], "\\cite{", ""), "}", "")
+		alias := CleanKey(os.Args[2])
 
-		if Library.IsValidPreferredAlias(alias) {
+		if CheckPreferredAliasValidity(alias) {
 			writeAliases = true
 
 			InitialiseLibrary()
 
 			if len(os.Args) == 4 {
-				key := strings.ReplaceAll(strings.ReplaceAll(os.Args[3], "\\cite{", ""), "}", "")
+				key := CleanKey(os.Args[3])
 				Library.AddKeyAlias(alias, key, true)
 			}
 

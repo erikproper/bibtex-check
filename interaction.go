@@ -5,7 +5,7 @@
 // For the moment, it only involves the reporting of errors and warnings.
 // In the future, it will also involve input from the user concerning e.g. resolving ambiguities when importing bibtex files.
 //
-// Creator: Henderik A. Proper (erikproper@fastmail.com)
+// Creator: Henderik A. Proper (erikproper@gmail.com)
 //
 // Version of: 23.04.2024
 //

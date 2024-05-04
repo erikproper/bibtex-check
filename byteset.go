@@ -5,7 +5,7 @@
 // The assumption is that using such vectors is faster than e.g. using maps from byte to empty structs.
 // In the future this module may become (part of) a sets & sequences package.
 //
-// Creator: Henderik A. Proper (erikproper@fastmail.com)
+// Creator: Henderik A. Proper (erikproper@gmail.com)
 //
 // Version of: 22.04.2024
 //
@@ -196,32 +196,32 @@ func (s *TByteSet) Subtract(t TByteSet) *TByteSet {
 }
 
 // Check if the set is equal to another set.
-func (s TByteSet) Eq(t TByteSet) bool {
+func (s TByteSet) IsEq(t TByteSet) bool {
 	// If all words are equal, then the sets are equal
 	return s.words[0] == t.words[0] && s.words[1] == t.words[1] &&
 		s.words[2] == t.words[2] && s.words[3] == t.words[3]
 }
 
 // Check if the set is a subset, or equal, to another set
-func (s TByteSet) SubsetEq(t TByteSet) bool {
+func (s TByteSet) IsSubsetEq(t TByteSet) bool {
 	// If all AND-NOT nots of t result in "blending out" the bits of set s, then s is a subset of (or equal to) t
 	return s.words[0]&^t.words[0] == 0 && (s.words[1]&^t.words[1] == 0) &&
 		(s.words[2]&^t.words[2] == 0) && (s.words[3]&^t.words[3] == 0)
 }
 
 // Check if the set is a subset to another set
-func (s TByteSet) Subset(t TByteSet) bool {
-	return s.SubsetEq(t) && !s.Eq(t)
+func (s TByteSet) IsSubset(t TByteSet) bool {
+	return s.IsSubsetEq(t) && !s.IsEq(t)
 }
 
 // Check if the set is a superset, or equal, to another set
-func (s TByteSet) SupersetEq(t TByteSet) bool {
-	return t.SubsetEq(s)
+func (s TByteSet) IsSupersetEq(t TByteSet) bool {
+	return t.IsSubsetEq(s)
 }
 
 // Check if the set is a superset to another set
-func (s TByteSet) Superset(t TByteSet) bool {
-	return s.SupersetEq(t) && !s.Eq(t)
+func (s TByteSet) IsSuperset(t TByteSet) bool {
+	return s.IsSupersetEq(t) && !s.IsEq(t)
 }
 
 // Check if the provided element(s) are in the set of strings
@@ -230,13 +230,14 @@ func (s TByteSet) Contains(elements ...byte) bool {
 
 	elementSet.add(elements)
 
-	return elementSet.SubsetEq(s)
+	return elementSet.IsSubsetEq(s)
 }
 
 // Convert byte sets to a string.
 // Depending on the settings regarding Verbalised/Mathematical, different styles of strings will be created:
 // - Verbalised:   'a', 'b', and 'c'
 // - Mathematical: { 'a', 'b', 'c' }
+// This cannot be a parameter, since String() enables as to write fmt.Println(s) for any TByteset
 func (s TByteSet) String() string {
 	head := ""
 	tail := ""

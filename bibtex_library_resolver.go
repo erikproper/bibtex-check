@@ -2,9 +2,8 @@ package main
 
 import "fmt"
 
-// This is a dummy function for now.
 // In the future, this will be crucial when dealing with the integration of double entries and legacy files in particular.
-// Needs the library as parameter as we need to access interacton from there ...
+// Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
 func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current string) string {
 	// OK. The key, field, and challenger are needed here. But, current is likely to be derivable from l with key and field.
 	// But ... needs to be checked once done with the legacy migration.

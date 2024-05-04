@@ -4,7 +4,7 @@
 // This module provides basic operations to manage sets of strings.
 // In the future this module may become (part of) a sets & sequences package.
 //
-// Creator: Henderik A. Proper (erikproper@fastmail.com)
+// Creator: Henderik A. Proper (erikproper@gmail.com)
 //
 // Version of: 22.04.2024
 //
@@ -124,12 +124,12 @@ func (s *TStringSet) Subtract(t *TStringSet) *TStringSet {
 }
 
 // Check if the set is equal to another set.
-func (s *TStringSet) Eq(t *TStringSet) bool {
+func (s *TStringSet) IsEq(t *TStringSet) bool {
 	return maps.Equal(s.elements, t.elements)
 }
 
 // Check if the set is a subset, or equal, to another set
-func (s *TStringSet) SubsetEq(t *TStringSet) bool {
+func (s *TStringSet) IsSubsetEq(t *TStringSet) bool {
 	// Makes uses of the maps.Equal function, where we know:
 	//    t UNION s = t ==> s SUBSETEQ t
 	// which could also be written as:
@@ -143,30 +143,28 @@ func (s *TStringSet) SubsetEq(t *TStringSet) bool {
 }
 
 // Check if the set is a subset to another set
-func (s *TStringSet) Subset(t *TStringSet) bool {
+func (s *TStringSet) IsSubset(t *TStringSet) bool {
 
-	return s.SubsetEq(t) && !s.Eq(t)
+	return s.IsSubsetEq(t) && !s.IsEq(t)
 }
 
 // Check if the set is a superset, or equal, to another set
-func (s *TStringSet) SupersetEq(t *TStringSet) bool {
+func (s *TStringSet) IsSupersetEq(t *TStringSet) bool {
 
-	return t.SubsetEq(s)
+	return t.IsSubsetEq(s)
 }
 
 // Check if the set is a superset to another set
-func (s *TStringSet) Superset(t *TStringSet) bool {
+func (s *TStringSet) IsSuperset(t *TStringSet) bool {
 
-	return t.Subset(s)
+	return t.IsSubset(s)
 }
 
 // Check if the provided element(s) are in the set of strings
 func (s *TStringSet) Contains(elements ...string) bool {
 	for _, element := range elements {
-		_, isIn := s.elements[element]
-
 		// As soon as we find one element which is not in the set of strings, we can safely stop and return false
-		if !isIn {
+		if _, isIn := s.elements[element]; !isIn {
 			return false
 		}
 	}

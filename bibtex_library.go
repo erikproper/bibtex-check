@@ -12,7 +12,6 @@ package main
 
 import (
 	"fmt"
-	"regexp"
 	"time"
 )
 
@@ -29,20 +28,18 @@ const (
 	QuestionIgnore            = "Ignore this field?"
 )
 
-// As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
-// By taking the time of starting the app as the based, we can at least generate keys from that point in time on.
-// However, we should never go beyond the present time, of course.
-var KeyTime time.Time
+//
+//
+// Definition of the Library type
+//
+//
 
 type (
-	// We use several mappings from strings to strings
-	TStringMap map[string]string
-
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
 		files            string                           // Path to root of folder with PDF files of the entries
 		comments         []string                         // The comments included in a BibTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		entryFields      map[string]TStringMap            // Per entry key, the fields associated to the actual entries.
+		entryFields      TStringStringMap                 // Per entry key, the fields associated to the actual entries.
 		entryType        TStringMap                       // Per entry key, the type of the enty.
 		deAlias          TStringMap                       // Mapping from aliases to the actual entry key.
 		aliases          map[string]TStringSet            // The inverted version of deAlias.
@@ -56,19 +53,56 @@ type (
 	}
 )
 
-// Checks if a given alias fits the desired format of [a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
-// Examples: gordijn2002e3value, overbeek2010matchmaking, ...
-func (l *TBibTeXLibrary) IsValidPreferredAlias(alias string) bool {
-	var validPreferredAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
-
-	return validPreferredAlias.MatchString(alias)
-}
+//
+//
+// Access abstraction -- Set functions
+//
+//
 
 func (l *TBibTeXLibrary) SetFilePath(path string) bool {
 	l.files = path
 
 	return true
 }
+
+func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
+	l.entryFields.StringStringMapSetValue(entry, field, value)
+}
+
+//
+//
+// Access abstraction -- Processing functions
+//
+//
+
+func (l *TBibTeXLibrary) ForEachEntryTypePair(f func(string, string)) {
+	l.entryType.ForEachStringPair(f)
+}
+
+func (l *TBibTeXLibrary) ForEachAliasEntryPair(f func(string, string)) {
+	l.deAlias.ForEachStringPair(f)
+}
+
+//
+//
+// Access abstraction -- Get functions
+//
+//
+
+func (l *TBibTeXLibrary) EntryExists(entry string) bool {
+	return l.entryType.StringMapped(entry)
+}
+
+func (l *TBibTeXLibrary) GetEntryFieldValue(entry, field string) string {
+	return l.entryFields.StringStringMapGetValue(entry, field)
+}
+
+//////// OTHER stuff
+
+// As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
+// By taking the time of starting the programme as the based, we can at least generate keys from that point in time on.
+// However, we should never go beyond the present time, of course.
+var KeyTime time.Time
 
 // Generate a new key based on the KeyTime.
 func (l *TBibTeXLibrary) NewKey() string {

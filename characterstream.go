@@ -4,7 +4,7 @@
 // This module is concerned with the (ASCII) character by character reading of files or strings, to enable the further parsing of the character stream.
 // As we are in a TeX environment, and may potentially be confronted with "Runes" in general, this involves an automatic conversion of runes to LaTeX symbols.
 //
-// Creator: Henderik A. Proper (erikproper@fastmail.com)
+// Creator: Henderik A. Proper (erikproper@gmail.com)
 //
 // Version of: 24.04.2024
 //

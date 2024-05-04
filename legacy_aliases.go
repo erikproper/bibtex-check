@@ -23,48 +23,6 @@ import (
 	"strings"
 )
 
-// Check the compliance of preferred aliases.
-// For the moment, the preferred aliases are stored in a separate file.
-// Later, these will simply be the first entry in a "aliases" field in the BIB file.
-// Once we've reached that point, we can integrate this check into the regular checks per field.
-func (l *TBibTeXLibrary) CheckPreferredAliases() {
-	// This actually still makes sense after we wrapup the legacy stuff.
-	// Well .. for imports ... so ... add it to the import functionality
-	// Only the lowercase part ...
-	for alias, key := range l.deAlias {
-		if l.preferredAliases[key] == "" {
-			if l.IsValidPreferredAlias(alias) {
-				l.AddPreferredAlias(alias)
-			} else {
-				loweredAlias := strings.ToLower(alias)
-				if l.deAlias[loweredAlias] == "" && loweredAlias != key && l.IsValidPreferredAlias(loweredAlias) {
-					l.AddKeyAlias(loweredAlias, key, false)
-					l.AddPreferredAlias(loweredAlias)
-					//				} else {
-					//					fmt.Println("No preferred alias for:", key)
-				}
-			}
-		}
-	}
-}
-
-// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced entry.
-// These dblp fields are important for the future functionality of syncing with the dblp.org database.
-func (l *TBibTeXLibrary) CheckDBLPAliases() {
-	for alias, key := range l.deAlias {
-		if strings.Index(alias, "DBLP:") == 0 {
-			dblp := alias[5:]
-			if l.entryFields[key] != nil && dblp != l.entryFields[key]["dblp"] {
-				if l.entryFields[key]["dblp"] != "" {
-					fmt.Println("Found:", dblp, "from", alias, "while", l.entryFields[key]["dblp"])
-				} else {
-					l.entryFields[key]["dblp"] = dblp
-				}
-			}
-		}
-	}
-}
-
 // Quick and dirty reading of the keys.map and preferred.aliases file.
 func (l *TBibTeXLibrary) ReadLegacyAliases() {
 	file, err := os.Open(KeysMapFile)
@@ -88,7 +46,7 @@ func (l *TBibTeXLibrary) ReadLegacyAliases() {
 		l.AddKeyAlias(alias, key, false)
 
 		// l.HasPreferredAlias
-		if l.preferredAliases[key] == "" && l.IsValidPreferredAlias(alias) {
+		if l.preferredAliases[key] == "" && CheckPreferredAliasValidity(alias) {
 			l.AddPreferredAlias(alias)
 		} else {
 			// fmt.Println("No pref alias:", key)

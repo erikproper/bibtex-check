@@ -3,7 +3,7 @@
 //
 // This module is defines the TBibTeXStream type as a parser of BibTeX entries
 //
-// Creator: Henderik A. Proper (erikproper@fastmail.com)
+// Creator: Henderik A. Proper (erikproper@gmail.com)
 //
 // Version of: 26.04.2024
 //

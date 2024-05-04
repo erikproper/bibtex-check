@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/base64"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -38,7 +37,6 @@ func processDOIValue(library *TBibTeXLibrary, rawDOI string) string {
 func processISSNValue(library *TBibTeXLibrary, rawISSN string) string {
 	var (
 		trimISSNStart = regexp.MustCompile(`^ *ISSN[:]? *`)
-		validISSN     = regexp.MustCompile(`^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9,X]$`)
 		trimmedISSN   string
 	)
 
@@ -48,7 +46,7 @@ func processISSNValue(library *TBibTeXLibrary, rawISSN string) string {
 	trimmedISSN = strings.Split(trimmedISSN, " ")[0]
 	trimmedISSN = strings.ReplaceAll(trimmedISSN, "-", "")
 
-	if validISSN.MatchString(trimmedISSN) {
+	if CheckISSNValidity(trimmedISSN) {
 		return trimmedISSN[0:4] + "-" + trimmedISSN[4:8]
 	} else {
 		if !library.legacyMode {
@@ -62,7 +60,6 @@ func processISBNValue(library *TBibTeXLibrary, rawISBN string) string {
 	var (
 		trimmedISBN   string
 		trimISBNStart = regexp.MustCompile(`^ *ISBN[-]?(10|13|)[:]? *`)
-		validISBN     = regexp.MustCompile(`^([0-9][-]?[0-9][-]?[0-9][-]?|)[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9,X]$`)
 	)
 
 	trimmedISBN = trimISBNStart.ReplaceAllString(rawISBN, "")
@@ -70,26 +67,29 @@ func processISBNValue(library *TBibTeXLibrary, rawISBN string) string {
 	trimmedISBN = strings.TrimSpace(trimmedISBN)
 	trimmedISBN = strings.Split(trimmedISBN, " ")[0]
 
-	if validISBN.MatchString(trimmedISBN) {
+	if CheckISBNValidity(trimmedISBN) {
 		return trimmedISBN
 	} else {
 		if !library.legacyMode {
 			library.Warning(WarningBadISBN, rawISBN, library.currentKey)
 		}
+
 		return strings.TrimSpace(rawISBN)
 	}
 }
 
 func processYearValue(library *TBibTeXLibrary, rawYear string) string {
-	var validYear = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]$`)
-
 	trimmedYear := strings.TrimSpace(rawYear)
 
-	if !validYear.MatchString(trimmedYear) && !library.legacyMode {
-		library.Warning(WarningBadYear, trimmedYear, library.currentKey)
-	}
+	if CheckYearValidity(trimmedYear) {
+		return trimmedYear
+	} else {
+		if !library.legacyMode {
+			library.Warning(WarningBadYear, rawYear, library.currentKey)
+		}
 
-	return trimmedYear
+		return strings.TrimSpace(rawYear)
+	}
 }
 
 func processDBLPValue(library *TBibTeXLibrary, value string) string {
@@ -117,11 +117,13 @@ func processCrossrefValue(library *TBibTeXLibrary, crossref string) string {
 }
 
 func processPagesValue(library *TBibTeXLibrary, pages string) string {
+	var trimDashes = regexp.MustCompile(`-+`)
+
 	trimedPageRanges := ""
 
 	trimedPageRanges = strings.TrimSpace(pages)
 	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, " ", "")
-	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, "--", "-")
+	trimedPageRanges = trimDashes.ReplaceAllString(trimedPageRanges, "-")
 
 	rangesList := ""
 	comma := ""
@@ -173,9 +175,8 @@ func processFileValue(library *TBibTeXLibrary, rawFile string) string {
 		trimmedFile = trimFileEnd.ReplaceAllString(trimmedFile, "") + ".pdf"
 
 		// Hardwired ... legacy!!
-		_, err := os.Stat("/Users/erikproper/BiBTeX/Zotero/" + trimmedFile)
-		if err == nil {
-			return trimmedFile
+		if FileExists("/Users/erikproper/BiBTeX/Zotero/" + trimmedFile) {
+			return "/Users/erikproper/BiBTeX/Zotero/" + trimmedFile
 		} else {
 			return ""
 		}
@@ -196,16 +197,15 @@ func processBDSKFileValue(library *TBibTeXLibrary, value string) string {
 		fileName = payload[fileNameStart:fileNameEnd]
 	}
 
-	_, err := os.Stat(library.files + fileName)
-	if err != nil && !library.legacyMode {
-		library.Warning(WarningMissingFile, fileName, library.currentKey)
-	}
+	if FileExists(library.files + fileName) {
+		return value
+	} else {
+		if !library.legacyMode {
+			library.Warning(WarningMissingFile, fileName, library.currentKey)
+		}
 
-	if err != nil && library.legacyMode {
 		return ""
 	}
-
-	return value
 }
 
 // /////// Include the key here or not??
@@ -252,10 +252,8 @@ func init() {
 	// "bdsk-url-9"
 	// "booktitle"
 	// "chapter"
-	// "crossref"
 	// "edition"
 	// "editor"
-	// "file"
 	// "howpublished"
 	// "institution"
 	// "journal"
