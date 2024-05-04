@@ -1,1 +1,0 @@
-cat $HOME/BiBTeX/Convert.bib  | sed -e "s/-DDDD-.*,/,/" > Convert.bib

@@ -4,7 +4,7 @@
  *
  * This module is concerned with the storage of BibTeX libraties
  *
- * Creator: Henderik A. Proper (erikproper@fastmail.com)
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
  * Version of: 24.04.2024
  *
@@ -17,24 +17,11 @@ import (
 	"time"
 )
 
-// Warnings regarding the consistency of the libraries
-const (
-	WarningEntryAlreadyExists = "Entry '%s' already exists"
-	WarningUnknownFields      = "Unknown field(s) used: %s"
-	WarningAmbiguousAlias     = "Ambiguous alias; for %s we have %s and %s"
-	WarningAliasIsKey         = "Alias %s is already known to be a key"
-	WarningPreferredNotExist  = "Can't select a non existing alias %s as preferred alias"
-	WarningAliasTargetIsAlias = "Alias %s has a target $s, which is actually an alias for $s"
-	WarningBadAlias           = "Alias %s for %s does not comply to the rules"
-	WarningIllegalField       = "Field \"%s\", with value \"%s\", is not allowed for entry %s of type %s"
-	QuestionIgnore            = "Ignore this field?"
-)
-
-//
-//
-// Definition of the Library type
-//
-//
+/*
+ *
+ * Definition of the Library type
+ *
+ */
 
 type (
 	// The type for BibTeXLibraries
@@ -55,11 +42,11 @@ type (
 	}
 )
 
-//
-//
-// Access abstraction -- Set functions
-//
-//
+/*
+ *
+ * Access abstraction -- Set functions
+ *
+ */
 
 func (l *TBibTeXLibrary) SetFilePath(path string) bool {
 	l.files = path
@@ -71,9 +58,11 @@ func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
 	l.entryFields.StringStringMapSetValue(entry, field, value)
 }
 
-//
-//
-// Access abstraction -- Processing functions
+/*
+ *
+ * Access abstraction -- Set functions
+ *
+ */ // Access abstraction -- Processing functions
 //
 //
 
@@ -85,11 +74,11 @@ func (l *TBibTeXLibrary) ForEachAliasEntryPair(f func(string, string)) {
 	l.deAlias.ForEachStringPair(f)
 }
 
-//
-//
-// Access abstraction -- Get functions
-//
-//
+/*
+ *
+ * Access abstraction -- Get functions
+ *
+ */
 
 func (l *TBibTeXLibrary) EntryExists(entry string) bool {
 	return l.entryType.StringMapped(entry)
@@ -99,11 +88,11 @@ func (l *TBibTeXLibrary) GetEntryFieldValue(entry, field string) string {
 	return l.entryFields.StringStringMapGetValue(entry, field)
 }
 
-//
-//
-// Access abstraction -- Checking functions
-//
-//
+/*
+ *
+ * Access abstraction -- Checking functions
+ *
+ */
 
 func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
 	_, exists := l.preferredAliases[alias]

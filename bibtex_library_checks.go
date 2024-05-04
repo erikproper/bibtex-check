@@ -4,7 +4,7 @@
  *
  * This module is concerned with checks of fields and entries.
  *
- * Creator: Henderik A. Proper (erikproper@fastmail.com)
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
  * Version of: 24.04.2024
  *
@@ -93,6 +93,8 @@ func (l *TBibTeXLibrary) CheckAliasEntryPair(alias, entry string) {
 
 // The driver function to check all alias/entry pairs of the library
 func (l *TBibTeXLibrary) CheckAliases() {
+	l.Progress(ProgressCheckingAliases)
+
 	l.ForEachAliasEntryPair(l.CheckAliasEntryPair)
 }
 

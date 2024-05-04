@@ -13,22 +13,6 @@ package main
 import "strings"
 
 const (
-	// Names of syntactic classes as used in error messages
-	CharacterClass  = "Character"
-	EntryBodyClass  = "EntryBody"
-	EntryTypeClass  = "EntryType"
-	FieldValueClass = "FieldValue"
-
-	// Error messages & warnings
-	ErrorMissing               = "Missing"
-	ErrorMissingCharacter      = ErrorMissing + " " + CharacterClass + " '%s', found '%s'"
-	ErrorMissingEntryBody      = ErrorMissing + " " + EntryBodyClass
-	ErrorMissingEntryType      = ErrorMissing + " " + EntryTypeClass
-	ErrorMissingFieldValue     = ErrorMissing + " " + FieldValueClass
-	ErrorOpeningFile           = "Could not open file '%s'"
-	ErrorUnknownString         = "Unknown string '%s' referenced"
-	WarningSkippingToNextEntry = "Skipping to next entry"
-
 	// TeXMode on
 	TeXMode = true
 

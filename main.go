@@ -16,12 +16,10 @@ var (
 )
 
 const (
-	BibTeXFolder     = "/Users/erikproper/BibTeX/"
-	PreferredAliases = BibTeXFolder + "PreferredAliases"
-	AliasKeys        = BibTeXFolder + "Keys"
-	ErikProperBib    = BibTeXFolder + "ErikProper.bib"
-	KeysMapFile      = BibTeXFolder + "ErikProper.aliases"
-	ChallengesFile   = BibTeXFolder + "ErikProper.challenges"
+	BibTeXFolder   = "/Users/erikproper/BibTeX/"
+	ErikProperBib  = BibTeXFolder + "ErikProper.bib"
+	KeysMapFile    = BibTeXFolder + "ErikProper.aliases"
+	ChallengesFile = BibTeXFolder + "ErikProper.challenges"
 )
 
 func Titles(title string) {
@@ -129,55 +127,12 @@ func Page(pages string) string {
 	return rangesList
 }
 
-var Tester1 TStringMap
-var Tester2 TStringStringMap
-var Tester3 TStringStringStringMap
-
-func Play() {
-	Tester1.StringMapSetValue("hello", "world")
-	fmt.Println(Tester1)
-	fmt.Println(Tester1.StringMapGetValue("hello"))
-	fmt.Println(Tester1.StringMapGetValue("not"))
-
-	Tester2.StringStringMapSetValue("hello", "world", "erik")
-	fmt.Println(Tester2)
-	fmt.Println(Tester2.StringStringMapGetValue("hello", "world"))
-	fmt.Println(Tester2.StringStringMapGetValue("not", "world"))
-	fmt.Println(Tester2.StringStringMapGetValue("hello", "not"))
-
-	Tester3.StringStringStringMapSetValue("hello", "world", "erik", "proper")
-	fmt.Println(Tester3)
-	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "world", "erik"))
-	fmt.Println(Tester3.StringStringStringMapGetValue("not", "world", "erik"))
-	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "not", "erik"))
-	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "world", "not"))
-
-	//	strings.TrimSpace
-	// Play
-	// TITLES
-	// Macro calls always protected.
-	// { => nest
-	// \ => in macro name to next space
-	// \{, \&, => no protection needed
-	// \', \^, etc ==> no space to next char needed
-	// \x Y ==> keep space
-	// " -- " ==> Sub title mode
-	// ": " ==> Sub title mode
-	// [nonspace]+[A-Z]+[nonspace]* => protect
-	//
-	//		Titles("{Hello {{World}}   HOW {aRe} Things}")
-	//		Titles("{ Hello {{World}} HOW   a{R}e Things}")
-	//		Titles("{Hello {{World}} HOW a{R}e Things")
-	//		Titles("Hello { { Wo   rld}} HOW a{R}e Things")
-	// Braces can prevent kerning between letters, so it is in general preferable to enclose entire words and not just single letters in braces to protect them.
-}
-
 func InitialiseLibrary() bool {
 	Library.Progress("Initialising main library")
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting)
+	Library.ReadAliases()
 	Library.SetFilePath(BibTeXFolder)
-	Library.ReadLegacyAliases()
 
 	return true
 }
@@ -225,7 +180,7 @@ func main() {
 			OldLibrary.Progress("Reading legacy library")
 			OldLibrary.Initialise(Reporting)
 			OldLibrary.legacyMode = true
-			OldLibrary.ReadLegacyAliases()
+			OldLibrary.ReadAliases()
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
@@ -281,15 +236,15 @@ func main() {
 			}
 		}
 
-	case len(os.Args) == 2 && os.Args[1] == "-play":
-		Play()
+		//	case len(os.Args) == 2 && os.Args[1] == "-play":
+		//		Play()
 
 	case len(os.Args) == 3 && os.Args[1] == "-alias":
 		Library.Silenced()
 		InitialiseLibrary()
 
 		// Function call.
-		alias, ok := Library.LookupEntry(CleanKey(os.Args[2]))
+		alias, ok := Library.preferredAliases[CleanKey(os.Args[2])]
 
 		if ok {
 			fmt.Println(alias)
@@ -355,6 +310,6 @@ func main() {
 
 	if writeAliases {
 		fmt.Println("Exporting updated aliases", KeysMapFile)
-		Library.WriteLegacyAliases()
+		Library.WriteAliases()
 	}
 }

@@ -1,33 +1,38 @@
-//
-// Module: byteset
-//
-// This module provides basic operations to manage sets of bytes / characters based on uint64 vectors.
-// The assumption is that using such vectors is faster than e.g. using maps from byte to empty structs.
-// In the future this module may become (part of) a sets & sequences package.
-//
-// Creator: Henderik A. Proper (erikproper@gmail.com)
-//
-// Version of: 22.04.2024
-//
+/*
+ *
+ * Module: byteset
+ *
+ * This module provides basic operations to manage sets of bytes / characters based on uint64 vectors.
+ * The assumption is that using such vectors is faster than e.g. using maps from byte to empty structs.
+ * In the future this module may become (part of) a sets & sequences package.
+ *
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
+ *
+ * Version of: 22.04.2024
+ *
+ */
 
 package main
 
 import "fmt"
 
-// Functions that create/add/remove/unite/etc sets, return a pointer to the given set to enable concatenation of operators.
-// For instance s.Initialise().Add(1).Add(2).Delete(1)
+type (
+	TByteSetElements map[byte]struct{}
 
-type TByteSetElements map[byte]struct{}
-type TByteSet struct {
-	words       [4]uint64 // Representation of the (encoding) of the elements.
-	treatAsChar bool      // Set to true if the elements should be treated as characters when converting the set to a string.
-	verbalise   bool      // Setting to determine the style used in converting sets to strings:
-	//                    // - Verbalised:   'a', 'b', and 'c'
-	//                    // - Mathematical: { 'a', 'b', 'c' }
-}
+	TByteSet struct {
+		words       [4]uint64 // Representation of the (encoding) of the elements.
+		treatAsChar bool      // Set to true if the elements should be treated as characters when converting the set to a string.
+		verbalise   bool      // Setting to determine the style used in converting sets to strings:
+		//                    // - Verbalised:   'a', 'b', and 'c'
+		//                    // - Mathematical: { 'a', 'b', 'c' }
+	}
+)
 
 // String representation of (special!) characters; see init function below.
 var ByteToString [256]string
+
+// Functions that create/add/remove/unite/etc sets, return a pointer to the given set to enable concatenation of operators.
+// For instance s.Initialise().Add(1).Add(2).Delete(1)
 
 // Create a new byte set.
 func TByteSetNew() TByteSet {
@@ -275,7 +280,7 @@ func (s TByteSet) String() string {
 
 func init() {
 	for i := 0; i < 256; i++ {
-		ByteToString[i] = string(i)
+		ByteToString[i] = fmt.Sprint(i)
 	}
 
 	ByteToString['\\'] = "\\\\"
