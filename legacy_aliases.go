@@ -45,11 +45,8 @@ func (l *TBibTeXLibrary) ReadLegacyAliases() {
 
 		l.AddKeyAlias(alias, key, false)
 
-		// l.HasPreferredAlias
-		if l.preferredAliases[key] == "" && CheckPreferredAliasValidity(alias) {
+		if l.PreferredAliasExists(key) && CheckPreferredAliasValidity(alias) {
 			l.AddPreferredAlias(alias)
-		} else {
-			// fmt.Println("No pref alias:", key)
 		}
 	}
 

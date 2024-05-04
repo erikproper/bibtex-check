@@ -1,12 +1,14 @@
-//
-// Module: bibtex_library
-//
-// This module is concerned with the storage of BibTeX libraties
-//
-// Creator: Henderik A. Proper (erikproper@fastmail.com)
-//
-// Version of: 24.04.2024
-//
+/*
+ *
+ * Module: bibtex_library
+ *
+ * This module is concerned with the storage of BibTeX libraties
+ *
+ * Creator: Henderik A. Proper (erikproper@fastmail.com)
+ *
+ * Version of: 24.04.2024
+ *
+ */
 
 package main
 
@@ -97,6 +99,24 @@ func (l *TBibTeXLibrary) GetEntryFieldValue(entry, field string) string {
 	return l.entryFields.StringStringMapGetValue(entry, field)
 }
 
+//
+//
+// Access abstraction -- Checking functions
+//
+//
+
+func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
+	_, exists := l.preferredAliases[alias]
+
+	return exists
+}
+
+func (l *TBibTeXLibrary) AliasExists(alias string) bool {
+	_, exists := l.deAlias[alias]
+
+	return exists
+}
+
 //////// OTHER stuff
 
 // As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
@@ -179,7 +199,7 @@ func (l *TBibTeXLibrary) registerChallengeWinner(entry, field, challenger, winne
 func (l *TBibTeXLibrary) updateChallengeWinner(entry, field, challenger, winner string) {
 	l.registerChallengeWinner(entry, field, challenger, winner)
 
-	for otherChallenger, _ := range l.challengeWinners[entry][field] {
+	for otherChallenger := range l.challengeWinners[entry][field] {
 		l.challengeWinners[entry][field][otherChallenger] = winner
 	}
 }

@@ -1,16 +1,28 @@
+/*
+ *
+ * Module: bibtex_library_checks
+ *
+ * This module is concerned with checks of fields and entries.
+ *
+ * Creator: Henderik A. Proper (erikproper@fastmail.com)
+ *
+ * Version of: 24.04.2024
+ *
+ */
+
 package main
 
 import (
-	"fmt"
+	//	"fmt"
 	"regexp"
 	"strings"
 )
 
-//
-//
-// Value conformity checks
-//
-//
+/*
+ *
+ * BibTeX field value conformity checks
+ *
+ */
 
 // Checks if a given alias fits the desired format of [a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
 // Examples: gordijn2002e3value, overbeek2010matchmaking, ...
@@ -38,35 +50,39 @@ func CheckYearValidity(year string) bool {
 	return validYear.MatchString(year)
 }
 
-//
-//
-// General checks
-//
-//
+/*
+ *
+ * General library/entry level checks
+ *
+ */
 
+// Checking pairs of aliases/entries
 func (l *TBibTeXLibrary) CheckAliasEntryPair(alias, entry string) {
-	// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced entry.
-	if l.EntryExists(entry) {
+	// Once we're not in legacy mode anymore, then we need to enforce l.EntryExists(entry)
+	if AllowLegacy && l.EntryExists(entry) {
+		// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced entry.
 		if strings.Index(alias, "DBLP:") == 0 {
 			dblpAlias := alias[5:]
 			dblpValue := l.GetEntryFieldValue(entry, "dblp")
 			if dblpAlias != dblpValue {
 				if dblpValue == "" {
+					// If we have a dblp alias, and we have no dblp entry, we can safely add this.
 					l.SetEntryFieldValue(entry, "dblp", dblpAlias)
 				} else {
-					fmt.Println("Found:", dblpAlias, "for", entry, "while", dblpValue)
+					l.Warning(WarningDBLPMismatch, dblpAlias, dblpValue, entry)
 				}
 			}
 		}
 
-		//// HERE! !l.PreferredAliasExists(entry)
-		if l.preferredAliases[entry] == "" {
-			if CheckPreferredAliasValidity(alias) {
-				l.AddPreferredAlias(alias)
-			} else {
-				loweredAlias := strings.ToLower(alias)
-				//////
-				if l.deAlias[loweredAlias] == "" && loweredAlias != entry && CheckPreferredAliasValidity(loweredAlias) {
+		// If we have no defined preferred alias, then we can try to define one.
+		// Note: when reading the aliases from file, the first alias that fits the preferred alias requirements is selected as the preferred one.
+		// So, if an entry has no preferred alias after reading the alias file, we can only try to create one.
+		// To do so, we will actually try to test if the current alias could be coerced into a
+		if !l.PreferredAliasExists(entry) {
+			loweredAlias := strings.ToLower(alias)
+
+			if !(loweredAlias == alias || loweredAlias == entry || l.AliasExists(loweredAlias)) {
+				if CheckPreferredAliasValidity(loweredAlias) {
 					l.AddKeyAlias(loweredAlias, entry, false)
 					l.AddPreferredAlias(loweredAlias)
 				}
@@ -75,6 +91,7 @@ func (l *TBibTeXLibrary) CheckAliasEntryPair(alias, entry string) {
 	}
 }
 
+// The driver function to check all alias/entry pairs of the library
 func (l *TBibTeXLibrary) CheckAliases() {
 	l.ForEachAliasEntryPair(l.CheckAliasEntryPair)
 }

@@ -31,7 +31,7 @@ func (l *TBibTeXLibrary) WriteBibTeXFile(fileName string) bool {
 	bibWriter := bufio.NewWriter(bibFile)
 
 	// Write out the entries and their fields
-	for key, _ := range l.entryFields {
+	for key := range l.entryFields {
 		bibWriter.WriteString(l.entryString(key))
 		bibWriter.WriteString("\n")
 	}
