@@ -197,7 +197,7 @@ func processBDSKFileValue(library *TBibTeXLibrary, value string) string {
 		fileName = payload[fileNameStart:fileNameEnd]
 	}
 
-	if FileExists(library.files + fileName) {
+	if FileExists(library.filesRoot + fileName) {
 		return value
 	} else {
 		if !library.legacyMode {

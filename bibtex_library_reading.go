@@ -20,9 +20,17 @@ import (
 	"strings"
 )
 
+func (l *TBibTeXLibrary) ReadBib(fileName string) bool {
+	l.bibFilePath = l.filesRoot + fileName
+
+	return l.bibTeXParser.ParseBibFile(l.bibFilePath)
+}
+
 // Quick and dirty reading of the keys.map and preferred.aliases file.
-func (l *TBibTeXLibrary) ReadAliases() {
-	file, err := os.Open(KeysMapFile)
+func (l *TBibTeXLibrary) ReadAliases(fileName string) {
+	l.aliasesFilePath = l.filesRoot + fileName
+
+	file, err := os.Open(l.aliasesFilePath)
 	if err != nil {
 		log.Fatal(err) /// Don't want to do it like this.
 	}
@@ -52,8 +60,12 @@ func (l *TBibTeXLibrary) ReadAliases() {
 	}
 
 	file.Close()
+}
 
-	file, err = os.Open(ChallengesFile)
+func (l *TBibTeXLibrary) ReadChallenges(fileName string) {
+	l.challengesFilePath = l.filesRoot + fileName
+
+	file, err := os.Open(l.challengesFilePath)
 	if err != nil {
 		log.Fatal(err) /// Don't want to do it like this.
 	}
@@ -62,7 +74,7 @@ func (l *TBibTeXLibrary) ReadAliases() {
 	field := ""
 	challenge := ""
 
-	scanner = bufio.NewScanner(file)
+	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		s := string(scanner.Text())
 
@@ -93,61 +105,4 @@ func (l *TBibTeXLibrary) ReadAliases() {
 	}
 
 	file.Close()
-}
-
-// Quick and dirty write-out of:
-// - the ErikProper.aliases files
-// - the creation of the "mapping" folders to enable the old scripts to still do their work
-func (l *TBibTeXLibrary) WriteChallenges() {
-	fmt.Println("Writing challenges map")
-
-	BackupFile(ChallengesFile)
-
-	chFile, err := os.Create(ChallengesFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer chFile.Close()
-
-	chWriter := bufio.NewWriter(chFile)
-	for key, fieldChallenges := range l.challengeWinners {
-		_, keyIsUsed := l.entryType[key]
-		if !keyIsUsed {
-			fmt.Println("Not in use:", key)
-		}
-		chWriter.WriteString("K " + key + "\n")
-		for field, challenges := range fieldChallenges {
-			chWriter.WriteString("F " + field + "\n")
-			for challenger, winner := range challenges {
-				chWriter.WriteString("C " + challenger + "\n")
-				chWriter.WriteString("W " + winner + "\n")
-			}
-		}
-	}
-	chWriter.Flush()
-}
-
-func (l *TBibTeXLibrary) WriteAliases() {
-	fmt.Println("Writing aliases map")
-
-	BackupFile(KeysMapFile)
-
-	kmFile, err := os.Create(KeysMapFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer kmFile.Close()
-
-	kmWriter := bufio.NewWriter(kmFile)
-	for key, alias := range Library.preferredAliases {
-		kmWriter.WriteString(alias + " " + key + "\n")
-	}
-	for alias, key := range Library.deAlias {
-		if alias != Library.preferredAliases[key] {
-			kmWriter.WriteString(alias + " " + key + "\n")
-		}
-	}
-	kmWriter.Flush()
-
-	l.WriteChallenges()
 }

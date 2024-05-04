@@ -471,8 +471,10 @@ func (b *TBibTeXStream) ParseStream() bool {
 }
 
 // Opening a BibTeX file, and then parse it (and add it to the selected Library.)
-func (b *TBibTeXStream) ParseBibFile(file string) bool {
-	return b.ForcedTextfileOpen(file, ErrorOpeningFile) &&
+func (b *TBibTeXStream) ParseBibFile(fileName string) bool {
+	b.ReportProgress(ProgressOpeningBibFile, fileName)
+
+	return b.ForcedTextfileOpen(fileName, ErrorOpeningFile) &&
 		/**/ b.ParseStream()
 }
 

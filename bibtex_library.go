@@ -26,19 +26,24 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		files            string                           // Path to root of folder with PDF files of the entries
-		comments         []string                         // The comments included in a BibTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		entryFields      TStringStringMap                 // Per entry key, the fields associated to the actual entries.
-		entryType        TStringMap                       // Per entry key, the type of the enty.
-		deAlias          TStringMap                       // Mapping from aliases to the actual entry key.
-		aliases          map[string]TStringSet            // The inverted version of deAlias.
-		preferredAliases TStringMap                       // Per entry key, the preferred alias
-		illegalFields    TStringSet                       // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		currentKey       string                           // The key of the entry we are currently working on.
-		foundDoubles     bool                             // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		legacyMode       bool                             // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		challengeWinners map[string]map[string]TStringMap // A key and field specific mapping from challenged value to winner values
-		TInteraction                                      // Error reporting channel
+		name               string // Name of the library
+		filesRoot          string // Path to folder with PDF files of the entries
+		bibFilePath        string
+		aliasesFilePath    string
+		challengesFilePath string
+		bibTeXParser       TBibTeXStream                    // ...
+		comments           []string                         // The comments included in a BibTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		entryFields        TStringStringMap                 // Per entry key, the fields associated to the actual entries.
+		entryType          TStringMap                       // Per entry key, the type of the enty.
+		deAlias            TStringMap                       // Mapping from aliases to the actual entry key.
+		aliases            map[string]TStringSet            // The inverted version of deAlias.
+		preferredAliases   TStringMap                       // Per entry key, the preferred alias
+		illegalFields      TStringSet                       // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		currentKey         string                           // The key of the entry we are currently working on.
+		foundDoubles       bool                             // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		legacyMode         bool                             // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
+		challengeWinners   map[string]map[string]TStringMap // A key and field specific mapping from challenged value to winner values
+		TInteraction                                        // Error reporting channel
 	}
 )
 
@@ -48,8 +53,8 @@ type (
  *
  */
 
-func (l *TBibTeXLibrary) SetFilePath(path string) bool {
-	l.files = path
+func (l *TBibTeXLibrary) SetFilesPath(path string) bool {
+	l.filesRoot = path
 
 	return true
 }
@@ -88,6 +93,10 @@ func (l *TBibTeXLibrary) GetEntryFieldValue(entry, field string) string {
 	return l.entryFields.StringStringMapGetValue(entry, field)
 }
 
+func (l *TBibTeXLibrary) LibrarySize() int {
+	return len(Library.entryType)
+}
+
 /*
  *
  * Access abstraction -- Checking functions
@@ -104,6 +113,10 @@ func (l *TBibTeXLibrary) AliasExists(alias string) bool {
 	_, exists := l.deAlias[alias]
 
 	return exists
+}
+
+func (l *TBibTeXLibrary) ReportLibrarySize() {
+	l.Progress(ProgressLibrarySize, l.name, len(l.entryType))
 }
 
 //////// OTHER stuff
@@ -300,8 +313,19 @@ func (l *TBibTeXLibrary) AddPreferredAlias(alias string) {
 }
 
 // Initialise a library
-func (l *TBibTeXLibrary) Initialise(reporting TInteraction) {
-	l.files = ""
+func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name string) {
+	l.TInteraction = reporting
+	l.name = name
+	l.Progress(ProgressInitialiseLibrary, l.name)
+
+	l.bibTeXParser = TBibTeXStream{}
+	l.bibTeXParser.Initialise(reporting, l)
+
+	l.filesRoot = ""
+	l.bibFilePath = ""
+	l.aliasesFilePath = ""
+	l.challengesFilePath = ""
+
 	l.comments = []string{}
 	l.entryFields = map[string]TStringMap{}
 	l.entryType = TStringMap{}
@@ -309,9 +333,9 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction) {
 	l.preferredAliases = TStringMap{}
 	l.aliases = map[string]TStringSet{}
 	l.currentKey = ""
-	l.TInteraction = reporting
 	l.foundDoubles = false
 	l.challengeWinners = map[string]map[string]TStringMap{}
+
 	if AllowLegacy {
 		l.legacyMode = false
 	}

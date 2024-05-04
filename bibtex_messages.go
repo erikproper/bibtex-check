@@ -13,6 +13,11 @@
 package main
 
 const (
+	// Progress reports
+	ProgressInitialiseLibrary = "Initialising %s library"
+	ProgressLibrarySize       = "Size of %s is: %d"
+	ProgressOpeningBibFile    = "Opening BibTeX file: %s"
+
 	// Names of syntactic classes as used in error messages when parsing BibTeX files
 	CharacterClass  = "Character"
 	EntryBodyClass  = "EntryBody"

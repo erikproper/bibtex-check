@@ -19,7 +19,6 @@ import (
 
 const (
 	errorCharacterNotIn = "expected character from %s"
-	progressOpeningFile = "Opening file: %s"
 )
 
 type (
@@ -160,8 +159,6 @@ func (c *TCharacterStream) TextfileOpen(fileName string) bool {
 // Open a textfile, and if this fails, report an error.
 // The "Forced" prefix follows the convention as used in the actual parser, when expecting the presence of a given (non)terminal of grammar.
 func (c *TCharacterStream) ForcedTextfileOpen(fileName, errorMessage string) bool {
-	c.ReportProgress(progressOpeningFile, fileName)
-
 	return c.TextfileOpen(fileName) ||
 		c.ReportError(errorMessage, fileName)
 }

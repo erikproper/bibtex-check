@@ -21,9 +21,11 @@ var (
 	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
 )
 
-// The prefix used for the generated keys
-// (*) Should go into a config file.
-const KeyPrefix = "EP"
+const (
+	// The prefix used for the generated keys
+	// (*) Should go into a config file.
+	KeyPrefix = "EP" // (*)
+)
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field
 // To avoid confusion with normal fields, use "illegal" field names

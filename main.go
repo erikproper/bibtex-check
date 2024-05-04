@@ -17,135 +17,25 @@ var (
 
 const (
 	BibTeXFolder   = "/Users/erikproper/BibTeX/"
-	ErikProperBib  = BibTeXFolder + "ErikProper.bib"
-	KeysMapFile    = BibTeXFolder + "ErikProper.aliases"
-	ChallengesFile = BibTeXFolder + "ErikProper.challenges"
+	BibFile        = "ErikProper.bib"
+	AliasesFile    = "ErikProper.aliases"
+	ChallengesFile = "ErikProper.challenges"
+	MainLibrary    = "main"
 )
 
-func Titles(title string) {
-	nesting := 0
-	normalised := map[int]string{}
-	inSpaces := true
-	needsProtection := false
-
-	fmt.Println("---")
-
-	normalised[nesting] = ""
-	for _, character := range title {
-		if character == '{' {
-			nesting++
-			normalised[nesting] = ""
-		} else if character == '}' {
-			normalised[nesting-1] += normalised[nesting]
-			nesting--
-		} else if character == ' ' && inSpaces {
-			// Skip
-		} else if character == ' ' && !inSpaces {
-			if needsProtection {
-				normalised[nesting-1] += "[" + normalised[nesting] + "]"
-			} else {
-				normalised[nesting-1] += normalised[nesting]
-			}
-			normalised[nesting-1] += " "
-			needsProtection = false
-			nesting--
-			inSpaces = true
-		} else if inSpaces {
-			nesting++
-			normalised[nesting] = string(character)
-			inSpaces = false
-		} else {
-			normalised[nesting] += string(character)
-			if !inSpaces && 'A' <= character && character <= 'Z' {
-				needsProtection = true
-			}
-		}
-		fmt.Printf("%s", string(character))
-	}
-
-	fmt.Println()
-	result := title
-	if nesting < 1 {
-		fmt.Println("Nesting already at 0. THis can't happen")
-	} else {
-		if nesting > 1 {
-			fmt.Println("Missing }")
-		}
-
-		result = ""
-		for index := nesting; index >= 0; index-- {
-			result = normalised[index] + result
-		}
-	}
-
-	fmt.Println(normalised)
-	fmt.Println(result)
-}
-
-func Page(pages string) string {
-	trimedPageRanges := ""
-
-	trimedPageRanges = strings.TrimSpace(pages)
-	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, " ", "")
-	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, "--", "-")
-
-	rangesList := ""
-	comma := ""
-
-	for _, pageRange := range strings.Split(trimedPageRanges, ",") {
-		trimedPagesList := strings.Split(pageRange, "-")
-		switch {
-		case len(trimedPagesList) == 0:
-			return pages
-
-		case len(trimedPagesList) == 1:
-			return trimedPagesList[0]
-
-		case len(trimedPagesList) == 2:
-			firstPagePair := strings.Split(trimedPagesList[0], ":")
-			secondPagePair := strings.Split(trimedPagesList[1], ":")
-
-			if len(firstPagePair) == 1 || len(secondPagePair) == 1 {
-				rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
-			} else if len(firstPagePair) == 2 && len(secondPagePair) == 2 {
-				if firstPagePair[0] == secondPagePair[0] {
-					rangesList += comma + trimedPagesList[0] + "--" + secondPagePair[1]
-				} else {
-					rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
-				}
-			} else {
-				return pages
-			}
-
-		default:
-			return pages
-		}
-
-		comma = ", "
-	}
-
-	return rangesList
-}
-
-func InitialiseLibrary() bool {
-	Library.Progress("Initialising main library")
+func InitialiseMainLibrary() bool {
 	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting)
-	Library.ReadAliases()
-	Library.SetFilePath(BibTeXFolder)
+	Library.Initialise(Reporting, MainLibrary)
+	Library.SetFilesPath(BibTeXFolder)
+	Library.ReadAliases(AliasesFile)
+	Library.ReadChallenges(ChallengesFile)
 
 	return true
 }
 
-func OpenLibrary() bool {
-	Library.Progress("Reading main library")
-	BibTeXParser := TBibTeXStream{}
-	BibTeXParser.Initialise(Reporting, &Library)
-	BibTeXParser.silenced = Library.silenced
-	if BibTeXParser.ParseBibFile(ErikProperBib) {
-		if !Library.silenced {
-			fmt.Println("Size of", ErikProperBib, "is:", len(Library.entryType))
-		}
+func OpenMainBibFile() bool {
+	if Library.ReadBib(BibFile) {
+		Library.ReportLibrarySize()
 		Library.CheckAliases()
 		Library.CheckEntries()
 
@@ -156,43 +46,47 @@ func OpenLibrary() bool {
 }
 
 func CleanKey(rawKey string) string {
-	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(rawKey, "\\cite{", ""), "}", ""))
+	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(rawKey, "\\cite{", ""), "cite{", ""), "}", ""))
 }
 
 func main() {
 	Reporting = TInteraction{}
 	writeAliases := false
+	writeChallenges := false
 	writeBibFile := false
 
 	switch {
 	case len(os.Args) == 1:
-		if InitialiseLibrary() && OpenLibrary() {
+		if InitialiseMainLibrary() && OpenMainBibFile() {
 			writeBibFile = true
 			writeAliases = true
+			writeChallenges = true
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-meta":
-		if InitialiseLibrary() && OpenLibrary() {
+		if InitialiseMainLibrary() && OpenMainBibFile() {
 			writeBibFile = true
 			writeAliases = false
+			writeChallenges = true
 
 			OldLibrary := TBibTeXLibrary{}
 			OldLibrary.Progress("Reading legacy library")
-			OldLibrary.Initialise(Reporting)
+			OldLibrary.Initialise(Reporting, "legacy")
 			OldLibrary.legacyMode = true
-			OldLibrary.ReadAliases()
+			OldLibrary.SetFilesPath(BibTeXFolder)
+			OldLibrary.ReadAliases(AliasesFile)
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old1.bib")
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old2.bib")
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old3.bib")
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old4.bib")
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old5.bib")
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old6.bib")
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old7.bib")
 
-			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old1.bib")
-			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old2.bib")
-			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old3.bib")
-			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old4.bib")
-			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old5.bib")
-			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old6.bib")
-			BibTeXParser.ParseBibFile("/Users/erikproper/BibTeX/Old/Old7.bib")
-			fmt.Println("Size of legacy pool is:", len(OldLibrary.entryType))
+			OldLibrary.ReportLibrarySize()
 
 			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
 			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA
@@ -236,12 +130,9 @@ func main() {
 			}
 		}
 
-		//	case len(os.Args) == 2 && os.Args[1] == "-play":
-		//		Play()
-
 	case len(os.Args) == 3 && os.Args[1] == "-alias":
-		Library.Silenced()
-		InitialiseLibrary()
+		Reporting.Silenced()
+		InitialiseMainLibrary()
 
 		// Function call.
 		alias, ok := Library.preferredAliases[CleanKey(os.Args[2])]
@@ -251,11 +142,11 @@ func main() {
 		}
 
 	case len(os.Args) > 2 && os.Args[1] == "-key":
-		Library.Silenced()
-		InitialiseLibrary()
+		Reporting.Silenced()
+		InitialiseMainLibrary()
 		Library.Silenced()
 
-		if OpenLibrary() {
+		if OpenMainBibFile() {
 			// Function call.
 			actualKey, ok := Library.LookupEntry(CleanKey(os.Args[2]))
 			if ok {
@@ -264,7 +155,7 @@ func main() {
 		}
 
 	case len(os.Args) > 3 && os.Args[1] == "-map":
-		if InitialiseLibrary() && OpenLibrary() {
+		if InitialiseMainLibrary() && OpenMainBibFile() {
 			keysString := ""
 			writeAliases = true
 
@@ -286,7 +177,7 @@ func main() {
 		if CheckPreferredAliasValidity(alias) {
 			writeAliases = true
 
-			InitialiseLibrary()
+			InitialiseMainLibrary()
 
 			if len(os.Args) == 4 {
 				key := CleanKey(os.Args[3])
@@ -304,12 +195,14 @@ func main() {
 	}
 
 	if writeBibFile {
-		fmt.Println("Exporting updated library", ErikProperBib)
-		Library.WriteBibTeXFile(ErikProperBib)
+		Library.WriteBibTeXFile()
 	}
 
 	if writeAliases {
-		fmt.Println("Exporting updated aliases", KeysMapFile)
 		Library.WriteAliases()
+	}
+
+	if writeChallenges {
+		Library.WriteChallenges()
 	}
 }

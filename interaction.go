@@ -33,6 +33,7 @@ func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 	if !r.silenced {
 		fmt.Printf("ERROR:    "+errorMessage+".\n", context...)
 	}
+
 	return true
 }
 
@@ -42,6 +43,7 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 	if !r.silenced {
 		fmt.Printf("WARNING:  "+warning+".\n", context...)
 	}
+
 	return true
 }
 
