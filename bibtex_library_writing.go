@@ -43,13 +43,10 @@ func (l *TBibTeXLibrary) writeFile(filePath, message string, writing func(*bufio
 // - When we start managing the groups (of keys) the way Bibdesk does, we need to ensure that their embedded as an XML structure embedded in a comment, is updated.
 func (l *TBibTeXLibrary) writeBibTeXContent(bibWriter *bufio.Writer) {
 	// Write out the entries and their fields
-	writeEntry := func(key string) {
-		bibWriter.WriteString(l.entryString(key))
+	l.ForEachEntry(func(entry string) {
+		bibWriter.WriteString(l.EntryString(entry))
 		bibWriter.WriteString("\n")
-	}
-	for key := range l.entryFields {
-		writeEntry(key)
-	}
+	})
 
 	// Write out the comments
 	writeComment := func(comment string) {
@@ -61,6 +58,7 @@ func (l *TBibTeXLibrary) writeBibTeXContent(bibWriter *bufio.Writer) {
 	}
 }
 
+///// COMMENTS
 func (l *TBibTeXLibrary) WriteBibTeXFile() bool {
 	return l.writeFile(l.bibFilePath, "Writing bib file %s", l.writeBibTeXContent)
 }

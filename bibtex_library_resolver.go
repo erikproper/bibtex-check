@@ -14,7 +14,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current strin
 			fmt.Println("WORK:", key)
 
 			warning := "Need to resolve for entry %s and field %s:\n- Challenger: %s\n- Current   : %s"
-			question := "Current entry:\n" + l.entryString(key) + "Keep the value as is?"
+			question := "Current entry:\n" + l.EntryString(key) + "Keep the value as is?"
 
 			if l.WarningBoolQuestion(question, warning, key, field, challenger, current) {
 				l.updateChallengeWinner(key, field, challenger, current)

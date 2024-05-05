@@ -279,6 +279,7 @@ func (s TByteSet) String() string {
 }
 
 func init() {
+	// Initialise the byto to string mapping
 	for i := 0; i < 256; i++ {
 		ByteToString[i] = fmt.Sprint(i)
 	}

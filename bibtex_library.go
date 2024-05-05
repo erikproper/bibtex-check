@@ -65,11 +65,13 @@ func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
 
 /*
  *
- * Access abstraction -- Set functions
+ * Access abstraction -- Processing functions
  *
- */ // Access abstraction -- Processing functions
-//
-//
+ */
+
+func (l *TBibTeXLibrary) ForEachEntry(f func(string)) {
+	l.entryType.ForEachStringPair(func(entry, _ string) { f(entry) })
+}
 
 func (l *TBibTeXLibrary) ForEachEntryTypePair(f func(string, string)) {
 	l.entryType.ForEachStringPair(f)
@@ -210,7 +212,7 @@ func (l *TBibTeXLibrary) checkChallengeWinner(entry, field, challenger, winner s
 	return l.challengeWinners[entry][field][challenger] == winner
 }
 
-func (l *TBibTeXLibrary) entryString(key string) string {
+func (l *TBibTeXLibrary) EntryString(key string) string {
 	result := ""
 	fields, knownEntry := l.entryFields[key]
 
