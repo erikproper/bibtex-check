@@ -1,7 +1,7 @@
 //
 // Module: string_maps
 //
-// This module is concerned XXXXXX
+// This module is concerned with different operators on string related maps
 //
 // Creator: Henderik A. Proper (erikproper@gmail.com)
 //
@@ -17,6 +17,12 @@ type (
 	TStringSetMap          map[string]TStringSet
 )
 
+/*
+ * 
+ * Processing functions
+ *
+ */
+ 
 func (m *TStringMap) ForEachStringPair(f func(string, string)) {
 	for i, v := range *m {
 		f(i, v)
@@ -41,6 +47,12 @@ func (m *TStringSetMap) ForEachStringSetPair(f func(string, TStringSet)) {
 	}
 }
 
+/*
+ * 
+ * Checking functions
+ *
+ */
+ 
 func (m *TStringMap) StringMapped(i string) bool {
 	if (*m) == nil {
 		return false
@@ -74,6 +86,12 @@ func (m *TStringStringStringMap) StringStringStringMapped(i, j, k string) bool {
 	}
 }
 
+/*
+ * 
+ * Get functions
+ *
+ */
+ 
 func (m *TStringMap) StringMapGetValue(i string) string {
 	if (*m) == nil {
 		return ""
@@ -104,7 +122,11 @@ func (m *TStringStringStringMap) StringStringStringMapGetValue(i, j, k string) s
 	}
 }
 
-//
+/*
+ * 
+ * Set functions
+ *
+ */
 
 func (m *TStringMap) StringMapSetValue(i, v string) {
 	if (*m) == nil {
