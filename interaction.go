@@ -24,8 +24,13 @@ type TInteraction struct {
 }
 
 // Surpress any output to standard out.
-func (r *TInteraction) Silenced() {
+func (r *TInteraction) SetSilenced() {
 	r.silenced = true
+}
+
+// Surpress any output to standard out.
+func (r *TInteraction) IsSilenced() bool {
+	return r.silenced
 }
 
 // Reporting errors.

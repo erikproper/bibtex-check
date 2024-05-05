@@ -131,7 +131,7 @@ func main() {
 		}
 
 	case len(os.Args) == 3 && os.Args[1] == "-alias":
-		Reporting.Silenced()
+		Reporting.SetSilenced()
 		InitialiseMainLibrary()
 
 		// Function call.
@@ -142,9 +142,8 @@ func main() {
 		}
 
 	case len(os.Args) > 2 && os.Args[1] == "-key":
-		Reporting.Silenced()
+		Reporting.SetSilenced()
 		InitialiseMainLibrary()
-		Library.Silenced()
 
 		if OpenMainBibFile() {
 			// Function call.

@@ -96,6 +96,7 @@ func (l *TBibTeXLibrary) ReadChallenges(filePath string) {
 
 		case 'W':
 			l.registerChallengeWinner(key, field, challenge, s[2:])
+			//			l.registerChallengeWinner(key, field, l.ProcessFieldValue(field, challenge), l.ProcessFieldValue(field, s[2:]))
 		}
 
 	}

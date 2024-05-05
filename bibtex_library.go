@@ -208,19 +208,26 @@ func (l *TBibTeXLibrary) checkChallengeWinner(entry, field, challenger, winner s
 	return l.challengeWinners[entry][field][challenger] == winner
 }
 
-func (l *TBibTeXLibrary) EntryString(key string) string {
-	result := ""
+func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 	fields, knownEntry := l.entryFields[key]
 
 	if knownEntry {
-		result = "@" + l.entryType[key] + "{" + key + ",\n"
-		for field, value := range fields {
-			result += "   " + field + " = {" + value + "},\n"
+		linePrefix := ""
+		for _, prefix := range prefixes {
+			linePrefix += prefix
 		}
-		result += "}\n"
+
+		result := linePrefix + "@" + l.entryType[key] + "{" + key + ",\n"
+		for field, value := range fields {
+			result += linePrefix + "   " + field + " = {" + value + "},\n"
+		}
+		result += linePrefix + "}\n"
+
+		return result
+	} else {
+		return ""
 	}
 
-	return result
 }
 
 // The low level registering of the alias for a key.
@@ -421,7 +428,8 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 		key := l.currentKey
 		entryType := l.entryType[key]
 		for field, value := range l.entryFields[key] {
-			if !BibTeXAllowedEntryFields[entryType].Set().Contains(field) {
+			/// CHECKS
+			if !l.IsSilenced() && !BibTeXAllowedEntryFields[entryType].Set().Contains(field) {
 				if l.WarningBoolQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entryType) {
 					delete(l.entryFields[key], field)
 				}
