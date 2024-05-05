@@ -1,5 +1,5 @@
 //
-// Module: stringmaps
+// Module: string_maps
 //
 // This module is concerned XXXXXX
 //
