@@ -26,7 +26,7 @@ const (
 func InitialiseMainLibrary() bool {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, MainLibrary)
-	Library.SetFilesPath(BibTeXFolder)
+	Library.SetFilesRoot(BibTeXFolder)
 	Library.ReadAliases(AliasesFile)
 	Library.ReadChallenges(ChallengesFile)
 
@@ -73,7 +73,7 @@ func main() {
 			OldLibrary.Progress("Reading legacy library")
 			OldLibrary.Initialise(Reporting, "legacy")
 			OldLibrary.legacyMode = true
-			OldLibrary.SetFilesPath(BibTeXFolder)
+			OldLibrary.SetFilesRoot(BibTeXFolder)
 			OldLibrary.ReadAliases(AliasesFile)
 
 			BibTeXParser := TBibTeXStream{}

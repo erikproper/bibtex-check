@@ -1,13 +1,15 @@
-//
-// Module: files
-//
-// This module provides basic operations to manage files.
-// It, in particular, provides functionality to backup existing files.
-//
-// Creator: Henderik A. Proper (erikproper@gmail.com)
-//
-// Version of: 23.04.2024
-//
+/*
+ *
+ * Module: files
+ *
+ * This module provides basic operations to manage files.
+ * It, in particular, provides functionality to backup existing files.
+ *
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
+ *
+ * Version of: 23.04.2024
+ *
+ */
 
 package main
 
@@ -59,6 +61,7 @@ func BackupFile(sourceFile string) bool {
 	return true
 }
 
+// Check if the given file exists or not.
 func FileExists(fileName string) bool {
 	_, err := os.Stat(fileName)
 

@@ -19,7 +19,7 @@ const (
 
 var fieldProcessors TFieldProcessors
 
-func processDOIValue(library *TBibTeXLibrary, rawDOI string) string {
+func processDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 	var (
 		trimDOIStart = regexp.MustCompile(`^(doi:|http://[a-z,.]*/)`)
 		trimmedDOI   string
@@ -34,7 +34,7 @@ func processDOIValue(library *TBibTeXLibrary, rawDOI string) string {
 	return trimmedDOI
 }
 
-func processISSNValue(library *TBibTeXLibrary, rawISSN string) string {
+func processISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 	var (
 		trimISSNStart = regexp.MustCompile(`^ *ISSN[:]? *`)
 		trimmedISSN   string
@@ -49,14 +49,14 @@ func processISSNValue(library *TBibTeXLibrary, rawISSN string) string {
 	if CheckISSNValidity(trimmedISSN) {
 		return trimmedISSN[0:4] + "-" + trimmedISSN[4:8]
 	} else {
-		if !library.legacyMode {
-			library.Warning(WarningBadISSN, rawISSN, library.currentKey)
+		if !l.legacyMode {
+			l.Warning(WarningBadISSN, rawISSN, l.currentKey)
 		}
 		return strings.TrimSpace(rawISSN)
 	}
 }
 
-func processISBNValue(library *TBibTeXLibrary, rawISBN string) string {
+func processISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	var (
 		trimmedISBN   string
 		trimISBNStart = regexp.MustCompile(`^ *ISBN[-]?(10|13|)[:]? *`)
@@ -70,42 +70,42 @@ func processISBNValue(library *TBibTeXLibrary, rawISBN string) string {
 	if CheckISBNValidity(trimmedISBN) {
 		return trimmedISBN
 	} else {
-		if !library.legacyMode {
-			library.Warning(WarningBadISBN, rawISBN, library.currentKey)
+		if !l.legacyMode {
+			l.Warning(WarningBadISBN, rawISBN, l.currentKey)
 		}
 
 		return strings.TrimSpace(rawISBN)
 	}
 }
 
-func processYearValue(library *TBibTeXLibrary, rawYear string) string {
+func processYearValue(l *TBibTeXLibrary, rawYear string) string {
 	trimmedYear := strings.TrimSpace(rawYear)
 
 	if CheckYearValidity(trimmedYear) {
 		return trimmedYear
 	} else {
-		if !library.legacyMode {
-			library.Warning(WarningBadYear, rawYear, library.currentKey)
+		if !l.legacyMode {
+			l.Warning(WarningBadYear, rawYear, l.currentKey)
 		}
 
 		return strings.TrimSpace(rawYear)
 	}
 }
 
-func processDBLPValue(library *TBibTeXLibrary, value string) string {
-	if !library.legacyMode {
-		library.AddKeyAlias("DBLP:"+value, library.currentKey, false)
+func processDBLPValue(l *TBibTeXLibrary, value string) string {
+	if !l.legacyMode {
+		l.AddKeyAlias("DBLP:"+value, l.currentKey, false)
 	}
 
 	return strings.TrimSpace(value)
 }
 
-func processCrossrefValue(library *TBibTeXLibrary, crossref string) string {
+func processCrossrefValue(l *TBibTeXLibrary, crossref string) string {
 	trimmedCrossref := strings.TrimSpace(crossref)
 
-	if library.legacyMode {
+	if l.legacyMode {
 		// Note that the next call is hard-wired to the main Library.
-		// Only needed while still allowing library.legacyMode mode.
+		// Only needed while still allowing l.legacyMode mode.
 		key, isKey := Library.LookupEntry(trimmedCrossref)
 
 		if isKey {
@@ -116,7 +116,7 @@ func processCrossrefValue(library *TBibTeXLibrary, crossref string) string {
 	return trimmedCrossref
 }
 
-func processPagesValue(library *TBibTeXLibrary, pages string) string {
+func processPagesValue(l *TBibTeXLibrary, pages string) string {
 	var trimDashes = regexp.MustCompile(`-+`)
 
 	trimedPageRanges := ""
@@ -163,14 +163,14 @@ func processPagesValue(library *TBibTeXLibrary, pages string) string {
 	return rangesList
 }
 
-func processFileValue(library *TBibTeXLibrary, rawFile string) string {
+func processFileValue(l *TBibTeXLibrary, rawFile string) string {
 	var (
 		trimFileStart = regexp.MustCompile(`^.*/Zotero/storage/`)
 		trimFileEnd   = regexp.MustCompile(`.pdf:.*$`)
 		trimmedFile   string
 	)
 
-	if library.legacyMode {
+	if l.legacyMode {
 		trimmedFile = trimFileStart.ReplaceAllString(rawFile, "")
 		trimmedFile = trimFileEnd.ReplaceAllString(trimmedFile, "") + ".pdf"
 
@@ -185,7 +185,7 @@ func processFileValue(library *TBibTeXLibrary, rawFile string) string {
 	}
 }
 
-func processBDSKFileValue(library *TBibTeXLibrary, value string) string {
+func processBDSKFileValue(l *TBibTeXLibrary, value string) string {
 	data, _ := base64.StdEncoding.DecodeString(value)
 	payload := string(data)
 
@@ -197,11 +197,11 @@ func processBDSKFileValue(library *TBibTeXLibrary, value string) string {
 		fileName = payload[fileNameStart:fileNameEnd]
 	}
 
-	if FileExists(library.filesRoot + fileName) {
+	if FileExists(l.FilesRoot + fileName) {
 		return value
 	} else {
-		if !library.legacyMode {
-			library.Warning(WarningMissingFile, fileName, library.currentKey)
+		if !l.legacyMode {
+			l.Warning(WarningMissingFile, fileName, l.currentKey)
 		}
 
 		return ""
@@ -231,11 +231,11 @@ func init() {
 	fieldProcessors["bdsk-file-8"] = processBDSKFileValue
 	fieldProcessors["bdsk-file-9"] = processBDSKFileValue
 	fieldProcessors["dblp"] = processDBLPValue
-	fieldProcessors["crossref"] = processCrossrefValue // only needed while still allowing library.legacyMode
+	fieldProcessors["crossref"] = processCrossrefValue // only needed while still allowing l.legacyMode
 	fieldProcessors["doi"] = processDOIValue
 	fieldProcessors["isbn"] = processISBNValue
 	fieldProcessors["issn"] = processISSNValue
-	fieldProcessors["file"] = processFileValue // only needed while still allowing library.legacyMode
+	fieldProcessors["file"] = processFileValue // only needed while still allowing l.legacyMode
 	fieldProcessors["pages"] = processPagesValue
 	fieldProcessors["year"] = processYearValue
 

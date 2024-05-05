@@ -10,7 +10,7 @@
  * Version of: 22.04.2024
  *
  */
- 
+
 package main
 
 import "maps"

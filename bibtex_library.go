@@ -27,11 +27,10 @@ type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
 		name               string // Name of the library
-		filesRoot          string // Path to folder with PDF files of the entries
-		bibFilePath        string
-		aliasesFilePath    string
-		challengesFilePath string
-		bibTeXParser       TBibTeXStream                    // ...
+		FilesRoot          string // Path to folder with library related files
+		BibFilePath        string
+		AliasesFilePath    string
+		ChallengesFilePath string
 		comments           []string                         // The comments included in a BibTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		entryFields        TStringStringMap                 // Per entry key, the fields associated to the actual entries.
 		entryType          TStringMap                       // Per entry key, the type of the enty.
@@ -44,6 +43,7 @@ type (
 		legacyMode         bool                             // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
 		challengeWinners   map[string]map[string]TStringMap // A key and field specific mapping from challenged value to winner values
 		TInteraction                                        // Error reporting channel
+		TBibTeXStream                                       // ...
 	}
 )
 
@@ -53,14 +53,14 @@ type (
  *
  */
 
-func (l *TBibTeXLibrary) SetFilesPath(path string) bool {
-	l.filesRoot = path
+func (l *TBibTeXLibrary) SetFilesRoot(path string) bool {
+	l.FilesRoot = path
 
 	return true
 }
 
 func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
-	l.entryFields.StringStringMapSetValue(entry, field, value)
+	l.entryFields.SetValueForStringPairMap(entry, field, value)
 }
 
 /*
@@ -70,15 +70,15 @@ func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
  */
 
 func (l *TBibTeXLibrary) ForEachEntry(f func(string)) {
-	l.entryType.ForEachStringPair(func(entry, _ string) { f(entry) })
+	l.entryType.ForEachStringMapping(func(entry, _ string) { f(entry) })
 }
 
 func (l *TBibTeXLibrary) ForEachEntryTypePair(f func(string, string)) {
-	l.entryType.ForEachStringPair(f)
+	l.entryType.ForEachStringMapping(f)
 }
 
 func (l *TBibTeXLibrary) ForEachAliasEntryPair(f func(string, string)) {
-	l.deAlias.ForEachStringPair(f)
+	l.deAlias.ForEachStringMapping(f)
 }
 
 /*
@@ -87,16 +87,16 @@ func (l *TBibTeXLibrary) ForEachAliasEntryPair(f func(string, string)) {
  *
  */
 
-func (l *TBibTeXLibrary) EntryExists(entry string) bool {
-	return l.entryType.StringMapped(entry)
-}
-
 func (l *TBibTeXLibrary) GetEntryFieldValue(entry, field string) string {
-	return l.entryFields.StringStringMapGetValue(entry, field)
+	return l.entryFields.GetValueFromStringPairMap(entry, field)
 }
 
 func (l *TBibTeXLibrary) LibrarySize() int {
 	return len(Library.entryType)
+}
+
+func (l *TBibTeXLibrary) ReportLibrarySize() {
+	l.Progress(ProgressLibrarySize, l.name, len(l.entryType))
 }
 
 /*
@@ -105,20 +105,16 @@ func (l *TBibTeXLibrary) LibrarySize() int {
  *
  */
 
-func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
-	_, exists := l.preferredAliases[alias]
+func (l *TBibTeXLibrary) EntryExists(entry string) bool {
+	return l.entryType.IsMappedString(entry)
+}
 
-	return exists
+func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
+	return l.preferredAliases.IsMappedString(alias)
 }
 
 func (l *TBibTeXLibrary) AliasExists(alias string) bool {
-	_, exists := l.deAlias[alias]
-
-	return exists
-}
-
-func (l *TBibTeXLibrary) ReportLibrarySize() {
-	l.Progress(ProgressLibrarySize, l.name, len(l.entryType))
+	return l.deAlias.IsMappedString(alias)
 }
 
 //////// OTHER stuff
@@ -320,13 +316,13 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name string) {
 	l.name = name
 	l.Progress(ProgressInitialiseLibrary, l.name)
 
-	l.bibTeXParser = TBibTeXStream{}
-	l.bibTeXParser.Initialise(reporting, l)
+	l.TBibTeXStream = TBibTeXStream{}
+	l.TBibTeXStream.Initialise(reporting, l)
 
-	l.filesRoot = ""
-	l.bibFilePath = ""
-	l.aliasesFilePath = ""
-	l.challengesFilePath = ""
+	l.FilesRoot = ""
+	l.BibFilePath = ""
+	l.AliasesFilePath = ""
+	l.ChallengesFilePath = ""
 
 	l.comments = []string{}
 	l.entryFields = map[string]TStringMap{}

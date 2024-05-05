@@ -1,12 +1,14 @@
-//
-// Module: bibtex_writing
-//
-// This module is defines the TBibTeXStream type as a parser of BibTeX entries
-//
-// Creator: Henderik A. Proper (erikproper@gmail.com)
-//
-// Version of: 26.04.2024
-//
+/*
+ *
+ *  Module: bibtex_writing
+ *
+ * This module is defines the TBibTeXStream type as a parser of BibTeX entries
+ *
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
+ *
+ * Version of: 26.04.2024
+ *
+ */
 
 package main
 
@@ -200,7 +202,7 @@ func (b *TBibTeXStream) ThisTokenWasCharacter(character byte) bool {
 // The Forced version of ThisTokenWasCharacterIn, with an error message if not found.
 func (b *TBibTeXStream) ForcedThisTokenWasCharacterIn(S TByteSet) bool {
 	return b.ThisCharacterWasIn(S) ||
-		b.MaybeReportError(errorCharacterNotIn, S.String()) ||
+		b.MaybeReportError(ErrorCharacterNotIn, S.String()) ||
 		b.SkipToNextEntry("")
 }
 

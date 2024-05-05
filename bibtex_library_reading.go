@@ -20,17 +20,17 @@ import (
 	"strings"
 )
 
-func (l *TBibTeXLibrary) ReadBib(fileName string) bool {
-	l.bibFilePath = l.filesRoot + fileName
+func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
+	l.BibFilePath = filePath
 
-	return l.bibTeXParser.ParseBibFile(l.bibFilePath)
+	return l.ParseBibFile(l.FilesRoot + l.BibFilePath)
 }
 
 // Quick and dirty reading of the keys.map and preferred.aliases file.
-func (l *TBibTeXLibrary) ReadAliases(fileName string) {
-	l.aliasesFilePath = l.filesRoot + fileName
+func (l *TBibTeXLibrary) ReadAliases(filePath string) {
+	l.AliasesFilePath = filePath
 
-	file, err := os.Open(l.aliasesFilePath)
+	file, err := os.Open(l.FilesRoot + l.AliasesFilePath)
 	if err != nil {
 		log.Fatal(err) /// Don't want to do it like this.
 	}
@@ -62,10 +62,10 @@ func (l *TBibTeXLibrary) ReadAliases(fileName string) {
 	file.Close()
 }
 
-func (l *TBibTeXLibrary) ReadChallenges(fileName string) {
-	l.challengesFilePath = l.filesRoot + fileName
+func (l *TBibTeXLibrary) ReadChallenges(filePath string) {
+	l.ChallengesFilePath = filePath
 
-	file, err := os.Open(l.challengesFilePath)
+	file, err := os.Open(l.FilesRoot + l.ChallengesFilePath)
 	if err != nil {
 		log.Fatal(err) /// Don't want to do it like this.
 	}

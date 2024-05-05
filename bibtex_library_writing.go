@@ -19,12 +19,15 @@ import (
 	"os"
 )
 
+// Generic function to write files
 func (l *TBibTeXLibrary) writeFile(filePath, message string, writing func(*bufio.Writer)) bool {
-	l.Progress(message, filePath)
+	ActualFilePath := l.FilesRoot + filePath
 
-	BackupFile(filePath)
+	l.Progress(message, ActualFilePath)
 
-	file, err := os.Create(filePath)
+	BackupFile(ActualFilePath)
+
+	file, err := os.Create(ActualFilePath)
 	if err != nil {
 		return false
 	}
@@ -37,7 +40,7 @@ func (l *TBibTeXLibrary) writeFile(filePath, message string, writing func(*bufio
 	return true
 }
 
-// Does what its name says ... writing the library to the provided BibTeX file
+// Function to write the BibTeX content of the library to a bufio.bWriter buffer
 // Notes:
 // - As we ignore preambles, these are not written.
 // - When we start managing the groups (of keys) the way Bibdesk does, we need to ensure that their embedded as an XML structure embedded in a comment, is updated.
@@ -58,46 +61,40 @@ func (l *TBibTeXLibrary) writeBibTeXContent(bibWriter *bufio.Writer) {
 	}
 }
 
-///// COMMENTS
+// Write the content of BibTeX content of the library to a file
 func (l *TBibTeXLibrary) WriteBibTeXFile() bool {
-	return l.writeFile(l.bibFilePath, "Writing bib file %s", l.writeBibTeXContent)
+	return l.writeFile(l.BibFilePath, ProgressWritingBibFile, l.writeBibTeXContent)
 }
 
-func (l *TBibTeXLibrary) WriteChallenges() {
-	fmt.Println("Writing challenges map")
+//// HERE!
 
-	// One block for both actually.
-	BackupFile(l.challengesFilePath)
-	chFile, err := os.Create(l.challengesFilePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer chFile.Close()
-
-	chWriter := bufio.NewWriter(chFile)
+// Function to write the BibTeX content of the library to a bufio.bWriter buffer
+func (l *TBibTeXLibrary) writeChallenges(chWriter *bufio.Writer) {
 	for key, fieldChallenges := range l.challengeWinners {
-		_, keyIsUsed := l.entryType[key]
-		if !keyIsUsed {
-			fmt.Println("Not in use:", key)
-		}
-		chWriter.WriteString("K " + key + "\n")
-		for field, challenges := range fieldChallenges {
-			chWriter.WriteString("F " + field + "\n")
-			for challenger, winner := range challenges {
-				chWriter.WriteString("C " + challenger + "\n")
-				chWriter.WriteString("W " + winner + "\n")
+		if EntryExists() {
+			chWriter.WriteString("K " + key + "\n")
+			for field, challenges := range fieldChallenges {
+				chWriter.WriteString("F " + field + "\n")
+				for challenger, winner := range challenges {
+					chWriter.WriteString("C " + challenger + "\n")
+					chWriter.WriteString("W " + winner + "\n")
+				}
 			}
 		}
 	}
-	chWriter.Flush()
+}
+
+// Write the content of BibTeX content of the library to a file
+func (l *TBibTeXLibrary) WriteChallenges() bool {
+	return l.writeFile(l.ChallengesFilePath, ProgressWritingChallengesFile, l.writeChallenges)
 }
 
 func (l *TBibTeXLibrary) WriteAliases() {
 	fmt.Println("Writing aliases map")
 
-	BackupFile(l.aliasesFilePath)
+	BackupFile(l.FilesRoot + l.AliasesFilePath)
 
-	kmFile, err := os.Create(l.aliasesFilePath)
+	kmFile, err := os.Create(l.FilesRoot + l.AliasesFilePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -113,6 +110,4 @@ func (l *TBibTeXLibrary) WriteAliases() {
 		}
 	}
 	kmWriter.Flush()
-
-	l.WriteChallenges()
 }

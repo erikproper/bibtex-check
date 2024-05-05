@@ -1,14 +1,16 @@
-//
-// Module: bibtex_config
-//
-// This module is concerned with general configuration parameters for handling BibTeX libraries.
-// Some of the things as presently set may be (partially) moved to a config file that is read when the application is started.
-// These are marked with (*)
-//
-// Creator: Henderik A. Proper (erikproper@gmail.com)
-//
-// Version of: 24.04.2024
-//
+/*
+ *
+ * Module: bibtex_config
+ *
+ * This module is concerned with general configuration parameters for handling BibTeX libraries.
+ * Some of the things as presently set may be (partially) moved to a config file that is read when the application is started.
+ * These are marked with (*)
+ *
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
+ *
+ * Version of: 24.04.2024
+ *
+ */
 
 package main
 

@@ -1,12 +1,14 @@
-//
-// Module: bibtex_characters
-//
-// This module defines characters and character sets that are needed for the parsing of BibTeX files.
-//
-// Creator: Henderik A. Proper (erikproper@gmail.com)
-//
-// Version of: 24.04.2024
-//
+/*
+ *
+ * Module: bibtex_characters
+ *
+ * This module defines characters and character sets that are needed for the parsing of BibTeX files.
+ *
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
+ *
+ * Version of: 24.04.2024
+ *
+ */
 
 package main
 

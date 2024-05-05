@@ -1,13 +1,15 @@
-//
-// Module: character_stream
-//
-// This module is concerned with the (ASCII) character by character reading of files or strings, to enable the further parsing of the character stream.
-// As we are in a TeX environment, and may potentially be confronted with "Runes" in general, this involves an automatic conversion of runes to LaTeX symbols.
-//
-// Creator: Henderik A. Proper (erikproper@gmail.com)
-//
-// Version of: 24.04.2024
-//
+/*
+ *
+ * Module: character_stream
+ *
+ * This module is concerned with the (ASCII) character by character reading of files or strings, to enable the further parsing of the character stream.
+ * As we are in a TeX environment, and may potentially be confronted with "Runes" in general, this involves an automatic conversion of runes to LaTeX symbols.
+ *
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
+ *
+ * Version of: 24.04.2024
+ *
+ */
 
 package main
 
@@ -15,10 +17,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-)
-
-const (
-	errorCharacterNotIn = "expected character from %s"
 )
 
 type (
@@ -122,7 +120,7 @@ func (c *TCharacterStream) positionReportety() string {
 	}
 }
 
-// Close the opened textfile, if needed.
+// Close the opened textfile; if needed.
 func (c *TCharacterStream) TextfileClose() bool {
 	if c.textfileIsOpen {
 		err := c.textfile.Close()

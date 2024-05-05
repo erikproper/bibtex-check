@@ -25,13 +25,13 @@ const (
 	FieldValueClass = "FieldValue"
 
 	// Error messages & warnings when parsing BibTeX files
-	ErrorMissing               = "Missing"
-	ErrorMissingCharacter      = ErrorMissing + " " + CharacterClass + " '%s', found '%s'"
-	ErrorMissingEntryBody      = ErrorMissing + " " + EntryBodyClass
-	ErrorMissingEntryType      = ErrorMissing + " " + EntryTypeClass
-	ErrorMissingFieldValue     = ErrorMissing + " " + FieldValueClass
+	ErrorMissingCharacter      = "Missing " + CharacterClass + " '%s', found '%s'"
+	ErrorMissingEntryBody      = "Missing " + EntryBodyClass
+	ErrorMissingEntryType      = "Missing " + EntryTypeClass
+	ErrorMissingFieldValue     = "Missing " + FieldValueClass
 	ErrorOpeningFile           = "Could not open file '%s'"
 	ErrorUnknownString         = "Unknown string '%s' referenced"
+	ErrorCharacterNotIn        = "Expected a character from %s"
 	WarningSkippingToNextEntry = "Skipping to next entry"
 
 	// Warnings regarding the consistency of the libraries
@@ -46,4 +46,8 @@ const (
 	WarningIllegalField       = "Field \"%s\", with value \"%s\", is not allowed for entry %s of type %s"
 	QuestionIgnore            = "Ignore this field?"
 	ProgressCheckingAliases   = "Checking consistency of aliases"
+
+	// Progress reports for reading/writing files
+	ProgressWritingBibFile        = "Writing bib file %s"
+	ProgressWritingChallengesFile = "Writing challenges file %s"
 )
