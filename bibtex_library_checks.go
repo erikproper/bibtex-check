@@ -13,7 +13,6 @@
 package main
 
 import (
-	//	"fmt"
 	"regexp"
 	"strings"
 )
@@ -33,7 +32,7 @@ func CheckPreferredAliasValidity(alias string) bool {
 }
 
 func CheckISSNValidity(ISSN string) bool {
-	var validISSN = regexp.MustCompile(`^[0-9][0-9][0-9][0-9][-]?[0-9][0-9][0-9][0-9,X]$`)
+	var validISSN = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9,X]$`)
 
 	return validISSN.MatchString(ISSN)
 }
@@ -63,10 +62,10 @@ func (l *TBibTeXLibrary) CheckAliasEntryPair(alias, entry string) {
 		// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced entry.
 		if strings.Index(alias, "DBLP:") == 0 {
 			dblpAlias := alias[5:]
-			dblpValue := l.GetEntryFieldValue(entry, "dblp")
+			dblpValue := l.EntryFieldValueity(entry, "dblp")
 			if dblpAlias != dblpValue {
 				if dblpValue == "" {
-					// If we have a dblp alias, and we have no dblp entry, we can safely add this.
+					// If we have a dblp alias, and we have no dblp entry, we can safely add this as the dblp value for this entry.
 					l.SetEntryFieldValue(entry, "dblp", dblpAlias)
 				} else {
 					l.Warning(WarningDBLPMismatch, dblpAlias, dblpValue, entry)
@@ -95,7 +94,9 @@ func (l *TBibTeXLibrary) CheckAliasEntryPair(alias, entry string) {
 func (l *TBibTeXLibrary) CheckAliases() {
 	l.Progress(ProgressCheckingAliases)
 
-	l.ForEachAliasEntryPair(l.CheckAliasEntryPair)
+	for alias, entry := range l.AliasToEntry {
+		l.CheckAliasEntryPair(alias, entry)
+	}
 }
 
 func (l *TBibTeXLibrary) CheckEntries() {

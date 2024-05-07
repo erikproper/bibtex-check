@@ -14,96 +14,85 @@ package main
 
 import (
 	"bufio"
-	"fmt"
-	"log"
 	"os"
 	"strings"
 )
 
+// Read bib files
 func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
 	l.BibFilePath = filePath
 
 	return l.ParseBibFile(l.FilesRoot + l.BibFilePath)
 }
 
+// Generic function to read library related files
+func (l *TBibTeXLibrary) readFile(filePath, message string, reading func(string)) bool {
+	FullFilePath := l.FilesRoot + filePath
+
+	l.Progress(message, FullFilePath)
+
+	file, err := os.Open(FullFilePath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		reading(string(scanner.Text()))
+	}
+
+	return scanner.Err() == nil
+}
+
 // Quick and dirty reading of the keys.map and preferred.aliases file.
 func (l *TBibTeXLibrary) ReadAliases(filePath string) {
 	l.AliasesFilePath = filePath
 
-	file, err := os.Open(l.FilesRoot + l.AliasesFilePath)
-	if err != nil {
-		log.Fatal(err) /// Don't want to do it like this.
-	}
+	l.readFile(l.AliasesFilePath, ProgressReadingAliasesFile, func(line string) {
+		strings := strings.Split(line, " ")
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		s := strings.Split(string(scanner.Text()), " ")
-
-		if len(s) != 2 {
-			fmt.Println("Line does not have precisely two entries:", s)
-			log.Fatal(err)
+		if len(strings) != 2 {
+			l.Warning(WarningAliasLineBadEntries, line)
 			return
 		}
 
-		alias := s[0]
-		key := s[1]
+		alias := strings[0]
+		key := strings[1]
 
 		l.AddKeyAlias(alias, key, false)
 
 		if !l.PreferredAliasExists(key) && CheckPreferredAliasValidity(alias) {
 			l.AddPreferredAlias(alias)
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	file.Close()
+	})
 }
 
 func (l *TBibTeXLibrary) ReadChallenges(filePath string) {
 	l.ChallengesFilePath = filePath
 
-	file, err := os.Open(l.FilesRoot + l.ChallengesFilePath)
-	if err != nil {
-		log.Fatal(err) /// Don't want to do it like this.
-	}
-
 	key := ""
 	field := ""
 	challenge := ""
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		s := string(scanner.Text())
-
-		if len(s) < 3 {
-			fmt.Println("Line is too short.", s)
-			log.Fatal(err)
+	l.readFile(l.ChallengesFilePath, ProgressReadingChallengesFile, func(line string) {
+		if len(line) < 3 {
+			l.Warning(WarningChallengeLineTooShort, line)
 			return
 		}
 
-		switch s[0] {
+		switch line[0] {
 		case 'K':
-			key = s[2:]
+			key = line[2:]
 
 		case 'F':
-			field = s[2:]
+			field = line[2:]
 
 		case 'C':
-			challenge = s[2:]
+			challenge = line[2:]
 
 		case 'W':
-			l.registerChallengeWinner(key, field, challenge, s[2:])
-			//			l.registerChallengeWinner(key, field, l.ProcessFieldValue(field, challenge), l.ProcessFieldValue(field, s[2:]))
+			l.registerChallengeWinner(key, field, l.NormaliseFieldValue(field, challenge), l.NormaliseFieldValue(field, line[2:]))
 		}
-
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	file.Close()
+	})
 }

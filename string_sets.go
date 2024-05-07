@@ -104,8 +104,7 @@ func (s *TStringSet) Unite(t *TStringSet) *TStringSet {
 // Intersect with another set.
 func (s *TStringSet) Intersect(t *TStringSet) *TStringSet {
 	for element := range s.elements {
-		_, isIn := t.elements[element]
-		if !isIn {
+		if _, isIn := t.elements[element]; !isIn {
 			delete(s.elements, element)
 		}
 	}
@@ -116,8 +115,7 @@ func (s *TStringSet) Intersect(t *TStringSet) *TStringSet {
 // Subtract another set.
 func (s *TStringSet) Subtract(t *TStringSet) *TStringSet {
 	for element := range s.elements {
-		_, isIn := t.elements[element]
-		if isIn {
+		if _, isIn := t.elements[element]; isIn {
 			delete(s.elements, element)
 		}
 	}

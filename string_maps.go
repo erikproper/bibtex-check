@@ -21,45 +21,11 @@ type (
 
 /*
  *
- * Processing functions
- *
- */
-
-// For each string pair apply the provided function.
-func (m *TStringMap) ForEachStringMapping(f func(string, string)) {
-	for i, v := range *m {
-		f(i, v)
-	}
-}
-
-// For each string tripple apply the provided function.
-func (m *TStringStringMap) ForEachStringPairMapping(f func(string, string, string)) {
-	for i, v := range *m {
-		v.ForEachStringMapping(func(a, b string) { f(i, a, b) })
-	}
-}
-
-// For each string quadruple apply the provided function.
-func (m *TStringStringStringMap) ForEachStringTrippleMapping(f func(string, string, string, string)) {
-	for i, v := range *m {
-		v.ForEachStringPairMapping(func(a, b, c string) { f(i, a, b, c) })
-	}
-}
-
-// For each pair of string and set of strings, apply the provided function.
-func (m *TStringSetMap) ForEachStringSetMapping(f func(string, TStringSet)) {
-	for i, v := range *m {
-		f(i, v)
-	}
-}
-
-/*
- *
  * Checking functions
  *
  */
 
-// Check if a string is "mapped" in the provided string map
+// Safely check if a string is "mapped" in the provided string map
 func (m *TStringMap) IsMappedString(i string) bool {
 	if (*m) == nil {
 		return false
@@ -68,7 +34,7 @@ func (m *TStringMap) IsMappedString(i string) bool {
 	}
 }
 
-// Check if a string is "mapped" in the provided string map
+// Safely check if a string is "mapped" in the provided string map
 func (m *TStringStringMap) IsMappedString(i string) bool {
 	if (*m) == nil {
 		return false
@@ -77,7 +43,7 @@ func (m *TStringStringMap) IsMappedString(i string) bool {
 	}
 }
 
-// Check if a string is "mapped" in the provided string map
+// Safely check if a string is "mapped" in the provided string map
 func (m *TStringStringStringMap) IsMappedString(i string) bool {
 	if (*m) == nil {
 		return false
@@ -86,7 +52,7 @@ func (m *TStringStringStringMap) IsMappedString(i string) bool {
 	}
 }
 
-// Check if a string pair is "mapped" in the provided string map
+// Safely check if a string pair is "mapped" in the provided string map
 func (m *TStringStringMap) IsMappedStringPair(i, j string) bool {
 	if (*m) == nil {
 		return false
@@ -97,7 +63,7 @@ func (m *TStringStringMap) IsMappedStringPair(i, j string) bool {
 	}
 }
 
-// Check if a string pair is "mapped" in the provided string map
+// Safely check if a string pair is "mapped" in the provided string map
 func (m *TStringStringStringMap) IsMappedStringPair(i, j string) bool {
 	if (*m) == nil {
 		return false
@@ -108,7 +74,7 @@ func (m *TStringStringStringMap) IsMappedStringPair(i, j string) bool {
 	}
 }
 
-// Check if a string tripple is "mapped" in the provided string map
+// Safely check if a string tripple is "mapped" in the provided string map
 func (m *TStringStringStringMap) IsMappedStringTripple(i, j, k string) bool {
 	if (*m) == nil {
 		return false
@@ -127,9 +93,10 @@ func (m *TStringStringStringMap) IsMappedStringTripple(i, j, k string) bool {
  *
  */
 
-// Get the mapped value from the given string, from the given map.
+// The functions below use the term "Valueity", since the can return an actual value, or an empty value.
+// Safely get the mapped value from the given string, from the given map.
 // Returns the empty string if no value is mapped.
-func (m *TStringMap) GetValueFromStringMap(i string) string {
+func (m *TStringMap) GetValueityFromStringMap(i string) string {
 	if (*m) == nil {
 		return ""
 	} else {
@@ -137,9 +104,9 @@ func (m *TStringMap) GetValueFromStringMap(i string) string {
 	}
 }
 
-// Get the mapped value from the given string pair, from the given map.
+// Safely get the mapped value from the given string pair, from the given map.
 // Returns the empty string if no value is mapped.
-func (m *TStringStringMap) GetValueFromStringPairMap(i, j string) string {
+func (m *TStringStringMap) GetValueityFromStringPairMap(i, j string) string {
 	if (*m) == nil {
 		return ""
 	} else if (*m)[i] == nil {
@@ -149,9 +116,9 @@ func (m *TStringStringMap) GetValueFromStringPairMap(i, j string) string {
 	}
 }
 
-// Get the mapped value from the given string triple, from the given map.
+// Safely get the mapped value from the given string triple, from the given map.
 // Returns the empty string if no value is mapped.
-func (m *TStringStringStringMap) GetValueFromStringTrippleMap(i, j, k string) string {
+func (m *TStringStringStringMap) GetValueityFromStringTrippleMap(i, j, k string) string {
 	if (*m) == nil {
 		return ""
 	} else if (*m)[i] == nil {
@@ -169,7 +136,7 @@ func (m *TStringStringStringMap) GetValueFromStringTrippleMap(i, j, k string) st
  *
  */
 
-// Set the mapped value for a string map
+// Safely set the mapped value for a string map
 func (m *TStringMap) SetValueForStringMap(i, v string) {
 	if (*m) == nil {
 		(*m) = TStringMap{}
@@ -178,7 +145,7 @@ func (m *TStringMap) SetValueForStringMap(i, v string) {
 	(*m)[i] = v
 }
 
-// Set the mapped value for a string pair map
+// Safely set the mapped value for a string pair map
 func (m *TStringStringMap) SetValueForStringPairMap(i, j, v string) {
 	if (*m) == nil {
 		(*m) = TStringStringMap{}
@@ -191,7 +158,7 @@ func (m *TStringStringMap) SetValueForStringPairMap(i, j, v string) {
 	(*m)[i][j] = v
 }
 
-// Set the mapped value for a string triple map
+// Safely set the mapped value for a string triple map
 func (m *TStringStringStringMap) SetValueForStringTripleMap(i, j, k, v string) {
 	if (*m) == nil {
 		(*m) = TStringStringStringMap{}

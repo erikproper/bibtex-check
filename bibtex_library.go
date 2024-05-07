@@ -26,17 +26,17 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name               string // Name of the library
-		FilesRoot          string // Path to folder with library related files
-		BibFilePath        string
-		AliasesFilePath    string
-		ChallengesFilePath string
-		comments           []string                         // The comments included in a BibTeX library. These are not always "just" comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		entryFields        TStringStringMap                 // Per entry key, the fields associated to the actual entries.
-		entryType          TStringMap                       // Per entry key, the type of the enty.
-		deAlias            TStringMap                       // Mapping from aliases to the actual entry key.
-		aliases            map[string]TStringSet            // The inverted version of deAlias.
-		preferredAliases   TStringMap                       // Per entry key, the preferred alias
+		name               string                           // Name of the library
+		FilesRoot          string                           // Path to folder with library related files
+		BibFilePath        string                           //
+		AliasesFilePath    string                           //
+		ChallengesFilePath string                           //
+		Comments           []string                         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields        TStringStringMap                 // Per entry key, the fields associated to the actual entries.
+		EntryTypes         TStringMap                       // Per entry key, the type of the enty.
+		AliasToEntry       TStringMap                       // Mapping from aliases to the actual entry key.
+		EntryToAliases     TStringSetMap                    // The inverted version of AliasToEntry.
+		PreferredAliases   TStringMap                       // Per entry key, the preferred alias
 		illegalFields      TStringSet                       // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
 		currentKey         string                           // The key of the entry we are currently working on.
 		foundDoubles       bool                             // If set, we found double entries. In this case, we may not want to e.g. write this file.
@@ -49,72 +49,48 @@ type (
 
 /*
  *
- * Access abstraction -- Set functions
+ * Safe set functions
  *
  */
-
-func (l *TBibTeXLibrary) SetFilesRoot(path string) bool {
-	l.FilesRoot = path
-
-	return true
-}
 
 func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
-	l.entryFields.SetValueForStringPairMap(entry, field, value)
+	l.EntryFields.SetValueForStringPairMap(entry, field, value)
 }
 
 /*
  *
- * Access abstraction -- Processing functions
+ * Retrieval functions
  *
  */
 
-func (l *TBibTeXLibrary) ForEachEntry(f func(string)) {
-	l.entryType.ForEachStringMapping(func(entry, _ string) { f(entry) })
-}
-
-func (l *TBibTeXLibrary) ForEachEntryTypePair(f func(string, string)) {
-	l.entryType.ForEachStringMapping(f)
-}
-
-func (l *TBibTeXLibrary) ForEachAliasEntryPair(f func(string, string)) {
-	l.deAlias.ForEachStringMapping(f)
-}
-
-/*
- *
- * Access abstraction -- Get functions
- *
- */
-
-func (l *TBibTeXLibrary) GetEntryFieldValue(entry, field string) string {
-	return l.entryFields.GetValueFromStringPairMap(entry, field)
+func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
+	return l.EntryFields.GetValueityFromStringPairMap(entry, field)
 }
 
 func (l *TBibTeXLibrary) LibrarySize() int {
-	return len(Library.entryType)
+	return len(Library.EntryTypes)
 }
 
 func (l *TBibTeXLibrary) ReportLibrarySize() {
-	l.Progress(ProgressLibrarySize, l.name, len(l.entryType))
+	l.Progress(ProgressLibrarySize, l.name, l.LibrarySize())
 }
 
 /*
  *
- * Access abstraction -- Checking functions
+ * Checking functions
  *
  */
 
 func (l *TBibTeXLibrary) EntryExists(entry string) bool {
-	return l.entryType.IsMappedString(entry)
+	return l.EntryTypes.IsMappedString(entry)
 }
 
 func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
-	return l.preferredAliases.IsMappedString(alias)
+	return l.PreferredAliases.IsMappedString(alias)
 }
 
 func (l *TBibTeXLibrary) AliasExists(alias string) bool {
-	return l.deAlias.IsMappedString(alias)
+	return l.AliasToEntry.IsMappedString(alias)
 }
 
 //////// OTHER stuff
@@ -155,21 +131,21 @@ func (l *TBibTeXLibrary) NewKey() string {
 
 // Add a comment to the current library
 func (l *TBibTeXLibrary) AddComment(comment string) bool {
-	l.comments = append(l.comments, comment)
+	l.Comments = append(l.Comments, comment)
 
 	return true
 }
 
 // Lookup the entry key and type for a given key/alias
 func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) {
-	lookupKey, isAlias := l.deAlias[key]
+	lookupKey, isAlias := l.AliasToEntry[key]
 	if !isAlias {
 		lookupKey = key
 	}
 
-	entryType, isKey := l.entryType[lookupKey]
+	EntryTypes, isKey := l.EntryTypes[lookupKey]
 	if isKey {
-		return lookupKey, entryType, true
+		return lookupKey, EntryTypes, true
 	} else {
 		return "", "", false
 	}
@@ -209,7 +185,7 @@ func (l *TBibTeXLibrary) checkChallengeWinner(entry, field, challenger, winner s
 }
 
 func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
-	fields, knownEntry := l.entryFields[key]
+	fields, knownEntry := l.EntryFields[key]
 
 	if knownEntry {
 		linePrefix := ""
@@ -217,7 +193,7 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 			linePrefix += prefix
 		}
 
-		result := linePrefix + "@" + l.entryType[key] + "{" + key + ",\n"
+		result := linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
 		for field, value := range fields {
 			result += linePrefix + "   " + field + " = {" + value + "},\n"
 		}
@@ -233,27 +209,27 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 // The low level registering of the alias for a key.
 // Also takes care of registering the inverse mapping.
 func (l *TBibTeXLibrary) registerAlias(alias, key string) {
-	l.deAlias[alias] = key
+	l.AliasToEntry[alias] = key
 
 	// Also create and/or update the inverse mapping
-	_, hasAliases := l.aliases[key]
+	_, hasAliases := l.EntryToAliases[key]
 	if !hasAliases && AllowLegacy {
-		l.aliases[key] = TStringSetNew()
+		l.EntryToAliases[key] = TStringSetNew()
 	}
-	l.aliases[key].Set().Add(alias)
+	l.EntryToAliases[key].Set().Add(alias)
 }
 
 // Move the alias preference to another key
 func (l *TBibTeXLibrary) moveAliasPreference(alias, currentKey, key string) {
-	if l.preferredAliases[currentKey] == alias && AllowLegacy {
-		delete(l.preferredAliases, currentKey)
-		l.preferredAliases[key] = alias
+	if l.PreferredAliases[currentKey] == alias && AllowLegacy {
+		delete(l.PreferredAliases, currentKey)
+		l.PreferredAliases[key] = alias
 	}
 }
 
 // Adds an alias to a key in the current library.
 // If allowRemap is true then we allow for a situation where the alias is actually a (former) key.
-// In the latter situation, we would need to update the aliases to that former key as well.
+// In the latter situation, we would need to update the EntryToAliases to that former key as well.
 // Note: The present complexity is caused due to the legacy libraries. The present mapping file refers to keys that are not yet in the main library.
 // Once that is solved, the checks here can be simpler:
 // - Aliasses cannot be keys
@@ -262,24 +238,24 @@ func (l *TBibTeXLibrary) moveAliasPreference(alias, currentKey, key string) {
 // - The latter might not always be necessary. E.g. when simply doing a "-alias" call
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 	// Check if the provided is already used.
-	currentKey, aliasIsAlreadyAliased := l.deAlias[alias]
+	currentKey, aliasIsAlreadyAliased := l.AliasToEntry[alias]
 
 	// Check if the provided alias is itself not a key that is in use by an entry.
-	_, aliasIsActuallyKeyToEntry := l.entryFields[alias]
+	_, aliasIsActuallyKeyToEntry := l.EntryFields[alias]
 
 	// Check if the provided alias is itself not the target of an alias mapping.
-	_, aliasIsActuallyKeyForAlias := l.aliases[alias]
+	_, aliasIsActuallyKeyForAlias := l.EntryToAliases[alias]
 
 	// Check if the provided key is itself not an alias.
-	aliasedKey, keyIsActuallyAlias := l.deAlias[key]
+	aliasedKey, keyIsActuallyAlias := l.AliasToEntry[key]
 
 	if aliasIsAlreadyAliased && currentKey != key {
 		if allowRemap && AllowLegacy {
-			l.aliases[currentKey].Set().Delete(key)
+			l.EntryToAliases[currentKey].Set().Delete(key)
 			l.registerAlias(alias, key)
 			l.moveAliasPreference(alias, currentKey, key)
 		} else {
-			// No ambiguous aliases allowed
+			// No ambiguous EntryToAliases allowed
 			l.Warning(WarningAmbiguousAlias, alias, currentKey, key)
 		}
 	} else if aliasIsActuallyKeyToEntry {
@@ -287,18 +263,18 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 		l.Warning(WarningAliasIsKey, alias)
 	} else if aliasIsActuallyKeyForAlias && AllowLegacy {
 		if allowRemap && AllowLegacy { // After the migration, this can only happen when merging two entries.
-			for old_alias := range l.aliases[alias].Set().Elements() {
+			for old_alias := range l.EntryToAliases[alias].Set().Elements() {
 				l.registerAlias(old_alias, key)
 				l.moveAliasPreference(old_alias, alias, key)
 			}
 			l.registerAlias(alias, key)
-			delete(l.aliases, alias)
+			delete(l.EntryToAliases, alias)
 		} else {
-			// Unless we allow for a remap of existing aliases, aliases cannot be keys themselves.
+			// Unless we allow for a remap of existing EntryToAliases, EntryToAliases cannot be keys themselves.
 			l.Warning(WarningAliasIsKey, alias)
 		}
 	} else if keyIsActuallyAlias {
-		// We cannot alias aliases.
+		// We cannot alias EntryToAliases.
 		l.Warning(WarningAliasTargetIsAlias, alias, key, aliasedKey)
 	} else {
 		l.registerAlias(alias, key)
@@ -307,18 +283,18 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 
 // Add a preferred alias
 func (l *TBibTeXLibrary) AddPreferredAlias(alias string) {
-	key, exists := l.deAlias[alias]
+	key, exists := l.AliasToEntry[alias]
 
 	// Of course, a preferred alias must be an alias.
 	if !exists {
 		l.Warning(WarningPreferredNotExist, key)
 	} else {
-		l.preferredAliases[key] = alias
+		l.PreferredAliases[key] = alias
 	}
 }
 
 // Initialise a library
-func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name string) {
+func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot string) {
 	l.TInteraction = reporting
 	l.name = name
 	l.Progress(ProgressInitialiseLibrary, l.name)
@@ -326,17 +302,17 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name string) {
 	l.TBibTeXStream = TBibTeXStream{}
 	l.TBibTeXStream.Initialise(reporting, l)
 
-	l.FilesRoot = ""
+	l.FilesRoot = filesRoot
 	l.BibFilePath = ""
 	l.AliasesFilePath = ""
 	l.ChallengesFilePath = ""
 
-	l.comments = []string{}
-	l.entryFields = map[string]TStringMap{}
-	l.entryType = TStringMap{}
-	l.deAlias = TStringMap{}
-	l.preferredAliases = TStringMap{}
-	l.aliases = map[string]TStringSet{}
+	l.Comments = []string{}
+	l.EntryFields = map[string]TStringMap{}
+	l.EntryTypes = TStringMap{}
+	l.AliasToEntry = TStringMap{}
+	l.PreferredAliases = TStringMap{}
+	l.EntryToAliases = map[string]TStringSet{}
 	l.currentKey = ""
 	l.foundDoubles = false
 	l.challengeWinners = map[string]map[string]TStringMap{}
@@ -370,7 +346,7 @@ func (l *TBibTeXLibrary) FoundDoubles() bool {
 var uniqueID int
 
 // Start to record a library entry
-func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
+func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, EntryTypes string) bool {
 	if l.legacyMode {
 		// Post legacy question: Do we want to use currentKey or can this be kept on the parser side??
 		l.currentKey = fmt.Sprintf("%dAAAAA", uniqueID) + key
@@ -380,15 +356,15 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 	}
 
 	// Check if an entry with the given key already exists
-	_, exists := l.entryType[l.currentKey]
+	_, exists := l.EntryTypes[l.currentKey]
 	if exists {
 		// When the entry already exists, we need to report that we found doubles, as well as possibly resolve the entry type.
 		l.Warning(WarningEntryAlreadyExists, l.currentKey)
 		l.foundDoubles = true
-		l.entryType[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.entryType[key])
+		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, EntryTypes, l.EntryTypes[key])
 	} else {
-		l.entryFields[l.currentKey] = TStringMap{}
-		l.entryType[l.currentKey] = entryType
+		l.EntryFields[l.currentKey] = TStringMap{}
+		l.EntryTypes[l.currentKey] = EntryTypes
 	}
 
 	return true
@@ -396,20 +372,20 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 
 // Assign a value to a field
 func (l *TBibTeXLibrary) AssignField(field, value string) bool {
-	// Note: The parser for BibTeX streams is responsible for the mapping of field name aliases.
+	// Note: The parser for BibTeX streams is responsible for the mapping of field name EntryToAliases.
 	// Here we need to take care of the normalisation and processing of field values.
-	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
+	// This includes the checking if e.g. files exist, and adding dblp keys as EntryToAliases.
 	newValue := l.ProcessFieldValue(field, value)
 
 	// If the new value is empty, we assign nothing.
 	if newValue != "" {
-		currentValue, alreadyHasValue := l.entryFields[l.currentKey][field]
+		currentValue, alreadyHasValue := l.EntryFields[l.currentKey][field]
 
 		// If the field already has a value that is different from the new value, we need to resolve this.
 		if alreadyHasValue && newValue != currentValue {
-			l.entryFields[l.currentKey][field] = l.ResolveFieldValue(l.currentKey, field, newValue, currentValue)
+			l.EntryFields[l.currentKey][field] = l.ResolveFieldValue(l.currentKey, field, newValue, currentValue)
 		} else {
-			l.entryFields[l.currentKey][field] = newValue
+			l.EntryFields[l.currentKey][field] = newValue
 		}
 	}
 
@@ -426,12 +402,12 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 	if !l.legacyMode {
 		// Check if no illegal fields were used
 		key := l.currentKey
-		entryType := l.entryType[key]
-		for field, value := range l.entryFields[key] {
+		EntryTypes := l.EntryTypes[key]
+		for field, value := range l.EntryFields[key] {
 			/// CHECKS
-			if !l.IsSilenced() && !BibTeXAllowedEntryFields[entryType].Set().Contains(field) {
-				if l.WarningBoolQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entryType) {
-					delete(l.entryFields[key], field)
+			if !l.IsSilenced() && !BibTeXAllowedEntryFields[EntryTypes].Set().Contains(field) {
+				if l.WarningBoolQuestion(QuestionIgnore, WarningIllegalField, field, value, key, EntryTypes) {
+					delete(l.EntryFields[key], field)
 				}
 			}
 		}

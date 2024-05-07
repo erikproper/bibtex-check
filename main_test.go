@@ -3,28 +3,11 @@ package main
 import "fmt"
 import "testing"
 
-var Tester1 TStringMap
-var Tester2 TStringStringMap
-var Tester3 TStringStringStringMap
-
 func TestStringMaps(t *testing.T) {
-	Tester1.StringMapSetValue("hello", "world")
-	fmt.Println(Tester1)
-	fmt.Println(Tester1.StringMapGetValue("hello"))
-	fmt.Println(Tester1.StringMapGetValue("not"))
 
-	Tester2.StringStringMapSetValue("hello", "world", "erik")
-	fmt.Println(Tester2)
-	fmt.Println(Tester2.StringStringMapGetValue("hello", "world"))
-	fmt.Println(Tester2.StringStringMapGetValue("not", "world"))
-	fmt.Println(Tester2.StringStringMapGetValue("hello", "not"))
-
-	Tester3.StringStringStringMapSetValue("hello", "world", "erik", "proper")
-	fmt.Println(Tester3)
-	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "world", "erik"))
-	fmt.Println(Tester3.StringStringStringMapGetValue("not", "world", "erik"))
-	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "not", "erik"))
-	fmt.Println(Tester3.StringStringStringMapGetValue("hello", "world", "not"))
+	fmt.Println(normalisePagesValue(&Library, "1:1--1:8, 3:2, 4-10"))
+	fmt.Println(normalisePagesValue(&Library, "1:1--2:8"))
+	fmt.Println(normalisePagesValue(&Library, "1:1---2:8"))
 
 	//	strings.TrimSpace
 	// Play

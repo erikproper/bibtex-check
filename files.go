@@ -53,8 +53,7 @@ func BackupFile(sourceFile string) bool {
 	defer destination.Close()
 
 	// Copy the contents of the source file to the backup file
-	_, err = io.Copy(destination, source)
-	if err != nil {
+	if _, err = io.Copy(destination, source); err != nil {
 		return false
 	}
 
@@ -64,6 +63,5 @@ func BackupFile(sourceFile string) bool {
 // Check if the given file exists or not.
 func FileExists(fileName string) bool {
 	_, err := os.Stat(fileName)
-
 	return err == nil
 }

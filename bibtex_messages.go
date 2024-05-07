@@ -16,7 +16,6 @@ const (
 	// Progress reports
 	ProgressInitialiseLibrary = "Initialising %s library"
 	ProgressLibrarySize       = "Size of %s is: %d"
-	ProgressOpeningBibFile    = "Opening BibTeX file: %s"
 
 	// Names of syntactic classes as used in error messages when parsing BibTeX files
 	CharacterClass  = "Character"
@@ -47,7 +46,19 @@ const (
 	QuestionIgnore            = "Ignore this field?"
 	ProgressCheckingAliases   = "Checking consistency of aliases"
 
+	// Warnings when reading files
+	WarningAliasLineBadEntries   = "Line in alias file must contain precisely two entries: %s"
+	WarningChallengeLineTooShort = "Line in challenges file is too short: %s"
+
 	// Progress reports for reading/writing files
 	ProgressWritingBibFile        = "Writing bib file %s"
+	ProgressWritingAliasesFile    = "Writing aliases file %s"
 	ProgressWritingChallengesFile = "Writing challenges file %s"
+	ProgressReadingBibFile        = "Reading bib file %s"
+	ProgressReadingAliasesFile    = "Reading aliases file %s"
+	ProgressReadingChallengesFile = "Reading challenges file %s"
+	WarningMissingFile            = "File %s for key %s seems not to exist"
+	WarningBadISBN                = "Found wrong ISBN \"%s\" for key %s"
+	WarningBadISSN                = "Found wrong ISSN \"%s\" for key %s"
+	WarningBadYear                = "Found wrong year \"%s\" for key %s"
 )

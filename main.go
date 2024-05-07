@@ -25,8 +25,7 @@ const (
 
 func InitialiseMainLibrary() bool {
 	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting, MainLibrary)
-	Library.SetFilesRoot(BibTeXFolder)
+	Library.Initialise(Reporting, MainLibrary, BibTeXFolder)
 	Library.ReadAliases(AliasesFile)
 	Library.ReadChallenges(ChallengesFile)
 
@@ -71,9 +70,8 @@ func main() {
 
 			OldLibrary := TBibTeXLibrary{}
 			OldLibrary.Progress("Reading legacy library")
-			OldLibrary.Initialise(Reporting, "legacy")
+			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder)
 			OldLibrary.legacyMode = true
-			OldLibrary.SetFilesRoot(BibTeXFolder)
 			OldLibrary.ReadAliases(AliasesFile)
 
 			BibTeXParser := TBibTeXStream{}
@@ -90,38 +88,38 @@ func main() {
 
 			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
 			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA
-			for oldEntry, oldType := range OldLibrary.entryType {
+			for oldEntry, oldType := range OldLibrary.EntryTypes {
 				newKey, newType, isEntry := Library.LookupEntryWithType(stripUniquePrefix.ReplaceAllString(oldEntry, ""))
 
 				if isEntry {
 					// We don't have a set type function??
-					Library.entryType[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
+					Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
 
 					// EntryFields function???
-					for oldField, oldValue := range OldLibrary.entryFields[oldEntry] {
+					for oldField, oldValue := range OldLibrary.EntryFields[oldEntry] {
 						if oldField == "file" {
-							if oldValue != "" && Library.entryFields[newKey]["bdsk-file-1"] == "" {
-								Library.entryFields[newKey]["local-url"] = oldValue
+							if oldValue != "" && Library.EntryFields[newKey]["bdsk-file-1"] == "" {
+								Library.EntryFields[newKey]["local-url"] = oldValue
 							}
 						}
 
-						// The next test should be a nice function IsAllowedEntryField(Library.entryType[newKey], oldField)
-						if BibTeXAllowedEntryFields[Library.entryType[newKey]].Set().Contains(oldField) {
+						// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
+						if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) {
 							switch oldField {
 							case "crossref":
-								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							case "chapter":
-								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							case "dblp":
-								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							case "doi":
-								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							case "pages":
-								Library.entryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.entryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							}
 						}
@@ -135,7 +133,7 @@ func main() {
 		InitialiseMainLibrary()
 
 		// Function call.
-		alias, ok := Library.preferredAliases[CleanKey(os.Args[2])]
+		alias, ok := Library.PreferredAliases[CleanKey(os.Args[2])]
 
 		if ok {
 			fmt.Println(alias)

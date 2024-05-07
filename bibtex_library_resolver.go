@@ -1,8 +1,21 @@
+/*
+ *
+ * Module: bibtex_library_resolver
+ *
+ * This module is concerned with the resolution of conflicting field values
+ * Presently, this is mainly needed to deal with the legacy migration.
+ * In the future, this will also be crucial when dealing with the integration of double entries and legacy files in particular.
+ *
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
+ *
+ * Version of: 06.05.2024
+ *
+ */
+
 package main
 
 import "fmt"
 
-// In the future, this will be crucial when dealing with the integration of double entries and legacy files in particular.
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
 func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current string) string {
 	// OK. The key, field, and challenger are needed here. But, current is likely to be derivable from l with key and field.
