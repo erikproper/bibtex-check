@@ -28,9 +28,9 @@ type (
 	TBibTeXLibrary struct {
 		name               string                           // Name of the library
 		FilesRoot          string                           // Path to folder with library related files
-		BibFilePath        string                           //
-		AliasesFilePath    string                           //
-		ChallengesFilePath string                           //
+		BibFilePath        string                           // Relative path to the BibTeX file
+		AliasesFilePath    string                           // Relative path to the aliases file
+		ChallengesFilePath string                           // Relative path to the challenges file
 		Comments           []string                         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		EntryFields        TStringStringMap                 // Per entry key, the fields associated to the actual entries.
 		EntryTypes         TStringMap                       // Per entry key, the type of the enty.
@@ -43,23 +43,33 @@ type (
 		legacyMode         bool                             // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
 		challengeWinners   map[string]map[string]TStringMap // A key and field specific mapping from challenged value to winner values
 		TInteraction                                        // Error reporting channel
-		TBibTeXStream                                       // ...
+		TBibTeXStream                                       // BibTeX parser
 	}
 )
 
 /*
  *
- * Safe set functions
+ * Set/add functions
+ * These are safe in the sense of not causing problems when dealing with partially empty nested maps.
  *
  */
 
+// (Safely) set the value for a field of a given entry.
 func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
 	l.EntryFields.SetValueForStringPairMap(entry, field, value)
 }
 
+// Add a comment to the current library.
+func (l *TBibTeXLibrary) AddComment(comment string) bool {
+	l.Comments = append(l.Comments, comment)
+
+	return true
+}
+
+
 /*
  *
- * Retrieval functions
+ * Retrieval & lookup functions
  *
  */
 
@@ -74,6 +84,29 @@ func (l *TBibTeXLibrary) LibrarySize() int {
 func (l *TBibTeXLibrary) ReportLibrarySize() {
 	l.Progress(ProgressLibrarySize, l.name, l.LibrarySize())
 }
+
+// Lookup the entry key and type for a given key/alias
+func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) {
+	lookupKey, isAlias := l.AliasToEntry[key]
+	if !isAlias {
+		lookupKey = key
+	}
+
+	EntryTypes, isKey := l.EntryTypes[lookupKey]
+	if isKey {
+		return lookupKey, EntryTypes, true
+	} else {
+		return "", "", false
+	}
+}
+
+// Lookup the entry key for a given key/alias
+func (l *TBibTeXLibrary) LookupEntry(key string) (string, bool) {
+	lookupKey, _, isKey := l.LookupEntryWithType(key)
+
+	return lookupKey, isKey
+}
+
 
 /*
  *
@@ -93,12 +126,16 @@ func (l *TBibTeXLibrary) AliasExists(alias string) bool {
 	return l.AliasToEntry.IsMappedString(alias)
 }
 
-//////// OTHER stuff
+/*
+ *
+ * Support functions
+ *
+ */
 
 // As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
 // By taking the time of starting the programme as the based, we can at least generate keys from that point in time on.
 // However, we should never go beyond the present time, of course.
-var KeyTime time.Time
+var KeyTime time.Time // The time used for the latest generated key. Is set (see init() below) at the start of the programme.
 
 // Generate a new key based on the KeyTime.
 func (l *TBibTeXLibrary) NewKey() string {
@@ -129,34 +166,6 @@ func (l *TBibTeXLibrary) NewKey() string {
 	return key
 }
 
-// Add a comment to the current library
-func (l *TBibTeXLibrary) AddComment(comment string) bool {
-	l.Comments = append(l.Comments, comment)
-
-	return true
-}
-
-// Lookup the entry key and type for a given key/alias
-func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) {
-	lookupKey, isAlias := l.AliasToEntry[key]
-	if !isAlias {
-		lookupKey = key
-	}
-
-	EntryTypes, isKey := l.EntryTypes[lookupKey]
-	if isKey {
-		return lookupKey, EntryTypes, true
-	} else {
-		return "", "", false
-	}
-}
-
-// Lookup the entry key for a given key/alias
-func (l *TBibTeXLibrary) LookupEntry(key string) (string, bool) {
-	lookupKey, _, isKey := l.LookupEntryWithType(key)
-
-	return lookupKey, isKey
-}
 
 func (l *TBibTeXLibrary) registerChallengeWinner(entry, field, challenger, winner string) {
 	_, isDefined := l.challengeWinners[entry]
