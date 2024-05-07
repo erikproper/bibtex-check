@@ -26,24 +26,24 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name               string                           // Name of the library
-		FilesRoot          string                           // Path to folder with library related files
-		BibFilePath        string                           // Relative path to the BibTeX file
-		AliasesFilePath    string                           // Relative path to the aliases file
-		ChallengesFilePath string                           // Relative path to the challenges file
-		Comments           []string                         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields        TStringStringMap                 // Per entry key, the fields associated to the actual entries.
-		EntryTypes         TStringMap                       // Per entry key, the type of the enty.
-		AliasToEntry       TStringMap                       // Mapping from aliases to the actual entry key.
-		EntryToAliases     TStringSetMap                    // The inverted version of AliasToEntry.
-		PreferredAliases   TStringMap                       // Per entry key, the preferred alias
-		illegalFields      TStringSet                       // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		currentKey         string                           // The key of the entry we are currently working on.
-		foundDoubles       bool                             // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		legacyMode         bool                             // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		challengeWinners   map[string]map[string]TStringMap // A key and field specific mapping from challenged value to winner values
-		TInteraction                                        // Error reporting channel
-		TBibTeXStream                                       // BibTeX parser
+		name               string                 // Name of the library
+		FilesRoot          string                 // Path to folder with library related files
+		BibFilePath        string                 // Relative path to the BibTeX file
+		AliasesFilePath    string                 // Relative path to the aliases file
+		ChallengesFilePath string                 // Relative path to the challenges file
+		Comments           []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields        TStringStringMap       // Per entry key, the fields associated to the actual entries.
+		EntryTypes         TStringMap             // Per entry key, the type of the enty.
+		AliasToEntry       TStringMap             // Mapping from aliases to the actual entry key.
+		EntryToAliases     TStringSetMap          // The inverted version of AliasToEntry.
+		PreferredAliases   TStringMap             // Per entry key, the preferred alias
+		illegalFields      TStringSet             // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		currentKey         string                 // The key of the entry we are currently working on.
+		foundDoubles       bool                   // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		legacyMode         bool                   // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
+		ChallengeWinners   TStringStringStringMap // A key and field specific mapping from challenged value to winner values
+		TInteraction                              // Error reporting channel
+		TBibTeXStream                             // BibTeX parser
 	}
 )
 
@@ -64,6 +64,21 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 	l.Comments = append(l.Comments, comment)
 
 	return true
+}
+
+// Initial registration of a winner over a challenger for a given entry and its field.
+func (l *TBibTeXLibrary) RegisterChallengeWinner(entry, field, challenger, winner string) {
+	l.ChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
+}
+
+// Update the registration of a winner over a challenger for a given entry and its field.
+// As we have a new winner, we also need to update any other existing challenges for this field.
+func (l *TBibTeXLibrary) UpdateChallengeWinner(entry, field, challenger, winner string) {
+	l.RegisterChallengeWinner(entry, field, challenger, winner)
+
+	for otherChallenger := range l.ChallengeWinners[entry][field] {
+		l.ChallengeWinners.SetValueForStringTripleMap(entry, field, otherChallenger, winner)
+	}
 }
 
 
@@ -107,7 +122,6 @@ func (l *TBibTeXLibrary) LookupEntry(key string) (string, bool) {
 	return lookupKey, isKey
 }
 
-
 /*
  *
  * Checking functions
@@ -124,6 +138,11 @@ func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
 
 func (l *TBibTeXLibrary) AliasExists(alias string) bool {
 	return l.AliasToEntry.IsMappedString(alias)
+}
+
+// Checks if the provided winner is, indeed, the winner of the challenge by the challenger for the provided field of the provided entry.
+func (l *TBibTeXLibrary) CheckChallengeWinner(entry, field, challenger, winner string) bool {
+	return l.ChallengeWinners.GetValueityFromStringTripleMap(entry, field, challenger) == winner
 }
 
 /*
@@ -166,32 +185,8 @@ func (l *TBibTeXLibrary) NewKey() string {
 	return key
 }
 
+//////// TEST!!!!
 
-func (l *TBibTeXLibrary) registerChallengeWinner(entry, field, challenger, winner string) {
-	_, isDefined := l.challengeWinners[entry]
-	if !isDefined {
-		l.challengeWinners[entry] = map[string]TStringMap{}
-	}
-
-	_, isDefined = l.challengeWinners[entry][field]
-	if !isDefined {
-		l.challengeWinners[entry][field] = TStringMap{}
-	}
-
-	l.challengeWinners[entry][field][challenger] = winner
-}
-
-func (l *TBibTeXLibrary) updateChallengeWinner(entry, field, challenger, winner string) {
-	l.registerChallengeWinner(entry, field, challenger, winner)
-
-	for otherChallenger := range l.challengeWinners[entry][field] {
-		l.challengeWinners[entry][field][otherChallenger] = winner
-	}
-}
-
-func (l *TBibTeXLibrary) checkChallengeWinner(entry, field, challenger, winner string) bool {
-	return l.challengeWinners[entry][field][challenger] == winner
-}
 
 func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 	fields, knownEntry := l.EntryFields[key]
@@ -317,14 +312,14 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot stri
 	l.ChallengesFilePath = ""
 
 	l.Comments = []string{}
-	l.EntryFields = map[string]TStringMap{}
+	l.EntryFields = TStringStringMap{}
 	l.EntryTypes = TStringMap{}
 	l.AliasToEntry = TStringMap{}
 	l.PreferredAliases = TStringMap{}
-	l.EntryToAliases = map[string]TStringSet{}
+	l.EntryToAliases = TStringSetMap{}
 	l.currentKey = ""
 	l.foundDoubles = false
-	l.challengeWinners = map[string]map[string]TStringMap{}
+	l.ChallengeWinners = TStringStringStringMap{}
 
 	if AllowLegacy {
 		l.legacyMode = false

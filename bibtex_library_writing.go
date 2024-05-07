@@ -63,7 +63,7 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() bool {
 
 // Write the challenges and winners for field values, of this library, to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) writeChallenges(challengeWriter *bufio.Writer) {
-	for key, fieldChallenges := range l.challengeWinners {
+	for key, fieldChallenges := range l.ChallengeWinners {
 		if l.EntryExists(key) {
 			challengeWriter.WriteString("K " + key + "\n")
 			for field, challenges := range fieldChallenges {

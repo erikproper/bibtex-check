@@ -92,7 +92,7 @@ func (l *TBibTeXLibrary) ReadChallenges(filePath string) {
 			challenge = line[2:]
 
 		case 'W':
-			l.registerChallengeWinner(key, field, l.NormaliseFieldValue(field, challenge), l.NormaliseFieldValue(field, line[2:]))
+			l.RegisterChallengeWinner(key, field, l.NormaliseFieldValue(field, challenge), l.NormaliseFieldValue(field, line[2:]))
 		}
 	})
 }

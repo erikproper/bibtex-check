@@ -118,7 +118,7 @@ func (m *TStringStringMap) GetValueityFromStringPairMap(i, j string) string {
 
 // Safely get the mapped value from the given string triple, from the given map.
 // Returns the empty string if no value is mapped.
-func (m *TStringStringStringMap) GetValueityFromStringTrippleMap(i, j, k string) string {
+func (m *TStringStringStringMap) GetValueityFromStringTripleMap(i, j, k string) string {
 	if (*m) == nil {
 		return ""
 	} else if (*m)[i] == nil {

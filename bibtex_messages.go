@@ -15,7 +15,7 @@ package main
 const (
 	// Progress reports
 	ProgressInitialiseLibrary = "Initialising %s library"
-	ProgressLibrarySize       = "Size of %s is: %d"
+	ProgressLibrarySize       = "Size of %s library is: %d"
 
 	// Names of syntactic classes as used in error messages when parsing BibTeX files
 	CharacterClass  = "Character"

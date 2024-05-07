@@ -5,10 +5,12 @@ import "testing"
 
 func TestStringMaps(t *testing.T) {
 
-	fmt.Println(normalisePagesValue(&Library, "1:1--1:8, 3:2, 4-10"))
-	fmt.Println(normalisePagesValue(&Library, "1:1--2:8"))
-	fmt.Println(normalisePagesValue(&Library, "1:1---2:8"))
+//	fmt.Println(normalisePagesValue(&Library, "1:1--1:8, 3:2, 4-10"))
+//	fmt.Println(normalisePagesValue(&Library, "1:1--2:8"))
+//	fmt.Println(normalisePagesValue(&Library, "1:1---2:8"))
 
+Library.UpdateChallengeWinner("hello", "daar", "creasht", "dit")
+fmt.Println(Library.ChallengeWinners)
 	//	strings.TrimSpace
 	// Play
 	// TITLES
