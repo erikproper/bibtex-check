@@ -26,24 +26,26 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name               string                 // Name of the library
-		FilesRoot          string                 // Path to folder with library related files
-		BibFilePath        string                 // Relative path to the BibTeX file
-		AliasesFilePath    string                 // Relative path to the aliases file
-		ChallengesFilePath string                 // Relative path to the challenges file
-		Comments           []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields        TStringStringMap       // Per entry key, the fields associated to the actual entries.
-		EntryTypes         TStringMap             // Per entry key, the type of the enty.
-		AliasToEntry       TStringMap             // Mapping from aliases to the actual entry key.
-		EntryToAliases     TStringSetMap          // The inverted version of AliasToEntry.
-		PreferredAliases   TStringMap             // Per entry key, the preferred alias
-		illegalFields      TStringSet             // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		currentKey         string                 // The key of the entry we are currently working on.
-		foundDoubles       bool                   // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		legacyMode         bool                   // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		ChallengeWinners   TStringStringStringMap // A key and field specific mapping from challenged value to winner values
-		TInteraction                              // Error reporting channel
-		TBibTeXStream                             // BibTeX parser
+		name                string                 // Name of the library
+		FilesRoot           string                 // Path to folder with library related files
+		BibFilePath         string                 // Relative path to the BibTeX file
+		KeyAliasesFilePath  string                 // Relative path to the entry aliases file
+		ChallengesFilePath  string                 // Relative path to the challenges file
+		NameAliasesFilePath string                 // Relative path to the name aliases file
+		Comments            []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields         TStringStringMap       // Per entry key, the fields associated to the actual entries.
+		EntryTypes          TStringMap             // Per entry key, the type of the enty.
+		KeyAliasToKey       TStringMap             // Mapping from key aliases to the actual entry key.
+		NameAliasToName     TStringMap             // Mapping from name aliases to the actual name.
+		EntryToAliases      TStringSetMap          // The inverted version of AliasToEntry.
+		PreferredAliases    TStringMap             // Per entry key, the preferred alias
+		illegalFields       TStringSet             // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		currentKey          string                 // The key of the entry we are currently working on.
+		foundDoubles        bool                   // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		legacyMode          bool                   // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
+		ChallengeWinners    TStringStringStringMap // A key and field specific mapping from challenged value to winner values
+		TInteraction                               // Error reporting channel
+		TBibTeXStream                              // BibTeX parser
 	}
 )
 
@@ -58,13 +60,15 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot stri
 
 	l.FilesRoot = filesRoot
 	l.BibFilePath = ""
-	l.AliasesFilePath = ""
+	l.KeyAliasesFilePath = ""
+	l.NameAliasesFilePath = ""
 	l.ChallengesFilePath = ""
 
 	l.Comments = []string{}
 	l.EntryFields = TStringStringMap{}
 	l.EntryTypes = TStringMap{}
-	l.AliasToEntry = TStringMap{}
+	l.KeyAliasToKey = TStringMap{}
+	l.NameAliasToName = TStringMap{}
 	l.PreferredAliases = TStringMap{}
 	l.EntryToAliases = TStringSetMap{}
 	l.currentKey = ""
@@ -115,8 +119,8 @@ func (l *TBibTeXLibrary) UpdateChallengeWinner(entry, field, challenger, winner 
 
 // The low level registering of the alias for a key.
 // Also takes care of registering the inverse mapping.
-func (l *TBibTeXLibrary) registerAlias(alias, key string) {
-	l.AliasToEntry[alias] = key
+func (l *TBibTeXLibrary) registerKeyAlias(alias, key string) {
+	l.KeyAliasToKey[alias] = key
 
 	// Also create and/or update the inverse mapping
 	_, hasAliases := l.EntryToAliases[key]
@@ -127,7 +131,7 @@ func (l *TBibTeXLibrary) registerAlias(alias, key string) {
 }
 
 // Move the alias preference to another key
-func (l *TBibTeXLibrary) moveAliasPreference(alias, currentKey, key string) {
+func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
 	if l.PreferredAliases[currentKey] == alias && AllowLegacy {
 		delete(l.PreferredAliases, currentKey)
 		l.PreferredAliases[key] = alias
@@ -145,7 +149,7 @@ func (l *TBibTeXLibrary) moveAliasPreference(alias, currentKey, key string) {
 // - The latter might not always be necessary. E.g. when simply doing a "-alias" call
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 	// Check if the provided is already used.
-	currentKey, aliasIsAlreadyAliased := l.AliasToEntry[alias]
+	currentKey, aliasIsAlreadyAliased := l.KeyAliasToKey[alias]
 
 	// Check if the provided alias is itself not a key that is in use by an entry.
 	_, aliasIsActuallyKeyToEntry := l.EntryFields[alias]
@@ -154,13 +158,13 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 	_, aliasIsActuallyKeyForAlias := l.EntryToAliases[alias]
 
 	// Check if the provided key is itself not an alias.
-	aliasedKey, keyIsActuallyAlias := l.AliasToEntry[key]
+	aliasedKey, keyIsActuallyAlias := l.KeyAliasToKey[key]
 
 	if aliasIsAlreadyAliased && currentKey != key {
 		if allowRemap && AllowLegacy {
 			l.EntryToAliases[currentKey].Set().Delete(key)
-			l.registerAlias(alias, key)
-			l.moveAliasPreference(alias, currentKey, key)
+			l.registerKeyAlias(alias, key)
+			l.moveKeyAliasPreference(alias, currentKey, key)
 		} else {
 			// No ambiguous EntryToAliases allowed
 			l.Warning(WarningAmbiguousAlias, alias, currentKey, key)
@@ -171,10 +175,10 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 	} else if aliasIsActuallyKeyForAlias && AllowLegacy {
 		if allowRemap && AllowLegacy { // After the migration, this can only happen when merging two entries.
 			for old_alias := range l.EntryToAliases[alias].Set().Elements() {
-				l.registerAlias(old_alias, key)
-				l.moveAliasPreference(old_alias, alias, key)
+				l.registerKeyAlias(old_alias, key)
+				l.moveKeyAliasPreference(old_alias, alias, key)
 			}
-			l.registerAlias(alias, key)
+			l.registerKeyAlias(alias, key)
 			delete(l.EntryToAliases, alias)
 		} else {
 			// Unless we allow for a remap of existing EntryToAliases, EntryToAliases cannot be keys themselves.
@@ -184,13 +188,13 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 		// We cannot alias EntryToAliases.
 		l.Warning(WarningAliasTargetIsAlias, alias, key, aliasedKey)
 	} else {
-		l.registerAlias(alias, key)
+		l.registerKeyAlias(alias, key)
 	}
 }
 
 // Add a preferred alias
 func (l *TBibTeXLibrary) AddPreferredAlias(alias string) {
-	key, exists := l.AliasToEntry[alias]
+	key, exists := l.KeyAliasToKey[alias]
 
 	// Of course, a preferred alias must be an alias.
 	if !exists {
@@ -198,6 +202,11 @@ func (l *TBibTeXLibrary) AddPreferredAlias(alias string) {
 	} else {
 		l.PreferredAliases[key] = alias
 	}
+}
+
+// Register a new name (of an author/editor) alias
+func (l *TBibTeXLibrary) RegisterNameAlias(name, alias string) {
+	l.NameAliasToName.SetValueForStringMap(name, alias)
 }
 
 /*
@@ -220,7 +229,7 @@ func (l *TBibTeXLibrary) ReportLibrarySize() {
 
 // Lookup the entry key and type for a given key/alias
 func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) {
-	lookupKey, isAlias := l.AliasToEntry[key]
+	lookupKey, isAlias := l.KeyAliasToKey[key]
 	if !isAlias {
 		lookupKey = key
 	}
@@ -285,7 +294,7 @@ func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
 }
 
 func (l *TBibTeXLibrary) AliasExists(alias string) bool {
-	return l.AliasToEntry.IsMappedString(alias)
+	return l.KeyAliasToKey.IsMappedString(alias)
 }
 
 // Checks if the provided winner is, indeed, the winner of the challenge by the challenger for the provided field of the provided entry.

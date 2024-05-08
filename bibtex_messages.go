@@ -47,18 +47,20 @@ const (
 	ProgressCheckingAliases   = "Checking consistency of aliases"
 
 	// Warnings when reading files
-	WarningAliasLineBadEntries   = "Line in alias file must contain precisely two entries: %s"
-	WarningChallengeLineTooShort = "Line in challenges file is too short: %s"
+	WarningKeyAliasesLineBadEntries = "Line in key aliases file must contain precisely two entries: %s"
+	WarningChallengeLineTooShort    = "Line in challenges file is too short: %s"
+	WarningNameAliasesLineTooShort  = "Line in name aliases file is too short: %s"
 
 	// Progress reports for reading/writing files
-	ProgressWritingBibFile        = "Writing bib file %s"
-	ProgressWritingAliasesFile    = "Writing aliases file %s"
-	ProgressWritingChallengesFile = "Writing challenges file %s"
-	ProgressReadingBibFile        = "Reading bib file %s"
-	ProgressReadingAliasesFile    = "Reading aliases file %s"
-	ProgressReadingChallengesFile = "Reading challenges file %s"
-	WarningMissingFile            = "File %s for key %s seems not to exist"
-	WarningBadISBN                = "Found wrong ISBN \"%s\" for key %s"
-	WarningBadISSN                = "Found wrong ISSN \"%s\" for key %s"
-	WarningBadYear                = "Found wrong year \"%s\" for key %s"
+	ProgressWritingBibFile         = "Writing bib file %s"
+	ProgressWritingAliasesFile     = "Writing aliases file %s"
+	ProgressWritingChallengesFile  = "Writing challenges file %s"
+	ProgressReadingBibFile         = "Reading bib file %s"
+	ProgressReadingKeyAliasesFile  = "Reading key aliases file %s"
+	ProgressReadingChallengesFile  = "Reading challenges file %s"
+	ProgressReadingNameAliasesFile = "Reading name aliases file %s"
+	WarningMissingFile             = "File %s for key %s seems not to exist"
+	WarningBadISBN                 = "Found wrong ISBN \"%s\" for key %s"
+	WarningBadISSN                 = "Found wrong ISSN \"%s\" for key %s"
+	WarningBadYear                 = "Found wrong year \"%s\" for key %s"
 )

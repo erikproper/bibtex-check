@@ -62,7 +62,7 @@ func CheckYearValidity(year string) bool {
 func (l *TBibTeXLibrary) CheckAliases() {
 	l.Progress(ProgressCheckingAliases)
 
-	for alias, entry := range l.AliasToEntry {
+	for alias, entry := range l.KeyAliasToKey {
 		// Once we're not in legacy mode anymore, then we need to enforce l.EntryExists(entry)
 		if AllowLegacy && l.EntryExists(entry) {
 			// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced entry.

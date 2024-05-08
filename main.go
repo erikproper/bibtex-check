@@ -16,17 +16,19 @@ var (
 )
 
 const (
-	BibTeXFolder   = "/Users/erikproper/BibTeX/"
-	BibFile        = "ErikProper.bib"
-	AliasesFile    = "ErikProper.aliases"
-	ChallengesFile = "ErikProper.challenges"
-	MainLibrary    = "main"
+	BibTeXFolder    = "/Users/erikproper/BibTeX/"
+	BibFile         = "ErikProper.bib"
+	KeyAliasesFile  = "ErikProper.aliases"
+	NameAliasesFile = "ErikProper.names"
+	ChallengesFile  = "ErikProper.challenges"
+	MainLibrary     = "main"
 )
 
 func InitialiseMainLibrary() bool {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder)
-	Library.ReadAliases(AliasesFile)
+	Library.ReadKeyAliases(KeyAliasesFile)
+	Library.ReadNameAliases(NameAliasesFile)
 	Library.ReadChallenges(ChallengesFile)
 
 	return true
@@ -72,7 +74,8 @@ func main() {
 			OldLibrary.Progress("Reading legacy library")
 			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder)
 			OldLibrary.legacyMode = true
-			OldLibrary.ReadAliases(AliasesFile)
+			OldLibrary.ReadKeyAliases(KeyAliasesFile)
+			OldLibrary.ReadNameAliases(NameAliasesFile)
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
@@ -142,7 +145,7 @@ func main() {
 	case len(os.Args) > 2 && os.Args[1] == "-entry":
 		Reporting.SetSilenced()
 
-		if InitialiseMainLibrary() && OpenMainBibFile()  {
+		if InitialiseMainLibrary() && OpenMainBibFile() {
 			actualKey, ok := Library.LookupEntry(CleanKey(os.Args[2]))
 			if ok {
 				fmt.Println(Library.EntryString(actualKey))
@@ -152,7 +155,7 @@ func main() {
 	case len(os.Args) > 2 && os.Args[1] == "-key":
 		Reporting.SetSilenced()
 
-		if InitialiseMainLibrary() && OpenMainBibFile()  {
+		if InitialiseMainLibrary() && OpenMainBibFile() {
 			// Function call.
 			actualKey, ok := Library.LookupEntry(CleanKey(os.Args[2]))
 			if ok {

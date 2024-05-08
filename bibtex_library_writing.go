@@ -65,12 +65,12 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() bool {
 func (l *TBibTeXLibrary) writeChallenges(challengeWriter *bufio.Writer) {
 	for key, fieldChallenges := range l.ChallengeWinners {
 		if l.EntryExists(key) {
-			challengeWriter.WriteString("K " + key + "\n")
+			challengeWriter.WriteString(ChallengeKey + " " + key + "\n")
 			for field, challenges := range fieldChallenges {
-				challengeWriter.WriteString("F " + field + "\n")
+				challengeWriter.WriteString(ChallengeField + " " + field + "\n")
 				for challenger, winner := range challenges {
-					challengeWriter.WriteString("C " + challenger + "\n")
-					challengeWriter.WriteString("W " + winner + "\n")
+					challengeWriter.WriteString(ChallengeChallenger + " " + challenger + "\n")
+					challengeWriter.WriteString(ChallengeWinner + " " + winner + "\n")
 				}
 			}
 		}
@@ -90,7 +90,7 @@ func (l *TBibTeXLibrary) writeAliases(aliasWriter *bufio.Writer) {
 	}
 
 	// Then write the other aliases
-	for alias, key := range Library.AliasToEntry {
+	for alias, key := range Library.KeyAliasToKey {
 		if alias != Library.PreferredAliases[key] {
 			aliasWriter.WriteString(alias + " " + key + "\n")
 		}
@@ -99,5 +99,5 @@ func (l *TBibTeXLibrary) writeAliases(aliasWriter *bufio.Writer) {
 
 // Write the aliases from this library, to a file
 func (l *TBibTeXLibrary) WriteAliases() bool {
-	return l.writeFile(l.AliasesFilePath, ProgressWritingAliasesFile, l.writeAliases)
+	return l.writeFile(l.KeyAliasesFilePath, ProgressWritingAliasesFile, l.writeAliases)
 }
