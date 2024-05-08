@@ -65,12 +65,9 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() bool {
 func (l *TBibTeXLibrary) writeChallenges(challengeWriter *bufio.Writer) {
 	for key, fieldChallenges := range l.ChallengeWinners {
 		if l.EntryExists(key) {
-			challengeWriter.WriteString(ChallengeKey + " " + key + "\n")
 			for field, challenges := range fieldChallenges {
-				challengeWriter.WriteString(ChallengeField + " " + field + "\n")
 				for challenger, winner := range challenges {
-					challengeWriter.WriteString(ChallengeChallenger + " " + challenger + "\n")
-					challengeWriter.WriteString(ChallengeWinner + " " + winner + "\n")
+					challengeWriter.WriteString(key + "\t" + field + "\t" + challenger + "\t" + winner + "\n")
 				}
 			}
 		}
@@ -83,21 +80,33 @@ func (l *TBibTeXLibrary) WriteChallenges() bool {
 }
 
 // Write the aliases from this library, to a bufio.bWriter buffer
-func (l *TBibTeXLibrary) writeAliases(aliasWriter *bufio.Writer) {
+func (l *TBibTeXLibrary) writeKeyAliases(aliasWriter *bufio.Writer) {
 	// First write the preferred aliases, so they are read first when reading them in again
-	for key, alias := range Library.PreferredAliases {
+	for key, alias := range Library.PreferredKeyAliases {
 		aliasWriter.WriteString(alias + " " + key + "\n")
 	}
 
 	// Then write the other aliases
 	for alias, key := range Library.KeyAliasToKey {
-		if alias != Library.PreferredAliases[key] {
+		if alias != Library.PreferredKeyAliases[key] {
 			aliasWriter.WriteString(alias + " " + key + "\n")
 		}
 	}
 }
 
-// Write the aliases from this library, to a file
-func (l *TBibTeXLibrary) WriteAliases() bool {
-	return l.writeFile(l.KeyAliasesFilePath, ProgressWritingAliasesFile, l.writeAliases)
+// Write the key aliases from this library, to a file
+func (l *TBibTeXLibrary) WriteKeyAliases() bool {
+	return l.writeFile(l.KeyAliasesFilePath, ProgressWritingKeyAliasesFile, l.writeKeyAliases)
+}
+
+// Write the challenges and winners for field values, of this library, to a bufio.bWriter buffer
+func (l *TBibTeXLibrary) writeNameAliases(aliasWriter *bufio.Writer) {
+	for alias, name := range l.NameAliasToName {
+		aliasWriter.WriteString(name + "\t" + alias + "\n")
+	}
+}
+
+// Write the name aliases from this library, to a file
+func (l *TBibTeXLibrary) WriteNameAliases() bool {
+	return l.writeFile(l.NameAliasesFilePath, ProgressWritingNameAliasesFile, l.writeNameAliases)
 }

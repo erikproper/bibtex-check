@@ -25,10 +25,10 @@ import (
 
 // Checks if a given alias fits the desired format of [a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
 // Examples: gordijn2002e3value, overbeek2010matchmaking, ...
-func CheckPreferredAliasValidity(alias string) bool {
-	var validPreferredAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
+func CheckPreferredKeyAliasValidity(alias string) bool {
+	var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
 
-	return validPreferredAlias.MatchString(alias)
+	return validPreferredKeyAlias.MatchString(alias)
 }
 
 // Checks if a given ISSN fits the desired format
@@ -83,13 +83,13 @@ func (l *TBibTeXLibrary) CheckAliases() {
 			// Note: when reading the aliases from file, the first alias that fits the preferred alias requirements is selected as the preferred one.
 			// So, if an entry has no preferred alias after reading the alias file, we can only try to create one.
 			// To do so, we will actually try to test if the current alias could be coerced into a
-			if !l.PreferredAliasExists(entry) {
+			if !l.PreferredKeyAliasExists(entry) {
 				loweredAlias := strings.ToLower(alias)
 
 				if !(loweredAlias == alias || loweredAlias == entry || l.AliasExists(loweredAlias)) {
-					if CheckPreferredAliasValidity(loweredAlias) {
+					if CheckPreferredKeyAliasValidity(loweredAlias) {
 						l.AddKeyAlias(loweredAlias, entry, false)
-						l.AddPreferredAlias(loweredAlias)
+						l.AddPreferredKeyAlias(loweredAlias)
 					}
 				}
 			}

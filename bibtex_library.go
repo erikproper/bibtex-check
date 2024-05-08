@@ -38,7 +38,7 @@ type (
 		KeyAliasToKey       TStringMap             // Mapping from key aliases to the actual entry key.
 		NameAliasToName     TStringMap             // Mapping from name aliases to the actual name.
 		EntryToAliases      TStringSetMap          // The inverted version of AliasToEntry.
-		PreferredAliases    TStringMap             // Per entry key, the preferred alias
+		PreferredKeyAliases TStringMap             // Per entry key, the preferred alias
 		illegalFields       TStringSet             // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
 		currentKey          string                 // The key of the entry we are currently working on.
 		foundDoubles        bool                   // If set, we found double entries. In this case, we may not want to e.g. write this file.
@@ -69,8 +69,13 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot stri
 	l.EntryTypes = TStringMap{}
 	l.KeyAliasToKey = TStringMap{}
 	l.NameAliasToName = TStringMap{}
-	l.PreferredAliases = TStringMap{}
-	l.EntryToAliases = TStringSetMap{}
+	l.PreferredKeyAliases = TStringMap{}
+
+	if AllowLegacy {
+		// Do we really need this one? And .. it should then be KeyToAliasKey
+		l.EntryToAliases = TStringSetMap{}
+	}
+
 	l.currentKey = ""
 	l.foundDoubles = false
 	l.ChallengeWinners = TStringStringStringMap{}
@@ -100,9 +105,9 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 }
 
 // Initial registration of a winner over a challenger for a given entry and its field.
-func (l *TBibTeXLibrary) MaybeRegisterChallengeWinner(entry, field, challenger, winner string) {
+func (l *TBibTeXLibrary) RegisterChallengeWinner(entry, field, challenger, winner string) {
 	// Only register challenger/winner pairs when both are non-empty
-	if winner != "" && challenger != "" {
+	if winner != challenger {
 		l.ChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
 	}
 }
@@ -110,10 +115,10 @@ func (l *TBibTeXLibrary) MaybeRegisterChallengeWinner(entry, field, challenger, 
 // Update the registration of a winner over a challenger for a given entry and its field.
 // As we have a new winner, we also need to update any other existing challenges for this field.
 func (l *TBibTeXLibrary) UpdateChallengeWinner(entry, field, challenger, winner string) {
-	l.MaybeRegisterChallengeWinner(entry, field, challenger, winner)
+	l.RegisterChallengeWinner(entry, field, challenger, winner)
 
 	for otherChallenger := range l.ChallengeWinners[entry][field] {
-		l.MaybeRegisterChallengeWinner(entry, field, otherChallenger, winner)
+		l.RegisterChallengeWinner(entry, field, otherChallenger, winner)
 	}
 }
 
@@ -132,9 +137,9 @@ func (l *TBibTeXLibrary) registerKeyAlias(alias, key string) {
 
 // Move the alias preference to another key
 func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
-	if l.PreferredAliases[currentKey] == alias && AllowLegacy {
-		delete(l.PreferredAliases, currentKey)
-		l.PreferredAliases[key] = alias
+	if l.PreferredKeyAliases[currentKey] == alias && AllowLegacy {
+		delete(l.PreferredKeyAliases, currentKey)
+		l.PreferredKeyAliases[key] = alias
 	}
 }
 
@@ -193,20 +198,20 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
 }
 
 // Add a preferred alias
-func (l *TBibTeXLibrary) AddPreferredAlias(alias string) {
+func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
 	key, exists := l.KeyAliasToKey[alias]
 
 	// Of course, a preferred alias must be an alias.
 	if !exists {
 		l.Warning(WarningPreferredNotExist, key)
 	} else {
-		l.PreferredAliases[key] = alias
+		l.PreferredKeyAliases[key] = alias
 	}
 }
 
 // Register a new name (of an author/editor) alias
-func (l *TBibTeXLibrary) RegisterNameAlias(name, alias string) {
-	l.NameAliasToName.SetValueForStringMap(name, alias)
+func (l *TBibTeXLibrary) RegisterAliasForName(alias, name string) {
+	l.NameAliasToName.SetValueForStringMap(alias, name)
 }
 
 /*
@@ -289,8 +294,8 @@ func (l *TBibTeXLibrary) EntryExists(entry string) bool {
 	return l.EntryTypes.IsMappedString(entry)
 }
 
-func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
-	return l.PreferredAliases.IsMappedString(alias)
+func (l *TBibTeXLibrary) PreferredKeyAliasExists(alias string) bool {
+	return l.PreferredKeyAliases.IsMappedString(alias)
 }
 
 func (l *TBibTeXLibrary) AliasExists(alias string) bool {
@@ -394,7 +399,7 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 		l.foundDoubles = true
 		// Resolve the double typing issue
 		// Post legacy migration, we still need to do this, but then we will always have: key == l.currentKey
-		l.EntryTypes[l.currentKey] = l.MaybeResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.EntryTypes[key])
+		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.EntryTypes[key])
 	} else {
 		l.EntryFields[l.currentKey] = TStringMap{}
 		l.EntryTypes[l.currentKey] = entryType

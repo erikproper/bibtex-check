@@ -17,13 +17,13 @@ package main
 // Still a major construction site.
 //
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
-func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, field, challenger, current string) string {
+func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current string) string {
 	// OK. The key, field, and challenger are needed here. But, current is likely to be derivable from l with key and field.
 	// But ... needs to be checked once done with the legacy migration.
 
-	// If the current one is empty, then the challenger should succeed.
-	if current == "" || current == challenger {
-		return challenger
+	// If the the challenger equals the current one, we can just return the current one.
+	if current == challenger {
+		return current
 	}
 
 	if !l.legacyMode {
@@ -46,7 +46,7 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, field, challenger, current 
 			// Note: this is an *update* as we may need to update this as a new winner for other challenges as well.
 
 			warning := "Need to resolve for entry %s and field %s:\n- Challenger: %s\n- Current   : %s"
-			question := "XXXCurrent entry:\n" + l.EntryString(key, "  ") + "Keep the value as is?"
+			question := "Current entry:\n" + l.EntryString(key, "  ") + "Keep the value as is?"
 
 			if l.WarningBoolQuestion(question, warning, key, field, challenger, current) {
 				l.UpdateChallengeWinner(key, field, challenger, current)
@@ -63,4 +63,13 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, field, challenger, current 
 	}
 
 	return current
+}
+
+// If the current value is empty, then we can assign the challenger.
+func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, field, challenger, current string) string {
+	if current == "" {
+		return challenger
+	} else {
+		return l.ResolveFieldValue(key, field, challenger, current)
+	}
 }

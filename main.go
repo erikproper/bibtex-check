@@ -96,7 +96,7 @@ func main() {
 
 				if isEntry {
 					// We don't have a set type function??
-					Library.EntryTypes[newKey] = Library.MaybeResolveFieldValue(newKey, EntryTypeField, oldType, newType)
+					Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
 
 					// EntryFields function???
 					for oldField, oldValue := range OldLibrary.EntryFields[oldEntry] {
@@ -110,19 +110,19 @@ func main() {
 						if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) {
 							switch oldField {
 							case "crossref":
-								Library.EntryFields[newKey][oldField] = Library.MaybeResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							case "chapter":
-								Library.EntryFields[newKey][oldField] = Library.MaybeResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							case "dblp":
-								Library.EntryFields[newKey][oldField] = Library.MaybeResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							case "doi":
-								Library.EntryFields[newKey][oldField] = Library.MaybeResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							case "pages":
-								Library.EntryFields[newKey][oldField] = Library.MaybeResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 
 							}
 						}
@@ -136,7 +136,7 @@ func main() {
 		InitialiseMainLibrary()
 
 		// Function call.
-		alias, ok := Library.PreferredAliases[CleanKey(os.Args[2])]
+		alias, ok := Library.PreferredKeyAliases[CleanKey(os.Args[2])]
 
 		if ok {
 			fmt.Println(alias)
@@ -183,7 +183,7 @@ func main() {
 	case len(os.Args) > 2 && os.Args[1] == "-preferred":
 		alias := CleanKey(os.Args[2])
 
-		if CheckPreferredAliasValidity(alias) {
+		if CheckPreferredKeyAliasValidity(alias) {
 			writeAliases = true
 
 			InitialiseMainLibrary()
@@ -193,7 +193,7 @@ func main() {
 				Library.AddKeyAlias(alias, key, true)
 			}
 
-			Library.AddPreferredAlias(alias)
+			Library.AddPreferredKeyAlias(alias)
 		} else {
 			fmt.Println("Not a valid preferred alias.")
 		}
@@ -208,7 +208,8 @@ func main() {
 	}
 
 	if writeAliases {
-		Library.WriteAliases()
+		Library.WriteKeyAliases()
+		Library.WriteNameAliases()
 	}
 
 	if writeChallenges {

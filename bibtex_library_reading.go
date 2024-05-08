@@ -63,72 +63,43 @@ func (l *TBibTeXLibrary) ReadKeyAliases(filePath string) {
 
 		l.AddKeyAlias(alias, key, false)
 
-		if !l.PreferredAliasExists(key) && CheckPreferredAliasValidity(alias) {
-			l.AddPreferredAlias(alias)
+		if !l.PreferredKeyAliasExists(key) && CheckPreferredKeyAliasValidity(alias) {
+			l.AddPreferredKeyAlias(alias)
 		}
 	})
 }
 
 // Read challenge files
-// A sequence of entries:
-//
-//	K <key>
-//	F <field>
-//	C <challenge_1>
-//	C ...
-//	C <challenge_n>
-//	W <winner>
 func (l *TBibTeXLibrary) ReadChallenges(filePath string) {
 	l.ChallengesFilePath = filePath
 
-	key := ""
-	field := ""
-	challenger := ""
 	l.readFile(l.ChallengesFilePath, ProgressReadingChallengesFile, func(line string) {
-		if len(line) < 3 {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 4 {
 			l.Warning(WarningChallengeLineTooShort, line)
 			return
 		}
 
-		switch string(line[0]) {
-		case ChallengeKey:
-			key = line[2:]
+		key := elements[0]
+		field := elements[1]
+		challenger := l.NormaliseFieldValue(field, elements[2])
+		winner := l.NormaliseFieldValue(field, elements[3])
 
-		case ChallengeField:
-			field = line[2:]
-
-		case ChallengeChallenger:
-			challenger = line[2:]
-
-		case ChallengeWinner:
-			l.MaybeRegisterChallengeWinner(key, field, l.NormaliseFieldValue(field, challenger), l.NormaliseFieldValue(field, line[2:]))
-		}
+		l.RegisterChallengeWinner(key, field, challenger, winner)
 	})
 }
 
-// Read challengenames files
-// A sequence of entries:
-//
-//	N <name>
-//	A <alias_1>
-//	A ...
-//	A <alias_n>
+// Read names aliases files
 func (l *TBibTeXLibrary) ReadNameAliases(filePath string) {
 	l.NameAliasesFilePath = filePath
 
-	name := ""
 	l.readFile(l.NameAliasesFilePath, ProgressReadingNameAliasesFile, func(line string) {
-		if len(line) < 3 {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
 			l.Warning(WarningNameAliasesLineTooShort, line)
 			return
 		}
 
-		switch string(line[0]) {
-		case NameOriginal:
-			name = line[2:]
-
-		case NameAlias:
-			l.RegisterNameAlias(name, line[2:])
-		}
+		l.RegisterAliasForName(elements[1], elements[0])
 	})
 }

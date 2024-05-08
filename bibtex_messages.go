@@ -45,7 +45,7 @@ const (
 	WarningIllegalField       = "Field \"%s\", with value \"%s\", is not allowed for entry %s of type %s"
 	QuestionIgnore            = "Ignore this field?"
 	ProgressCheckingAliases   = "Checking consistency of aliases"
-
+	
 	// Warnings when reading files
 	WarningKeyAliasesLineBadEntries = "Line in key aliases file must contain precisely two entries: %s"
 	WarningChallengeLineTooShort    = "Line in challenges file is too short: %s"
@@ -53,7 +53,8 @@ const (
 
 	// Progress reports for reading/writing files
 	ProgressWritingBibFile         = "Writing bib file %s"
-	ProgressWritingAliasesFile     = "Writing aliases file %s"
+	ProgressWritingKeyAliasesFile  = "Writing key aliases file %s"
+	ProgressWritingNameAliasesFile = "Writing name aliases file %s"
 	ProgressWritingChallengesFile  = "Writing challenges file %s"
 	ProgressReadingBibFile         = "Reading bib file %s"
 	ProgressReadingKeyAliasesFile  = "Reading key aliases file %s"
