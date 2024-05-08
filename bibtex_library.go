@@ -47,6 +47,35 @@ type (
 	}
 )
 
+// Initialise a library
+func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot string) {
+	l.TInteraction = reporting
+	l.name = name
+	l.Progress(ProgressInitialiseLibrary, l.name)
+
+	l.TBibTeXStream = TBibTeXStream{}
+	l.TBibTeXStream.Initialise(reporting, l)
+
+	l.FilesRoot = filesRoot
+	l.BibFilePath = ""
+	l.AliasesFilePath = ""
+	l.ChallengesFilePath = ""
+
+	l.Comments = []string{}
+	l.EntryFields = TStringStringMap{}
+	l.EntryTypes = TStringMap{}
+	l.AliasToEntry = TStringMap{}
+	l.PreferredAliases = TStringMap{}
+	l.EntryToAliases = TStringSetMap{}
+	l.currentKey = ""
+	l.foundDoubles = false
+	l.ChallengeWinners = TStringStringStringMap{}
+
+	if AllowLegacy {
+		l.legacyMode = false
+	}
+}
+
 /*
  *
  * Set/add functions
@@ -67,147 +96,21 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 }
 
 // Initial registration of a winner over a challenger for a given entry and its field.
-func (l *TBibTeXLibrary) RegisterChallengeWinner(entry, field, challenger, winner string) {
-	l.ChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
+func (l *TBibTeXLibrary) MaybeRegisterChallengeWinner(entry, field, challenger, winner string) {
+	// Only register challenger/winner pairs when both are non-empty
+	if winner != "" && challenger != "" {
+		l.ChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
+	}
 }
 
 // Update the registration of a winner over a challenger for a given entry and its field.
 // As we have a new winner, we also need to update any other existing challenges for this field.
 func (l *TBibTeXLibrary) UpdateChallengeWinner(entry, field, challenger, winner string) {
-	l.RegisterChallengeWinner(entry, field, challenger, winner)
+	l.MaybeRegisterChallengeWinner(entry, field, challenger, winner)
 
 	for otherChallenger := range l.ChallengeWinners[entry][field] {
-		l.ChallengeWinners.SetValueForStringTripleMap(entry, field, otherChallenger, winner)
+		l.MaybeRegisterChallengeWinner(entry, field, otherChallenger, winner)
 	}
-}
-
-
-/*
- *
- * Retrieval & lookup functions
- *
- */
-
-func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
-	return l.EntryFields.GetValueityFromStringPairMap(entry, field)
-}
-
-func (l *TBibTeXLibrary) LibrarySize() int {
-	return len(Library.EntryTypes)
-}
-
-func (l *TBibTeXLibrary) ReportLibrarySize() {
-	l.Progress(ProgressLibrarySize, l.name, l.LibrarySize())
-}
-
-// Lookup the entry key and type for a given key/alias
-func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) {
-	lookupKey, isAlias := l.AliasToEntry[key]
-	if !isAlias {
-		lookupKey = key
-	}
-
-	EntryTypes, isKey := l.EntryTypes[lookupKey]
-	if isKey {
-		return lookupKey, EntryTypes, true
-	} else {
-		return "", "", false
-	}
-}
-
-// Lookup the entry key for a given key/alias
-func (l *TBibTeXLibrary) LookupEntry(key string) (string, bool) {
-	lookupKey, _, isKey := l.LookupEntryWithType(key)
-
-	return lookupKey, isKey
-}
-
-/*
- *
- * Checking functions
- *
- */
-
-func (l *TBibTeXLibrary) EntryExists(entry string) bool {
-	return l.EntryTypes.IsMappedString(entry)
-}
-
-func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
-	return l.PreferredAliases.IsMappedString(alias)
-}
-
-func (l *TBibTeXLibrary) AliasExists(alias string) bool {
-	return l.AliasToEntry.IsMappedString(alias)
-}
-
-// Checks if the provided winner is, indeed, the winner of the challenge by the challenger for the provided field of the provided entry.
-func (l *TBibTeXLibrary) CheckChallengeWinner(entry, field, challenger, winner string) bool {
-	return l.ChallengeWinners.GetValueityFromStringTripleMap(entry, field, challenger) == winner
-}
-
-/*
- *
- * Support functions
- *
- */
-
-// As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
-// By taking the time of starting the programme as the based, we can at least generate keys from that point in time on.
-// However, we should never go beyond the present time, of course.
-var KeyTime time.Time // The time used for the latest generated key. Is set (see init() below) at the start of the programme.
-
-// Generate a new key based on the KeyTime.
-func (l *TBibTeXLibrary) NewKey() string {
-
-	// We're not allowed to move into the future.
-	if KeyTime.After(time.Now()) {
-		///////// WAAARNING
-		fmt.Println("Sleep on key generation")
-		for KeyTime.After(time.Now()) {
-			// Sleep ...
-		}
-	}
-
-	// Create the actual new key
-	key := fmt.Sprintf(
-		"%s-%04d-%02d-%02d-%02d-%02d-%02d",
-		KeyPrefix,
-		KeyTime.Year(),
-		int(KeyTime.Month()),
-		KeyTime.Day(),
-		KeyTime.Hour(),
-		KeyTime.Minute(),
-		KeyTime.Second())
-
-	// Move to the next time for which we can generate a key.
-	KeyTime = KeyTime.Add(time.Second)
-
-	return key
-}
-
-//////// TEST!!!!
-
-
-func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
-	fields, knownEntry := l.EntryFields[key]
-
-	if knownEntry {
-		linePrefix := ""
-		for _, prefix := range prefixes {
-			linePrefix += prefix
-		}
-
-		result := linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
-		for field, value := range fields {
-			result += linePrefix + "   " + field + " = {" + value + "},\n"
-		}
-		result += linePrefix + "}\n"
-
-		return result
-	} else {
-		return ""
-	}
-
 }
 
 // The low level registering of the alias for a key.
@@ -297,37 +200,148 @@ func (l *TBibTeXLibrary) AddPreferredAlias(alias string) {
 	}
 }
 
-// Initialise a library
-func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot string) {
-	l.TInteraction = reporting
-	l.name = name
-	l.Progress(ProgressInitialiseLibrary, l.name)
+/*
+ *
+ * Retrieval & lookup functions
+ *
+ */
 
-	l.TBibTeXStream = TBibTeXStream{}
-	l.TBibTeXStream.Initialise(reporting, l)
+func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
+	return l.EntryFields.GetValueityFromStringPairMap(entry, field)
+}
 
-	l.FilesRoot = filesRoot
-	l.BibFilePath = ""
-	l.AliasesFilePath = ""
-	l.ChallengesFilePath = ""
+func (l *TBibTeXLibrary) LibrarySize() int {
+	return len(Library.EntryTypes)
+}
 
-	l.Comments = []string{}
-	l.EntryFields = TStringStringMap{}
-	l.EntryTypes = TStringMap{}
-	l.AliasToEntry = TStringMap{}
-	l.PreferredAliases = TStringMap{}
-	l.EntryToAliases = TStringSetMap{}
-	l.currentKey = ""
-	l.foundDoubles = false
-	l.ChallengeWinners = TStringStringStringMap{}
+func (l *TBibTeXLibrary) ReportLibrarySize() {
+	l.Progress(ProgressLibrarySize, l.name, l.LibrarySize())
+}
 
-	if AllowLegacy {
-		l.legacyMode = false
+// Lookup the entry key and type for a given key/alias
+func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) {
+	lookupKey, isAlias := l.AliasToEntry[key]
+	if !isAlias {
+		lookupKey = key
+	}
+
+	EntryTypes, isKey := l.EntryTypes[lookupKey]
+	if isKey {
+		return lookupKey, EntryTypes, true
+	} else {
+		return "", "", false
 	}
 }
 
+// Lookup the entry key for a given key/alias
+func (l *TBibTeXLibrary) LookupEntry(key string) (string, bool) {
+	lookupKey, _, isKey := l.LookupEntryWithType(key)
+
+	return lookupKey, isKey
+}
+
+// Create a string (with newlines) with a BibTeX based representation of the provided key, while using an optional prefix for each line.
+func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
+	fields, knownEntry := l.EntryFields[key]
+
+	if knownEntry {
+		// Combine all prefixes into one
+		linePrefix := ""
+		for _, prefix := range prefixes {
+			linePrefix += prefix
+		}
+
+		// Add the type and key
+		result := linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
+
+		// Iterate over the fields and their values
+		for field, value := range fields {
+			result += linePrefix + "   " + field + " = {" + value + "},\n"
+		}
+
+		// Close the entry statement
+		result += linePrefix + "}\n"
+
+		return result
+	} else {
+		// When the specified entry does not exist, all we can do is return the empty string
+		return ""
+	}
+
+}
+
+/*
+ *
+ * Checking functions
+ *
+ */
+
+func (l *TBibTeXLibrary) EntryExists(entry string) bool {
+	return l.EntryTypes.IsMappedString(entry)
+}
+
+func (l *TBibTeXLibrary) PreferredAliasExists(alias string) bool {
+	return l.PreferredAliases.IsMappedString(alias)
+}
+
+func (l *TBibTeXLibrary) AliasExists(alias string) bool {
+	return l.AliasToEntry.IsMappedString(alias)
+}
+
+// Checks if the provided winner is, indeed, the winner of the challenge by the challenger for the provided field of the provided entry.
+func (l *TBibTeXLibrary) CheckChallengeWinner(entry, field, challenger, winner string) bool {
+	return l.ChallengeWinners.GetValueityFromStringTripleMap(entry, field, challenger) == winner
+}
+
+/*
+ *
+ * Support functions
+ *
+ */
+
+// As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
+// By taking the time of starting the programme as the based, we can at least generate keys from that point in time on.
+// However, we should never go beyond the present time, of course.
+var KeyTime time.Time // The time used for the latest generated key. Is set (see init() below) at the start of the programme.
+
+// Generate a new key based on the KeyTime.
+func (l *TBibTeXLibrary) NewKey() string {
+
+	// We're not allowed to move into the future.
+	if KeyTime.After(time.Now()) {
+		///////// WAAARNING
+		fmt.Println("Sleep on key generation")
+		for KeyTime.After(time.Now()) {
+			// Sleep ...
+		}
+	}
+
+	// Create the actual new key
+	key := fmt.Sprintf(
+		"%s-%04d-%02d-%02d-%02d-%02d-%02d",
+		KeyPrefix,
+		KeyTime.Year(),
+		int(KeyTime.Month()),
+		KeyTime.Day(),
+		KeyTime.Hour(),
+		KeyTime.Minute(),
+		KeyTime.Second())
+
+	// Move to the next time for which we can generate a key.
+	KeyTime = KeyTime.Add(time.Second)
+
+	return key
+}
+
+/*
+ *
+ * Recording entries by the parser
+ *
+ */
+
 // Start recording to the library
 func (l *TBibTeXLibrary) StartRecordingToLibrary() bool {
+	// Reset the set of the illegal fields we may have encountered.
 	l.illegalFields = TStringSetNew()
 
 	return true
@@ -335,6 +349,7 @@ func (l *TBibTeXLibrary) StartRecordingToLibrary() bool {
 
 // Finish recording to the library
 func (l *TBibTeXLibrary) FinishRecordingToLibrary() bool {
+	// If we did encounter illegal fields we need to issue a warning.
 	if !l.legacyMode && l.illegalFields.Size() > 0 {
 		l.Warning(WarningUnknownFields, l.illegalFields.String())
 	}
@@ -347,51 +362,50 @@ func (l *TBibTeXLibrary) FoundDoubles() bool {
 	return l.foundDoubles
 }
 
+// Here for legacy purposes.
+// Across the legacy files, we can have double occurrences.
+// So, we need to add a unique prefix while parsing these entries.
 var uniqueID int
 
 // Start to record a library entry
-func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, EntryTypes string) bool {
+func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
 	if l.legacyMode {
 		// Post legacy question: Do we want to use currentKey or can this be kept on the parser side??
 		l.currentKey = fmt.Sprintf("%dAAAAA", uniqueID) + key
 		uniqueID++
 	} else {
+		// Set the current key. But can't we keep that current key "inside" the parser?
 		l.currentKey = key
 	}
 
 	// Check if an entry with the given key already exists
-	_, exists := l.EntryTypes[l.currentKey]
-	if exists {
+	if l.EntryExists(l.currentKey) {
 		// When the entry already exists, we need to report that we found doubles, as well as possibly resolve the entry type.
 		l.Warning(WarningEntryAlreadyExists, l.currentKey)
 		l.foundDoubles = true
-		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, EntryTypes, l.EntryTypes[key])
+		// Resolve the double typing issue
+		// Post legacy migration, we still need to do this, but then we will always have: key == l.currentKey
+		l.EntryTypes[l.currentKey] = l.MaybeResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.EntryTypes[key])
 	} else {
 		l.EntryFields[l.currentKey] = TStringMap{}
-		l.EntryTypes[l.currentKey] = EntryTypes
+		l.EntryTypes[l.currentKey] = entryType
 	}
 
 	return true
 }
 
 // Assign a value to a field
+// Post legacy ... we may want to add a key as well, when the parser maintains the current key on that side.
 func (l *TBibTeXLibrary) AssignField(field, value string) bool {
-	// Note: The parser for BibTeX streams is responsible for the mapping of field name EntryToAliases.
-	// Here we need to take care of the normalisation and processing of field values.
-	// This includes the checking if e.g. files exist, and adding dblp keys as EntryToAliases.
+	// Note: The parser for BibTeX streams is responsible for the mapping of field name alises, such as editors to editor, etc.
+	// Here we only need to take care of the normalisation and processing of field values.
+	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
+
 	newValue := l.ProcessFieldValue(field, value)
+	currentValue := l.EntryFieldValueity(l.currentKey, field)
 
-	// If the new value is empty, we assign nothing.
-	if newValue != "" {
-		currentValue, alreadyHasValue := l.EntryFields[l.currentKey][field]
-
-		// If the field already has a value that is different from the new value, we need to resolve this.
-		if alreadyHasValue && newValue != currentValue {
-			l.EntryFields[l.currentKey][field] = l.ResolveFieldValue(l.currentKey, field, newValue, currentValue)
-		} else {
-			l.EntryFields[l.currentKey][field] = newValue
-		}
-	}
+	// Assign the new value, while, if needed, resolve it with the current value
+	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, field, newValue, currentValue)
 
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {
@@ -403,14 +417,15 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 
 // Finish recording the current library entry
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
-	if !l.legacyMode {
-		// Check if no illegal fields were used
+	// Check if no illegal fields were used
+	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
+	if !l.legacyMode && !l.IsSilenced() {
 		key := l.currentKey
-		EntryTypes := l.EntryTypes[key]
 		for field, value := range l.EntryFields[key] {
-			/// CHECKS
-			if !l.IsSilenced() && !BibTeXAllowedEntryFields[EntryTypes].Set().Contains(field) {
-				if l.WarningBoolQuestion(QuestionIgnore, WarningIllegalField, field, value, key, EntryTypes) {
+			// Check if the field is allowed for this type.
+			// If not, we need to ask if it can be deleted.
+			if !l.EntryAllowsForField(key, field) {
+				if l.WarningBoolQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryTypes[key]) {
 					delete(l.EntryFields[key], field)
 				}
 			}
@@ -421,5 +436,6 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 }
 
 func init() {
+	// Set this at the start so we have enough keys to be generated by the time we need them.
 	KeyTime = time.Now()
 }

@@ -97,6 +97,10 @@ func (l *TBibTeXLibrary) CheckAliases() {
 	}
 }
 
+func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
+	return BibTeXAllowedEntryFields[l.EntryTypes[entry]].Set().Contains(field)
+}
+
 func (l *TBibTeXLibrary) CheckEntries() {
 	//ForEachStringPair(l.entryType, func(a, b string) { fmt.Println(a, b) })
 	//for key, entryType := range l.GetEntryTypeMap() {
