@@ -220,16 +220,29 @@ func (l *TBibTeXLibrary) RegisterAliasForName(alias, name string) {
  *
  */
 
+// Get the value of the field of a specific entry. Returns the empty string if it is not there.
 func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
 	return l.EntryFields.GetValueityFromStringPairMap(entry, field)
 }
 
+// Returns the size of this library.
 func (l *TBibTeXLibrary) LibrarySize() int {
 	return len(Library.EntryTypes)
 }
 
+// Reports the size of this library.
 func (l *TBibTeXLibrary) ReportLibrarySize() {
 	l.Progress(ProgressLibrarySize, l.name, l.LibrarySize())
+}
+
+// Normalise the name of a person based on the aliases
+func (l *TBibTeXLibrary) NormalisePersonName (name string) string {
+	fmt.Println("[", name, "]")
+	if normalised, isMapped := l.NameAliasToName[name]; isMapped {
+		return normalised
+	} else {
+		return name
+	}
 }
 
 // Lookup the entry key and type for a given key/alias

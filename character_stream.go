@@ -279,7 +279,7 @@ func (c *TCharacterStream) CollectCharacterThatWas(ch byte, s *string) bool {
 
 // Tests if the currently selected character (as byte) is NOT in the provided byte set, and if so, adds it to the provided string as well as moves to the next character.
 func (c *TCharacterStream) CollectCharacterThatWasNot(ch byte, s *string) bool {
-	return !c.ThisCharacterIs(ch) && c.CollectCharacter(s) && c.NextCharacter()
+	return !c.EndOfStream() && !c.ThisCharacterIs(ch) && c.CollectCharacter(s) && c.NextCharacter()
 }
 
 // Tests if the currently selected character (as byte) is in the provided byte set
@@ -297,9 +297,14 @@ func (c *TCharacterStream) CollectCharacterThatWasIn(S TByteSet, s *string) bool
 	return c.ThisCharacterIsIn(S) && c.CollectCharacter(s) && c.NextCharacter()
 }
 
+// Tests if the currently selected character (as byte) is NOT in the provided byte set, and if so, adds it to the provided string as well as moves to the next character.
+func (c *TCharacterStream) CollectCharacterThatWasNotIn(S TByteSet, s *string) bool {
+	return !c.EndOfStream() && !c.ThisCharacterIsIn(S) && c.CollectCharacter(s) && c.NextCharacter()
+}
+
 // Tests if the currently selected character (as byte) is NOT in the provided byte set, and if so, moves to the next character.
 func (c *TCharacterStream) ThisCharacterWasNotIn(s TByteSet) bool {
-	return (!c.ThisCharacterIsIn(s)) && c.NextCharacter()
+	return !c.EndOfStream() && !c.ThisCharacterIsIn(s) && c.NextCharacter()
 }
 
 // Ignores all characters. until we arrive at the specified character.

@@ -45,7 +45,7 @@ const (
 	WarningIllegalField       = "Field \"%s\", with value \"%s\", is not allowed for entry %s of type %s"
 	QuestionIgnore            = "Ignore this field?"
 	ProgressCheckingAliases   = "Checking consistency of aliases"
-	
+
 	// Warnings when reading files
 	WarningKeyAliasesLineBadEntries = "Line in key aliases file must contain precisely two entries: %s"
 	WarningChallengeLineTooShort    = "Line in challenges file is too short: %s"

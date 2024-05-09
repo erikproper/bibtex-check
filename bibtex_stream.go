@@ -465,7 +465,7 @@ func (b *TBibTeXStream) Entriesety() bool {
 }
 
 // Parse current stream to the library
-func (b *TBibTeXStream) ParseStream() bool {
+func (b *TBibTeXStream) ParseBibTeXStream() bool {
 	return b.library.StartRecordingToLibrary() &&
 		/**/ b.Entriesety() &&
 		/*  */ b.library.FinishRecordingToLibrary() &&
@@ -477,13 +477,13 @@ func (b *TBibTeXStream) ParseBibFile(fileName string) bool {
 	b.ReportProgress(ProgressReadingBibFile, fileName)
 
 	return b.ForcedTextfileOpen(fileName, ErrorOpeningFile) &&
-		/**/ b.ParseStream()
+		/**/ b.ParseBibTeXStream()
 }
 
 // Opening a string with BibTeX entries, and then parse it (and add it to the selected Library.)
 func (b *TBibTeXStream) ParseBibString(bibtex string) bool {
 	return b.TextString(bibtex) &&
-		/**/ b.ParseStream()
+		/**/ b.ParseBibTeXStream()
 }
 
 // Things to be initialised
