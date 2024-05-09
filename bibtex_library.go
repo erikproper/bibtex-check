@@ -46,6 +46,7 @@ type (
 		ChallengeWinners    TStringStringStringMap // A key and field specific mapping from challenged value to winner values
 		TInteraction                               // Error reporting channel
 		TBibTeXStream                              // BibTeX parser
+		TBibTeXTeX
 	}
 )
 
@@ -57,6 +58,11 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot stri
 
 	l.TBibTeXStream = TBibTeXStream{}
 	l.TBibTeXStream.Initialise(reporting, l)
+
+	l.TBibTeXTeX = TBibTeXTeX{}
+
+	//// Abstraction
+	l.TBibTeXTeX.library = l
 
 	l.FilesRoot = filesRoot
 	l.BibFilePath = ""
@@ -236,8 +242,7 @@ func (l *TBibTeXLibrary) ReportLibrarySize() {
 }
 
 // Normalise the name of a person based on the aliases
-func (l *TBibTeXLibrary) NormalisePersonName (name string) string {
-	fmt.Println("[", name, "]")
+func (l *TBibTeXLibrary) NormalisePersonName(name string) string {
 	if normalised, isMapped := l.NameAliasToName[name]; isMapped {
 		return normalised
 	} else {
@@ -283,7 +288,9 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 
 		// Iterate over the fields and their values
 		for field, value := range fields {
-			result += linePrefix + "   " + field + " = {" + value + "},\n"
+			if value != "" {
+				result += linePrefix + "   " + field + " = {" + value + "},\n"
+			}
 		}
 
 		// Close the entry statement
