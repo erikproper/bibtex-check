@@ -45,7 +45,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current strin
 			// And update the recorded challenges
 			// Note: this is an *update* as we may need to update this as a new winner for other challenges as well.
 
-			warning := "Need to resolve for entry %s and field %s:\n- Challenger: %s\n- Current   : %s"
+			warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 			question := "Current entry:\n" + l.EntryString(key, "  ") + "Keep the value as is?"
 
 			if l.WarningBoolQuestion(question, warning, key, field, challenger, current) {
@@ -56,6 +56,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current strin
 			} else {
 				l.UpdateChallengeWinner(key, field, current, challenger)
 				l.WriteChallenges()
+				l.WriteBibTeXFile()
 
 				return challenger
 			}

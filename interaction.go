@@ -60,7 +60,10 @@ func (r *TInteraction) WarningBoolQuestion(question, warning string, context ...
 	fmt.Printf("QUESTION: " + question + " (y/n): ")
 
 	reader := bufio.NewReader(os.Stdin)
-	char, _, _ := reader.ReadRune()
+	char := '_'
+	for char != 'y' && char != 'n' {
+		char, _, _ = reader.ReadRune()
+	}
 
 	return char == 'y'
 }

@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"regexp"
 	"strings"
+//	"fmt"
 )
 
 // Definition of the map for field normalisers
@@ -286,6 +287,7 @@ func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 func init() {
 	// Define the normaliser functions.
 	fieldNormalisers = TFieldNormalisers{}
+	fieldNormalisers["author"] = NormaliseNamesString
 	fieldNormalisers["address"] = NormaliseTitleString
 	fieldNormalisers["bdsk-file-1"] = normaliseBDSKFileValue
 	fieldNormalisers["bdsk-file-2"] = normaliseBDSKFileValue
@@ -299,18 +301,22 @@ func init() {
 	fieldNormalisers["booktitle"] = NormaliseTitleString
 	fieldNormalisers["crossref"] = normaliseCrossrefValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["doi"] = normaliseDOIValue
+	fieldNormalisers["editor"] = NormaliseNamesString
 	fieldNormalisers["file"] = normaliseFileValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["howpublished"] = NormaliseTitleString
+	fieldNormalisers["institution"] = NormaliseTitleString
 	fieldNormalisers["isbn"] = normaliseISBNValue
 	fieldNormalisers["issn"] = normaliseISSNValue
 	fieldNormalisers["journal"] = NormaliseTitleString
+	fieldNormalisers["organization"] = NormaliseTitleString
 	fieldNormalisers["pages"] = normalisePagesValue
+	fieldNormalisers["publisher"] = NormaliseTitleString
 	fieldNormalisers["series"] = NormaliseTitleString
+	fieldNormalisers["school"] = NormaliseTitleString
 	fieldNormalisers["title"] = NormaliseTitleString
 	fieldNormalisers["year"] = normaliseYearValue
 
 	// To be including:
-	// "author"
 	// "bdsk-url-1"
 	// "bdsk-url-2"
 	// "bdsk-url-3"
@@ -323,17 +329,13 @@ func init() {
 	// "chapter"
 	// "edition"
 	// "editor"
-	// "institution"
 	// "key"
 	// "langid"
 	// "local-url"
 	// "month"
 	// "note"
 	// "number"
-	// "organization"
-	// "publisher"
 	// "researchgate"
-	// "school"
 	// "type"
 	// "url"
 	// "urldate"

@@ -109,6 +109,24 @@ func main() {
 						// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
 						if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) {
 							switch oldField {
+							case "booktitle":
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+
+							case "address":
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+
+							case "series":
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+
+							case "journal":
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+
+							case "title":
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+
+							case "editor":
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+
 							case "crossref":
 								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 

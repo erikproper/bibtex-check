@@ -292,9 +292,14 @@ func (c *TCharacterStream) ThisCharacterWasIn(S TByteSet) bool {
 	return c.ThisCharacterIsIn(S) && c.NextCharacter()
 }
 
+// Tests if the currently selected character (as byte) is in the provided byte set, and if so, adds it to the provided string.
+func (c *TCharacterStream) CollectCharacterThatIsIn(S TByteSet, s *string) bool {
+	return c.ThisCharacterIsIn(S) && c.CollectCharacter(s)
+}
+
 // Tests if the currently selected character (as byte) is in the provided byte set, and if so, adds it to the provided string as well as moves to the next character.
 func (c *TCharacterStream) CollectCharacterThatWasIn(S TByteSet, s *string) bool {
-	return c.ThisCharacterIsIn(S) && c.CollectCharacter(s) && c.NextCharacter()
+	return c.CollectCharacterThatIsIn(S, s) && c.NextCharacter()
 }
 
 // Tests if the currently selected character (as byte) is NOT in the provided byte set, and if so, adds it to the provided string as well as moves to the next character.

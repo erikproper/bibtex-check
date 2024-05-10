@@ -10,16 +10,21 @@ func TestStringMaps(t *testing.T) {
 
 	tt := TBibTeXTeX{}
 	tt.library = &Library
-	//	fmt.Println(tt.NormaliseNamesString(" {Petrevska Nechkoska}, Renata and Mart{\\'i}n, D. AND P{ie rre}, \\hello\\there\\{     AND {h i}  "))
+	fmt.Println(NormaliseNamesString(&Library, "Ssebuggwawo, D. and Hoppenbrouwers, Stijn J. B. A. and Proper, Henderik A."))
+	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92"))
+	fmt.Println(NormaliseTitleString(&Library, "{ConQuer-92}"))
 
-	//	fmt.Println(NormaliseTitleString(&Library, "Hello"))
-	//	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work -- Modelling, Communication and Analysis}"))
-	//	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work: Modelling, Communication and Analysis}"))
-	//	fmt.Println(NormaliseTitleString(&Library, "{EA {Anamnesis}: An Approach for Decision Making Analysis in Enterprise Architecture}"))
+	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92 -- 24th Revised Report on -- Meta-Data the {Meta-Data} Conceptual Query Language {LISA-D}"))
+	fmt.Println(NormaliseTitleString(&Library, "{ConQuer-92} -- {The} Revised Matulevi{\\v c} on the Conceptual Query Language {LISA-D}"))
+	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92 -- meta-Data Revised Meta-Data on the C{\\\"o}nce{\\v p}tual Query Language LISA-D"))
+	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work -- Modelling, Communication and Analysis}"))
+	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work: Modelling, Communication and Analysis}"))
+	fmt.Println(NormaliseTitleString(&Library, "{EA {Anamnesis}: An Approach for Decision Making Analysis in Enterprise Architecture}"))
+	fmt.Println(NormaliseTitleString(&Library, "EA {Anamnesis}: An Approach for Decision Making Analysis in Enterprise Architecture"))
 	//	fmt.Println(NormaliseTitleString(&Library, "{8th {Mediter}RAnean Conference on Information Systems, {{{{{MCIS}}}}} 2014, Verona, Italy, September 3-5, 2014}"))
-	fmt.Println(NormaliseTitleString(&Library, "{EA} {Anamnesis}: {{Towards}} an Approach for Ent{\\\"e}rprise \\Architecture Rationalization"))
-	fmt.Println("----")
-	fmt.Println(NormaliseTitleString(&Library, "{EA} {Anamnesis}: Towards an Approach for Enterprise Architecture Rationalization"))
+	//fmt.Println(NormaliseTitleString(&Library, "{EA} {Anamnesis}: {{Towards}} an Approach for Ent{\\\"e}rprise \\Architecture Rationalization"))
+	//fmt.Println("----")
+	//fmt.Println(NormaliseTitleString(&Library, "{EA} {Anamnesis}: Towards an Approach for Enterprise Architecture Rationalization"))
 
 	// Use NeedsCaseProtection and NeedsTeXProtection
 	// For "{", X, "}" patterns:
