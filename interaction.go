@@ -40,9 +40,8 @@ func (r *TInteraction) InteractionIsOff() bool {
 
 // Set the interaction status to the specified state
 func (r *TInteraction) SetInteraction(status bool) {
-	 r.silenced = status
+	r.silenced = status
 }
-
 
 // Reporting errors.
 // The error message should provide the formatting.

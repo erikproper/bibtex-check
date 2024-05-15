@@ -16,7 +16,7 @@ package main
 
 var (
 	BibTeXAllowedEntryFields map[string]TStringSet // Per entry type, the allowed field
-	BibTeXImportFields		 TStringSet			   // Set of fields we would consider importing
+	BibTeXImportFields       TStringSet            // Set of fields we would consider importing
 	BibTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
 	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entries.
 	BibTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
@@ -128,8 +128,8 @@ func init() {
 		"local-url", "langid",
 		"url", "urldate", "urloriginal")
 
-	BibTeXImportFields.Unite(BibTeXAllowedFields)	
-	
+	BibTeXImportFields.Unite(BibTeXAllowedFields)
+
 	AddAllowedFields(
 		"date-added", "date-modified",
 		"bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",

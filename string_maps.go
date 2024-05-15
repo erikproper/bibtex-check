@@ -174,3 +174,17 @@ func (m *TStringStringStringMap) SetValueForStringTripleMap(i, j, k, v string) {
 
 	(*m)[i][j][k] = v
 }
+
+// Safely add an element to a string set map
+func (m *TStringSetMap) AddValueToStringSetMap(i, v string) {
+	if (*m) == nil {
+		(*m) = TStringSetMap{}
+	}
+
+	_, hasSet := (*m)[i]
+	if !hasSet {
+		(*m)[i] = TStringSetNew()
+	}
+
+	(*m)[i].Set().Add(v)
+}

@@ -36,8 +36,9 @@ type (
 		EntryFields         TStringStringMap       // Per entry key, the fields associated to the actual entries.
 		EntryTypes          TStringMap             // Per entry key, the type of the enty.
 		KeyAliasToKey       TStringMap             // Mapping from key aliases to the actual entry key.
+		KeyToAliases        TStringSetMap          // The inverted version of KeyAliasToKey.
 		NameAliasToName     TStringMap             // Mapping from name aliases to the actual name.
-		EntryToAliases      TStringSetMap          // The inverted version of AliasToEntry.
+		NameToAliases       TStringSetMap          // The inverted version of NameAliasToName
 		PreferredKeyAliases TStringMap             // Per entry key, the preferred alias
 		illegalFields       TStringSet             // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
 		currentKey          string                 // The key of the entry we are currently working on.
@@ -79,7 +80,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot stri
 
 	if AllowLegacy {
 		// Do we really need this one? And .. it should then be KeyToAliasKey
-		l.EntryToAliases = TStringSetMap{}
+		l.KeyToAliases = TStringSetMap{}
 	}
 
 	l.currentKey = ""
@@ -111,8 +112,8 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 }
 
 // Initial registration of a winner over a challenger for a given entry and its field.
-func (l *TBibTeXLibrary) RegisterChallengeWinner(entry, field, challenger, winner string) {
-	// Only register challenger/winner pairs when both are non-empty
+func (l *TBibTeXLibrary) AddChallengeWinner(entry, field, challenger, winner string) {
+	// Only add challenger/winner pairs when both are non-empty
 	if winner != challenger {
 		l.ChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
 	}
@@ -121,25 +122,27 @@ func (l *TBibTeXLibrary) RegisterChallengeWinner(entry, field, challenger, winne
 // Update the registration of a winner over a challenger for a given entry and its field.
 // As we have a new winner, we also need to update any other existing challenges for this field.
 func (l *TBibTeXLibrary) UpdateChallengeWinner(entry, field, challenger, winner string) {
-	l.RegisterChallengeWinner(entry, field, challenger, winner)
+	l.AddChallengeWinner(entry, field, challenger, winner)
 
 	for otherChallenger := range l.ChallengeWinners[entry][field] {
-		l.RegisterChallengeWinner(entry, field, otherChallenger, winner)
+		l.AddChallengeWinner(entry, field, otherChallenger, winner)
 	}
 }
 
-// The low level registering of the alias for a key.
-// Also takes care of registering the inverse mapping.
-func (l *TBibTeXLibrary) registerKeyAlias(alias, key string) {
-	l.KeyAliasToKey[alias] = key
+// Add a preferred alias
+func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
+	///  SAVE!
+	key, exists := l.KeyAliasToKey[alias]
 
-	// Also create and/or update the inverse mapping
-	_, hasAliases := l.EntryToAliases[key]
-	if !hasAliases && AllowLegacy {
-		l.EntryToAliases[key] = TStringSetNew()
+	// Of course, a preferred alias must be an alias.
+	if !exists {
+		l.Warning(WarningPreferredNotExist, key)
+	} else {
+		///  SAVE!
+		l.PreferredKeyAliases[key] = alias
 	}
-	l.EntryToAliases[key].Set().Add(alias)
 }
+
 
 // Move the alias preference to another key
 func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
@@ -149,75 +152,80 @@ func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
 	}
 }
 
+// Check validity of alias and target
+func  (l *TBibTeXLibrary) NeedToAssignAlias(alias, target string, aliasMap TStringMap, warningAmbiguousAlias string) bool {
+	// Neither alias, nor target should be empty
+	if alias == "" || target == "" {
+		return false
+	}
+
+	// No need to alias oneself
+	if alias == target {
+		return false
+	}
+
+	// Check for ambiguity of aliases
+	if currentTarget, aliasIsAlreadyAliased := aliasMap[alias]; aliasIsAlreadyAliased {
+		if currentTarget != target {
+			l.Warning(warningAmbiguousAlias, alias, currentTarget, target)
+		} 
+
+		return false
+	}
+	
+	return true
+}
+
+// The low level addition of the alias for a key.
+// Also takes care of adding the alias the inverse mapping.
+func (l *TBibTeXLibrary) addKeyAlias(alias, key string) {
+	// Set the actual mapping
+	l.KeyAliasToKey.SetValueForStringMap(alias, key)
+
+	// Also create update the inverse mapping
+	l.KeyToAliases.AddValueToStringSetMap(key, alias)
+}
+
 // Adds an alias to a key in the current library.
 // If allowRemap is true then we allow for a situation where the alias is actually a (former) key.
-// In the latter situation, we would need to update the EntryToAliases to that former key as well.
+// In the latter situation, we would need to update the KeyToAliases to that former key as well.
 // Note: The present complexity is caused due to the legacy libraries. The present mapping file refers to keys that are not yet in the main library.
 // Once that is solved, the checks here can be simpler:
 // - Aliasses cannot be keys
 // - Keys must be actual keys of entries
 // - The latter check can be deferred until after (actually) reading the library
 // - The latter might not always be necessary. E.g. when simply doing a "-alias" call
-func (l *TBibTeXLibrary) AddKeyAlias(alias, key string, allowRemap bool) {
-	// Check if the provided is already used.
-	currentKey, aliasIsAlreadyAliased := l.KeyAliasToKey[alias]
+func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
+	if !l.NeedToAssignAlias(alias, key, l.KeyAliasToKey, WarningAmbiguousKeyAlias) {
+		return
+	}
 
-	// Check if the provided alias is itself not a key that is in use by an entry.
-	_, aliasIsActuallyKeyToEntry := l.EntryFields[alias]
-
-	// Check if the provided alias is itself not the target of an alias mapping.
-	_, aliasIsActuallyKeyForAlias := l.EntryToAliases[alias]
-
-	// Check if the provided key is itself not an alias.
-	aliasedKey, keyIsActuallyAlias := l.KeyAliasToKey[key]
-
-	if aliasIsAlreadyAliased && currentKey != key {
-		if allowRemap && AllowLegacy {
-			l.EntryToAliases[currentKey].Set().Delete(key)
-			l.registerKeyAlias(alias, key)
-			l.moveKeyAliasPreference(alias, currentKey, key)
-		} else {
-			// No ambiguous EntryToAliases allowed
-			l.Warning(WarningAmbiguousAlias, alias, currentKey, key)
-		}
-	} else if aliasIsActuallyKeyToEntry {
-		// Aliases cannot be keys of actual themselves.
-		l.Warning(WarningAliasIsKey, alias)
-	} else if aliasIsActuallyKeyForAlias && AllowLegacy {
-		if allowRemap && AllowLegacy { // After the migration, this can only happen when merging two entries.
-			for old_alias := range l.EntryToAliases[alias].Set().Elements() {
-				l.registerKeyAlias(old_alias, key)
+	if _, aliasIsUsedAsKeyForAlias := l.KeyToAliases[alias]; aliasIsUsedAsKeyForAlias && AllowLegacy {
+		if AllowLegacy { // After the migration, this can only happen when merging two entries.
+			for old_alias := range l.KeyToAliases[alias].Set().Elements() {
+				l.addKeyAlias(old_alias, key)
 				l.moveKeyAliasPreference(old_alias, alias, key)
 			}
-			l.registerKeyAlias(alias, key)
-			delete(l.EntryToAliases, alias)
-		} else {
-			// Unless we allow for a remap of existing EntryToAliases, EntryToAliases cannot be keys themselves.
-			l.Warning(WarningAliasIsKey, alias)
+
+			l.addKeyAlias(alias, key)
+			delete(l.KeyToAliases, alias)
 		}
-	} else if keyIsActuallyAlias {
-		// We cannot alias EntryToAliases.
-		l.Warning(WarningAliasTargetIsAlias, alias, key, aliasedKey)
-	} else {
-		l.registerKeyAlias(alias, key)
 	}
-}
 
-// Add a preferred alias
-func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
-	key, exists := l.KeyAliasToKey[alias]
-
-	// Of course, a preferred alias must be an alias.
-	if !exists {
-		l.Warning(WarningPreferredNotExist, key)
-	} else {
-		l.PreferredKeyAliases[key] = alias
-	}
+	l.addKeyAlias(alias, key)
 }
 
 // Register a new name (of an author/editor) alias
-func (l *TBibTeXLibrary) RegisterAliasForName(alias, name string) {
+func (l *TBibTeXLibrary) AddAliasForName(alias, name string) {
+	if !l.NeedToAssignAlias(alias, name, l.NameAliasToName, WarningAmbiguousNameAlias) {
+		return
+	}
+	
+	// Set the actual mapping
 	l.NameAliasToName.SetValueForStringMap(alias, name)
+
+	// Also create update the inverse mapping
+	l.NameToAliases.AddValueToStringSetMap(name, alias)
 }
 
 /*

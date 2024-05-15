@@ -16,17 +16,24 @@ var (
 )
 
 const (
-	BibTeXFolder    = "/Users/erikproper/BibTeX/"
-	BibFile         = "ErikProper.bib"
-	KeyAliasesFile  = "ErikProper.aliases"
-	NameAliasesFile = "ErikProper.names"
-	ChallengesFile  = "ErikProper.challenges"
-	MainLibrary     = "main"
+	BaseName                = "ErikProper"
+	BibTeXFolder            = "/Users/erikproper/BibTeX/"
+	BibFile                 = BaseName + ".bib"
+	KeyAliasesFile          = BaseName + ".aliases"
+	NameAliasesFile         = BaseName + ".names"
+	JournalAliasesFile      = BaseName + ".journals"
+	PublisherAliasesFile    = BaseName + ".publishers"
+	InstitutionAliasesFile  = BaseName + ".institutions"
+	OrganisationAliasesFile = BaseName + ".organisations"
+	SchoolsAliasesFile      = BaseName + ".schools"
+	ChallengesFile          = BaseName + ".challenges"
+	MainLibrary             = "main"
 )
 
 func InitialiseMainLibrary() bool {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder)
+
 	Library.ReadKeyAliases(KeyAliasesFile)
 	Library.ReadNameAliases(NameAliasesFile)
 	Library.ReadChallenges(ChallengesFile)
@@ -37,7 +44,7 @@ func InitialiseMainLibrary() bool {
 func OpenMainBibFile() bool {
 	if Library.ReadBib(BibFile) {
 		Library.ReportLibrarySize()
-		Library.CheckAliases()
+		Library.CheckKeyAliasesConsistency()
 		Library.CheckEntries()
 
 		return true
@@ -160,7 +167,8 @@ func main() {
 			key := keyStrings[len(keyStrings)-1]
 			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 				fmt.Println("Mapping", alias, "to", key)
-				Library.AddKeyAlias(alias, key, true)
+				Library.AddKeyAlias(alias, key)
+				Library.WriteKeyAliases()
 			}
 		}
 
@@ -174,10 +182,11 @@ func main() {
 
 			if len(os.Args) == 4 {
 				key := CleanKey(os.Args[3])
-				Library.AddKeyAlias(alias, key, true)
+				Library.AddKeyAlias(alias, key)
 			}
 
 			Library.AddPreferredKeyAlias(alias)
+			Library.WriteKeyAliases()
 		} else {
 			fmt.Println("Not a valid preferred alias.")
 		}

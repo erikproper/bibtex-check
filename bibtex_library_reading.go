@@ -16,6 +16,7 @@ import (
 	"bufio"
 	"os"
 	"strings"
+//	"fmt"
 )
 
 // Read bib files
@@ -45,28 +46,57 @@ func (l *TBibTeXLibrary) readFile(filePath, message string, reading func(string)
 	return scanner.Err() == nil
 }
 
-// Read key alias files
-// These files contain two keys per line, where the former is an alias to the latter key
-func (l *TBibTeXLibrary) ReadKeyAliases(filePath string) {
-	l.KeyAliasesFilePath = filePath
-
-	l.readFile(l.KeyAliasesFilePath, ProgressReadingKeyAliasesFile, func(line string) {
-		strings := strings.Split(line, " ")
-
-		if len(strings) != 2 {
-			l.Warning(WarningKeyAliasesLineBadEntries, line)
+// Read aliases files
+// These files contain two strings per line, separated by a tab, where the former is an alias to the latter.
+func (l *TBibTeXLibrary) readAliasesMapping(filePath, progress string, addMapping func(alias, target string), checkAliasesMapping func()) {
+	l.readFile(filePath, progress, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
+			l.Warning(WarningAliasesLineTooShort, line)
 			return
 		}
 
-		alias := strings[0]
-		key := strings[1]
+		addMapping(elements[1], elements[0])
+	})
 
-		l.AddKeyAlias(alias, key, false)
+	checkAliasesMapping()
+}
 
+// Read key alias files
+func (l *TBibTeXLibrary) ReadKeyAliases(filePath string) {
+	l.KeyAliasesFilePath = filePath
+
+	l.readAliasesMapping(filePath, ProgressReadingKeyAliasesFile, func(alias, key string) {
+		l.AddKeyAlias(alias, key)
+		
 		if !l.PreferredKeyAliasExists(key) && CheckPreferredKeyAliasValidity(alias) {
 			l.AddPreferredKeyAlias(alias)
 		}
-	})
+	}, l.CheckKeyAliasesMapping)
+}
+
+// Read name aliases files
+func (l *TBibTeXLibrary) ReadNameAliases(filePath string) {
+	l.NameAliasesFilePath = filePath
+
+	l.readAliasesMapping(filePath, ProgressReadingNameAliasesFile, l.AddAliasForName, l.CheckNameAliasesMapping)
+}
+
+// Read journal aliases files
+func (l *TBibTeXLibrary) ReadJournalAliases(filePath string) {
+	//	l.JournalAliasesFilePath = filePath
+
+	//	l.readFile(l.JournalAliasesFilePath, ProgressReadingJournalAliasesFile, func(line string) {
+	//		elements := strings.Split(line, "\t")
+	//		if len(elements) < 2 {
+	//			l.Warning(WarningNameAliasesLineTooShort, line)
+	//			return
+	//		}
+	//
+	//		l.RegisterAliasForName(elements[1], elements[0])
+	//	})
+
+	//l.CheckNameAliasesMapping()
 }
 
 // Read challenge files
@@ -85,27 +115,12 @@ func (l *TBibTeXLibrary) ReadChallenges(filePath string) {
 		winner := l.NormaliseFieldValue(field, elements[3])
 
 		// We do normalise the challengers, but want to ignore error messages.
-		// Challenged values may actually have errors ... 
+		// Challenged values may actually have errors ...
 		silenced := l.InteractionIsOff()
 		l.SetInteractionOff()
 		/**/ challenger := l.NormaliseFieldValue(field, elements[2])
 		l.SetInteraction(silenced)
 
-		l.RegisterChallengeWinner(key, field, challenger, winner)
-	})
-}
-
-// Read names aliases files
-func (l *TBibTeXLibrary) ReadNameAliases(filePath string) {
-	l.NameAliasesFilePath = filePath
-
-	l.readFile(l.NameAliasesFilePath, ProgressReadingNameAliasesFile, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning(WarningNameAliasesLineTooShort, line)
-			return
-		}
-
-		l.RegisterAliasForName(elements[1], elements[0])
+		l.AddChallengeWinner(key, field, challenger, winner)
 	})
 }

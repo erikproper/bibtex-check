@@ -16,7 +16,7 @@ import (
 	"encoding/base64"
 	"regexp"
 	"strings"
-//	"fmt"
+	// "fmt"
 )
 
 // Definition of the map for field normalisers

@@ -81,12 +81,14 @@ func (l *TBibTeXLibrary) WriteChallenges() bool {
 	return l.writeFile(l.ChallengesFilePath, ProgressWritingChallengesFile, l.writeChallenges)
 }
 
+////////// FUNC WriteAlias(aliaswriter, alias, key)
+
 // Write the aliases from this library, to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) writeKeyAliases(aliasWriter *bufio.Writer) {
 	// First write the preferred aliases, so they are read first when reading them in again
 	for key, alias := range Library.PreferredKeyAliases {
 		if key != alias {
-			aliasWriter.WriteString(alias + " " + key + "\n")
+			aliasWriter.WriteString(key + "\t" + alias + "\n")
 		}
 	}
 
@@ -94,7 +96,7 @@ func (l *TBibTeXLibrary) writeKeyAliases(aliasWriter *bufio.Writer) {
 	for alias, key := range Library.KeyAliasToKey {
 		if alias != Library.PreferredKeyAliases[key] {
 			if key != alias {
-				aliasWriter.WriteString(alias + " " + key + "\n")
+				aliasWriter.WriteString(key + "\t" + alias + "\n")
 			}
 		}
 	}

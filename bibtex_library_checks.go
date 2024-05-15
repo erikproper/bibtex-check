@@ -13,6 +13,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -54,12 +55,52 @@ func CheckYearValidity(year string) bool {
 
 /*
  *
+ * Check if a field is allowed for a given entry.
+ *
+ */
+func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
+	return BibTeXAllowedEntryFields[l.EntryTypes[entry]].Set().Contains(field)
+}
+
+/*
+ *
+ * Basic correctness checks of mappings
+ *
+ */
+
+func (l *TBibTeXLibrary) CheckAliasesMapping(aliasMap TStringMap, inverseMap TStringSetMap, progress, warningUsedAsAlias, warningTargetIsAlias string) {
+	l.Progress(progress)
+
+	// Note: when we find an issue, we will not immediately stop as we want to list all issues.
+	for alias, target := range aliasMap {
+		if aliasedTarget, targetIsUsedAsAlias := aliasMap[target]; targetIsUsedAsAlias {
+			// We cannot alias aliases
+			l.Warning(warningTargetIsAlias, alias, target, aliasedTarget)
+		}
+
+		if _, aliasIsUsedAsTargetForAlias := inverseMap[alias]; aliasIsUsedAsTargetForAlias {
+			// Aliases should not be keys themselves.
+			l.Warning(warningUsedAsAlias, alias)
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) CheckKeyAliasesMapping() {
+	l.CheckAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, ProgressCheckingKeyAliasesMapping, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+}
+
+func (l *TBibTeXLibrary) CheckNameAliasesMapping() {
+	l.CheckAliasesMapping(l.NameAliasToName, l.NameToAliases, ProgressCheckingNameAliasesMapping, WarningAliasIsName, WarningAliasTargetNameIsAlias)
+}
+
+/*
+ *
  * General library/entry level checks
  *
  */
 
-// The driver function to check all alias/entry pairs of the library
-func (l *TBibTeXLibrary) CheckAliases() {
+// Check all alias/entry pairs of the library
+func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 	l.Progress(ProgressCheckingAliases)
 
 	for alias, entry := range l.KeyAliasToKey {
@@ -88,7 +129,7 @@ func (l *TBibTeXLibrary) CheckAliases() {
 
 				if !(loweredAlias == alias || loweredAlias == entry || l.AliasExists(loweredAlias)) {
 					if CheckPreferredKeyAliasValidity(loweredAlias) {
-						l.AddKeyAlias(loweredAlias, entry, false)
+						l.AddKeyAlias(loweredAlias, entry)
 						l.AddPreferredKeyAlias(loweredAlias)
 					}
 				}
@@ -97,11 +138,15 @@ func (l *TBibTeXLibrary) CheckAliases() {
 	}
 }
 
-func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
-	return BibTeXAllowedEntryFields[l.EntryTypes[entry]].Set().Contains(field)
-}
+//	if _, aliasIsActuallyKeyToEntry := l.EntryFields[alias]; aliasIsActuallyKeyToEntry {
+//		// Aliases cannot be keys themselves.
+//		l.Warning(WarningAliasIsKey, alias)
+//
+//		return
+//	}
 
 func (l *TBibTeXLibrary) CheckEntries() {
+	fmt.Println("KKKK")
 	//ForEachStringPair(l.entryType, func(a, b string) { fmt.Println(a, b) })
 	//for key, entryType := range l.GetEntryTypeMap() {
 	//fmt.Println(key, entryType)

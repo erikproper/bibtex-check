@@ -20,7 +20,7 @@ var fieldProcessors TFieldProcessors
 // When we have a DBLP field, we can use this as an alias
 func processDBLPValue(l *TBibTeXLibrary, value string) string {
 	if !l.legacyMode {
-		l.AddKeyAlias("DBLP:"+value, l.currentKey, false)
+		l.AddKeyAlias("DBLP:"+value, l.currentKey)
 	}
 
 	return value
