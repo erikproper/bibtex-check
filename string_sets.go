@@ -95,16 +95,16 @@ func (s *TStringSet) Delete(elements ...string) *TStringSet {
 }
 
 // Combine with another set.
-func (s *TStringSet) Unite(t *TStringSet) *TStringSet {
-	maps.Copy(s.elements, t.elements)
+func (s *TStringSet) Unite(t TStringSet) *TStringSet {
+	maps.Copy(s.elements, (&t).elements)
 
 	return s
 }
 
 // Intersect with another set.
-func (s *TStringSet) Intersect(t *TStringSet) *TStringSet {
+func (s *TStringSet) Intersect(t TStringSet) *TStringSet {
 	for element := range s.elements {
-		if _, isIn := t.elements[element]; !isIn {
+		if _, isIn := (&t).elements[element]; !isIn {
 			delete(s.elements, element)
 		}
 	}
@@ -113,9 +113,9 @@ func (s *TStringSet) Intersect(t *TStringSet) *TStringSet {
 }
 
 // Subtract another set.
-func (s *TStringSet) Subtract(t *TStringSet) *TStringSet {
+func (s *TStringSet) Subtract(t TStringSet) *TStringSet {
 	for element := range s.elements {
-		if _, isIn := t.elements[element]; isIn {
+		if _, isIn := (&t).elements[element]; isIn {
 			delete(s.elements, element)
 		}
 	}

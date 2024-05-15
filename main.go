@@ -107,42 +107,8 @@ func main() {
 						}
 
 						// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
-						if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) {
-							switch oldField {
-							case "booktitle":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "address":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "series":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "journal":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "title":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "editor":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "crossref":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "chapter":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "dblp":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "doi":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							case "pages":
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
-
-							}
+						if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
+							Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 						}
 					}
 				}
@@ -150,7 +116,7 @@ func main() {
 		}
 
 	case len(os.Args) == 3 && os.Args[1] == "-alias":
-		Reporting.SetSilenced()
+		Reporting.SetInteractionOff()
 		InitialiseMainLibrary()
 
 		// Function call.
@@ -161,7 +127,7 @@ func main() {
 		}
 
 	case len(os.Args) > 2 && os.Args[1] == "-entry":
-		Reporting.SetSilenced()
+		Reporting.SetInteractionOff()
 
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			actualKey, ok := Library.LookupEntry(CleanKey(os.Args[2]))
@@ -171,7 +137,7 @@ func main() {
 		}
 
 	case len(os.Args) > 2 && os.Args[1] == "-key":
-		Reporting.SetSilenced()
+		Reporting.SetInteractionOff()
 
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			// Function call.

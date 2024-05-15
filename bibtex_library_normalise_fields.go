@@ -315,30 +315,4 @@ func init() {
 	fieldNormalisers["school"] = NormaliseTitleString
 	fieldNormalisers["title"] = NormaliseTitleString
 	fieldNormalisers["year"] = normaliseYearValue
-
-	// To be including:
-	// "bdsk-url-1"
-	// "bdsk-url-2"
-	// "bdsk-url-3"
-	// "bdsk-url-4"
-	// "bdsk-url-5"
-	// "bdsk-url-6"
-	// "bdsk-url-7"
-	// "bdsk-url-8"
-	// "bdsk-url-9"
-	// "chapter"
-	// "edition"
-	// "editor"
-	// "key"
-	// "langid"
-	// "local-url"
-	// "month"
-	// "note"
-	// "number"
-	// "researchgate"
-	// "type"
-	// "url"
-	// "urldate"
-	// "urloriginal"
-	// "volume"
 }

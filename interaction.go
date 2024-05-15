@@ -23,15 +23,26 @@ type TInteraction struct {
 	silenced bool
 }
 
-// Surpress any output to standard out.
-func (r *TInteraction) SetSilenced() {
+// Disable any output to standard out.
+func (r *TInteraction) SetInteractionOff() {
 	r.silenced = true
 }
 
-// Surpress any output to standard out.
-func (r *TInteraction) IsSilenced() bool {
+// Enable any output to standard out.
+func (r *TInteraction) SetInteractionOn() {
+	r.silenced = false
+}
+
+// Status of interaction.
+func (r *TInteraction) InteractionIsOff() bool {
 	return r.silenced
 }
+
+// Set the interaction status to the specified state
+func (r *TInteraction) SetInteraction(status bool) {
+	 r.silenced = status
+}
+
 
 // Reporting errors.
 // The error message should provide the formatting.

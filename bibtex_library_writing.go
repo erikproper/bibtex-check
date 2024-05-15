@@ -67,7 +67,9 @@ func (l *TBibTeXLibrary) writeChallenges(challengeWriter *bufio.Writer) {
 		if l.EntryExists(key) {
 			for field, challenges := range fieldChallenges {
 				for challenger, winner := range challenges {
-					challengeWriter.WriteString(key + "\t" + field + "\t" + challenger + "\t" + winner + "\n")
+					if challenger != winner {
+						challengeWriter.WriteString(key + "\t" + field + "\t" + challenger + "\t" + winner + "\n")
+					}
 				}
 			}
 		}
@@ -83,13 +85,17 @@ func (l *TBibTeXLibrary) WriteChallenges() bool {
 func (l *TBibTeXLibrary) writeKeyAliases(aliasWriter *bufio.Writer) {
 	// First write the preferred aliases, so they are read first when reading them in again
 	for key, alias := range Library.PreferredKeyAliases {
-		aliasWriter.WriteString(alias + " " + key + "\n")
+		if key != alias {
+			aliasWriter.WriteString(alias + " " + key + "\n")
+		}
 	}
 
 	// Then write the other aliases
 	for alias, key := range Library.KeyAliasToKey {
 		if alias != Library.PreferredKeyAliases[key] {
-			aliasWriter.WriteString(alias + " " + key + "\n")
+			if key != alias {
+				aliasWriter.WriteString(alias + " " + key + "\n")
+			}
 		}
 	}
 }
@@ -102,7 +108,9 @@ func (l *TBibTeXLibrary) WriteKeyAliases() bool {
 // Write the challenges and winners for field values, of this library, to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) writeNameAliases(aliasWriter *bufio.Writer) {
 	for alias, name := range l.NameAliasToName {
-		aliasWriter.WriteString(name + "\t" + alias + "\n")
+		if name != alias {
+			aliasWriter.WriteString(name + "\t" + alias + "\n")
+		}
 	}
 }
 

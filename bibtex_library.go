@@ -233,7 +233,7 @@ func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
 
 // Returns the size of this library.
 func (l *TBibTeXLibrary) LibrarySize() int {
-	return len(Library.EntryTypes)
+	return len(l.EntryTypes)
 }
 
 // Reports the size of this library.
@@ -453,7 +453,7 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 	// Check if no illegal fields were used
 	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
-	if !l.legacyMode && !l.IsSilenced() {
+	if !l.legacyMode && !l.InteractionIsOff() {
 		key := l.currentKey
 		for field, value := range l.EntryFields[key] {
 			// Check if the field is allowed for this type.

@@ -20,7 +20,7 @@ func TestStringMaps(t *testing.T) {
 	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work -- Modelling, Communication and Analysis}"))
 	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work: Modelling, Communication and Analysis}"))
 	fmt.Println(NormaliseTitleString(&Library, "{EA {Anamnesis}: An Approach for Decision Making Analysis in Enterprise Architecture}"))
-	fmt.Println(NormaliseTitleString(&Library, "EA {Anamnesis}: An Approach for Decision Making Analysis in Enterprise Architecture"))
+	fmt.Println(NormaliseTitleString(&Library, "Model-Driven Architecture and Behavior of Cyber-Physical Systems"))
 	//	fmt.Println(NormaliseTitleString(&Library, "{8th {Mediter}RAnean Conference on Information Systems, {{{{{MCIS}}}}} 2014, Verona, Italy, September 3-5, 2014}"))
 	//fmt.Println(NormaliseTitleString(&Library, "{EA} {Anamnesis}: {{Towards}} an Approach for Ent{\\\"e}rprise \\Architecture Rationalization"))
 	//fmt.Println("----")
