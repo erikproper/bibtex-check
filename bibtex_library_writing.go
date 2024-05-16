@@ -81,23 +81,25 @@ func (l *TBibTeXLibrary) WriteChallenges() bool {
 	return l.writeFile(l.ChallengesFilePath, ProgressWritingChallengesFile, l.writeChallenges)
 }
 
-////////// FUNC WriteAlias(aliaswriter, alias, key)
+// Write the preferred key aliases from this library, to a bufio.bWriter buffer
+func (l *TBibTeXLibrary) writePreferredKeyAliases(aliasWriter *bufio.Writer) {
+	for key, alias := range Library.PreferredKeyAliases {
+		if key != alias && AllowLegacy {
+			aliasWriter.WriteString(alias + "\n")
+		}
+	}
+}
+
+// Write the preferred key aliases from this library, to a file
+func (l *TBibTeXLibrary) WritePreferredKeyAliases() bool {
+	return l.writeFile(PreferredKeyAliasesFile, ProgressWritingPreferredKeyAliasesFile, l.writePreferredKeyAliases)
+}
 
 // Write the aliases from this library, to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) writeKeyAliases(aliasWriter *bufio.Writer) {
-	// First write the preferred aliases, so they are read first when reading them in again
-	for key, alias := range Library.PreferredKeyAliases {
+	for alias, key := range Library.KeyAliasToKey {
 		if key != alias {
 			aliasWriter.WriteString(key + "\t" + alias + "\n")
-		}
-	}
-
-	// Then write the other aliases
-	for alias, key := range Library.KeyAliasToKey {
-		if alias != Library.PreferredKeyAliases[key] {
-			if key != alias {
-				aliasWriter.WriteString(key + "\t" + alias + "\n")
-			}
 		}
 	}
 }
@@ -119,4 +121,18 @@ func (l *TBibTeXLibrary) writeNameAliases(aliasWriter *bufio.Writer) {
 // Write the name aliases from this library, to a file
 func (l *TBibTeXLibrary) WriteNameAliases() bool {
 	return l.writeFile(l.NameAliasesFilePath, ProgressWritingNameAliasesFile, l.writeNameAliases)
+}
+
+// Write the journal aliases from this library, to a bufio.bWriter buffer
+func (l *TBibTeXLibrary) writeJournalAliases(aliasWriter *bufio.Writer) {
+	for alias, key := range Library.JournalAliasToJournal {
+		if key != alias {
+			aliasWriter.WriteString(key + "\t" + alias + "\n")
+		}
+	}
+}
+
+// Write the key aliases from this library, to a file
+func (l *TBibTeXLibrary) WriteJournalAliases() bool {
+	return l.writeFile(l.JournalAliasesFilePath, ProgressWritingJournalAliasesFile, l.writeJournalAliases)
 }

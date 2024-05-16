@@ -19,7 +19,8 @@ const (
 	BaseName                = "ErikProper"
 	BibTeXFolder            = "/Users/erikproper/BibTeX/"
 	BibFile                 = BaseName + ".bib"
-	KeyAliasesFile          = BaseName + ".aliases"
+	KeyAliasesFile          = BaseName + ".keys"
+	PreferredKeyAliasesFile = BaseName + ".preferred"
 	NameAliasesFile         = BaseName + ".names"
 	JournalAliasesFile      = BaseName + ".journals"
 	PublisherAliasesFile    = BaseName + ".publishers"
@@ -35,7 +36,9 @@ func InitialiseMainLibrary() bool {
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder)
 
 	Library.ReadKeyAliases(KeyAliasesFile)
+	Library.ReadPreferredKeyAliases(PreferredKeyAliasesFile)
 	Library.ReadNameAliases(NameAliasesFile)
+	Library.ReadJournalAliases(JournalAliasesFile)
 	Library.ReadChallenges(ChallengesFile)
 
 	return true
@@ -44,8 +47,11 @@ func InitialiseMainLibrary() bool {
 func OpenMainBibFile() bool {
 	if Library.ReadBib(BibFile) {
 		Library.ReportLibrarySize()
+		// Check library consistency call:
+		/**/
 		Library.CheckKeyAliasesConsistency()
-		Library.CheckEntries()
+		/**/ Library.CheckPreferredKeyAliasesConsistency()
+		/**/ Library.CheckEntries()
 
 		return true
 	} else {
@@ -83,6 +89,7 @@ func main() {
 			OldLibrary.legacyMode = true
 			OldLibrary.ReadKeyAliases(KeyAliasesFile)
 			OldLibrary.ReadNameAliases(NameAliasesFile)
+			OldLibrary.ReadJournalAliases(JournalAliasesFile)
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
@@ -175,7 +182,7 @@ func main() {
 	case len(os.Args) > 2 && os.Args[1] == "-preferred":
 		alias := CleanKey(os.Args[2])
 
-		if CheckPreferredKeyAliasValidity(alias) {
+		if PreferredKeyAliasIsValid(alias) {
 			writeAliases = true
 
 			InitialiseMainLibrary()
@@ -202,7 +209,9 @@ func main() {
 
 	if writeAliases {
 		Library.WriteKeyAliases()
+		Library.WritePreferredKeyAliases()
 		Library.WriteNameAliases()
+		Library.WriteJournalAliases()
 	}
 
 	if writeChallenges {

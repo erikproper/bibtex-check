@@ -26,27 +26,48 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name                string                 // Name of the library
-		FilesRoot           string                 // Path to folder with library related files
-		BibFilePath         string                 // Relative path to the BibTeX file
-		KeyAliasesFilePath  string                 // Relative path to the entry aliases file
-		ChallengesFilePath  string                 // Relative path to the challenges file
-		NameAliasesFilePath string                 // Relative path to the name aliases file
-		Comments            []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields         TStringStringMap       // Per entry key, the fields associated to the actual entries.
-		EntryTypes          TStringMap             // Per entry key, the type of the enty.
-		KeyAliasToKey       TStringMap             // Mapping from key aliases to the actual entry key.
-		KeyToAliases        TStringSetMap          // The inverted version of KeyAliasToKey.
-		NameAliasToName     TStringMap             // Mapping from name aliases to the actual name.
-		NameToAliases       TStringSetMap          // The inverted version of NameAliasToName
-		PreferredKeyAliases TStringMap             // Per entry key, the preferred alias
-		illegalFields       TStringSet             // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		currentKey          string                 // The key of the entry we are currently working on.
-		foundDoubles        bool                   // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		legacyMode          bool                   // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		ChallengeWinners    TStringStringStringMap // A key and field specific mapping from challenged value to winner values
-		TInteraction                               // Error reporting channel
-		TBibTeXStream                              // BibTeX parser
+		name                            string                 // Name of the library
+		FilesRoot                       string                 // Path to folder with library related files
+		BibFilePath                     string                 // Relative path to the BibTeX file
+		PreferredKeyAliasesFilePath     string                 // Relative path to the preferred key aliases file
+		KeyAliasesFilePath              string                 // Relative path to the key aliases file
+		ChallengesFilePath              string                 // Relative path to the challenges file
+		NameAliasesFilePath             string                 // Relative path to the name aliases file
+		JournalAliasesFilePath          string                 // Relative path to the journal aliases file
+		SchoolAliasesFilePath           string                 // Relative path to the journal aliases file
+		InstitutionAliasesFilePath      string                 // Relative path to the institution aliases file
+		OrganizationAliasesFilePath     string                 // Relative path to the organisation aliases file
+		SeriesAliasesFilePath           string                 // Relative path to the series aliases file
+		PublisherAliasesFilePath        string                 // Relative path to the publisher aliases file
+		AddressesFilePath               string                 // Relative path to the addresses file
+		Comments                        []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields                     TStringStringMap       // Per entry key, the fields associated to the actual entries.
+		EntryTypes                      TStringMap             // Per entry key, the type of the enty.
+		KeyAliasToKey                   TStringMap             // Mapping from key aliases to the actual entry key.
+		KeyToAliases                    TStringSetMap          // The inverted version of KeyAliasToKey.
+		PreferredKeyAliases             TStringMap             // Per entry key, the preferred alias
+		NameAliasToName                 TStringMap             // Mapping from name aliases to the actual name.
+		NameToAliases                   TStringSetMap          // The inverted version of NameAliasToName
+		JournalAliasToJournal           TStringMap             // Mapping from journal aliases to the actual journal.
+		JournalToAliases                TStringSetMap          // The inverted version of JournalAliasToJournal.
+		SchoolAliasToSchool             TStringMap             // Mapping from school aliases to the actual school.
+		SchoolToAliases                 TStringSetMap          // The inverted version of SchoolAliasToSchool.
+		InstitutionAliasToInstitution   TStringMap             // Mapping from institution aliases to the actual institution.
+		InstitutionToAliases            TStringSetMap          // The inverted version of InstitutionAliasToInstitution.
+		OrganisationAliasToOrganisation TStringMap             // Mapping from organisation aliases to the actual organisation.
+		OrganisationToAliases           TStringSetMap          // The inverted version of OrganisationAliasToOrganisation.
+		SeriesAliasToSeries             TStringMap             // Mapping from series aliases to the actual publisher.
+		SeriesToAliases                 TStringSetMap          // The inverted version of SeriesAliasToSeries.
+		PublisherAliasToPublisher       TStringMap             // Mapping from publisher aliases to the actual publisher.
+		PublisherToAliases              TStringSetMap          // The inverted version of PublisherAliasToPublisher.
+		OrganisationalAddresses         TStringMap             // Addresses of publishers, organisations, etc.
+		illegalFields                   TStringSet             // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		currentKey                      string                 // The key of the entry we are currently working on.
+		foundDoubles                    bool                   // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		legacyMode                      bool                   // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
+		ChallengeWinners                TStringStringStringMap // A key and field specific mapping from challenged value to winner values
+		TInteraction                                           // Error reporting channel
+		TBibTeXStream                                          // BibTeX parser
 		TBibTeXTeX
 	}
 )
@@ -131,18 +152,25 @@ func (l *TBibTeXLibrary) UpdateChallengeWinner(entry, field, challenger, winner 
 
 // Add a preferred alias
 func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
-	///  SAVE!
+	///  SAVE!? Clean!
 	key, exists := l.KeyAliasToKey[alias]
 
 	// Of course, a preferred alias must be an alias.
 	if !exists {
-		l.Warning(WarningPreferredNotExist, key)
-	} else {
-		///  SAVE!
-		l.PreferredKeyAliases[key] = alias
-	}
-}
+		l.Warning(WarningPreferredAliasNotExist, key)
 
+		return
+	}
+
+	if !PreferredKeyAliasIsValid(alias) {
+		l.Warning(WarningInvalidPreferredKeyAlias, alias, key)
+
+		return
+	}
+
+	///  SAVE WAY!!
+	l.PreferredKeyAliases[key] = alias
+}
 
 // Move the alias preference to another key
 func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
@@ -153,7 +181,7 @@ func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
 }
 
 // Check validity of alias and target
-func  (l *TBibTeXLibrary) NeedToAssignAlias(alias, target string, aliasMap TStringMap, warningAmbiguousAlias string) bool {
+func (l *TBibTeXLibrary) NeedToAssignAlias(alias, target string, aliasMap TStringMap, warningAmbiguousAlias string) bool {
 	// Neither alias, nor target should be empty
 	if alias == "" || target == "" {
 		return false
@@ -168,11 +196,11 @@ func  (l *TBibTeXLibrary) NeedToAssignAlias(alias, target string, aliasMap TStri
 	if currentTarget, aliasIsAlreadyAliased := aliasMap[alias]; aliasIsAlreadyAliased {
 		if currentTarget != target {
 			l.Warning(warningAmbiguousAlias, alias, currentTarget, target)
-		} 
+		}
 
 		return false
 	}
-	
+
 	return true
 }
 
@@ -220,12 +248,28 @@ func (l *TBibTeXLibrary) AddAliasForName(alias, name string) {
 	if !l.NeedToAssignAlias(alias, name, l.NameAliasToName, WarningAmbiguousNameAlias) {
 		return
 	}
-	
+
 	// Set the actual mapping
 	l.NameAliasToName.SetValueForStringMap(alias, name)
 
 	// Also create update the inverse mapping
 	l.NameToAliases.AddValueToStringSetMap(name, alias)
+}
+
+// Register a new journal alias
+func (l *TBibTeXLibrary) AddAliasForJournal(aliasRaw, journalRaw string) {
+	alias := NormaliseTitleString(l, aliasRaw)
+	journal := NormaliseTitleString(l, journalRaw)
+
+	if !l.NeedToAssignAlias(alias, journal, l.JournalAliasToJournal, WarningAmbiguousJournalAlias) {
+		return
+	}
+
+	// Set the actual mapping
+	l.JournalAliasToJournal.SetValueForStringMap(alias, journal)
+
+	// Also create update the inverse mapping
+	l.JournalToAliases.AddValueToStringSetMap(journal, alias)
 }
 
 /*
@@ -247,15 +291,6 @@ func (l *TBibTeXLibrary) LibrarySize() int {
 // Reports the size of this library.
 func (l *TBibTeXLibrary) ReportLibrarySize() {
 	l.Progress(ProgressLibrarySize, l.name, l.LibrarySize())
-}
-
-// Normalise the name of a person based on the aliases
-func (l *TBibTeXLibrary) NormalisePersonName(name string) string {
-	if normalised, isMapped := l.NameAliasToName[name]; isMapped {
-		return normalised
-	} else {
-		return name
-	}
 }
 
 // Lookup the entry key and type for a given key/alias

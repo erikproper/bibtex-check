@@ -89,7 +89,7 @@ func (m *TStringStringStringMap) IsMappedStringTripple(i, j, k string) bool {
 
 /*
  *
- * Get functions
+ * Get value(s) functions
  *
  */
 
@@ -132,7 +132,7 @@ func (m *TStringStringStringMap) GetValueityFromStringTripleMap(i, j, k string) 
 
 /*
  *
- * Set functions
+ * Set value(s) functions
  *
  */
 

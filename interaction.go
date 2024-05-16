@@ -47,7 +47,7 @@ func (r *TInteraction) SetInteraction(status bool) {
 // The error message should provide the formatting.
 func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 	if !r.silenced {
-		fmt.Printf("ERROR:    "+errorMessage+".\n", context...)
+		fmt.Printf("ERROR:    "+errorMessage+"\n", context...)
 	}
 
 	return true
@@ -57,7 +57,7 @@ func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 // The warning message should provide the formatting.
 func (r *TInteraction) Warning(warning string, context ...any) bool {
 	if !r.silenced {
-		fmt.Printf("WARNING:  "+warning+".\n", context...)
+		fmt.Printf("WARNING:  "+warning+"\n", context...)
 	}
 
 	return true
@@ -82,7 +82,7 @@ func (r *TInteraction) WarningBoolQuestion(question, warning string, context ...
 // The progress message should provide the formatting.
 func (r *TInteraction) Progress(progress string, context ...any) bool {
 	if !r.silenced {
-		fmt.Printf("PROGRESS: "+progress+".\n", context...)
+		fmt.Printf("PROGRESS: "+progress+"\n", context...)
 	}
 	return true
 }

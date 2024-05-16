@@ -16,7 +16,7 @@ import (
 	"bufio"
 	"os"
 	"strings"
-//	"fmt"
+	// "fmt"
 )
 
 // Read bib files
@@ -46,8 +46,15 @@ func (l *TBibTeXLibrary) readFile(filePath, message string, reading func(string)
 	return scanner.Err() == nil
 }
 
-// Read aliases files
-// These files contain two strings per line, separated by a tab, where the former is an alias to the latter.
+// Read preferred key aliases file
+func (l *TBibTeXLibrary) ReadPreferredKeyAliases(filePath string) {
+	l.PreferredKeyAliasesFilePath = filePath
+
+	l.readFile(filePath, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
+}
+
+// General function to read aliases files
+// These files contain two strings per line, separated by a tab, where the second string is an alias for the latter.
 func (l *TBibTeXLibrary) readAliasesMapping(filePath, progress string, addMapping func(alias, target string), checkAliasesMapping func()) {
 	l.readFile(filePath, progress, func(line string) {
 		elements := strings.Split(line, "\t")
@@ -62,17 +69,11 @@ func (l *TBibTeXLibrary) readAliasesMapping(filePath, progress string, addMappin
 	checkAliasesMapping()
 }
 
-// Read key alias files
+// Read key aliases file
 func (l *TBibTeXLibrary) ReadKeyAliases(filePath string) {
 	l.KeyAliasesFilePath = filePath
 
-	l.readAliasesMapping(filePath, ProgressReadingKeyAliasesFile, func(alias, key string) {
-		l.AddKeyAlias(alias, key)
-		
-		if !l.PreferredKeyAliasExists(key) && CheckPreferredKeyAliasValidity(alias) {
-			l.AddPreferredKeyAlias(alias)
-		}
-	}, l.CheckKeyAliasesMapping)
+	l.readAliasesMapping(filePath, ProgressReadingKeyAliasesFile, l.AddKeyAlias, l.CheckKeyAliasesMapping)
 }
 
 // Read name aliases files
@@ -84,19 +85,9 @@ func (l *TBibTeXLibrary) ReadNameAliases(filePath string) {
 
 // Read journal aliases files
 func (l *TBibTeXLibrary) ReadJournalAliases(filePath string) {
-	//	l.JournalAliasesFilePath = filePath
+	l.JournalAliasesFilePath = filePath
 
-	//	l.readFile(l.JournalAliasesFilePath, ProgressReadingJournalAliasesFile, func(line string) {
-	//		elements := strings.Split(line, "\t")
-	//		if len(elements) < 2 {
-	//			l.Warning(WarningNameAliasesLineTooShort, line)
-	//			return
-	//		}
-	//
-	//		l.RegisterAliasForName(elements[1], elements[0])
-	//	})
-
-	//l.CheckNameAliasesMapping()
+	l.readAliasesMapping(filePath, ProgressReadingJournalAliasesFile, l.AddAliasForJournal, l.CheckJournalAliasesMapping)
 }
 
 // Read challenge files

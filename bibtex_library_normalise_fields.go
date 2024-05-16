@@ -1,8 +1,8 @@
 /*
  *
- * Module: bibtex_library_normalise
+ * Module: bibtex_library_normalise_fields
  *
- * This module is concerned with the normalisation of field values.
+ * This module is concerned with the Normalisation of field values.
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
@@ -19,13 +19,62 @@ import (
 	// "fmt"
 )
 
-// Definition of the map for field normalisers
+// Definition of the map for field Normalisers
 type TFieldNormalisers = map[string]func(*TBibTeXLibrary, string) string
 
 var fieldNormalisers TFieldNormalisers
 
+// TXT
+func NormaliseAliassableFieldValue(fieldAliasToAlias TStringMap, value string) string {
+	if normalised, isMapped := fieldAliasToAlias[value]; isMapped {
+		return normalised
+	} else {
+		return value
+	}
+}
+
+// Normalise the name of a person based on the aliases
+func NormalisePersonNameValue(l *TBibTeXLibrary, name string) string {
+	return NormaliseAliassableFieldValue(l.NameAliasToName, name)
+}
+
+// TXT
+func NormaliseAliassableTitleFieldValue(l *TBibTeXLibrary, fieldAliasToAlias TStringMap, value string) string {
+	return NormaliseAliassableFieldValue(fieldAliasToAlias, NormaliseTitleString(l, value))
+}
+
+// Normalise the name of a journal based on the aliases
+func NormaliseJournalValue(l *TBibTeXLibrary, journal string) string {
+	return NormaliseAliassableTitleFieldValue(l, l.JournalAliasToJournal, journal)
+}
+
+// Normalise the name of a school based on the aliases
+func NormaliseSchoolValue(l *TBibTeXLibrary, school string) string {
+	return NormaliseAliassableTitleFieldValue(l, l.SchoolAliasToSchool, school)
+}
+
+// Normalise the name of an institution based on the aliases
+func NormaliseInstitutionValue(l *TBibTeXLibrary, institution string) string {
+	return NormaliseAliassableTitleFieldValue(l, l.InstitutionAliasToInstitution, institution)
+}
+
+// Normalise the name of an organisation based on the aliases
+func NormaliseOrganisationValue(l *TBibTeXLibrary, organisation string) string {
+	return NormaliseAliassableTitleFieldValue(l, l.OrganisationAliasToOrganisation, organisation)
+}
+
+// Normalise the name of a publisher based on the aliases
+func NormalisePublisherValue(l *TBibTeXLibrary, publisher string) string {
+	return NormaliseAliassableTitleFieldValue(l, l.PublisherAliasToPublisher, publisher)
+}
+
+// Normalise the name of a series based on the aliases
+func NormaliseSeriesValue(l *TBibTeXLibrary, series string) string {
+	return NormaliseAliassableTitleFieldValue(l, l.SeriesAliasToSeries, series)
+}
+
 // Normalize DOI values
-func normaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
+func NormaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 	var (
 		trimDOIStart = regexp.MustCompile(`^(doi:|http://[a-z,.]*/)`)
 		trimmedDOI   string
@@ -44,7 +93,7 @@ func normaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 }
 
 // Normalize DOI values to the format 1234-5678
-func normaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
+func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 	var (
 		trimISSNStart = regexp.MustCompile(`^ *ISSN[:]? *`)
 		trimmedISSN   string
@@ -81,7 +130,7 @@ func normaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 }
 
 // Normalize DOI values to an ISBN10 or ISBN13 format.
-func normaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
+func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	var (
 		trimmedISBN   string
 		trimISBNStart = regexp.MustCompile(`^ *ISBN[-]?(10|13|)[:]? *`)
@@ -109,7 +158,7 @@ func normaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	return strings.TrimSpace(rawISBN)
 }
 
-func normaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
+func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
 	// Remove leading/trailing spaces
 	trimmedYear := strings.TrimSpace(rawYear)
 
@@ -125,7 +174,7 @@ func normaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
 	return strings.TrimSpace(rawYear)
 }
 
-func normaliseCrossrefValue(l *TBibTeXLibrary, crossref string) string {
+func NormaliseCrossrefValue(l *TBibTeXLibrary, crossref string) string {
 	// Remove leading/trailing spaces
 	trimmedCrossref := strings.TrimSpace(crossref)
 
@@ -142,7 +191,7 @@ func normaliseCrossrefValue(l *TBibTeXLibrary, crossref string) string {
 	return trimmedCrossref
 }
 
-func normalisePagesValue(l *TBibTeXLibrary, pages string) string {
+func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
 	var trimDashes = regexp.MustCompile(`-+`)
 
 	trimedPageRanges := ""
@@ -150,7 +199,7 @@ func normalisePagesValue(l *TBibTeXLibrary, pages string) string {
 	trimedPageRanges = strings.TrimSpace(pages)
 	// There should be no spaces in page ranges.
 	trimedPageRanges = strings.ReplaceAll(trimedPageRanges, " ", "")
-	// We use "--" between start and end page. However, during the normalisation, we first reduce this to only one "-" to that way normalise ---, -- and - to a single -.
+	// We use "--" between start and end page. However, during the Normalisation, we first reduce this to only one "-" to that way Normalise ---, -- and - to a single -.
 	trimedPageRanges = trimDashes.ReplaceAllString(trimedPageRanges, "-")
 
 	rangesList := "" // We use this to collect the page range(s)
@@ -215,7 +264,7 @@ func normalisePagesValue(l *TBibTeXLibrary, pages string) string {
 }
 
 // Legacy ... will be removed once we have migrated all legacy and files.
-func normaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
+func NormaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
 	var (
 		trimFileStart = regexp.MustCompile(`^.*/Zotero/storage/`)
 		trimFileEnd   = regexp.MustCompile(`.pdf:.*$`)
@@ -240,7 +289,7 @@ func normaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
 // Check if the provided BibDesk file (in base64 encoded format) is present.
 // If not present, we should just ignore the field.
 // But still give a warning.
-func normaliseBDSKFileValue(l *TBibTeXLibrary, value string) string {
+func NormaliseBDSKFileValue(l *TBibTeXLibrary, value string) string {
 	// Decode the provided value, and get the payload as a string.
 	data, _ := base64.StdEncoding.DecodeString(value)
 	payload := string(data)
@@ -271,8 +320,8 @@ func normaliseBDSKFileValue(l *TBibTeXLibrary, value string) string {
 	}
 }
 
-// The general function call to normalise field values.
-// If a field specific normalisation function exists, then it is applied.
+// The general function call to Normalise field values.
+// If a field specific Normalisation function exists, then it is applied.
 // Otherwise, we only remove leading/trailing spaces.
 func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 	valueNormaliser, hasNormaliser := fieldNormalisers[field]
@@ -285,34 +334,34 @@ func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 }
 
 func init() {
-	// Define the normaliser functions.
+	// Define the Normaliser functions.
 	fieldNormalisers = TFieldNormalisers{}
 	fieldNormalisers["author"] = NormaliseNamesString
 	fieldNormalisers["address"] = NormaliseTitleString
-	fieldNormalisers["bdsk-file-1"] = normaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-2"] = normaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-3"] = normaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-4"] = normaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-5"] = normaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-6"] = normaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-7"] = normaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-8"] = normaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-9"] = normaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-1"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-2"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-3"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-4"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-5"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-6"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-7"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-8"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-9"] = NormaliseBDSKFileValue
 	fieldNormalisers["booktitle"] = NormaliseTitleString
-	fieldNormalisers["crossref"] = normaliseCrossrefValue // only needed while still allowing l.legacyMode
-	fieldNormalisers["doi"] = normaliseDOIValue
+	fieldNormalisers["crossref"] = NormaliseCrossrefValue // only needed while still allowing l.legacyMode
+	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString
-	fieldNormalisers["file"] = normaliseFileValue // only needed while still allowing l.legacyMode
+	fieldNormalisers["file"] = NormaliseFileValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["howpublished"] = NormaliseTitleString
-	fieldNormalisers["institution"] = NormaliseTitleString
-	fieldNormalisers["isbn"] = normaliseISBNValue
-	fieldNormalisers["issn"] = normaliseISSNValue
-	fieldNormalisers["journal"] = NormaliseTitleString
-	fieldNormalisers["organization"] = NormaliseTitleString
-	fieldNormalisers["pages"] = normalisePagesValue
-	fieldNormalisers["publisher"] = NormaliseTitleString
+	fieldNormalisers["institution"] = NormaliseInstitutionValue
+	fieldNormalisers["isbn"] = NormaliseISBNValue
+	fieldNormalisers["issn"] = NormaliseISSNValue
+	fieldNormalisers["journal"] = NormaliseJournalValue
+	fieldNormalisers["organization"] = NormaliseOrganisationValue
+	fieldNormalisers["pages"] = NormalisePagesValue
+	fieldNormalisers["publisher"] = NormalisePublisherValue
 	fieldNormalisers["series"] = NormaliseTitleString
-	fieldNormalisers["school"] = NormaliseTitleString
+	fieldNormalisers["school"] = NormaliseSchoolValue
 	fieldNormalisers["title"] = NormaliseTitleString
-	fieldNormalisers["year"] = normaliseYearValue
+	fieldNormalisers["year"] = NormaliseYearValue
 }

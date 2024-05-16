@@ -13,7 +13,7 @@
 package main
 
 import (
-	"fmt"
+	// "fmt"
 	"regexp"
 	"strings"
 )
@@ -26,7 +26,7 @@ import (
 
 // Checks if a given alias fits the desired format of [a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
 // Examples: gordijn2002e3value, overbeek2010matchmaking, ...
-func CheckPreferredKeyAliasValidity(alias string) bool {
+func PreferredKeyAliasIsValid(alias string) bool {
 	var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
 
 	return validPreferredKeyAlias.MatchString(alias)
@@ -93,44 +93,63 @@ func (l *TBibTeXLibrary) CheckNameAliasesMapping() {
 	l.CheckAliasesMapping(l.NameAliasToName, l.NameToAliases, ProgressCheckingNameAliasesMapping, WarningAliasIsName, WarningAliasTargetNameIsAlias)
 }
 
+func (l *TBibTeXLibrary) CheckJournalAliasesMapping() {
+	l.CheckAliasesMapping(l.JournalAliasToJournal, l.JournalToAliases, ProgressCheckingJournalAliasesMapping, WarningAliasIsJournal, WarningAliasTargetJournalIsAlias)
+}
+
+func (l *TBibTeXLibrary) CheckSeriesAliasesMapping() {
+	l.CheckAliasesMapping(l.SeriesAliasToSeries, l.SeriesToAliases, ProgressCheckingSeriesAliasesMapping, WarningAliasIsSeries, WarningAliasTargetSeriesIsAlias)
+}
+
+// School, Institution, Organization, Publisher, 
+
 /*
  *
- * General library/entry level checks
+ * General library/entry level checks & updates
  *
  */
 
-// Check all alias/entry pairs of the library
-func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
-	l.Progress(ProgressCheckingAliases)
+func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency() {
+	l.Progress(ProgressCheckingConsistencyOfPreferredKeyAliases)
 
-	for alias, entry := range l.KeyAliasToKey {
-		// Once we're not in legacy mode anymore, then we need to enforce l.EntryExists(entry)
-		if AllowLegacy && l.EntryExists(entry) {
-			// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced entry.
-			if strings.Index(alias, "DBLP:") == 0 {
-				dblpAlias := alias[5:]
-				dblpValue := l.EntryFieldValueity(entry, "dblp")
-				if dblpAlias != dblpValue {
-					if dblpValue == "" {
-						// If we have a dblp alias, and we have no dblp entry, we can safely add this as the dblp value for this entry.
-						l.SetEntryFieldValue(entry, "dblp", dblpAlias)
-					} else {
-						l.Warning(WarningDBLPMismatch, dblpAlias, dblpValue, entry)
+	for key := range l.EntryTypes {
+		if !l.PreferredKeyAliasExists(key) {
+			///// CLEANER
+			for alias := range l.KeyToAliases[key].Set().Elements() {
+				if PreferredKeyAliasIsValid(alias) {
+					// If we have no defined preferred alias, then we can use this one if it would be a valid preferred alias
+					l.AddPreferredKeyAlias(alias)
+				} else {
+					// If we have no defined preferred alias, and the current alias is not valid, we can still try to lower the case and see if this works.
+					loweredAlias := strings.ToLower(alias)
+
+					// We do have to make sure the new alias is not already in use, and if it is then a valid alias.
+					if !l.AliasExists(loweredAlias) && PreferredKeyAliasIsValid(loweredAlias) {
+						l.AddPreferredKeyAlias(alias)
 					}
 				}
 			}
+		}
+	}
+}
 
-			// If we have no defined preferred alias, then we can try to define one.
-			// Note: when reading the aliases from file, the first alias that fits the preferred alias requirements is selected as the preferred one.
-			// So, if an entry has no preferred alias after reading the alias file, we can only try to create one.
-			// To do so, we will actually try to test if the current alias could be coerced into a
-			if !l.PreferredKeyAliasExists(entry) {
-				loweredAlias := strings.ToLower(alias)
+// Check all key aliases of the library
+func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
+	l.Progress(ProgressCheckingConsistencyOfKeyAliases)
 
-				if !(loweredAlias == alias || loweredAlias == entry || l.AliasExists(loweredAlias)) {
-					if CheckPreferredKeyAliasValidity(loweredAlias) {
-						l.AddKeyAlias(loweredAlias, entry)
-						l.AddPreferredKeyAlias(loweredAlias)
+	for alias, key := range l.KeyAliasToKey {
+		// Once we're not in legacy mode anymore, then we need to enforce l.EntryExists(key)
+		if AllowLegacy && l.EntryExists(key) {
+			// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced key.
+			if strings.Index(alias, "DBLP:") == 0 {
+				dblpAlias := alias[5:]
+				dblpValue := l.EntryFieldValueity(key, "dblp")
+				if dblpAlias != dblpValue {
+					if dblpValue == "" {
+						// If we have a dblp alias, and we have no dblp key, we can safely add this as the dblp value for this key.
+						l.SetEntryFieldValue(key, "dblp", dblpAlias)
+					} else {
+						l.Warning(WarningDBLPMismatch, dblpAlias, dblpValue, key)
 					}
 				}
 			}
@@ -146,9 +165,10 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 //	}
 
 func (l *TBibTeXLibrary) CheckEntries() {
-	fmt.Println("KKKK")
-	//ForEachStringPair(l.entryType, func(a, b string) { fmt.Println(a, b) })
-	//for key, entryType := range l.GetEntryTypeMap() {
-	//fmt.Println(key, entryType)
-	//}
+	//	fmt.Println("KKKK")
+	//
+	// ForEachStringPair(l.entryType, func(a, b string) { fmt.Println(a, b) })
+	// for key, entryType := range l.GetEntryTypeMap() {
+	// fmt.Println(key, entryType)
+	// }
 }
