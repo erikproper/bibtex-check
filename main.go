@@ -16,30 +16,19 @@ var (
 )
 
 const (
-	BaseName                = "ErikProper"
-	BibTeXFolder            = "/Users/erikproper/BibTeX/"
-	BibFile                 = BaseName + ".bib"
-	KeyAliasesFile          = BaseName + ".keys"
-	PreferredKeyAliasesFile = BaseName + ".preferred"
-	NameAliasesFile         = BaseName + ".names"
-	JournalAliasesFile      = BaseName + ".journals"
-	PublisherAliasesFile    = BaseName + ".publishers"
-	InstitutionAliasesFile  = BaseName + ".institutions"
-	OrganisationAliasesFile = BaseName + ".organisations"
-	SchoolsAliasesFile      = BaseName + ".schools"
-	ChallengesFile          = BaseName + ".challenges"
-	MainLibrary             = "main"
+	BaseName     = "ErikProper"
+	BibTeXFolder = "/Users/erikproper/BibTeX/"
+	BibFile      = BaseName + ".bib"
+	MainLibrary  = "main"
 )
 
 func InitialiseMainLibrary() bool {
 	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting, MainLibrary, BibTeXFolder)
+	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
-	Library.ReadKeyAliases(KeyAliasesFile)
-	Library.ReadPreferredKeyAliases(PreferredKeyAliasesFile)
-	Library.ReadNameAliases(NameAliasesFile)
-	Library.ReadJournalAliases(JournalAliasesFile)
-	Library.ReadChallenges(ChallengesFile)
+	Library.ReadAliasesFiles()
+	Library.CheckAliasesMappings()
+	Library.ReadChallenges()
 
 	return true
 }
@@ -85,11 +74,9 @@ func main() {
 
 			OldLibrary := TBibTeXLibrary{}
 			OldLibrary.Progress("Reading legacy library")
-			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder)
+			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder, BaseName)
 			OldLibrary.legacyMode = true
-			OldLibrary.ReadKeyAliases(KeyAliasesFile)
-			OldLibrary.ReadNameAliases(NameAliasesFile)
-			OldLibrary.ReadJournalAliases(JournalAliasesFile)
+			OldLibrary.ReadAliasesFiles()
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)

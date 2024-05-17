@@ -68,7 +68,7 @@ func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
  *
  */
 
-func (l *TBibTeXLibrary) CheckAliasesMapping(aliasMap TStringMap, inverseMap TStringSetMap, progress, warningUsedAsAlias, warningTargetIsAlias string) {
+func (l *TBibTeXLibrary) checkAliasesMapping(aliasMap TStringMap, inverseMap TStringSetMap, progress, warningUsedAsAlias, warningTargetIsAlias string) {
 	l.Progress(progress)
 
 	// Note: when we find an issue, we will not immediately stop as we want to list all issues.
@@ -85,23 +85,16 @@ func (l *TBibTeXLibrary) CheckAliasesMapping(aliasMap TStringMap, inverseMap TSt
 	}
 }
 
-func (l *TBibTeXLibrary) CheckKeyAliasesMapping() {
-	l.CheckAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, ProgressCheckingKeyAliasesMapping, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+func (l *TBibTeXLibrary) CheckAliasesMappings() {
+	l.checkAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, ProgressCheckingKeyAliasesMapping, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+	l.checkAliasesMapping(l.NameAliasToName, l.NameToAliases, ProgressCheckingNameAliasesMapping, WarningAliasIsName, WarningAliasTargetNameIsAlias)
+	l.checkAliasesMapping(l.JournalAliasToJournal, l.JournalToAliases, ProgressCheckingJournalAliasesMapping, WarningAliasIsJournal, WarningAliasTargetJournalIsAlias)
+	l.checkAliasesMapping(l.SchoolAliasToSchool, l.SchoolToAliases, ProgressCheckingSchoolAliasesMapping, WarningAliasIsSchool, WarningAliasTargetSchoolIsAlias)
+	l.checkAliasesMapping(l.InstitutionAliasToInstitution, l.InstitutionToAliases, ProgressCheckingInstitutionAliasesMapping, WarningAliasIsInstitution, WarningAliasTargetInstitutionIsAlias)
+	l.checkAliasesMapping(l.OrganisationAliasToOrganisation, l.OrganisationToAliases, ProgressCheckingOrganisationAliasesMapping, WarningAliasIsOrganisation, WarningAliasTargetOrganisationIsAlias)
+	l.checkAliasesMapping(l.SeriesAliasToSeries, l.SeriesToAliases, ProgressCheckingSeriesAliasesMapping, WarningAliasIsSeries, WarningAliasTargetSeriesIsAlias)
+	l.checkAliasesMapping(l.PublisherAliasToPublisher, l.PublisherToAliases, ProgressCheckingPublisherAliasesMapping, WarningAliasIsPublisher, WarningAliasTargetPublisherIsAlias)
 }
-
-func (l *TBibTeXLibrary) CheckNameAliasesMapping() {
-	l.CheckAliasesMapping(l.NameAliasToName, l.NameToAliases, ProgressCheckingNameAliasesMapping, WarningAliasIsName, WarningAliasTargetNameIsAlias)
-}
-
-func (l *TBibTeXLibrary) CheckJournalAliasesMapping() {
-	l.CheckAliasesMapping(l.JournalAliasToJournal, l.JournalToAliases, ProgressCheckingJournalAliasesMapping, WarningAliasIsJournal, WarningAliasTargetJournalIsAlias)
-}
-
-func (l *TBibTeXLibrary) CheckSeriesAliasesMapping() {
-	l.CheckAliasesMapping(l.SeriesAliasToSeries, l.SeriesToAliases, ProgressCheckingSeriesAliasesMapping, WarningAliasIsSeries, WarningAliasTargetSeriesIsAlias)
-}
-
-// School, Institution, Organization, Publisher, 
 
 /*
  *
@@ -125,7 +118,7 @@ func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency() {
 
 					// We do have to make sure the new alias is not already in use, and if it is then a valid alias.
 					if !l.AliasExists(loweredAlias) && PreferredKeyAliasIsValid(loweredAlias) {
-						l.AddPreferredKeyAlias(alias)
+						l.AddPreferredKeyAlias(loweredAlias)
 					}
 				}
 			}

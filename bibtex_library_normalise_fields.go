@@ -360,7 +360,7 @@ func init() {
 	fieldNormalisers["organization"] = NormaliseOrganisationValue
 	fieldNormalisers["pages"] = NormalisePagesValue
 	fieldNormalisers["publisher"] = NormalisePublisherValue
-	fieldNormalisers["series"] = NormaliseTitleString
+	fieldNormalisers["series"] = NormaliseSeriesValue
 	fieldNormalisers["school"] = NormaliseSchoolValue
 	fieldNormalisers["title"] = NormaliseTitleString
 	fieldNormalisers["year"] = NormaliseYearValue

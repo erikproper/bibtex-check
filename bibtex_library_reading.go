@@ -27,8 +27,8 @@ func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
 }
 
 // Generic function to read library related files
-func (l *TBibTeXLibrary) readFile(filePath, message string, reading func(string)) bool {
-	FullFilePath := l.FilesRoot + filePath
+func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading func(string)) bool {
+	FullFilePath := l.FilesRoot + l.BaseName + fileExtension
 
 	l.Progress(message, FullFilePath)
 
@@ -46,55 +46,59 @@ func (l *TBibTeXLibrary) readFile(filePath, message string, reading func(string)
 	return scanner.Err() == nil
 }
 
-// Read preferred key aliases file
-func (l *TBibTeXLibrary) ReadPreferredKeyAliases(filePath string) {
-	l.PreferredKeyAliasesFilePath = filePath
+func (l *TBibTeXLibrary) readAddressMapping(fileExtension, progress string, addMapping func(alias, target string)) {
+	l.readLibraryFile(fileExtension, progress, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
+			l.Warning(WarningAddressesLineTooShort, line)
+			return
+		}
 
-	l.readFile(filePath, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
+		addMapping(elements[0], elements[1])
+	})
 }
 
-// General function to read aliases files
+// General function to read aliases mapping files
 // These files contain two strings per line, separated by a tab, where the second string is an alias for the latter.
-func (l *TBibTeXLibrary) readAliasesMapping(filePath, progress string, addMapping func(alias, target string), checkAliasesMapping func()) {
-	l.readFile(filePath, progress, func(line string) {
+// The addMapping is needed as a function, as this involves different implementations per field
+func (l *TBibTeXLibrary) readAliasesMapping(fileExtension, progress string, addMapping func(alias, target string, aliasMap *TStringMap, inverseMap *TStringSetMap), aliasMap *TStringMap, inverseMap *TStringSetMap) {
+	l.readLibraryFile(fileExtension, progress, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 2 {
 			l.Warning(WarningAliasesLineTooShort, line)
 			return
 		}
 
-		addMapping(elements[1], elements[0])
+		addMapping(elements[1], elements[0], aliasMap, inverseMap)
 	})
-
-	checkAliasesMapping()
 }
 
-// Read key aliases file
-func (l *TBibTeXLibrary) ReadKeyAliases(filePath string) {
-	l.KeyAliasesFilePath = filePath
+// Read aliases files
+func (l *TBibTeXLibrary) ReadAliasesFiles() {
+	l.JournalAliasesFilePath = l.BaseName + JournalAliasesFileExtension
+	l.PreferredKeyAliasesFilePath = l.BaseName + PreferredKeyAliasesFileExtension
+	l.NameAliasesFilePath = l.BaseName + NameAliasesFileExtension
+	l.KeyAliasesFilePath = l.BaseName + KeyAliasesFileExtension
 
-	l.readAliasesMapping(filePath, ProgressReadingKeyAliasesFile, l.AddKeyAlias, l.CheckKeyAliasesMapping)
+	l.readAliasesMapping(KeyAliasesFileExtension, ProgressReadingKeyAliasesFile, l.AddAliasForKey, &l.KeyAliasToKey, &l.KeyToAliases)
+	l.readAliasesMapping(NameAliasesFileExtension, ProgressReadingNameAliasesFile, l.AddNameAlias, &l.NameAliasToName, &l.NameToAliases)
+	l.readAliasesMapping(JournalAliasesFileExtension, ProgressReadingJournalAliasesFile, l.AddAliasForTextString, &l.JournalAliasToJournal, &l.JournalToAliases)
+	l.readAliasesMapping(SeriesAliasesFileExtension, ProgressReadingSeriesAliasesFile, l.AddAliasForTextString, &l.SeriesAliasToSeries, &l.SeriesToAliases)
+	l.readAliasesMapping(SchoolAliasesFileExtension, ProgressReadingSchoolAliasesFile, l.AddAliasForTextString, &l.SchoolAliasToSchool, &l.SchoolToAliases)
+	l.readAliasesMapping(InstitutionAliasesFileExtension, ProgressReadingInstitutionAliasesFile, l.AddAliasForTextString, &l.InstitutionAliasToInstitution, &l.InstitutionToAliases)
+	l.readAliasesMapping(OrganisationAliasesFileExtension, ProgressReadingOrganisationAliasesFile, l.AddAliasForTextString, &l.OrganisationAliasToOrganisation, &l.OrganisationToAliases)
+	l.readAliasesMapping(PublisherAliasesFileExtension, ProgressReadingPublisherAliasesFile, l.AddAliasForTextString, &l.PublisherAliasToPublisher, &l.PublisherToAliases)
+	
+	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
+	
+	l.readAddressMapping(AddressesFileExtension, ProgressReadingAddressesFile, l.AddOrganisationalAddress)
 }
 
-// Read name aliases files
-func (l *TBibTeXLibrary) ReadNameAliases(filePath string) {
-	l.NameAliasesFilePath = filePath
+// Read challenge file
+func (l *TBibTeXLibrary) ReadChallenges() {
+	l.ChallengesFilePath = l.BaseName + ChallengesFileExtension
 
-	l.readAliasesMapping(filePath, ProgressReadingNameAliasesFile, l.AddAliasForName, l.CheckNameAliasesMapping)
-}
-
-// Read journal aliases files
-func (l *TBibTeXLibrary) ReadJournalAliases(filePath string) {
-	l.JournalAliasesFilePath = filePath
-
-	l.readAliasesMapping(filePath, ProgressReadingJournalAliasesFile, l.AddAliasForJournal, l.CheckJournalAliasesMapping)
-}
-
-// Read challenge files
-func (l *TBibTeXLibrary) ReadChallenges(filePath string) {
-	l.ChallengesFilePath = filePath
-
-	l.readFile(l.ChallengesFilePath, ProgressReadingChallengesFile, func(line string) {
+	l.readLibraryFile(ChallengesFileExtension, ProgressReadingChallengesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 4 {
 			l.Warning(WarningChallengeLineTooShort, line)
@@ -106,10 +110,10 @@ func (l *TBibTeXLibrary) ReadChallenges(filePath string) {
 		winner := l.NormaliseFieldValue(field, elements[3])
 
 		// We do normalise the challengers, but want to ignore error messages.
-		// Challenged values may actually have errors ...
+		// The challenged values may actually have errors ...
 		silenced := l.InteractionIsOff()
 		l.SetInteractionOff()
-		/**/ challenger := l.NormaliseFieldValue(field, elements[2])
+	    challenger := l.NormaliseFieldValue(field, elements[2])
 		l.SetInteraction(silenced)
 
 		l.AddChallengeWinner(key, field, challenger, winner)

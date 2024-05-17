@@ -92,7 +92,7 @@ func (l *TBibTeXLibrary) writePreferredKeyAliases(aliasWriter *bufio.Writer) {
 
 // Write the preferred key aliases from this library, to a file
 func (l *TBibTeXLibrary) WritePreferredKeyAliases() bool {
-	return l.writeFile(PreferredKeyAliasesFile, ProgressWritingPreferredKeyAliasesFile, l.writePreferredKeyAliases)
+	return l.writeFile(l.PreferredKeyAliasesFilePath, ProgressWritingPreferredKeyAliasesFile, l.writePreferredKeyAliases)
 }
 
 // Write the aliases from this library, to a bufio.bWriter buffer

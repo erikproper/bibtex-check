@@ -15,6 +15,7 @@ package main
 import (
 	"fmt"
 	"time"
+	"strings"
 )
 
 /*
@@ -28,6 +29,7 @@ type (
 	TBibTeXLibrary struct {
 		name                            string                 // Name of the library
 		FilesRoot                       string                 // Path to folder with library related files
+		BaseName                        string                 // BaseName of the library related files
 		BibFilePath                     string                 // Relative path to the BibTeX file
 		PreferredKeyAliasesFilePath     string                 // Relative path to the preferred key aliases file
 		KeyAliasesFilePath              string                 // Relative path to the key aliases file
@@ -73,7 +75,7 @@ type (
 )
 
 // Initialise a library
-func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot string) {
+func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, baseName string) {
 	l.TInteraction = reporting
 	l.name = name
 	l.Progress(ProgressInitialiseLibrary, l.name)
@@ -87,6 +89,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot stri
 	l.TBibTeXTeX.library = l
 
 	l.FilesRoot = filesRoot
+	l.BaseName = baseName
 	l.BibFilePath = ""
 	l.KeyAliasesFilePath = ""
 	l.NameAliasesFilePath = ""
@@ -180,97 +183,98 @@ func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
 	}
 }
 
-// Check validity of alias and target
-func (l *TBibTeXLibrary) NeedToAssignAlias(alias, target string, aliasMap TStringMap, warningAmbiguousAlias string) bool {
+// Add a new alias
+func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
 	// Neither alias, nor target should be empty
-	if alias == "" || target == "" {
-		return false
-	}
-
-	// No need to alias oneself
-	if alias == target {
-		return false
-	}
-
-	// Check for ambiguity of aliases
-	if currentTarget, aliasIsAlreadyAliased := aliasMap[alias]; aliasIsAlreadyAliased {
-		if currentTarget != target {
-			l.Warning(warningAmbiguousAlias, alias, currentTarget, target)
-		}
-
-		return false
-	}
-
-	return true
-}
-
-// The low level addition of the alias for a key.
-// Also takes care of adding the alias the inverse mapping.
-func (l *TBibTeXLibrary) addKeyAlias(alias, key string) {
-	// Set the actual mapping
-	l.KeyAliasToKey.SetValueForStringMap(alias, key)
-
-	// Also create update the inverse mapping
-	l.KeyToAliases.AddValueToStringSetMap(key, alias)
-}
-
-// Adds an alias to a key in the current library.
-// If allowRemap is true then we allow for a situation where the alias is actually a (former) key.
-// In the latter situation, we would need to update the KeyToAliases to that former key as well.
-// Note: The present complexity is caused due to the legacy libraries. The present mapping file refers to keys that are not yet in the main library.
-// Once that is solved, the checks here can be simpler:
-// - Aliasses cannot be keys
-// - Keys must be actual keys of entries
-// - The latter check can be deferred until after (actually) reading the library
-// - The latter might not always be necessary. E.g. when simply doing a "-alias" call
-func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
-	if !l.NeedToAssignAlias(alias, key, l.KeyAliasToKey, WarningAmbiguousKeyAlias) {
+	if alias == "" || original == "" {
 		return
 	}
 
-	if _, aliasIsUsedAsKeyForAlias := l.KeyToAliases[alias]; aliasIsUsedAsKeyForAlias && AllowLegacy {
+	// No need to alias oneself
+	if alias == original {
+		return
+	}
+
+	// Check for ambiguity of aliases
+	if currentOriginal, aliasIsAlreadyAliased := (*aliasMap)[alias]; aliasIsAlreadyAliased {
+		if currentOriginal != original {
+			l.Warning(WarningAmbiguousAlias, alias, currentOriginal, original)
+			
+			return
+		}
+	}
+
+	// Set the actual mapping
+	aliasMap.SetValueForStringMap(alias, original)
+
+	// Also create update the inverse mapping
+	inverseMap.AddValueToStringSetMap(original, alias)
+}
+
+// Help function 
+func (l *TBibTeXLibrary) MaybeAddReorderedName(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
+	aliasSplit := strings.Split(alias, ",")
+
+	if len(aliasSplit) == 3 {
+		reorderedAlias := strings.TrimSpace(aliasSplit[2] + " "+ aliasSplit[0] + strings.TrimRight(aliasSplit[1]," .") + ".")
+		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap)
+	} else if len(aliasSplit) == 2 {
+		reorderedAlias :=  strings.TrimSpace(aliasSplit[1] + " " + aliasSplit[0])
+		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap)
+	}
+}
+
+// Add a new name alias
+func (l *TBibTeXLibrary) AddNameAlias(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
+	l.MaybeAddReorderedName(name, name, aliasMap, inverseMap)
+	l.MaybeAddReorderedName(alias, name, aliasMap, inverseMap)
+	
+	l.AddAlias(alias, name, aliasMap, inverseMap)
+}
+
+// Add a new text string alias
+func (l *TBibTeXLibrary) AddAliasForTextString(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
+	l.AddAlias(NormaliseTitleString(l, alias), NormaliseTitleString(l,original), aliasMap, inverseMap)
+}
+
+// Add a new key alias (for use in generic read function)
+func (l *TBibTeXLibrary) AddAliasForKey(alias, key string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
+	if _, aliasIsUsedAsKeyForAlias := (*inverseMap)[alias]; aliasIsUsedAsKeyForAlias && AllowLegacy {
 		if AllowLegacy { // After the migration, this can only happen when merging two entries.
-			for old_alias := range l.KeyToAliases[alias].Set().Elements() {
-				l.addKeyAlias(old_alias, key)
+			for old_alias := range (*inverseMap)[alias].Set().Elements() {
+				l.AddAlias(old_alias, key, aliasMap, inverseMap)
 				l.moveKeyAliasPreference(old_alias, alias, key)
 			}
 
-			l.addKeyAlias(alias, key)
+			l.AddAlias(alias, key, aliasMap, inverseMap)
 			delete(l.KeyToAliases, alias)
 		}
 	}
 
-	l.addKeyAlias(alias, key)
+	l.AddAlias(alias, key, aliasMap, inverseMap)
 }
 
-// Register a new name (of an author/editor) alias
-func (l *TBibTeXLibrary) AddAliasForName(alias, name string) {
-	if !l.NeedToAssignAlias(alias, name, l.NameAliasToName, WarningAmbiguousNameAlias) {
-		return
+// Add a new key alias
+func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
+	l.AddAliasForKey(alias, key, &l.KeyAliasToKey, &l.KeyToAliases)
+}
+
+func (l *TBibTeXLibrary) AddOrganisationalAddress(organisationRaw, addressRaw string) {
+	organisation := NormaliseTitleString(l, organisationRaw)
+	address := NormaliseTitleString(l, addressRaw)
+	
+	if currentAddress, organisationHasAddress := l.OrganisationalAddresses[organisation]; organisationHasAddress {
+		if currentAddress != address {
+			l.Warning(WarningAmbiguousAddress, organisation, currentAddress, address)
+			
+			return
+		}
 	}
 
 	// Set the actual mapping
-	l.NameAliasToName.SetValueForStringMap(alias, name)
-
-	// Also create update the inverse mapping
-	l.NameToAliases.AddValueToStringSetMap(name, alias)
+	l.OrganisationalAddresses.SetValueForStringMap(organisation, address)
 }
 
-// Register a new journal alias
-func (l *TBibTeXLibrary) AddAliasForJournal(aliasRaw, journalRaw string) {
-	alias := NormaliseTitleString(l, aliasRaw)
-	journal := NormaliseTitleString(l, journalRaw)
-
-	if !l.NeedToAssignAlias(alias, journal, l.JournalAliasToJournal, WarningAmbiguousJournalAlias) {
-		return
-	}
-
-	// Set the actual mapping
-	l.JournalAliasToJournal.SetValueForStringMap(alias, journal)
-
-	// Also create update the inverse mapping
-	l.JournalToAliases.AddValueToStringSetMap(journal, alias)
-}
 
 /*
  *
