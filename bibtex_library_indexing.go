@@ -80,6 +80,8 @@ func (l *TBibTeXLibrary) MaybeAddToIndex(key, field, value string) bool {
 }
 
 func (l *TBibTeXLibrary) CreateTitleIndex() {
+	l.Progress("Creating title index")
+	
 	for key := range l.EntryTypes {
 		l.MaybeAddToIndex(key, "title", l.EntryFieldValueity(key, "title"))
 	} 
