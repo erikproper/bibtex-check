@@ -33,53 +33,13 @@ func InitialiseMainLibrary() bool {
 	return true
 }
 
-func StringSignature(input string) string {
-	cleaned := input
-
-	cleaned = strings.ReplaceAll(cleaned, "\\c ", "")
-	cleaned = strings.ReplaceAll(cleaned, "\\k ", "")
-	cleaned = strings.ReplaceAll(cleaned, "\\v ", "")
-	cleaned = strings.ReplaceAll(cleaned, "\\r ", "")
-	cleaned = strings.ReplaceAll(cleaned, "\\H ", "")
-	cleaned = strings.ReplaceAll(cleaned, "\\AA", "aa")
-	cleaned = strings.ReplaceAll(cleaned, "\\AE", "ae")
-	cleaned = strings.ReplaceAll(cleaned, "\\OE", "oe")
-	cleaned = strings.ReplaceAll(cleaned, "\\aa", "aa")
-	cleaned = strings.ReplaceAll(cleaned, "\\ae", "ae")
-	cleaned = strings.ReplaceAll(cleaned, "\\oe", "oe")
-	cleaned = strings.ReplaceAll(cleaned, "\\i", "i")
-	cleaned = strings.ReplaceAll(cleaned, "\\ss", "s")
-	cleaned = strings.ReplaceAll(cleaned, "\\&", "&")
-	cleaned = strings.ReplaceAll(cleaned, "{", "")
-	cleaned = strings.ReplaceAll(cleaned, "}", "")
-	cleaned = strings.ReplaceAll(cleaned, "~", "")
-	cleaned = strings.ReplaceAll(cleaned, ".", "")
-	cleaned = strings.ReplaceAll(cleaned, ",", "")
-	cleaned = strings.ReplaceAll(cleaned, "\"", "")
-	cleaned = strings.ReplaceAll(cleaned, "'", "")
-	cleaned = strings.ReplaceAll(cleaned, "`", "")
-	cleaned = strings.ReplaceAll(cleaned, "^", "")
-	cleaned = strings.ReplaceAll(cleaned, "*", "")
-	cleaned = strings.ReplaceAll(cleaned, "=", "")
-	cleaned = strings.ReplaceAll(cleaned, "!", "")
-	cleaned = strings.ReplaceAll(cleaned, "?", "")
-	cleaned = strings.ReplaceAll(cleaned, "_", "")
-	cleaned = strings.ReplaceAll(cleaned, "-", "")
-	cleaned = strings.ReplaceAll(cleaned, ":", "")
-	cleaned = strings.ReplaceAll(cleaned, ";", "")
-	cleaned = strings.ReplaceAll(cleaned, "/", "")
-	cleaned = strings.ReplaceAll(cleaned, " ", "")
-	cleaned = strings.ReplaceAll(cleaned, "\\", "")
-	cleaned = strings.ToLower(cleaned)
-
-	return cleaned
-}
-
 func OpenMainBibFile() bool {
 	if Library.ReadBib(BibFile) {
 		Library.ReportLibrarySize()
 		Library.CheckKeyAliasesConsistency()
 		Library.CheckEntries()
+		
+		Library.CreateTitleIndex()
 
 		return true
 	} else {

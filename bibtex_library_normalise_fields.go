@@ -19,6 +19,8 @@ import (
 	// "fmt"
 )
 
+/////// Do we really need the library as parameter?
+
 // Definition of the map for field Normalisers
 type TFieldNormalisers = map[string]func(*TBibTeXLibrary, string) string
 

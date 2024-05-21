@@ -1,120 +1,91 @@
 /*
  *
- * Module: bibtex_library_writing
+ * Module: bibtex_library_indexing
  *
- * This module is adds the functionality (for TBibTeXLibrary) to write out BibTeX and associated files
+ * This module is adds the functionality (for TBibTeXLibrary) related to the indexing of entries based on the fields
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
- * Version of: 24.04.2024
+ * Version of: 21.05.2024
  *
  */
 
 package main
 
 import (
-	"bufio"
-	"os"
+	"strings"
+//	"bufio"
+//	"os"
 )
 
-// Generic function to write library related files
-func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing func(*bufio.Writer)) bool {
-	FullFilePath := l.FilesRoot + l.BaseName + fileExtension
+// Definition of the map for field Normalisers
+type TFieldIndexers = map[string]func(string) string
 
-	l.Progress(message, FullFilePath)
+var fieldIndexers TFieldIndexers
 
-	BackupFile(FullFilePath)
+func TeXStringIndexer(input string) string {
+	cleaned := input
 
-	file, err := os.Create(FullFilePath)
-	if err != nil {
-		return false
+	cleaned = strings.ReplaceAll(cleaned, "\\c ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\k ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\v ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\r ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\H ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\AA", "aa")
+	cleaned = strings.ReplaceAll(cleaned, "\\AE", "ae")
+	cleaned = strings.ReplaceAll(cleaned, "\\OE", "oe")
+	cleaned = strings.ReplaceAll(cleaned, "\\aa", "aa")
+	cleaned = strings.ReplaceAll(cleaned, "\\ae", "ae")
+	cleaned = strings.ReplaceAll(cleaned, "\\oe", "oe")
+	cleaned = strings.ReplaceAll(cleaned, "\\i", "i")
+	cleaned = strings.ReplaceAll(cleaned, "\\ss", "s")
+	cleaned = strings.ReplaceAll(cleaned, "\\&", "&")
+	cleaned = strings.ReplaceAll(cleaned, "{", "")
+	cleaned = strings.ReplaceAll(cleaned, "}", "")
+	cleaned = strings.ReplaceAll(cleaned, "~", "")
+	cleaned = strings.ReplaceAll(cleaned, ".", "")
+	cleaned = strings.ReplaceAll(cleaned, ",", "")
+	cleaned = strings.ReplaceAll(cleaned, "\"", "")
+	cleaned = strings.ReplaceAll(cleaned, "'", "")
+	cleaned = strings.ReplaceAll(cleaned, "`", "")
+	cleaned = strings.ReplaceAll(cleaned, "^", "")
+	cleaned = strings.ReplaceAll(cleaned, "*", "")
+	cleaned = strings.ReplaceAll(cleaned, "=", "")
+	cleaned = strings.ReplaceAll(cleaned, "!", "")
+	cleaned = strings.ReplaceAll(cleaned, "?", "")
+	cleaned = strings.ReplaceAll(cleaned, "_", "")
+	cleaned = strings.ReplaceAll(cleaned, "-", "")
+	cleaned = strings.ReplaceAll(cleaned, ":", "")
+	cleaned = strings.ReplaceAll(cleaned, ";", "")
+	cleaned = strings.ReplaceAll(cleaned, "/", "")
+	cleaned = strings.ReplaceAll(cleaned, " ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\", "")
+	cleaned = strings.ToLower(cleaned)
+
+	return cleaned
+}
+
+func Index(field, value string) string {
+	if indexer, indexerExists := fieldIndexers[field]; indexerExists {
+		return indexer(value)
+	} else {
+		return value
 	}
-	defer file.Close()
+}
 
-	writer := bufio.NewWriter(file)
-	writing(writer)
-	writer.Flush()
-
+func (l *TBibTeXLibrary) MaybeAddToIndex(key, field, value string) bool {
+	l.FieldsIndex.AddValueToStringPairSetMap(Index(field, value), field, key)
+	
 	return true
 }
 
-// Function to write the BibTeX content of the library to a bufio.bWriter buffer
-// Notes:
-// - As we ignore preambles, these are not written.
-// - When we start managing the groups (of keys) the way Bibdesk does, we need to ensure that their embedded as an XML structure embedded in a comment, is updated.
-func (l *TBibTeXLibrary) WriteBibTeXFile() {
-	l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
-		// Write out the entries and their fields
-		for entry := range l.EntryTypes {
-			bibWriter.WriteString(l.EntryString(entry))
-			bibWriter.WriteString("\n")
-		}
-
-		// Write out the comments
-		for _, comment := range l.Comments {
-			bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
-			bibWriter.WriteString("\n")
-		}
-	})
+func (l *TBibTeXLibrary) CreateTitleIndex() {
+	for key := range l.EntryTypes {
+		l.MaybeAddToIndex(key, "title", l.EntryFieldValueity(key, "title"))
+	} 
 }
 
-// Write the challenges and winners for field values, of this library, to a file
-func (l *TBibTeXLibrary) WriteChallenges() {
-	l.writeLibraryFile(ChallengesFileExtension, ProgressWritingChallengesFile, func(challengeWriter *bufio.Writer) {
-		for key, fieldChallenges := range l.ChallengeWinners {
-			if l.EntryExists(key) {
-				for field, challenges := range fieldChallenges {
-					for challenger, winner := range challenges {
-						if challenger != winner {
-							challengeWriter.WriteString(key + "\t" + field + "\t" + challenger + "\t" + winner + "\n")
-						}
-					}
-				}
-			}
-		}
-	})
-}
-
-// Write the preferred key aliases from this library, to a bufio.bWriter buffer
-func (l *TBibTeXLibrary) writePreferredKeyAliases(aliasWriter *bufio.Writer) {
-	for key, alias := range Library.PreferredKeyAliases {
-		if key != alias && AllowLegacy {
-			aliasWriter.WriteString(alias + "\n")
-		}
-	}
-}
-
-// Write alias/original pairs to a bufio.bWriter buffer
-func (l *TBibTeXLibrary) writeAliasesMapping(fileExtension, progress string, aliasMap TStringMap) {
-	l.writeLibraryFile(fileExtension, progress, func(aliasWriter *bufio.Writer) {
-		for alias, original := range aliasMap {
-			if alias != original {
-				aliasWriter.WriteString(original + "\t" + alias + "\n")
-			}
-		}
-	})
-}
-
-// Write alias/original pairs to a bufio.bWriter buffer
-func (l *TBibTeXLibrary) writeAddressMapping(fileExtension, progress string, aliasMap TStringMap) {
-	l.writeLibraryFile(fileExtension, progress, func(aliasWriter *bufio.Writer) {
-		for organisation, address := range aliasMap {
-			aliasWriter.WriteString(organisation + "\t" + address + "\n")
-		}
-	})
-}
-
-func (l *TBibTeXLibrary) WriteAliasesFiles() {
-	l.writeAliasesMapping(KeyAliasesFileExtension, ProgressWritingKeyAliasesFile, l.KeyAliasToKey)
-	l.writeAliasesMapping(NameAliasesFileExtension, ProgressWritingNameAliasesFile, l.NameAliasToName)
-	l.writeAliasesMapping(JournalAliasesFileExtension, ProgressWritingJournalAliasesFile, l.JournalAliasToJournal)
-	l.writeAliasesMapping(SeriesAliasesFileExtension, ProgressWritingSeriesAliasesFile, l.SeriesAliasToSeries)
-	l.writeAliasesMapping(SchoolAliasesFileExtension, ProgressWritingSchoolAliasesFile, l.SchoolAliasToSchool)
-	l.writeAliasesMapping(InstitutionAliasesFileExtension, ProgressWritingInstitutionAliasesFile, l.InstitutionAliasToInstitution)
-	l.writeAliasesMapping(OrganisationAliasesFileExtension, ProgressWritingOrganisationAliasesFile, l.OrganisationAliasToOrganisation)
-	l.writeAliasesMapping(PublisherAliasesFileExtension, ProgressWritingPublisherAliasesFile, l.PublisherAliasToPublisher)
-
-	l.writeLibraryFile(PreferredKeyAliasesFileExtension, ProgressWritingPreferredKeyAliasesFile, l.writePreferredKeyAliases)
-
-	l.writeAddressMapping(AddressesFileExtension, ProgressWritingAddressesFile, l.OrganisationalAddresses)
+func init () {
+	fieldIndexers = TFieldIndexers{}
+	fieldIndexers["title"] = TeXStringIndexer
 }

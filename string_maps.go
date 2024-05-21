@@ -17,6 +17,7 @@ type (
 	TStringStringMap       map[string]TStringMap
 	TStringStringStringMap map[string]TStringStringMap
 	TStringSetMap          map[string]TStringSet
+	TStringStringSetMap    map[string]TStringSetMap
 )
 
 /*
@@ -187,4 +188,23 @@ func (m *TStringSetMap) AddValueToStringSetMap(i, v string) {
 	}
 
 	(*m)[i].Set().Add(v)
+}
+
+// Safely add an element to a string set map
+func (m *TStringStringSetMap) AddValueToStringPairSetMap(i, j, v string) {
+	if (*m) == nil {
+		(*m) = TStringStringSetMap{}
+	}
+
+	_, hasMap := (*m)[i]
+	if !hasMap {
+		(*m)[i] = TStringSetMap{}
+	}
+
+	_, hasSet := (*m)[i][j]
+	if !hasSet {
+		(*m)[i][j] = TStringSetNew()
+	}
+
+	(*m)[i][j].Set().Add(v)
 }
