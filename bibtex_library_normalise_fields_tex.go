@@ -31,22 +31,30 @@ type TBibTeXTeX struct {
 }
 
 func (t *TBibTeXTeX) TeXSpacety() bool {
-	for t.ThisCharacterWasIn(TeXSpaces) {
-		t.inWord = false
+	if t.ThisCharacterWasIn(TeXSpaces) {
+		for t.ThisCharacterWasIn(TeXSpaces) {
+			t.inWord = false
+		}
+
+		return true
 	}
 
-	return true
+	return !t.EndOfStream()
 }
 
 func (t *TBibTeXTeX) CollectTeXSpacety(s *string) bool {
 	if t.ThisCharacterWasIn(TeXSpaces) {
 		*s += " "
+
+		t.TeXSpacety()
+
+		return true
 	}
 
-	return t.TeXSpacety()
+	return !t.EndOfStream()
 }
 
-func (t *TBibTeXTeX) CollectTokenSequence(tokens *string, isOfferedProtection bool, needsProtection *bool) bool {
+func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection bool, needsProtection *bool) {
 	token := ""
 	spacety := ""
 	sequenceNeedsProtection := false
@@ -54,8 +62,9 @@ func (t *TBibTeXTeX) CollectTokenSequence(tokens *string, isOfferedProtection bo
 
 	*needsProtection = false
 
-	for !t.EndOfStream() && !t.ThisCharacterIs('}') && t.CollectTeXSpacety(&spacety) &&
-		/**/ t.CollectTeXToken(&token, isOfferedProtection, &sequenceNeedsProtection, &sequenceNextIsFirstTokenOfSubTitle) {
+	for !t.ThisCharacterIs('}') &&
+		/**/ t.CollectTeXSpacety(&spacety) &&
+		/*  */ t.CollectTeXToken(&token, isOfferedProtection, &sequenceNeedsProtection, &sequenceNextIsFirstTokenOfSubTitle) {
 		if token != "" {
 			if sequenceNeedsProtection {
 				*tokens += spacety + "{" + token + "}"
@@ -68,70 +77,85 @@ func (t *TBibTeXTeX) CollectTokenSequence(tokens *string, isOfferedProtection bo
 		token = ""
 		spacety = ""
 	}
-
-	return true
 }
 
 func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool, needsProtection, nextIsFirstTokenOfSubTitle *bool) bool {
-	switch {
+	if t.EndOfStream() {
+		return false
+	} else {
+		switch {
 
-	case t.ThisCharacterWas('{'):
-		groupElements := ""
-		groupNeedsProtection := false
+		case t.ThisCharacterWas('{'):
+			groupElements := ""
+			groupNeedsProtection := false
 
-		t.CollectTokenSequence(&groupElements, true, &groupNeedsProtection)
+			t.CollectTokenSequencety(&groupElements, true, &groupNeedsProtection)
 
-		if groupElements != "" {
-			*s += "{" + groupElements + "}"
+			if groupElements != "" {
+				*s += "{" + groupElements + "}"
+			}
+
+			*needsProtection = false
+
+			t.ThisCharacterWas('}')
+
+			return true
+
+		case t.CollectCharacterThatIsIn(UppercaseLetters, s):
+			if !*needsProtection && !isOfferedProtection && (t.inWord || *nextIsFirstTokenOfSubTitle) {
+				*needsProtection = true
+			}
+			t.inWord = true
+
+			t.NextCharacter()
+
+			return true
+
+		case t.CollectCharacterThatWasIn(WordLetters, s):
+			t.inWord = true
+
+			return true
+
+		case t.CollectCharacterThatWas('\\', s):
+			*needsProtection = !isOfferedProtection && !t.ThisCharacterIsIn(TeXNoProtect)
+			t.inWord = false
+
+			t.CollectCharacterThatWasThere(s)
+
+			return true
+
+		default:
+			return t.CollectCharacterThatWasNotIn(TeXDelimiters, s)
+
 		}
-
-		*needsProtection = false
-
-		return t.ThisCharacterWas('}')
-
-	case t.CollectCharacterThatIsIn(UppercaseLetters, s):
-		if !*needsProtection && !isOfferedProtection && (t.inWord || *nextIsFirstTokenOfSubTitle) {
-			*needsProtection = true
-		}
-		t.inWord = true
-
-		return t.NextCharacter()
-
-	case t.CollectCharacterThatWasIn(WordLetters, s):
-		t.inWord = true
-
-		return true
-
-	case t.CollectCharacterThatWas('\\', s):
-		*needsProtection = !isOfferedProtection && !t.ThisCharacterIsIn(TeXNoProtect)
-		t.inWord = false
-
-		return t.CollectCharacterThatWasThere(s)
 	}
-
-	return t.CollectCharacterThatWasNotIn(TeXDelimiters, s)
 }
 
 func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, needsProtection, nextIsFirstTokenOfSubTitle *bool) bool {
 	t.inWord = false
 
-	if t.ThisCharacterIsIn(TeXSingletons) {
-		t.inWord = false
-
-		if t.CollectCharacterThatWasIn(TeXSubTitlers, token) {
-			*nextIsFirstTokenOfSubTitle = t.ThisCharacterIsIn(TeXSpaces)
-		} else {
-			t.CollectCharacterThatWasIn(TeXSingletons, token)
-		}
+	if t.EndOfStream() {
+		return false
 	} else {
-		*needsProtection = false
+		if t.ThisCharacterIsIn(TeXSingletons) {
+			t.inWord = false
 
-		for !t.ThisCharacterIsIn(TeXSingletons) && t.CollectTeXTokenElement(token, isOfferedProtection, needsProtection, nextIsFirstTokenOfSubTitle) {
-			*nextIsFirstTokenOfSubTitle = false
+			if t.CollectCharacterThatWasIn(TeXSubTitlers, token) {
+				*nextIsFirstTokenOfSubTitle = t.ThisCharacterIsIn(TeXSpaces)
+			} else {
+				t.CollectCharacterThatWasIn(TeXSingletons, token)
+			}
+
+		} else {
+			*needsProtection = false
+
+			for !t.ThisCharacterIsIn(TeXSingletons) && !t.EndOfStream() && t.CollectTeXTokenElement(token, isOfferedProtection, needsProtection, nextIsFirstTokenOfSubTitle) {
+				*nextIsFirstTokenOfSubTitle = false
+			}
 		}
-	}
 
-	return true
+		return true
+	}
 }
 
 func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
@@ -147,7 +171,7 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 	l.TBibTeXTeX.TextString(names)
 	l.TBibTeXTeX.TeXSpacety()
 
-	for !l.TBibTeXTeX.EndOfStream() && l.CollectTeXSpacety(&spacety) && l.CollectTeXToken(&token, false, &needsProtection, &nextIsFirstTokenOfSubTitle) {
+	for l.CollectTeXSpacety(&spacety) && l.CollectTeXToken(&token, false, &needsProtection, &nextIsFirstTokenOfSubTitle) {
 		if token != "" {
 			if strings.ToLower(token) == "and" {
 				if name != "" {
@@ -170,10 +194,6 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 		result += andety + NormalisePersonNameValue(l.TBibTeXTeX.library, name)
 	}
 
-	//fmt.Println("------------------")
-	//fmt.Println(names)
-	//fmt.Println(result)
-
 	return result
 }
 
@@ -181,10 +201,10 @@ func NormaliseTitleString(l *TBibTeXLibrary, title string) string {
 	needsProtection := false
 	result := ""
 
-	l.TBibTeXTeX.TextString(strings.ReplaceAll(strings.TrimRight(title, ".,"), " - ", " -- "))
+	l.TBibTeXTeX.TextString(strings.ReplaceAll(title, " - ", " -- "))
 	l.TBibTeXTeX.inWord = false
 	l.TBibTeXTeX.TeXSpacety()
-	l.TBibTeXTeX.CollectTokenSequence(&result, false, &needsProtection)
+	l.TBibTeXTeX.CollectTokenSequencety(&result, false, &needsProtection)
 
 	return result
 }

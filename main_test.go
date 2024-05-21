@@ -1,26 +1,46 @@
 package main
 
 import "fmt"
+
+//import "strings"
 import "testing"
 
+func StringsAreSimilar(a, b string) bool {
+	return StringSignature(a) == StringSignature(b)
+}
+
 func TestStringMaps(t *testing.T) {
+	//	fmt.Println(NormaliseTitleString(&Library, "Educational Environments::"))
+
+	//	Test1 := "Business Transformation Framework - to Get from Strategy to Execution"
+	//	Test2 := "Business Transformation Framework -- to Get from Strategy to Execution"
+
+	//	fmt.Println(StringSignature(Test1))
+	//	fmt.Println(StringSignature(Test2))
+	//	fmt.Println(StringsAreSimilar(Test1, Test2))
+
+	//	fmt.Println(StringsAreSimilar("Challenges in {{Collaborative Modelling}}: {{A Literature Review}} and {{Research Agenda}}", "Challenges in collaborative modelling: a literature review and research agenda"))
+
 	Library = TBibTeXLibrary{}
 	InitialiseMainLibrary()
 	//	OpenMainBibFile()
 
-	tt := TBibTeXTeX{}
-	tt.library = &Library
+	//	tt := TBibTeXTeX{}
+	//	tt.library = &Library
 	fmt.Println(NormaliseNamesString(&Library, "Ssebuggwawo, D. and Hoppenbrouwers, Stijn J. B. A. and Proper, Henderik A."))
-	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92"))
-	fmt.Println(NormaliseTitleString(&Library, "{ConQuer-92}"))
+	fmt.Println(NormaliseNamesString(&Library, "Proper, Henderik A."))
+	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92:A"))
+	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92:"))
+	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92::"))
+	//	fmt.Println(NormaliseTitleString(&Library, "{ConQuer-92}"))
 
-	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92 -- 24th Revised Report on -- Meta-Data the {Meta-Data} Conceptual Query Language {LISA-D}"))
-	fmt.Println(NormaliseTitleString(&Library, "{ConQuer-92} -- {The} Revised Matulevi{\\v c} on the Conceptual Query Language {LISA-D}"))
-	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92 -- meta-Data Revised Meta-Data on the C{\\\"o}nce{\\v p}tual Query Language LISA-D"))
-	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work -- Modelling, Communication and Analysis}"))
-	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work: Modelling, Communication and Analysis}"))
-	fmt.Println(NormaliseTitleString(&Library, "{EA {Anamnesis}: An Approach for Decision Making Analysis in Enterprise Architecture}"))
-	fmt.Println(NormaliseTitleString(&Library, "Model-Driven Architecture and Behavior of Cyber-Physical Systems"))
+	//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92 -- 24th Revised Report on -- Meta-Data the {Meta-Data} Conceptual Query Language {LISA-D}"))
+	//	fmt.Println(NormaliseTitleString(&Library, "{ConQuer-92} -- {The} Revised Matulevi{\\v c} on the Conceptual Query Language {LISA-D}"))
+	//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92 -- meta-Data Revised Meta-Data on the C{\\\"o}nce{\\v p}tual Query Language LISA-D"))
+	//	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work -- Modelling, Communication and Analysis}"))
+	//	fmt.Println(NormaliseTitleString(&Library, "{Enterprise Architecture at Work: Modelling, Communication and Analysis}"))
+	//	fmt.Println(NormaliseTitleString(&Library, "{EA {Anamnesis}: An Approach for Decision Making Analysis in Enterprise Architecture}"))
+	//	fmt.Println(NormaliseTitleString(&Library, "Model-Driven Architecture and Behavior of Cyber-Physical Systems"))
 	//	fmt.Println(NormaliseTitleString(&Library, "{8th {Mediter}RAnean Conference on Information Systems, {{{{{MCIS}}}}} 2014, Verona, Italy, September 3-5, 2014}"))
 	//fmt.Println(NormaliseTitleString(&Library, "{EA} {Anamnesis}: {{Towards}} an Approach for Ent{\\\"e}rprise \\Architecture Rationalization"))
 	//fmt.Println("----")

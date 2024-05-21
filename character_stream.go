@@ -284,7 +284,7 @@ func (c *TCharacterStream) CollectCharacterThatWasNot(ch byte, s *string) bool {
 
 // Tests if the currently selected character (as byte) is in the provided byte set
 func (c *TCharacterStream) ThisCharacterIsIn(S TByteSet) bool {
-	return S.Contains(c.ThisCharacter())
+	return !c.EndOfStream() && S.Contains(c.ThisCharacter())
 }
 
 // Tests if the currently selected character (as byte) is in the provided byte set, and if so, moves to the next character.

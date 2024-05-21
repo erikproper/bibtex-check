@@ -40,7 +40,7 @@ const (
 	SchoolAliasesFileExtension       = ".schools"
 	SeriesAliasesFileExtension       = ".series"
 	ChallengesFileExtension          = ".challenges"
-	AddressesFileExtension		     = ".addresses"
+	AddressesFileExtension           = ".addresses"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field

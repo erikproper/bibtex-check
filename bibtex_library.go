@@ -14,8 +14,8 @@ package main
 
 import (
 	"fmt"
-	"time"
 	"strings"
+	"time"
 )
 
 /*
@@ -30,18 +30,6 @@ type (
 		name                            string                 // Name of the library
 		FilesRoot                       string                 // Path to folder with library related files
 		BaseName                        string                 // BaseName of the library related files
-		BibFilePath                     string                 // Relative path to the BibTeX file
-		PreferredKeyAliasesFilePath     string                 // Relative path to the preferred key aliases file
-		KeyAliasesFilePath              string                 // Relative path to the key aliases file
-		ChallengesFilePath              string                 // Relative path to the challenges file
-		NameAliasesFilePath             string                 // Relative path to the name aliases file
-		JournalAliasesFilePath          string                 // Relative path to the journal aliases file
-		SchoolAliasesFilePath           string                 // Relative path to the journal aliases file
-		InstitutionAliasesFilePath      string                 // Relative path to the institution aliases file
-		OrganizationAliasesFilePath     string                 // Relative path to the organisation aliases file
-		SeriesAliasesFilePath           string                 // Relative path to the series aliases file
-		PublisherAliasesFilePath        string                 // Relative path to the publisher aliases file
-		AddressesFilePath               string                 // Relative path to the addresses file
 		Comments                        []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		EntryFields                     TStringStringMap       // Per entry key, the fields associated to the actual entries.
 		EntryTypes                      TStringMap             // Per entry key, the type of the enty.
@@ -85,15 +73,10 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 
 	l.TBibTeXTeX = TBibTeXTeX{}
 
-	//// Abstraction
 	l.TBibTeXTeX.library = l
 
 	l.FilesRoot = filesRoot
 	l.BaseName = baseName
-	l.BibFilePath = ""
-	l.KeyAliasesFilePath = ""
-	l.NameAliasesFilePath = ""
-	l.ChallengesFilePath = ""
 
 	l.Comments = []string{}
 	l.EntryFields = TStringStringMap{}
@@ -199,7 +182,7 @@ func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, 
 	if currentOriginal, aliasIsAlreadyAliased := (*aliasMap)[alias]; aliasIsAlreadyAliased {
 		if currentOriginal != original {
 			l.Warning(WarningAmbiguousAlias, alias, currentOriginal, original)
-			
+
 			return
 		}
 	}
@@ -211,15 +194,15 @@ func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, 
 	inverseMap.AddValueToStringSetMap(original, alias)
 }
 
-// Help function 
+// Help function
 func (l *TBibTeXLibrary) MaybeAddReorderedName(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
 	aliasSplit := strings.Split(alias, ",")
 
 	if len(aliasSplit) == 3 {
-		reorderedAlias := strings.TrimSpace(aliasSplit[2] + " "+ aliasSplit[0] + strings.TrimRight(aliasSplit[1]," .") + ".")
+		reorderedAlias := strings.TrimSpace(aliasSplit[2] + " " + aliasSplit[0] + strings.TrimRight(aliasSplit[1], " .") + ".")
 		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap)
 	} else if len(aliasSplit) == 2 {
-		reorderedAlias :=  strings.TrimSpace(aliasSplit[1] + " " + aliasSplit[0])
+		reorderedAlias := strings.TrimSpace(aliasSplit[1] + " " + aliasSplit[0])
 		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap)
 	}
 }
@@ -228,13 +211,13 @@ func (l *TBibTeXLibrary) MaybeAddReorderedName(alias, name string, aliasMap *TSt
 func (l *TBibTeXLibrary) AddNameAlias(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
 	l.MaybeAddReorderedName(name, name, aliasMap, inverseMap)
 	l.MaybeAddReorderedName(alias, name, aliasMap, inverseMap)
-	
+
 	l.AddAlias(alias, name, aliasMap, inverseMap)
 }
 
 // Add a new text string alias
 func (l *TBibTeXLibrary) AddAliasForTextString(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
-	l.AddAlias(NormaliseTitleString(l, alias), NormaliseTitleString(l,original), aliasMap, inverseMap)
+	l.AddAlias(NormaliseTitleString(l, alias), NormaliseTitleString(l, original), aliasMap, inverseMap)
 }
 
 // Add a new key alias (for use in generic read function)
@@ -262,11 +245,11 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 func (l *TBibTeXLibrary) AddOrganisationalAddress(organisationRaw, addressRaw string) {
 	organisation := NormaliseTitleString(l, organisationRaw)
 	address := NormaliseTitleString(l, addressRaw)
-	
+
 	if currentAddress, organisationHasAddress := l.OrganisationalAddresses[organisation]; organisationHasAddress {
 		if currentAddress != address {
 			l.Warning(WarningAmbiguousAddress, organisation, currentAddress, address)
-			
+
 			return
 		}
 	}
@@ -274,7 +257,6 @@ func (l *TBibTeXLibrary) AddOrganisationalAddress(organisationRaw, addressRaw st
 	// Set the actual mapping
 	l.OrganisationalAddresses.SetValueForStringMap(organisation, address)
 }
-
 
 /*
  *
@@ -448,6 +430,10 @@ func (l *TBibTeXLibrary) FoundDoubles() bool {
 // So, we need to add a unique prefix while parsing these entries.
 var uniqueID int
 
+////////
+//////// l.currentKey ... keep in parser??
+////////
+
 // Start to record a library entry
 func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
 	if l.legacyMode {
@@ -496,8 +482,22 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	return true
 }
 
+func (l *TBibTeXLibrary) MaybeApplyOrganisationalAddressMapping(key, field string) {
+	if fieldValue := l.EntryFieldValueity(key, field); fieldValue != "" {
+		if address, isMapped := l.OrganisationalAddresses[fieldValue]; isMapped {
+			/////// SAFE!!
+			l.EntryFields[key]["address"] = address
+		}
+	}
+}
+
 // Finish recording the current library entry
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
+	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "organization")
+	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "institution")
+	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "school")
+	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "publisher")
+
 	// Check if no illegal fields were used
 	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
 	if !l.legacyMode && !l.InteractionIsOff() {

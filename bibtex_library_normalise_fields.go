@@ -73,6 +73,23 @@ func NormaliseSeriesValue(l *TBibTeXLibrary, series string) string {
 	return NormaliseAliassableTitleFieldValue(l, l.SeriesAliasToSeries, series)
 }
 
+// Normalize number values
+func NormaliseNumberValue(l *TBibTeXLibrary, rawNumber string) string {
+	var (
+		numberRange = regexp.MustCompile(`^[0-9]+-+[0-9]+$`)
+		minuses     = regexp.MustCompile(`-+`)
+	)
+
+	number := strings.TrimSpace(rawNumber)
+	if numberRange.MatchString(number) {
+		number = minuses.ReplaceAllString(number, "--")
+	} else {
+		number = minuses.ReplaceAllString(number, "-")
+	}
+
+	return number
+}
+
 // Normalize DOI values
 func NormaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 	var (
@@ -90,6 +107,22 @@ func NormaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 	trimmedDOI = strings.ReplaceAll(trimmedDOI, "$}", "")
 
 	return trimmedDOI
+}
+
+// Normalize URL values
+func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
+	var trimmedURL string
+
+	// Remove leading/trailing spaces
+	trimmedURL = strings.TrimSpace(rawURL)
+	// Some publishers of BibTeX files use a "{$\_$}" in the URL. We prefer not to.
+	trimmedURL = strings.ReplaceAll(trimmedURL, "\\_", "_")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "{$", "")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "$}", "")
+	// Same with "%5C" which is an encoded \_
+	trimmedURL = strings.ReplaceAll(trimmedURL, "%5C", "_")
+
+	return trimmedURL
 }
 
 // Normalize DOI values to the format 1234-5678
@@ -347,6 +380,15 @@ func init() {
 	fieldNormalisers["bdsk-file-7"] = NormaliseBDSKFileValue
 	fieldNormalisers["bdsk-file-8"] = NormaliseBDSKFileValue
 	fieldNormalisers["bdsk-file-9"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-url-1"] = NormaliseURLValue
+	fieldNormalisers["bdsk-url-2"] = NormaliseURLValue
+	fieldNormalisers["bdsk-url-3"] = NormaliseURLValue
+	fieldNormalisers["bdsk-url-4"] = NormaliseURLValue
+	fieldNormalisers["bdsk-url-5"] = NormaliseURLValue
+	fieldNormalisers["bdsk-url-6"] = NormaliseURLValue
+	fieldNormalisers["bdsk-url-7"] = NormaliseURLValue
+	fieldNormalisers["bdsk-url-8"] = NormaliseURLValue
+	fieldNormalisers["bdsk-url-9"] = NormaliseURLValue
 	fieldNormalisers["booktitle"] = NormaliseTitleString
 	fieldNormalisers["crossref"] = NormaliseCrossrefValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["doi"] = NormaliseDOIValue
@@ -357,11 +399,13 @@ func init() {
 	fieldNormalisers["isbn"] = NormaliseISBNValue
 	fieldNormalisers["issn"] = NormaliseISSNValue
 	fieldNormalisers["journal"] = NormaliseJournalValue
+	fieldNormalisers["number"] = NormaliseNumberValue
 	fieldNormalisers["organization"] = NormaliseOrganisationValue
 	fieldNormalisers["pages"] = NormalisePagesValue
 	fieldNormalisers["publisher"] = NormalisePublisherValue
 	fieldNormalisers["series"] = NormaliseSeriesValue
 	fieldNormalisers["school"] = NormaliseSchoolValue
 	fieldNormalisers["title"] = NormaliseTitleString
+	fieldNormalisers["url"] = NormaliseURLValue
 	fieldNormalisers["year"] = NormaliseYearValue
 }

@@ -28,19 +28,58 @@ func InitialiseMainLibrary() bool {
 
 	Library.ReadAliasesFiles()
 	Library.CheckAliasesMappings()
-	Library.ReadChallenges()
+	Library.ReadChallengesFile()
 
 	return true
+}
+
+func StringSignature(input string) string {
+	cleaned := input
+
+	cleaned = strings.ReplaceAll(cleaned, "\\c ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\k ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\v ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\r ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\H ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\AA", "aa")
+	cleaned = strings.ReplaceAll(cleaned, "\\AE", "ae")
+	cleaned = strings.ReplaceAll(cleaned, "\\OE", "oe")
+	cleaned = strings.ReplaceAll(cleaned, "\\aa", "aa")
+	cleaned = strings.ReplaceAll(cleaned, "\\ae", "ae")
+	cleaned = strings.ReplaceAll(cleaned, "\\oe", "oe")
+	cleaned = strings.ReplaceAll(cleaned, "\\i", "i")
+	cleaned = strings.ReplaceAll(cleaned, "\\ss", "s")
+	cleaned = strings.ReplaceAll(cleaned, "\\&", "&")
+	cleaned = strings.ReplaceAll(cleaned, "{", "")
+	cleaned = strings.ReplaceAll(cleaned, "}", "")
+	cleaned = strings.ReplaceAll(cleaned, "~", "")
+	cleaned = strings.ReplaceAll(cleaned, ".", "")
+	cleaned = strings.ReplaceAll(cleaned, ",", "")
+	cleaned = strings.ReplaceAll(cleaned, "\"", "")
+	cleaned = strings.ReplaceAll(cleaned, "'", "")
+	cleaned = strings.ReplaceAll(cleaned, "`", "")
+	cleaned = strings.ReplaceAll(cleaned, "^", "")
+	cleaned = strings.ReplaceAll(cleaned, "*", "")
+	cleaned = strings.ReplaceAll(cleaned, "=", "")
+	cleaned = strings.ReplaceAll(cleaned, "!", "")
+	cleaned = strings.ReplaceAll(cleaned, "?", "")
+	cleaned = strings.ReplaceAll(cleaned, "_", "")
+	cleaned = strings.ReplaceAll(cleaned, "-", "")
+	cleaned = strings.ReplaceAll(cleaned, ":", "")
+	cleaned = strings.ReplaceAll(cleaned, ";", "")
+	cleaned = strings.ReplaceAll(cleaned, "/", "")
+	cleaned = strings.ReplaceAll(cleaned, " ", "")
+	cleaned = strings.ReplaceAll(cleaned, "\\", "")
+	cleaned = strings.ToLower(cleaned)
+
+	return cleaned
 }
 
 func OpenMainBibFile() bool {
 	if Library.ReadBib(BibFile) {
 		Library.ReportLibrarySize()
-		// Check library consistency call:
-		/**/
 		Library.CheckKeyAliasesConsistency()
-		/**/ Library.CheckPreferredKeyAliasesConsistency()
-		/**/ Library.CheckEntries()
+		Library.CheckEntries()
 
 		return true
 	} else {
@@ -162,7 +201,7 @@ func main() {
 			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 				fmt.Println("Mapping", alias, "to", key)
 				Library.AddKeyAlias(alias, key)
-				Library.WriteKeyAliases()
+				Library.WriteAliasesFiles()
 			}
 		}
 
@@ -180,7 +219,7 @@ func main() {
 			}
 
 			Library.AddPreferredKeyAlias(alias)
-			Library.WriteKeyAliases()
+			Library.WriteAliasesFiles()
 		} else {
 			fmt.Println("Not a valid preferred alias.")
 		}
@@ -194,11 +233,11 @@ func main() {
 		Library.WriteBibTeXFile()
 	}
 
+	//	Library.ReadAliasesFiles()/
+	//	Library.ReadChallenges()
+
 	if writeAliases {
-		Library.WriteKeyAliases()
-		Library.WritePreferredKeyAliases()
-		Library.WriteNameAliases()
-		Library.WriteJournalAliases()
+		Library.WriteAliasesFiles()
 	}
 
 	if writeChallenges {

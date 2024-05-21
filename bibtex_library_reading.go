@@ -21,9 +21,11 @@ import (
 
 // Read bib files
 func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
-	l.BibFilePath = filePath
+	//	l.BibFilePath = filePath
+	FullFilePath := l.FilesRoot + l.BaseName + BibFileExtension
 
-	return l.ParseBibFile(l.FilesRoot + l.BibFilePath)
+	return l.ParseBibFile(FullFilePath)
+	//l.FilesRoot + l.BibFilePath)
 }
 
 // Generic function to read library related files
@@ -75,11 +77,6 @@ func (l *TBibTeXLibrary) readAliasesMapping(fileExtension, progress string, addM
 
 // Read aliases files
 func (l *TBibTeXLibrary) ReadAliasesFiles() {
-	l.JournalAliasesFilePath = l.BaseName + JournalAliasesFileExtension
-	l.PreferredKeyAliasesFilePath = l.BaseName + PreferredKeyAliasesFileExtension
-	l.NameAliasesFilePath = l.BaseName + NameAliasesFileExtension
-	l.KeyAliasesFilePath = l.BaseName + KeyAliasesFileExtension
-
 	l.readAliasesMapping(KeyAliasesFileExtension, ProgressReadingKeyAliasesFile, l.AddAliasForKey, &l.KeyAliasToKey, &l.KeyToAliases)
 	l.readAliasesMapping(NameAliasesFileExtension, ProgressReadingNameAliasesFile, l.AddNameAlias, &l.NameAliasToName, &l.NameToAliases)
 	l.readAliasesMapping(JournalAliasesFileExtension, ProgressReadingJournalAliasesFile, l.AddAliasForTextString, &l.JournalAliasToJournal, &l.JournalToAliases)
@@ -88,15 +85,15 @@ func (l *TBibTeXLibrary) ReadAliasesFiles() {
 	l.readAliasesMapping(InstitutionAliasesFileExtension, ProgressReadingInstitutionAliasesFile, l.AddAliasForTextString, &l.InstitutionAliasToInstitution, &l.InstitutionToAliases)
 	l.readAliasesMapping(OrganisationAliasesFileExtension, ProgressReadingOrganisationAliasesFile, l.AddAliasForTextString, &l.OrganisationAliasToOrganisation, &l.OrganisationToAliases)
 	l.readAliasesMapping(PublisherAliasesFileExtension, ProgressReadingPublisherAliasesFile, l.AddAliasForTextString, &l.PublisherAliasToPublisher, &l.PublisherToAliases)
-	
+
 	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
-	
+
 	l.readAddressMapping(AddressesFileExtension, ProgressReadingAddressesFile, l.AddOrganisationalAddress)
 }
 
 // Read challenge file
-func (l *TBibTeXLibrary) ReadChallenges() {
-	l.ChallengesFilePath = l.BaseName + ChallengesFileExtension
+func (l *TBibTeXLibrary) ReadChallengesFile() {
+	//	l.ChallengesFilePath = l.BaseName + ChallengesFileExtension
 
 	l.readLibraryFile(ChallengesFileExtension, ProgressReadingChallengesFile, func(line string) {
 		elements := strings.Split(line, "\t")
@@ -113,7 +110,7 @@ func (l *TBibTeXLibrary) ReadChallenges() {
 		// The challenged values may actually have errors ...
 		silenced := l.InteractionIsOff()
 		l.SetInteractionOff()
-	    challenger := l.NormaliseFieldValue(field, elements[2])
+		challenger := l.NormaliseFieldValue(field, elements[2])
 		l.SetInteraction(silenced)
 
 		l.AddChallengeWinner(key, field, challenger, winner)

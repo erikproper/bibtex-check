@@ -13,7 +13,7 @@
 package main
 
 import (
-	// "fmt"
+	//"fmt"
 	"regexp"
 	"strings"
 )
@@ -102,30 +102,6 @@ func (l *TBibTeXLibrary) CheckAliasesMappings() {
  *
  */
 
-func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency() {
-	l.Progress(ProgressCheckingConsistencyOfPreferredKeyAliases)
-
-	for key := range l.EntryTypes {
-		if !l.PreferredKeyAliasExists(key) {
-			///// CLEANER
-			for alias := range l.KeyToAliases[key].Set().Elements() {
-				if PreferredKeyAliasIsValid(alias) {
-					// If we have no defined preferred alias, then we can use this one if it would be a valid preferred alias
-					l.AddPreferredKeyAlias(alias)
-				} else {
-					// If we have no defined preferred alias, and the current alias is not valid, we can still try to lower the case and see if this works.
-					loweredAlias := strings.ToLower(alias)
-
-					// We do have to make sure the new alias is not already in use, and if it is then a valid alias.
-					if !l.AliasExists(loweredAlias) && PreferredKeyAliasIsValid(loweredAlias) {
-						l.AddPreferredKeyAlias(loweredAlias)
-					}
-				}
-			}
-		}
-	}
-}
-
 // Check all key aliases of the library
 func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 	l.Progress(ProgressCheckingConsistencyOfKeyAliases)
@@ -147,21 +123,78 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 				}
 			}
 		}
+
+		if _, aliasIsActuallyKeyToEntry := l.EntryFields[alias]; aliasIsActuallyKeyToEntry {
+			// Aliases cannot be keys themselves.
+			l.Warning(WarningAliasIsKey, alias)
+		}
 	}
 }
 
-//	if _, aliasIsActuallyKeyToEntry := l.EntryFields[alias]; aliasIsActuallyKeyToEntry {
-//		// Aliases cannot be keys themselves.
-//		l.Warning(WarningAliasIsKey, alias)
-//
-//		return
-//	}
+func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) bool {
+	if *foundDOI == "" {
+		URL := l.EntryFieldValueity(key, field)
+
+		if URL != "" {
+			var DOIURL = regexp.MustCompile(`^http(s|)://(dx.|)doi.org/`)
+
+			DOICandidate := DOIURL.ReplaceAllString(URL, "")
+
+			if DOICandidate != URL {
+				*foundDOI = DOICandidate
+
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
+	foundDOI := l.EntryFieldValueity(key, "doi")
+
+	if foundDOI == "" {
+		if l.tryGetDOIFromURL(key, "url", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-1", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-2", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-3", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-4", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-5", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-6", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-7", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-8", &foundDOI) ||
+			l.tryGetDOIFromURL(key, "bdsk-url-9", &foundDOI) {
+			l.EntryFields[key]["doi"] = foundDOI
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
+	if !l.PreferredKeyAliasExists(key) {
+		///// CLEANER
+		for alias := range l.KeyToAliases[key].Set().Elements() {
+			if PreferredKeyAliasIsValid(alias) {
+				// If we have no defined preferred alias, then we can use this one if it would be a valid preferred alias
+				l.AddPreferredKeyAlias(alias)
+			} else {
+				// If we have no defined preferred alias, and the current alias is not valid, we can still try to lower the case and see if this works.
+				loweredAlias := strings.ToLower(alias)
+
+				// We do have to make sure the new alias is not already in use, and if it is then a valid alias.
+				if !l.AliasExists(loweredAlias) && PreferredKeyAliasIsValid(loweredAlias) {
+					l.AddPreferredKeyAlias(loweredAlias)
+				}
+			}
+		}
+	}
+}
 
 func (l *TBibTeXLibrary) CheckEntries() {
-	//	fmt.Println("KKKK")
-	//
-	// ForEachStringPair(l.entryType, func(a, b string) { fmt.Println(a, b) })
-	// for key, entryType := range l.GetEntryTypeMap() {
-	// fmt.Println(key, entryType)
-	// }
+	l.Progress(ProgressCheckingConsistencyOfEntries)
+
+	for key := range l.EntryTypes {
+		l.CheckPreferredKeyAliasesConsistency(key)
+		l.CheckDOIPresence(key)
+	}
 }
