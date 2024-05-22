@@ -193,6 +193,22 @@ func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	return strings.TrimSpace(rawISBN)
 }
 
+func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
+	// Remove leading/trailing spaces
+	trimmedDate := strings.TrimSpace(rawDate)
+
+	if CheckDateValidity(trimmedDate) {
+		return trimmedDate
+	}
+
+	// If we get here, we have a bad year on our hand.
+	if !l.legacyMode {
+		l.Warning(WarningBadDate, rawDate, l.currentKey)
+	}
+
+	return strings.TrimSpace(rawDate)
+}
+
 func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
 	// Remove leading/trailing spaces
 	trimmedYear := strings.TrimSpace(rawYear)
@@ -393,6 +409,7 @@ func init() {
 	fieldNormalisers["bdsk-url-9"] = NormaliseURLValue
 	fieldNormalisers["booktitle"] = NormaliseTitleString
 	fieldNormalisers["crossref"] = NormaliseCrossrefValue // only needed while still allowing l.legacyMode
+	fieldNormalisers["urldate"] = NormaliseDateValue
 	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString
 	fieldNormalisers["file"] = NormaliseFileValue // only needed while still allowing l.legacyMode

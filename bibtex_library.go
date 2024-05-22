@@ -27,12 +27,12 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name                            string                 // Name of the library
-		FilesRoot                       string                 // Path to folder with library related files
-		BaseName                        string                 // BaseName of the library related files
-		Comments                        []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields                     TStringStringMap       // Per entry key, the fields associated to the actual entries.
-		FieldsIndex						TStringStringSetMap
+		name                            string           // Name of the library
+		FilesRoot                       string           // Path to folder with library related files
+		BaseName                        string           // BaseName of the library related files
+		Comments                        []string         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields                     TStringStringMap // Per entry key, the fields associated to the actual entries.
+		FieldsIndex                     TStringStringSetMap
 		EntryTypes                      TStringMap             // Per entry key, the type of the enty.
 		KeyAliasToKey                   TStringMap             // Mapping from key aliases to the actual entry key.
 		KeyToAliases                    TStringSetMap          // The inverted version of KeyAliasToKey.

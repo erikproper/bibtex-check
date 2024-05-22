@@ -38,8 +38,8 @@ func OpenMainBibFile() bool {
 		Library.ReportLibrarySize()
 		Library.CheckKeyAliasesConsistency()
 		Library.CheckEntries()
-		
-		Library.CreateTitleIndex()
+
+		//Library.CreateTitleIndex()
 
 		return true
 	} else {

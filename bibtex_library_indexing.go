@@ -13,9 +13,9 @@
 package main
 
 import (
+	"fmt"
 	"strings"
-//	"bufio"
-//	"os"
+	// "os"
 )
 
 // Definition of the map for field Normalisers
@@ -74,20 +74,25 @@ func Index(field, value string) string {
 }
 
 func (l *TBibTeXLibrary) MaybeAddToIndex(key, field, value string) bool {
-	l.FieldsIndex.AddValueToStringPairSetMap(Index(field, value), field, key)
-	
+	index := Index(field, value)
+
+	l.FieldsIndex.AddValueToStringPairSetMap(index, field, key)
+
+	if l.FieldsIndex[index][field].Set().Size() > 1 {
+		fmt.Println("Double", key, field, value)
+	}
 	return true
 }
 
 func (l *TBibTeXLibrary) CreateTitleIndex() {
 	l.Progress("Creating title index")
-	
+
 	for key := range l.EntryTypes {
 		l.MaybeAddToIndex(key, "title", l.EntryFieldValueity(key, "title"))
-	} 
+	}
 }
 
-func init () {
+func init() {
 	fieldIndexers = TFieldIndexers{}
 	fieldIndexers["title"] = TeXStringIndexer
 }

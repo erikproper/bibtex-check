@@ -13,7 +13,7 @@
 package main
 
 import (
-	//"fmt"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -51,6 +51,13 @@ func CheckYearValidity(year string) bool {
 	var validYear = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]$`)
 
 	return validYear.MatchString(year)
+}
+
+// Checks if a given date is indeed a date
+func CheckDateValidity(date string) bool {
+	var validDate = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$`)
+
+	return validDate.MatchString(date)
 }
 
 /*
@@ -151,6 +158,12 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 	return false
 }
 
+func (l *TBibTeXLibrary) CheckLocalURLPresence(key string) {
+	if l.EntryFieldValueity(key, "local-url") != "" {
+		l.Warning(WarningKeyHasLocalURL, key)
+	}
+}
+
 func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 	foundDOI := l.EntryFieldValueity(key, "doi")
 
@@ -165,7 +178,23 @@ func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 			l.tryGetDOIFromURL(key, "bdsk-url-7", &foundDOI) ||
 			l.tryGetDOIFromURL(key, "bdsk-url-8", &foundDOI) ||
 			l.tryGetDOIFromURL(key, "bdsk-url-9", &foundDOI) {
+
+			// If we found a doi in the URL, then assign it
 			l.EntryFields[key]["doi"] = foundDOI
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) CheckURLDateNeed(key string) {
+	if l.EntryFieldValueity(key, "urldate") != "" {
+		if l.EntryFieldValueity(key, "url") == "" ||
+			l.EntryFieldValueity(key, "dblp") != "" ||
+			l.EntryFieldValueity(key, "doi") != "" ||
+			l.EntryFieldValueity(key, "isbn") != "" ||
+			l.EntryFieldValueity(key, "issn") != "" {
+
+			// In these cases, we do not need an urldate
+			l.EntryFields[key]["urldate"] = ""
 		}
 	}
 }
@@ -190,11 +219,113 @@ func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
+	// SAFE??
+	if BibTeXBookish.Contains(l.EntryTypes[key]) {
+		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
+		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
+	}
+}
+
+func (l *TBibTeXLibrary) CheckEPrint(key string) {
+	DOIValueity := strings.ToLower(l.EntryFieldValueity(key, "doi"))
+	URLValueity := strings.ToLower(l.EntryFieldValueity(key, "url"))
+
+	EPrintTypeValueity := strings.ToLower(l.EntryFieldValueity(key, "eprinttype"))
+	EPrintValueity := l.EntryFieldValueity(key, "eprint")
+
+	OnArXive := EPrintTypeValueity == "arxiv" ||
+		/*   */ strings.HasPrefix(DOIValueity, "10.48550/") ||
+		/*   */ strings.HasPrefix(URLValueity, "https://arxiv.org/abs/") ||
+		/*   */ strings.HasPrefix(URLValueity, "https://doi.org/10.48550/")
+
+	OnJstor := EPrintTypeValueity == "jstor" ||
+		/*   */ strings.HasPrefix(DOIValueity, "10.2307/") ||
+		/*   */ strings.HasPrefix(URLValueity, "https://doi.org/10.2307/") ||
+		/*   */ strings.HasPrefix(URLValueity, "http://www.jstor.org/stable/") ||
+		/*   */ strings.HasPrefix(URLValueity, "https://www.jstor.org/stable/")
+
+	switch {
+	case OnArXive:
+		EPrintTypeValue := "arXiv"
+		// EPrintValue := l.EntryFieldValueity(key, "eprint")
+		// URLLower = ToLower(URLValue)
+		// DOILower = ToLower(DOIValue)
+		//
+		//  if eprint != "" {
+		//     remove arXiv: prefix from eprint
+		//  }
+		//    if eprint == "" && doiLower != "" {
+		//     eprint = doiLower with "10.48550/" ==> ""
+		//	   if eprint == doiLower { eprint = "" }
+		//    }
+		//
+		//    if eprint == "" && urlLower != "" {
+		//      eprint = urlLower with "https://doi.org/10.48550/arxiv." ==> ""
+		//
+		//      if eprint == urlLower {
+		//        eprint = urlLower with "https://arxiv.org/abs/" ==> ""
+		//        if eprint == url { eprint = "" }
+		//      }
+		//    }
+		// }
+		//
+		// if eprint == "" {
+		//    WARNING
+		// } else {
+		//   if doi == "" {
+		//      doi = "10.48550/arXiv." + eprint
+		//   }
+		//
+		//   if url == "" {
+		//      url == "https://doi.org/10.48550/arXiv." + eprint
+		//   }
+		// }
+
+		l.EntryFields[key]["eprinttype"] = EPrintTypeValue
+		//		l.EntryFields[key]["eprint"] = EPrintValue
+		//		l.EntryFields[key]["doi"] = DOIValue
+		//		l.EntryFields[key]["url"] = URLValue
+		fmt.Println("arXiv")
+
+	case OnJstor:
+		EPrintTypeValue := "jstor"
+		EPrintValue := EPrintValueity
+		
+		if EPrintValueity == "" {
+			EPrintValue = strings.ReplaceAll(URLValueity, "https://doi.org/10.2307/", "")
+			EPrintValue = strings.ReplaceAll(EPrintValue, "http://www.jstor.org/stable/", "")
+			EPrintValue = strings.ReplaceAll(EPrintValue, "https://www.jstor.org/stable/", "")
+		}
+
+		if EPrintValue == URLValueity {
+			l.Warning("Not able to find eprint data for %s")
+			EPrintValue = ""
+		}
+
+		l.EntryFields[key]["eprinttype"] = EPrintTypeValue
+		l.EntryFields[key]["eprint"] = EPrintValue
+
+		fmt.Println("jstor")
+
+	default:
+		if (EPrintTypeValueity != "" && EPrintValueity == "") || (EPrintTypeValueity == "" && EPrintValueity != "") {
+			l.EntryFields[key]["eprinttype"] = ""
+			l.EntryFields[key]["eprint"] = ""
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) CheckEntries() {
 	l.Progress(ProgressCheckingConsistencyOfEntries)
 
 	for key := range l.EntryTypes {
 		l.CheckPreferredKeyAliasesConsistency(key)
 		l.CheckDOIPresence(key)
+		l.CheckLocalURLPresence(key)
+		l.CheckBookishTitles(key)
+		l.CheckEPrint(key)
+		// All DOI/URL attemtps/checks before the next one
+		l.CheckURLDateNeed(key)
 	}
 }

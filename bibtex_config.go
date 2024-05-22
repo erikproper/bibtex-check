@@ -18,7 +18,8 @@ var (
 	BibTeXAllowedEntryFields map[string]TStringSet // Per entry type, the allowed field
 	BibTeXImportFields       TStringSet            // Set of fields we would consider importing
 	BibTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
-	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entries.
+	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entry types
+	BibTeXBookish            TStringSet            // All book-alike entry types
 	BibTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
 	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
 	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
@@ -100,6 +101,7 @@ func init() {
 	BibTeXAllowedEntries.Initialise()
 	BibTeXAllowedFields.Initialise()
 	BibTeXImportFields.Initialise()
+	BibTeXBookish.Initialise()
 
 	AddAllowedEntryFields(
 		"article", "journal", "volume", "number", "pages", "month", "issn")
@@ -152,6 +154,8 @@ func init() {
 	// (*) The above ones are the ones needed for my purposes in the BiBDesk contect.
 	// It makes sense to allow a config file to add to these, and move some of the above to this config file as well.
 	// For instance "researchgate" and "urloriginal"
+
+	BibTeXBookish.Add("proceedings", "book")
 
 	BibTeXEntryMap = TStringMap{}
 	BibTeXEntryMap["conference"] = "inproceedings"
