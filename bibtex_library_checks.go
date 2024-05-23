@@ -320,6 +320,21 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckCrossref(key string) {
+	Crossrefity := l.EntryFieldValueity(key, "crossref")
+
+	if Crossrefity != "" {
+		fmt.Println("Crossref from", key, "to", Crossrefity)
+// DOes the target exist?
+//
+// Does the source TYPE allow for crossrefs?
+// Does the target comply to the typing hierarchy?
+//
+//		EntryType := l.EntryTypes[key]		
+//		BibTeXCrossrefType
+	}
+
+
 func (l *TBibTeXLibrary) CheckEntries() {
 	l.Progress(ProgressCheckingConsistencyOfEntries)
 
@@ -329,7 +344,7 @@ func (l *TBibTeXLibrary) CheckEntries() {
 		l.CheckLocalURLPresence(key)
 		l.CheckBookishTitles(key)
 		l.CheckEPrint(key)
-		// All DOI/URL attemtps/checks before the next one
+		l.CheckCrossref(key)
 		l.CheckURLDateNeed(key)
 	}
 }
