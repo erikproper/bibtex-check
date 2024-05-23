@@ -13,7 +13,7 @@
 package main
 
 import (
-	"fmt"
+	//"fmt"
 	"regexp"
 	"strings"
 )
@@ -227,73 +227,76 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	}
 }
 
+// Config based ... needs a bit of work I guess ....
 func (l *TBibTeXLibrary) CheckEPrint(key string) {
-	DOIValueity := strings.ToLower(l.EntryFieldValueity(key, "doi"))
-	URLValueity := strings.ToLower(l.EntryFieldValueity(key, "url"))
-
 	EPrintTypeValueity := strings.ToLower(l.EntryFieldValueity(key, "eprinttype"))
 	EPrintValueity := l.EntryFieldValueity(key, "eprint")
 
+	DOIValueity := l.EntryFieldValueity(key, "doi")
+	URLValueity := l.EntryFieldValueity(key, "url")
+
+	DOIValueLower := strings.ToLower(DOIValueity)
+	URLValueLower := strings.ToLower(URLValueity)
+
 	OnArXive := EPrintTypeValueity == "arxiv" ||
-		/*   */ strings.HasPrefix(DOIValueity, "10.48550/") ||
-		/*   */ strings.HasPrefix(URLValueity, "https://arxiv.org/abs/") ||
-		/*   */ strings.HasPrefix(URLValueity, "https://doi.org/10.48550/")
+		/*   */ strings.HasPrefix(DOIValueLower, "10.48550/") ||
+		/*   */ strings.HasPrefix(URLValueLower, "https://arxiv.org/abs/") ||
+		/*   */ strings.HasPrefix(URLValueLower, "https://doi.org/10.48550/")
 
 	OnJstor := EPrintTypeValueity == "jstor" ||
-		/*   */ strings.HasPrefix(DOIValueity, "10.2307/") ||
-		/*   */ strings.HasPrefix(URLValueity, "https://doi.org/10.2307/") ||
-		/*   */ strings.HasPrefix(URLValueity, "http://www.jstor.org/stable/") ||
-		/*   */ strings.HasPrefix(URLValueity, "https://www.jstor.org/stable/")
+		/*   */ strings.HasPrefix(DOIValueLower, "10.2307/") ||
+		/*   */ strings.HasPrefix(URLValueLower, "https://doi.org/10.2307/") ||
+		/*   */ strings.HasPrefix(URLValueLower, "http://www.jstor.org/stable/") ||
+		/*   */ strings.HasPrefix(URLValueLower, "https://www.jstor.org/stable/")
 
 	switch {
 	case OnArXive:
 		EPrintTypeValue := "arXiv"
-		// EPrintValue := l.EntryFieldValueity(key, "eprint")
-		// URLLower = ToLower(URLValue)
-		// DOILower = ToLower(DOIValue)
-		//
-		//  if eprint != "" {
-		//     remove arXiv: prefix from eprint
-		//  }
-		//    if eprint == "" && doiLower != "" {
-		//     eprint = doiLower with "10.48550/" ==> ""
-		//	   if eprint == doiLower { eprint = "" }
-		//    }
-		//
-		//    if eprint == "" && urlLower != "" {
-		//      eprint = urlLower with "https://doi.org/10.48550/arxiv." ==> ""
-		//
-		//      if eprint == urlLower {
-		//        eprint = urlLower with "https://arxiv.org/abs/" ==> ""
-		//        if eprint == url { eprint = "" }
-		//      }
-		//    }
-		// }
-		//
-		// if eprint == "" {
-		//    WARNING
-		// } else {
-		//   if doi == "" {
-		//      doi = "10.48550/arXiv." + eprint
-		//   }
-		//
-		//   if url == "" {
-		//      url == "https://doi.org/10.48550/arXiv." + eprint
-		//   }
-		// }
+		EPrintValue := EPrintValueity
+
+		if EPrintValue != "" {
+			EPrintValue = strings.ReplaceAll(strings.ToLower(EPrintValue), "arxiv:", "")
+		}
+
+		if EPrintValue == "" && DOIValueLower != "" {
+			EPrintValue = strings.ReplaceAll(DOIValueLower, "10.48550/arxiv.", "")
+
+			if EPrintValue == DOIValueLower {
+				EPrintValue = ""
+			}
+		}
+
+		if EPrintValue == "" && URLValueLower != "" {
+			EPrintValue = strings.ReplaceAll(URLValueLower, "https://arxiv.org/abs/", "")
+
+			if EPrintValue == URLValueLower {
+				EPrintValue = ""
+			}
+		}
+
+		if EPrintValue == "" {
+			l.Warning("Not able to find eprint data for %s")
+		} else {
+			if DOIValueity == "" {
+				DOIValueity = "10.48550/arXiv." + EPrintValue
+			}
+			
+			if URLValueity == "" {
+				URLValueity = "https://doi.org/10.48550/arXiv." + EPrintValue
+			}
+		}
 
 		l.EntryFields[key]["eprinttype"] = EPrintTypeValue
-		//		l.EntryFields[key]["eprint"] = EPrintValue
-		//		l.EntryFields[key]["doi"] = DOIValue
-		//		l.EntryFields[key]["url"] = URLValue
-		fmt.Println("arXiv")
+		l.EntryFields[key]["eprint"] = EPrintValue
+		l.EntryFields[key]["doi"] = DOIValueity
+		l.EntryFields[key]["url"] = URLValueity
 
 	case OnJstor:
 		EPrintTypeValue := "jstor"
 		EPrintValue := EPrintValueity
-		
+
 		if EPrintValueity == "" {
-			EPrintValue = strings.ReplaceAll(URLValueity, "https://doi.org/10.2307/", "")
+			EPrintValue = strings.ReplaceAll(URLValueLower, "https://doi.org/10.2307/", "")
 			EPrintValue = strings.ReplaceAll(EPrintValue, "http://www.jstor.org/stable/", "")
 			EPrintValue = strings.ReplaceAll(EPrintValue, "https://www.jstor.org/stable/", "")
 		}
@@ -305,8 +308,6 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 
 		l.EntryFields[key]["eprinttype"] = EPrintTypeValue
 		l.EntryFields[key]["eprint"] = EPrintValue
-
-		fmt.Println("jstor")
 
 	default:
 		if (EPrintTypeValueity != "" && EPrintValueity == "") || (EPrintTypeValueity == "" && EPrintValueity != "") {
