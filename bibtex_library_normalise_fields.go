@@ -95,7 +95,7 @@ func NormaliseNumberValue(l *TBibTeXLibrary, rawNumber string) string {
 // Normalize DOI values
 func NormaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 	var (
-		trimDOIStart = regexp.MustCompile(`^(doi:|http://[a-z,.]*/)`)
+		trimDOIStart = regexp.MustCompile(`^(doi:|http(s|)://[a-z,.]*/)`)
 		trimmedDOI   string
 	)
 

@@ -13,7 +13,7 @@
 package main
 
 import (
-	//"fmt"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -143,7 +143,7 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 		URL := l.EntryFieldValueity(key, field)
 
 		if URL != "" {
-			var DOIURL = regexp.MustCompile(`^http(s|)://(dx.|)doi.org/`)
+			var DOIURL = regexp.MustCompile(`^http(s|)://((dx.|)doi.org|hdl.handle.net)/`)
 
 			DOICandidate := DOIURL.ReplaceAllString(URL, "")
 
@@ -180,6 +180,7 @@ func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 			l.tryGetDOIFromURL(key, "bdsk-url-9", &foundDOI) {
 
 			// If we found a doi in the URL, then assign it
+			fmt.Println("Found DOI", foundDOI, "for", key)
 			l.EntryFields[key]["doi"] = foundDOI
 		}
 	}
@@ -226,6 +227,8 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
 	}
 }
+
+// Harmonize with tryGetDOIFromURL ???
 
 // Config based ... needs a bit of work I guess ....
 func (l *TBibTeXLibrary) CheckEPrint(key string) {
