@@ -14,6 +14,8 @@
 
 package main
 
+//import "fmt"
+
 // Still a major construction site.
 //
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
@@ -45,12 +47,18 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current strin
 			// And update the recorded challenges
 			// Note: this is an *update* as we may need to update this as a new winner for other challenges as well.
 
+			//			fmt.Println("KCU", current, "KK")
+			//			fmt.Println("KCH", challenger, "KK")
+			//			fmt.Println("KWI", Library.ChallengeWinners.GetValueityFromStringTripleMap(key, field, challenger), "KK")
+			//			fmt.Println("KNO", NormaliseTitleString(&Library, Library.ChallengeWinners.GetValueityFromStringTripleMap(key, field, challenger)), "KK")
+
 			warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 			question := "Current entry:\n" + l.EntryString(key, "  ") + "Keep the value as is?"
 
 			if l.WarningBoolQuestion(question, warning, key, field, challenger, current) {
 				l.UpdateChallengeWinner(key, field, challenger, current)
 				l.WriteChallenges()
+				l.WriteBibTeXFile()
 
 				return current
 			} else {

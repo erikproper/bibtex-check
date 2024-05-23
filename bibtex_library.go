@@ -27,14 +27,15 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name                            string           // Name of the library
-		FilesRoot                       string           // Path to folder with library related files
-		BaseName                        string           // BaseName of the library related files
-		Comments                        []string         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields                     TStringStringMap // Per entry key, the fields associated to the actual entries.
-		FieldsIndex                     TStringStringSetMap
+		name                            string                 // Name of the library
+		FilesRoot                       string                 // Path to folder with library related files
+		BaseName                        string                 // BaseName of the library related files
+		Comments                        []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields                     TStringStringMap       // Per entry key, the fields associated to the actual entries.
+		FieldsIndex                     TStringStringSetMap    //
 		EntryTypes                      TStringMap             // Per entry key, the type of the enty.
 		KeyAliasToKey                   TStringMap             // Mapping from key aliases to the actual entry key.
+		SeriesToISSN                    TStringMap             // Mapping from series/journals to ISSN
 		KeyToAliases                    TStringSetMap          // The inverted version of KeyAliasToKey.
 		PreferredKeyAliases             TStringMap             // Per entry key, the preferred alias
 		NameAliasToName                 TStringMap             // Mapping from name aliases to the actual name.
@@ -122,10 +123,8 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 
 // Initial registration of a winner over a challenger for a given entry and its field.
 func (l *TBibTeXLibrary) AddChallengeWinner(entry, field, challenger, winner string) {
-	// Only add challenger/winner pairs when both are non-empty
-	if winner != challenger {
-		l.ChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
-	}
+	l.ChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
+
 }
 
 // Update the registration of a winner over a challenger for a given entry and its field.
@@ -258,6 +257,10 @@ func (l *TBibTeXLibrary) AddOrganisationalAddress(organisationRaw, addressRaw st
 
 	// Set the actual mapping
 	l.OrganisationalAddresses.SetValueForStringMap(organisation, address)
+}
+
+func (l *TBibTeXLibrary) AddSeriesISSN(name, ISSN string) {
+	l.SeriesToISSN.SetValueForStringMap(name, NormaliseISSNValue(l, ISSN))
 }
 
 /*

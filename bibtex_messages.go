@@ -74,8 +74,9 @@ const (
 	WarningOrganisationAliasesLineTooShort = "Line in organisation aliases file is too short: %s"
 	WarningSeriesAliasesLineTooShort       = "Line in series aliases file is too short: %s"
 	WarningAliasesLineTooShort             = "Line in aliases file is too short: %s"
-
-	// Progress reports for reading/writing files
+	WarningISSNLineTooShort					= "Line in issn file is too short: %s"
+	
+	// Progress reports for reading/writing files"Line in aliases file is too short: %s"
 	ProgressWritingBibFile                     = "Writing bib file %s"
 	ProgressWritingChallengesFile              = "Writing challenges file %s"
 	ProgressWritingPreferredKeyAliasesFile     = "Writing preferred key aliases file %s"
@@ -84,6 +85,7 @@ const (
 	ProgressWritingJournalAliasesFile          = "Writing journal aliases file %s"
 	ProgressWritingNameAliasesFile             = "Writing name aliases file %s"
 	ProgressWritingSchoolAliasesFile           = "Writing school aliases file %s"
+	ProgressWritingISSNFile                    = "Writing ISSN file %s"
 	ProgressWritingInstitutionAliasesFile      = "Writing institution aliases file %s"
 	ProgressWritingOrganisationAliasesFile     = "Writing organisation aliases file %s"
 	ProgressWritingSeriesAliasesFile           = "Writing series aliases file %s"
@@ -96,6 +98,7 @@ const (
 	ProgressReadingJournalAliasesFile          = "Reading journal aliases file %s"
 	ProgressReadingNameAliasesFile             = "Reading name aliases file %s"
 	ProgressReadingSchoolAliasesFile           = "Reading school aliases file %s"
+	ProgressReadingISSNFile                    = "Reading ISSN file %s"
 	ProgressReadingInstitutionAliasesFile      = "Reading institution aliases file %s"
 	ProgressReadingOrganisationAliasesFile     = "Reading organisation aliases file %s"
 	ProgressReadingSeriesAliasesFile           = "Reading series aliases file %s"

@@ -40,7 +40,7 @@ func CheckISSNValidity(ISSN string) bool {
 }
 
 // Checks if a given ISBN fits the desired format
-func CheckISBNValidity(ISBN string) bool {
+func IsValidISBN(ISBN string) bool {
 	var validISBN = regexp.MustCompile(`^([0-9][-]?[0-9][-]?[0-9][-]?|)[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9][-]?[0-9,X]$`)
 
 	return validISBN.MatchString(ISBN)
@@ -158,12 +158,6 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 	return false
 }
 
-func (l *TBibTeXLibrary) CheckLocalURLPresence(key string) {
-	if l.EntryFieldValueity(key, "local-url") != "" {
-		l.Warning(WarningKeyHasLocalURL, key)
-	}
-}
-
 func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 	foundDOI := l.EntryFieldValueity(key, "doi")
 
@@ -224,12 +218,12 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	// SAFE??
 	if BibTeXBookish.Contains(l.EntryTypes[key]) {
 		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
+		l.UpdateChallengeWinner(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
 	}
 }
 
 // Harmonize with tryGetDOIFromURL ???
-
 // Config based ... needs a bit of work I guess ....
 func (l *TBibTeXLibrary) CheckEPrint(key string) {
 	EPrintTypeValueity := strings.ToLower(l.EntryFieldValueity(key, "eprinttype"))
@@ -320,6 +314,18 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
+	DOIValueity := l.EntryFieldValueity(key, "doi")
+
+	if strings.HasPrefix(DOIValueity, "10.1007/978-") {
+		ISBNCandidate := strings.ReplaceAll(DOIValueity, "10.1007/", "")
+		if IsValidISBN(ISBNCandidate) {
+			l.UpdateChallengeWinner(key, "isbn", l.EntryFields[key]["isbn"], ISBNCandidate)
+			l.EntryFields[key]["isbn"] = ISBNCandidate
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	Crossrefity := l.EntryFieldValueity(key, "crossref")
 
@@ -340,16 +346,61 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) BDSKFileValueMatches(key, field, localURL string) bool {
+	return strings.HasSuffix(BDSKFile(l.EntryFieldValueity(key, field)), localURL)
+}
+
+func (l *TBibTeXLibrary) tryGetISSN(key, field string, ISSN *string) bool {
+	if fieldValueity := l.EntryFieldValueity(key, field); fieldValueity != "" {
+		newISSN, isMapped := l.SeriesToISSN[fieldValueity]
+		*ISSN = newISSN
+		
+		return isMapped	
+	}
+	
+	return false
+}
+
+func (l *TBibTeXLibrary) CheckISSN(key string) {
+	var newISSN string
+	
+	if  l.tryGetISSN(key, "series", &newISSN) || l.tryGetISSN(key, "journal", &newISSN) {
+		l.EntryFields[key]["issn"] = newISSN
+	}
+}
+
+func (l *TBibTeXLibrary) CheckNeedForLocalURL(key string) {
+	LocalURLity := l.EntryFieldValueity(key, "local-url")
+
+	if LocalURLity != "" {
+		if l.BDSKFileValueMatches(key, "bdsk-file-1", LocalURLity) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-2", LocalURLity) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-3", LocalURLity) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-4", LocalURLity) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-5", LocalURLity) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-6", LocalURLity) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-7", LocalURLity) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-8", LocalURLity) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-9", LocalURLity) {
+			l.EntryFields[key]["local-url"] = ""
+		} else {
+			l.Warning(WarningKeyHasLocalURL, key)
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) CheckEntries() {
 	l.Progress(ProgressCheckingConsistencyOfEntries)
 
 	for key := range l.EntryTypes {
 		l.CheckPreferredKeyAliasesConsistency(key)
 		l.CheckDOIPresence(key)
-		l.CheckLocalURLPresence(key)
+		l.CheckNeedForLocalURL(key)
 		l.CheckBookishTitles(key)
 		l.CheckEPrint(key)
 		l.CheckCrossref(key)
+		l.CheckISBNFromDOI(key)
+		l.CheckISSN(key)
 		l.CheckURLDateNeed(key)
 	}
 }

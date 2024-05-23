@@ -48,11 +48,24 @@ func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading 
 	return scanner.Err() == nil
 }
 
+/// Generic binary mapping reader??
 func (l *TBibTeXLibrary) readAddressMapping(fileExtension, progress string, addMapping func(alias, target string)) {
 	l.readLibraryFile(fileExtension, progress, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 2 {
 			l.Warning(WarningAddressesLineTooShort, line)
+			return
+		}
+
+		addMapping(elements[0], elements[1])
+	})
+}
+
+func (l *TBibTeXLibrary) readISSNMapping(fileExtension, progress string, addMapping func(alias, target string)) {
+	l.readLibraryFile(fileExtension, progress, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
+			l.Warning(WarningISSNLineTooShort, line)
 			return
 		}
 
@@ -89,6 +102,7 @@ func (l *TBibTeXLibrary) ReadAliasesFiles() {
 	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
 
 	l.readAddressMapping(AddressesFileExtension, ProgressReadingAddressesFile, l.AddOrganisationalAddress)
+	l.readISSNMapping(ISSNFileExtension, ProgressReadingISSNFile, l.AddSeriesISSN)
 }
 
 // Read challenge file

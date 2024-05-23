@@ -181,7 +181,7 @@ func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	// Select the first ISBN number
 	trimmedISBN = strings.Split(trimmedISBN, " ")[0]
 
-	if CheckISBNValidity(trimmedISBN) {
+	if IsValidISBN(trimmedISBN) {
 		return trimmedISBN
 	}
 
@@ -341,33 +341,49 @@ func NormaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
 // Check if the provided BibDesk file (in base64 encoded format) is present.
 // If not present, we should just ignore the field.
 // But still give a warning.
-func NormaliseBDSKFileValue(l *TBibTeXLibrary, value string) string {
-	// Decode the provided value, and get the payload as a string.
-	data, _ := base64.StdEncoding.DecodeString(value)
-	payload := string(data)
+func NormaliseBDSKFileValueOld(l *TBibTeXLibrary, value string) string {
+	return NormaliseBDSKFileValue(l, l.currentKey, value)
+}
 
-	// Find start of filename.
-	fileNameStart := strings.Index(payload, "relativePathXbookmark") + len("relativePathXbookmark") + 3
-	// Find the end of the filename
-	fileNameEnd := strings.Index(payload, ".pdf") + 4
+func BDSKFile(value string) string {
+	if value != "" {
+		// Decode the provided value, and get the payload as a string.
+		data, _ := base64.StdEncoding.DecodeString(value)
+		payload := string(data)
 
-	// We use the raw payload as the default filename
-	fileName := payload
-	// But if we have a correct "cutout" of the filename we will use that:
-	if 0 <= fileNameStart && fileNameStart < fileNameEnd && fileNameEnd <= len(payload) {
-		fileName = payload[fileNameStart:fileNameEnd]
-	}
+		// Find start of filename.
+		fileNameStart := strings.Index(payload, "relativePathXbookmark") + len("relativePathXbookmark") + 3
+		// Find the end of the filename
+		fileNameEnd := strings.Index(payload, ".pdf") + 4
 
-	// See if the file exists
-	if FileExists(l.FilesRoot + fileName) {
-		// If it's there, we can return the original value as-is
-		return value
-	} else {
-		// If it is not there, create a warning, and return empty
-		if !l.legacyMode {
-			l.Warning(WarningMissingFile, fileName, l.currentKey)
+		// We use the raw payload as the default filename
+		fileName := payload
+		// But if we have a correct "cutout" of the filename we will use that:
+		if 0 <= fileNameStart && fileNameStart < fileNameEnd && fileNameEnd <= len(payload) {
+			fileName = payload[fileNameStart:fileNameEnd]
 		}
 
+		return fileName
+	} else {
+		return ""
+	}
+}
+
+func NormaliseBDSKFileValue(l *TBibTeXLibrary, key, value string) string {
+	if fileName := BDSKFile(value); fileName != "" {
+		// See if the file exists
+		if FileExists(l.FilesRoot + fileName) {
+			// If it's there, we can return the original value as-is
+			return value
+		} else {
+			// If it is not there, create a warning, and return empty
+			if !l.legacyMode {
+				l.Warning(WarningMissingFile, fileName, key)
+			}
+
+			return ""
+		}
+	} else {
 		return ""
 	}
 }
@@ -390,15 +406,15 @@ func init() {
 	fieldNormalisers = TFieldNormalisers{}
 	fieldNormalisers["author"] = NormaliseNamesString
 	fieldNormalisers["address"] = NormaliseTitleString
-	fieldNormalisers["bdsk-file-1"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-2"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-3"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-4"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-5"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-6"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-7"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-8"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-9"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-1"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-2"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-3"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-4"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-5"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-6"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-7"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-8"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-9"] = NormaliseBDSKFileValueOld
 	fieldNormalisers["bdsk-url-1"] = NormaliseURLValue
 	fieldNormalisers["bdsk-url-2"] = NormaliseURLValue
 	fieldNormalisers["bdsk-url-3"] = NormaliseURLValue

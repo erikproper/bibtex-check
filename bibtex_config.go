@@ -43,6 +43,7 @@ const (
 	SeriesAliasesFileExtension       = ".series"
 	ChallengesFileExtension          = ".challenges"
 	AddressesFileExtension           = ".addresses"
+	ISSNFileExtension                = ".issn"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field
@@ -109,13 +110,13 @@ func init() {
 		"article", "journal", "volume", "number", "pages", "month", "issn")
 	AddAllowedEntryFields(
 		"book", "booktitle", "editor", "publisher", "volume", "number", "series", "address",
-		"edition", "isbn")
+		"edition", "issn", "isbn")
 	AddAllowedEntryFields(
 		"inbook", "booktitle", "editor", "chapter", "pages", "publisher", "volume", "number",
-		"series", "type", "address", "edition", "isbn", "crossref")
+		"series", "type", "address", "edition", "issn", "isbn", "crossref")
 	AddAllowedEntryFields(
 		"incollection", "booktitle", "publisher", "editor", "volume", "number", "series",
-		"type", "chapter", "pages", "address", "edition", "isbn", "crossref")
+		"type", "chapter", "pages", "address", "edition", "issn", "isbn", "crossref")
 	AddAllowedEntryFields(
 		"inproceedings", "booktitle", "editor", "volume", "number", "series", "pages",
 		"address", "organization", "publisher", "issn", "isbn", "crossref")
