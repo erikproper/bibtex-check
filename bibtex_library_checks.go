@@ -283,7 +283,7 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 			if DOIValueity == "" {
 				DOIValueity = "10.48550/arXiv." + EPrintValue
 			}
-			
+
 			if URLValueity == "" {
 				URLValueity = "https://doi.org/10.48550/arXiv." + EPrintValue
 			}
@@ -324,16 +324,21 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	Crossrefity := l.EntryFieldValueity(key, "crossref")
 
 	if Crossrefity != "" {
-		fmt.Println("Crossref from", key, "to", Crossrefity)
-// DOes the target exist?
-//
-// Does the source TYPE allow for crossrefs?
-// Does the target comply to the typing hierarchy?
-//
-//		EntryType := l.EntryTypes[key]		
-//		BibTeXCrossrefType
-	}
+		EntryType := l.EntryTypes[key]
 
+		if CrossrefType, CrossrefExists := l.EntryTypes[Crossrefity]; CrossrefExists {
+			if BibTeXCrossrefType[EntryType] != CrossrefType {
+				l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", EntryType, key, CrossrefType, Crossrefity)
+
+				return
+			}
+		} else {
+			l.Warning("Target %s of crossref from %s does not exist.", Crossrefity, key)
+
+			return
+		}
+	}
+}
 
 func (l *TBibTeXLibrary) CheckEntries() {
 	l.Progress(ProgressCheckingConsistencyOfEntries)

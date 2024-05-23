@@ -193,6 +193,7 @@ func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	return strings.TrimSpace(rawISBN)
 }
 
+// //// The key should be provided when normalising ... or not?
 func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
 	// Remove leading/trailing spaces
 	trimmedDate := strings.TrimSpace(rawDate)

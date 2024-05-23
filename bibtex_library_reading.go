@@ -104,14 +104,21 @@ func (l *TBibTeXLibrary) ReadChallengesFile() {
 
 		key := elements[0]
 		field := elements[1]
-		winner := l.NormaliseFieldValue(field, elements[3])
+		challenger := elements[2]
+		winner := elements[3]
+
+		if winner != "" {
+			winner = l.NormaliseFieldValue(field, winner)
+		}
 
 		// We do normalise the challengers, but want to ignore error messages.
 		// The challenged values may actually have errors ...
-		silenced := l.InteractionIsOff()
-		l.SetInteractionOff()
-		challenger := l.NormaliseFieldValue(field, elements[2])
-		l.SetInteraction(silenced)
+		if challenger != "" {
+			silenced := l.InteractionIsOff()
+			l.SetInteractionOff()
+			challenger = l.NormaliseFieldValue(field, challenger)
+			l.SetInteraction(silenced)
+		}
 
 		l.AddChallengeWinner(key, field, challenger, winner)
 	})

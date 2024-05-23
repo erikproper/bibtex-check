@@ -23,7 +23,7 @@ var (
 	BibTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
 	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
 	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
-	BibTeXCrossrefType		 TStringMap 		   // Entry type mapping for crossrefs
+	BibTeXCrossrefType       TStringMap            // Entry type mapping for crossrefs
 )
 
 const (
@@ -104,7 +104,6 @@ func init() {
 	BibTeXAllowedFields.Initialise()
 	BibTeXImportFields.Initialise()
 	BibTeXBookish.Initialise()
-	BibTeXCrossrefType.Initialise()
 
 	AddAllowedEntryFields(
 		"article", "journal", "volume", "number", "pages", "month", "issn")
@@ -159,11 +158,12 @@ func init() {
 	// For instance "researchgate" and "urloriginal"
 
 	BibTeXBookish.Add("proceedings", "book")
-	
+
+	BibTeXCrossrefType = TStringMap{}
 	BibTeXCrossrefType["inproceedings"] = "proceedings"
 	BibTeXCrossrefType["incollection"] = "book"
 	BibTeXCrossrefType["inbook"] = "book"
-	
+
 	BibTeXEntryMap = TStringMap{}
 	BibTeXEntryMap["conference"] = "inproceedings"
 	// (*) The above one is an official alias.
