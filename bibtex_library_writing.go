@@ -95,11 +95,21 @@ func (l *TBibTeXLibrary) writeAliasesMapping(fileExtension, progress string, ali
 	})
 }
 
-// Write alias/original pairs to a bufio.bWriter buffer
+// GENERIC binary writer
+// Write address mappings to a bufio.bWriter file
 func (l *TBibTeXLibrary) writeAddressMapping(fileExtension, progress string, aliasMap TStringMap) {
 	l.writeLibraryFile(fileExtension, progress, func(aliasWriter *bufio.Writer) {
 		for organisation, address := range aliasMap {
 			aliasWriter.WriteString(organisation + "\t" + address + "\n")
+		}
+	})
+}
+
+// Write name/ISSN pairs to a bufio.bWriter buffer
+func (l *TBibTeXLibrary) writeISSNMapping(fileExtension, progress string, ISSNMap TStringMap) {
+	l.writeLibraryFile(fileExtension, progress, func(aliasWriter *bufio.Writer) {
+		for name, ISSN := range ISSNMap {
+			aliasWriter.WriteString(name + "\t" + ISSN + "\n")
 		}
 	})
 }
@@ -117,4 +127,5 @@ func (l *TBibTeXLibrary) WriteAliasesFiles() {
 	l.writeLibraryFile(PreferredKeyAliasesFileExtension, ProgressWritingPreferredKeyAliasesFile, l.writePreferredKeyAliases)
 
 	l.writeAddressMapping(AddressesFileExtension, ProgressWritingAddressesFile, l.OrganisationalAddresses)
+	l.writeISSNMapping(ISSNFileExtension, ProgressWritingISSNFile, l.SeriesToISSN)
 }
