@@ -168,7 +168,7 @@ func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	var (
 		trimmedISBN   string
-		trimISBNStart = regexp.MustCompile(`^ *ISBN[-]?(10|13|)[:]? *`)
+		trimISBNStart = regexp.MustCompile(`^ *(ISBN|isbn)[-]?[(10|13]?[:]? *`)
 	)
 
 	// Remove ISBN: from the start
@@ -230,14 +230,8 @@ func NormaliseCrossrefValue(l *TBibTeXLibrary, crossref string) string {
 	// Remove leading/trailing spaces
 	trimmedCrossref := strings.TrimSpace(crossref)
 
-	if l.legacyMode {
-		// Note that the next call is hard-wired to the main Library.
-		// Only needed while still allowing l.legacyMode mode.
-		key, isKey := Library.LookupEntry(trimmedCrossref)
-
-		if isKey {
-			return key
-		}
+	if key, isKey := Library.LookupEntryKey(trimmedCrossref); isKey {
+		return key
 	}
 
 	return trimmedCrossref
@@ -326,10 +320,16 @@ func NormaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
 	if l.legacyMode {
 		trimmedFile = trimFileStart.ReplaceAllString(rawFile, "")
 		trimmedFile = trimFileEnd.ReplaceAllString(trimmedFile, "") + ".pdf"
+		trimmedFile = strings.ReplaceAll(trimmedFile, "--", "-")
+		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\`a}", "à")
+		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\'e}", "é")
+		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\~a}", "ã")
 
 		// Hardwired ... legacy!!
 		if FileExists("/Users/erikproper/BiBTeX/Zotero/" + trimmedFile) {
 			return "/Users/erikproper/BiBTeX/Zotero/" + trimmedFile
+		} else if FileExists("/Users/erikproper/Zotero/storage/" + trimmedFile) {
+			return "/Users/erikproper/Zotero/storage/" + trimmedFile
 		} else {
 			return ""
 		}
@@ -429,7 +429,8 @@ func init() {
 	fieldNormalisers["urldate"] = NormaliseDateValue
 	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString
-	fieldNormalisers["file"] = NormaliseFileValue // only needed while still allowing l.legacyMode
+	fieldNormalisers["file"] = NormaliseFileValue      // only needed while still allowing l.legacyMode
+	fieldNormalisers["local-url"] = NormaliseFileValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["howpublished"] = NormaliseTitleString
 	fieldNormalisers["institution"] = NormaliseInstitutionValue
 	fieldNormalisers["isbn"] = NormaliseISBNValue

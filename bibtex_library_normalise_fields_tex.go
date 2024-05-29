@@ -54,21 +54,20 @@ func (t *TBibTeXTeX) CollectTeXSpacety(s *string) bool {
 	return !t.EndOfStream()
 }
 
-func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection bool, needsProtection *bool) {
+func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection bool) {
 	token := ""
 	spacety := ""
-	sequenceNeedsProtection := false
+	tokenNeedsProtection := false
 	sequenceNextIsFirstTokenOfSubTitle := false
-
-	*needsProtection = false
 
 	for !t.ThisCharacterIs('}') &&
 		/**/ t.CollectTeXSpacety(&spacety) &&
-		/*  */ t.CollectTeXToken(&token, isOfferedProtection, &sequenceNeedsProtection, &sequenceNextIsFirstTokenOfSubTitle) {
+		/*  */ t.CollectTeXToken(&token, isOfferedProtection, &tokenNeedsProtection, &sequenceNextIsFirstTokenOfSubTitle) {
 		if token != "" {
-			if sequenceNeedsProtection {
+			if tokenNeedsProtection {
 				*tokens += spacety + "{" + token + "}"
-				sequenceNeedsProtection = false
+
+				tokenNeedsProtection = false
 			} else {
 				*tokens += spacety + token
 			}
@@ -87,15 +86,16 @@ func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool,
 
 		case t.ThisCharacterWas('{'):
 			groupElements := ""
-			groupNeedsProtection := false
 
-			t.CollectTokenSequencety(&groupElements, true, &groupNeedsProtection)
+			t.CollectTokenSequencety(&groupElements, true)
 
 			if groupElements != "" {
-				*s += "{" + groupElements + "}"
+				if isOfferedProtection {
+					*s += groupElements
+				} else {
+					*s += "{" + groupElements + "}"
+				}
 			}
-
-			*needsProtection = false
 
 			t.ThisCharacterWas('}')
 
@@ -133,6 +133,7 @@ func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool,
 
 func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, needsProtection, nextIsFirstTokenOfSubTitle *bool) bool {
 	t.inWord = false
+	*needsProtection = false
 
 	if t.EndOfStream() {
 		return false
@@ -147,8 +148,6 @@ func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, ne
 			}
 
 		} else {
-			*needsProtection = false
-
 			for !t.ThisCharacterIsIn(TeXSingletons) && !t.EndOfStream() && t.CollectTeXTokenElement(token, isOfferedProtection, needsProtection, nextIsFirstTokenOfSubTitle) {
 				*nextIsFirstTokenOfSubTitle = false
 			}
@@ -198,13 +197,12 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 }
 
 func NormaliseTitleString(l *TBibTeXLibrary, title string) string {
-	needsProtection := false
 	result := ""
 
 	l.TBibTeXTeX.TextString(strings.ReplaceAll(title, " - ", " -- "))
 	l.TBibTeXTeX.inWord = false
 	l.TBibTeXTeX.TeXSpacety()
-	l.TBibTeXTeX.CollectTokenSequencety(&result, false, &needsProtection)
+	l.TBibTeXTeX.CollectTokenSequencety(&result, false)
 
 	return result
 }

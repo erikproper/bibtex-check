@@ -74,8 +74,8 @@ const (
 	WarningOrganisationAliasesLineTooShort = "Line in organisation aliases file is too short: %s"
 	WarningSeriesAliasesLineTooShort       = "Line in series aliases file is too short: %s"
 	WarningAliasesLineTooShort             = "Line in aliases file is too short: %s"
-	WarningISSNLineTooShort					= "Line in issn file is too short: %s"
-	
+	WarningISSNLineTooShort                = "Line in issn file is too short: %s"
+
 	// Progress reports for reading/writing files"Line in aliases file is too short: %s"
 	ProgressWritingBibFile                     = "Writing bib file %s"
 	ProgressWritingChallengesFile              = "Writing challenges file %s"

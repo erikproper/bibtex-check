@@ -18,12 +18,13 @@ var (
 	BibTeXAllowedEntryFields map[string]TStringSet // Per entry type, the allowed field
 	BibTeXImportFields       TStringSet            // Set of fields we would consider importing
 	BibTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
-	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entry types
-	BibTeXBookish            TStringSet            // All book-alike entry types
-	BibTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
-	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
-	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
-	BibTeXCrossrefType       TStringMap            // Entry type mapping for crossrefs
+	BibTeXBDSKFileFields     TStringSet
+	BibTeXAllowedEntries     TStringSet // Aggregation of the allowed entry types
+	BibTeXBookish            TStringSet // All book-alike entry types
+	BibTeXFieldMap           TStringMap // Mapping of field names, to enable aliases and automatic corrections
+	BibTeXEntryMap           TStringMap // Mapping of entry names, to enable automatic corrections
+	BibTeXDefaultStrings     TStringMap // The default string definitions that will be used when opening a BibTeX file
+	BibTeXCrossrefType       TStringMap // Entry type mapping for crossrefs
 )
 
 const (
@@ -105,6 +106,7 @@ func init() {
 	BibTeXAllowedFields.Initialise()
 	BibTeXImportFields.Initialise()
 	BibTeXBookish.Initialise()
+	BibTeXBDSKFileFields.Initialise()
 
 	AddAllowedEntryFields(
 		"article", "journal", "volume", "number", "pages", "month", "issn")
@@ -148,6 +150,10 @@ func init() {
 
 	BibTeXImportFields.Unite(BibTeXAllowedFields)
 
+	//////	WOULD be nice to then Unite this one to AllowedFields, but this requires a special version of AddAllowedFields as that one does some checks ...
+	BibTeXBDSKFileFields.Add("bdsk-file-1", "bdsk-file-2", "bdsk-file-3", "bdsk-file-4", "bdsk-file-5",
+		"bdsk-file-6", "bdsk-file-7", "bdsk-file-8", "bdsk-file-9")
+
 	AddAllowedFields(
 		"date-added", "date-modified",
 		"bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
@@ -170,6 +176,7 @@ func init() {
 	// (*) The above one is an official alias.
 	// The ones below are not, and should be moved to a config file.
 	BibTeXEntryMap["softmisc"] = "misc"
+	BibTeXEntryMap["online"] = "misc"
 	BibTeXEntryMap["patent"] = "misc"
 	BibTeXEntryMap["unpublished"] = "misc"
 

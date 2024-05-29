@@ -65,17 +65,43 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 
 // Reporting warnings that involve a choice on how to proceed.
 // The warning message should provide the formatting.
-func (r *TInteraction) WarningBoolQuestion(question, warning string, context ...any) bool {
+func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
 	r.Warning(warning, context...)
-	fmt.Printf("QUESTION: " + question + " (y/n): ")
+	optionSet := "("
+	separator := ""
+	for option := range options.Elements() {
+		optionSet += separator + option
+		separator = "/"
+	}
+	optionSet += "): "
+	
+	fmt.Printf("QUESTION: " + question + " " + optionSet)
 
 	reader := bufio.NewReader(os.Stdin)
-	char := '_'
-	for char != 'y' && char != 'n' {
-		char, _, _ = reader.ReadRune()
-	}
+	validOption := false
+	for {
+		option, _ := reader.ReadString('\n')
+		option = option[:len(option)-1]
+		
+		validOption = options.Contains(option)
 
-	return char == 'y'
+		if validOption {
+			return option
+		}
+		
+		fmt.Printf(optionSet)
+	}
+}
+
+// Reporting warnings that involve a choice on how to proceed.
+// The warning message should provide the formatting.
+func (r *TInteraction) WarningYesNoQuestion(question, warning string, context ...any) bool {
+	options := TStringSetNew()
+	options.Add("y", "n")
+
+	answer := Library.WarningQuestion(question, options, warning, context...)
+
+	return answer == "y"
 }
 
 // Reporting progres.

@@ -65,6 +65,110 @@ func main() {
 			writeChallenges = true
 		}
 
+	case len(os.Args) == 2 && os.Args[1] == "-migrate":
+		if InitialiseMainLibrary() && OpenMainBibFile() {
+			writeBibFile = true
+			writeAliases = false
+			writeChallenges = true
+
+			OldLibrary := TBibTeXLibrary{}
+			OldLibrary.Progress("Reading legacy library")
+			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder, BaseName)
+			OldLibrary.legacyMode = true
+			OldLibrary.migrationMode = true
+			OldLibrary.ReadAliasesFiles()
+
+			BibTeXParser := TBibTeXStream{}
+			BibTeXParser.Initialise(Reporting, &OldLibrary)
+			BibTeXParser.ParseBibFile(BibTeXFolder + "My Library.bib")
+			//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old1.bib")
+			//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old2.bib")
+			//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old3.bib")
+			//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old4.bib")
+			//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old5.bib")
+			//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old6.bib")
+			//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old7.bib")
+			//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old8.bib")
+
+			OldLibrary.ReportLibrarySize()
+
+			for key := range OldLibrary.EntryTypes {
+				OldLibrary.CheckDOIPresence(key)
+				OldLibrary.CheckNeedForLocalURL(key)
+				OldLibrary.CheckBookishTitles(key)
+				OldLibrary.CheckEPrint(key)
+				OldLibrary.CheckISBNFromDOI(key)
+				OldLibrary.CheckISSN(key)
+				OldLibrary.CheckURLDateNeed(key)
+			}
+
+			for key := range OldLibrary.EntryTypes {
+				deleted := false
+
+				if Library.EntryExists(key) {
+					delete(OldLibrary.EntryTypes, key)
+					delete(OldLibrary.EntryFields, key)
+					deleted = true
+				}
+
+				if original, hasOriginal := Library.KeyAliasToKey[key]; !deleted && hasOriginal {
+					if Library.EntryExists(original) {
+						delete(OldLibrary.EntryTypes, key)
+						delete(OldLibrary.EntryFields, key)
+						deleted = true
+					} else if OldLibrary.EntryExists(original) {
+						delete(OldLibrary.EntryTypes, key)
+						delete(OldLibrary.EntryFields, key)
+						deleted = true
+					}
+				}
+
+				if !deleted {
+					var oops = regexp.MustCompile(`[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$`)
+					deOops := oops.ReplaceAllString(key, "")
+					if deOops != key {
+						if deOopsID, deOopsIsAlias := Library.KeyAliasToKey[deOops]; deOopsIsAlias {
+							Library.AddKeyAlias(key, deOopsID)
+							delete(OldLibrary.EntryTypes, key)
+							delete(OldLibrary.EntryFields, key)
+							deleted = true
+						} else if OldLibrary.EntryExists(deOops) {
+							Library.AddKeyAlias(key, deOops)
+							delete(OldLibrary.EntryTypes, key)
+							delete(OldLibrary.EntryFields, key)
+							deleted = true
+						}
+					}
+				}
+
+				if fieldValueity := OldLibrary.EntryFieldValueity(key, "dblp"); !deleted && fieldValueity != "" {
+					if knownKey, knownDBLP := Library.KeyAliasToKey["DBLP:"+fieldValueity]; knownDBLP {
+						if key != knownKey {
+							fmt.Println("key", key, "has DBLP", fieldValueity, "with ID", knownKey)
+							//						Library.AddKeyAlias(key, knownKey)
+							//						delete(OldLibrary.EntryTypes, key)
+							//						delete(OldLibrary.EntryFields, key)
+							//	 					deleted = true
+						}
+					}
+				}
+			}
+
+			OldLibrary.ReportLibrarySize()
+			for key := range OldLibrary.EntryTypes {
+				if original, hasOriginal := Library.KeyAliasToKey[key]; hasOriginal {
+					newKey := Library.NewKey()
+					Library.AddKeyAlias(original, newKey)
+					Library.AddKeyAlias(key, newKey)
+				} else {
+					Library.AddKeyAlias(key, Library.NewKey())
+				}
+			}
+			writeAliases = true
+			OldLibrary.BaseName = "Migration"
+			OldLibrary.WriteBibTeXFile()
+		}
+
 	case len(os.Args) == 2 && os.Args[1] == "-meta":
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			writeBibFile = true
@@ -86,13 +190,14 @@ func main() {
 			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old5.bib")
 			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old6.bib")
 			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old7.bib")
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old8.bib")
 
 			OldLibrary.ReportLibrarySize()
 
 			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
 			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA
 			for oldEntry, oldType := range OldLibrary.EntryTypes {
-				newKey, newType, isEntry := Library.LookupEntryWithType(stripUniquePrefix.ReplaceAllString(oldEntry, ""))
+				newKey, newType, isEntry := Library.LookupEntryKeyWithType(stripUniquePrefix.ReplaceAllString(oldEntry, ""))
 
 				if isEntry {
 					// We don't have a set type function??
@@ -130,7 +235,7 @@ func main() {
 		Reporting.SetInteractionOff()
 
 		if InitialiseMainLibrary() && OpenMainBibFile() {
-			actualKey, ok := Library.LookupEntry(CleanKey(os.Args[2]))
+			actualKey, ok := Library.LookupEntryKey(CleanKey(os.Args[2]))
 			if ok {
 				fmt.Println(Library.EntryString(actualKey))
 			}
@@ -141,7 +246,7 @@ func main() {
 
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			// Function call.
-			actualKey, ok := Library.LookupEntry(CleanKey(os.Args[2]))
+			actualKey, ok := Library.LookupEntryKey(CleanKey(os.Args[2]))
 			if ok {
 				fmt.Println(actualKey)
 			}

@@ -52,16 +52,19 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current strin
 			//			fmt.Println("KWI", Library.ChallengeWinners.GetValueityFromStringTripleMap(key, field, challenger), "KK")
 			//			fmt.Println("KNO", NormaliseTitleString(&Library, Library.ChallengeWinners.GetValueityFromStringTripleMap(key, field, challenger)), "KK")
 
+			options := TStringSetNew()
+			options.Add("Y", "y", "n", "N")
 			warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 			question := "Current entry:\n" + l.EntryString(key, "  ") + "Keep the value as is?"
-
-			if l.WarningBoolQuestion(question, warning, key, field, challenger, current) {
+			answer := l.WarningQuestion(question, options, warning, key, field, challenger, current)
+			
+			if answer == "y" {
 				l.UpdateChallengeWinner(key, field, challenger, current)
 				l.WriteChallenges()
 				l.WriteBibTeXFile()
 
 				return current
-			} else {
+			} else if answer == "n" {
 				l.UpdateChallengeWinner(key, field, current, challenger)
 				l.WriteChallenges()
 				l.WriteBibTeXFile()

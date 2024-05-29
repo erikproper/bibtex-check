@@ -32,11 +32,15 @@ type (
 		BaseName                        string                 // BaseName of the library related files
 		Comments                        []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		EntryFields                     TStringStringMap       // Per entry key, the fields associated to the actual entries.
-		FieldsIndex                     TStringStringSetMap    //
+		TitleIndex                      TStringSetMap          //
+		BookTitleIndex                  TStringSetMap          //
+		ISBNIndex                       TStringSetMap          //
+		BDSKFileIndex                   TStringSetMap          //
+		DOIIndex                        TStringSetMap          //
 		EntryTypes                      TStringMap             // Per entry key, the type of the enty.
 		KeyAliasToKey                   TStringMap             // Mapping from key aliases to the actual entry key.
 		SeriesToISSN                    TStringMap             // Mapping from series/journals to ISSN
-		KeyToAliases                    TStringSetMap          // The inverted version of KeyAliasToKey.
+		KeyToAliases                    TStringSetMap          // The inverted version of KeyAliasToKey NEEEEEEEDED??????
 		PreferredKeyAliases             TStringMap             // Per entry key, the preferred alias
 		NameAliasToName                 TStringMap             // Mapping from name aliases to the actual name.
 		NameToAliases                   TStringSetMap          // The inverted version of NameAliasToName
@@ -60,6 +64,7 @@ type (
 		ChallengeWinners                TStringStringStringMap // A key and field specific mapping from challenged value to winner values
 		TInteraction                                           // Error reporting channel
 		TBibTeXStream                                          // BibTeX parser
+		migrationMode                   bool
 		TBibTeXTeX
 	}
 )
@@ -77,12 +82,17 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 
 	l.TBibTeXTeX.library = l
 
+	l.migrationMode = false
 	l.FilesRoot = filesRoot
 	l.BaseName = baseName
 
 	l.Comments = []string{}
 	l.EntryFields = TStringStringMap{}
-	l.FieldsIndex = TStringStringSetMap{}
+	l.TitleIndex = TStringSetMap{}
+	l.BookTitleIndex = TStringSetMap{}
+	l.ISBNIndex = TStringSetMap{}
+	l.BDSKFileIndex = TStringSetMap{}
+	l.DOIIndex = TStringSetMap{}
 	l.EntryTypes = TStringMap{}
 	l.KeyAliasToKey = TStringMap{}
 	l.NameAliasToName = TStringMap{}
@@ -144,7 +154,7 @@ func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
 
 	// Of course, a preferred alias must be an alias.
 	if !exists {
-		l.Warning(WarningPreferredAliasNotExist, key)
+		l.Warning(WarningPreferredAliasNotExist, alias)
 
 		return
 	}
@@ -168,7 +178,7 @@ func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
 }
 
 // Add a new alias
-func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
+func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap, check bool) {
 	// Neither alias, nor target should be empty
 	if alias == "" || original == "" {
 		return
@@ -180,11 +190,13 @@ func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, 
 	}
 
 	// Check for ambiguity of aliases
-	if currentOriginal, aliasIsAlreadyAliased := (*aliasMap)[alias]; aliasIsAlreadyAliased {
-		if currentOriginal != original {
-			l.Warning(WarningAmbiguousAlias, alias, currentOriginal, original)
+	if check {
+		if currentOriginal, aliasIsAlreadyAliased := (*aliasMap)[alias]; aliasIsAlreadyAliased {
+			if currentOriginal != original {
+				l.Warning(WarningAmbiguousAlias, alias, currentOriginal, original)
 
-			return
+				return
+			}
 		}
 	}
 
@@ -201,10 +213,10 @@ func (l *TBibTeXLibrary) MaybeAddReorderedName(alias, name string, aliasMap *TSt
 
 	if len(aliasSplit) == 3 {
 		reorderedAlias := strings.TrimSpace(aliasSplit[2] + " " + aliasSplit[0] + strings.TrimRight(aliasSplit[1], " .") + ".")
-		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap)
+		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap, true)
 	} else if len(aliasSplit) == 2 {
 		reorderedAlias := strings.TrimSpace(aliasSplit[1] + " " + aliasSplit[0])
-		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap)
+		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap, true)
 	}
 }
 
@@ -213,29 +225,28 @@ func (l *TBibTeXLibrary) AddNameAlias(alias, name string, aliasMap *TStringMap, 
 	l.MaybeAddReorderedName(name, name, aliasMap, inverseMap)
 	l.MaybeAddReorderedName(alias, name, aliasMap, inverseMap)
 
-	l.AddAlias(alias, name, aliasMap, inverseMap)
+	l.AddAlias(alias, name, aliasMap, inverseMap, true)
 }
 
 // Add a new text string alias
 func (l *TBibTeXLibrary) AddAliasForTextString(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
-	l.AddAlias(NormaliseTitleString(l, alias), NormaliseTitleString(l, original), aliasMap, inverseMap)
+	l.AddAlias(NormaliseTitleString(l, alias), NormaliseTitleString(l, original), aliasMap, inverseMap, true)
 }
 
 // Add a new key alias (for use in generic read function)
 func (l *TBibTeXLibrary) AddAliasForKey(alias, key string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
-	if _, aliasIsUsedAsKeyForAlias := (*inverseMap)[alias]; aliasIsUsedAsKeyForAlias && AllowLegacy {
-		if AllowLegacy { // After the migration, this can only happen when merging two entries.
-			for old_alias := range (*inverseMap)[alias].Set().Elements() {
-				l.AddAlias(old_alias, key, aliasMap, inverseMap)
-				l.moveKeyAliasPreference(old_alias, alias, key)
+	if alias != key {
+		if _, aliasIsUsedAsKeyForSomeAlias := (*inverseMap)[alias]; aliasIsUsedAsKeyForSomeAlias {
+			for oldAlias := range (*inverseMap)[alias].Set().Elements() {
+				l.AddAlias(oldAlias, key, aliasMap, inverseMap, false)
+				l.moveKeyAliasPreference(oldAlias, alias, key)
 			}
 
-			l.AddAlias(alias, key, aliasMap, inverseMap)
-			delete(l.KeyToAliases, alias)
+			delete(*inverseMap, alias)
 		}
-	}
 
-	l.AddAlias(alias, key, aliasMap, inverseMap)
+		l.AddAlias(alias, key, aliasMap, inverseMap, false)
+	}
 }
 
 // Add a new key alias
@@ -285,25 +296,32 @@ func (l *TBibTeXLibrary) ReportLibrarySize() {
 }
 
 // Lookup the entry key and type for a given key/alias
-func (l *TBibTeXLibrary) LookupEntryWithType(key string) (string, string, bool) {
+func (l *TBibTeXLibrary) LookupEntryKeyWithType(key string) (string, string, bool) {
 	lookupKey, isAlias := l.KeyAliasToKey[key]
 	if !isAlias {
 		lookupKey = key
 	}
 
-	EntryTypes, isKey := l.EntryTypes[lookupKey]
-	if isKey {
-		return lookupKey, EntryTypes, true
+	if entryType, isKey := l.EntryTypes[lookupKey]; isKey {
+		return lookupKey, entryType, true
 	} else {
 		return "", "", false
 	}
 }
 
 // Lookup the entry key for a given key/alias
-func (l *TBibTeXLibrary) LookupEntry(key string) (string, bool) {
-	lookupKey, _, isKey := l.LookupEntryWithType(key)
+func (l *TBibTeXLibrary) LookupEntryKey(key string) (string, bool) {
+	lookupKey, isAlias := l.KeyAliasToKey[key]
+	if !isAlias {
+		lookupKey = key
+	}
 
-	return lookupKey, isKey
+	if _, isKey := l.EntryTypes[lookupKey]; isKey {
+		return lookupKey, true
+	} else {
+		return "", false
+	}
+
 }
 
 // Create a string (with newlines) with a BibTeX based representation of the provided key, while using an optional prefix for each line.
@@ -317,13 +335,28 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 			linePrefix += prefix
 		}
 
+		result := ""
 		// Add the type and key
-		result := linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
+		if !l.migrationMode {
+			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
+		} else if realKey, isAlias := Library.KeyAliasToKey[key]; isAlias {
+			result = linePrefix + "@" + l.EntryTypes[key] + "{" + realKey + ",\n"
+		} else {
+			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
+		}
 
 		// Iterate over the fields and their values
 		for field, value := range fields {
-			if value != "" {
-				result += linePrefix + "   " + field + " = {" + value + "},\n"
+			if l.EntryAllowsForField(key, field) {
+				if value != "" {
+					if field == "crossref" {
+						result += linePrefix + "   " + field + " = {" + NormaliseCrossrefValue(l, value) + "},\n"
+					} else if field == "file" {
+						result += linePrefix + "   local-url = {" + value + "},\n"
+					} else {
+						result += linePrefix + "   " + field + " = {" + value + "},\n"
+					}
+				}
 			}
 		}
 
@@ -441,10 +474,16 @@ var uniqueID int
 
 // Start to record a library entry
 func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
-	if l.legacyMode {
+	if l.legacyMode && !l.migrationMode {
 		// Post legacy question: Do we want to use currentKey or can this be kept on the parser side??
 		l.currentKey = fmt.Sprintf("%dAAAAA", uniqueID) + key
 		uniqueID++
+	} else if l.migrationMode {
+		if mappedKey, isAlias := Library.KeyAliasToKey[key]; isAlias {
+			l.currentKey = mappedKey
+		} else {
+			l.currentKey = key
+		}
 	} else {
 		// Set the current key. But can't we keep that current key "inside" the parser?
 		l.currentKey = key
@@ -453,11 +492,15 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 	// Check if an entry with the given key already exists
 	if l.EntryExists(l.currentKey) {
 		// When the entry already exists, we need to report that we found doubles, as well as possibly resolve the entry type.
-		l.Warning(WarningEntryAlreadyExists, l.currentKey)
-		l.foundDoubles = true
+
+		if !l.migrationMode {
+			l.Warning(WarningEntryAlreadyExists, l.currentKey)
+			l.foundDoubles = true
+		}
+
 		// Resolve the double typing issue
 		// Post legacy migration, we still need to do this, but then we will always have: key == l.currentKey
-		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.EntryTypes[key])
+		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.EntryTypes[l.currentKey])
 	} else {
 		l.EntryFields[l.currentKey] = TStringMap{}
 		l.EntryTypes[l.currentKey] = entryType
@@ -503,6 +546,33 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "school")
 	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "publisher")
 
+	for BDSKFileField := range BibTeXBDSKFileFields.Elements() {
+		if BDSKFile := l.EntryFieldValueity(l.currentKey, BDSKFileField); BDSKFile != "" {
+			if l.BDSKFileIndex[BDSKFile].Set().Contains(l.currentKey) {
+				l.Warning("Double DSK file within entry %s", l.currentKey)
+				l.EntryFields[l.currentKey][BDSKFileField] = ""
+			} else {
+				l.BDSKFileIndex.AddValueToStringSetMap(BDSKFile, l.currentKey)
+			}
+		}
+	}
+
+	if ISBN := l.EntryFieldValueity(l.currentKey, "isbn"); ISBN != "" {
+		l.ISBNIndex.AddValueToStringSetMap(ISBN, l.currentKey)
+	}
+
+	if DOI := l.EntryFieldValueity(l.currentKey, "doi"); DOI != "" {
+		l.DOIIndex.AddValueToStringSetMap(DOI, l.currentKey)
+	}
+
+	if title := l.EntryFieldValueity(l.currentKey, "title"); title != "" {
+		l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(title), l.currentKey)
+	}
+
+	if bookTitle := l.EntryFieldValueity(l.currentKey, "booktitle"); bookTitle != "" {
+		l.BookTitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), l.currentKey)
+	}
+
 	// Check if no illegal fields were used
 	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
 	if !l.legacyMode && !l.InteractionIsOff() {
@@ -511,7 +581,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 			// Check if the field is allowed for this type.
 			// If not, we need to ask if it can be deleted.
 			if !l.EntryAllowsForField(key, field) {
-				if l.WarningBoolQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryTypes[key]) {
+				if l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryTypes[key]) {
 					delete(l.EntryFields[key], field)
 				}
 			}

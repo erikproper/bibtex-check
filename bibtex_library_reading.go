@@ -48,7 +48,7 @@ func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading 
 	return scanner.Err() == nil
 }
 
-/// Generic binary mapping reader??
+// / Generic binary mapping reader??
 func (l *TBibTeXLibrary) readAddressMapping(fileExtension, progress string, addMapping func(alias, target string)) {
 	l.readLibraryFile(fileExtension, progress, func(line string) {
 		elements := strings.Split(line, "\t")

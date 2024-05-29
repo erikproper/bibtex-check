@@ -50,10 +50,12 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 			bibWriter.WriteString("\n")
 		}
 
-		// Write out the comments
-		for _, comment := range l.Comments {
-			bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
-			bibWriter.WriteString("\n")
+		if !l.migrationMode {
+			// Write out the comments
+			for _, comment := range l.Comments {
+				bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
+				bibWriter.WriteString("\n")
+			}
 		}
 	})
 }

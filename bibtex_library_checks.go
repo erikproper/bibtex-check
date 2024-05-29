@@ -207,6 +207,7 @@ func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
 
 				// We do have to make sure the new alias is not already in use, and if it is then a valid alias.
 				if !l.AliasExists(loweredAlias) && PreferredKeyAliasIsValid(loweredAlias) {
+					l.AddKeyAlias(loweredAlias, key)
 					l.AddPreferredKeyAlias(loweredAlias)
 				}
 			}
@@ -272,7 +273,7 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 		}
 
 		if EPrintValue == "" {
-			l.Warning("Not able to find eprint data for %s")
+			l.Warning("Not able to find eprint data for %s", key)
 		} else {
 			if DOIValueity == "" {
 				DOIValueity = "10.48550/arXiv." + EPrintValue
@@ -292,15 +293,24 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 		EPrintTypeValue := "jstor"
 		EPrintValue := EPrintValueity
 
-		if EPrintValueity == "" {
-			EPrintValue = strings.ReplaceAll(URLValueLower, "https://doi.org/10.2307/", "")
-			EPrintValue = strings.ReplaceAll(EPrintValue, "http://www.jstor.org/stable/", "")
-			EPrintValue = strings.ReplaceAll(EPrintValue, "https://www.jstor.org/stable/", "")
-		}
+		if EPrintValue == "" {
+			EPrintValue = strings.ReplaceAll(DOIValueLower, "10.2307/", "")
 
-		if EPrintValue == URLValueity {
-			l.Warning("Not able to find eprint data for %s")
-			EPrintValue = ""
+			if EPrintValue == "" {
+				EPrintValue = strings.ReplaceAll(URLValueLower, "https://doi.org/10.2307/", "")
+
+				if EPrintValue == "" {
+					EPrintValue = strings.ReplaceAll(EPrintValue, "http://www.jstor.org/stable/", "")
+
+					if EPrintValue == "" {
+						EPrintValue = strings.ReplaceAll(EPrintValue, "https://www.jstor.org/stable/", "")
+
+						if EPrintValue == "" {
+							l.Warning("Not able to find eprint data for %s", key)
+						}
+					}
+				}
+			}
 		}
 
 		l.EntryFields[key]["eprinttype"] = EPrintTypeValue
@@ -354,17 +364,17 @@ func (l *TBibTeXLibrary) tryGetISSN(key, field string, ISSN *string) bool {
 	if fieldValueity := l.EntryFieldValueity(key, field); fieldValueity != "" {
 		newISSN, isMapped := l.SeriesToISSN[fieldValueity]
 		*ISSN = newISSN
-		
-		return isMapped	
+
+		return isMapped
 	}
-	
+
 	return false
 }
 
 func (l *TBibTeXLibrary) CheckISSN(key string) {
 	var newISSN string
-	
-	if  l.tryGetISSN(key, "series", &newISSN) || l.tryGetISSN(key, "journal", &newISSN) {
+
+	if l.tryGetISSN(key, "series", &newISSN) || l.tryGetISSN(key, "journal", &newISSN) {
 		l.EntryFields[key]["issn"] = newISSN
 	}
 }
