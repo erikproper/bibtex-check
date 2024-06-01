@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"regexp"
@@ -22,18 +23,46 @@ const (
 	MainLibrary  = "main"
 )
 
+// SEPARATE FILE
+// Update bib mapping file
+func (l *TBibTeXLibrary) UpdateBibMap(file string) {
+	bibMap := TStringMap{}
+
+	l.readFile(file, "Reading mapping file %s", func(line string) {
+		elements := strings.Split(line, " ")
+		if len(elements) < 2 {
+			l.Warning("File line too short: %s", line)
+			return
+		}
+
+		candidateKey := elements[1]
+		if lookupKey, isAlias := l.KeyAliasToKey[candidateKey]; isAlias {
+			bibMap[elements[0]] = lookupKey
+		} else {
+			bibMap[elements[0]] = candidateKey
+		}
+	})
+
+	l.writeFile(file, "Writing mapping file %s", func(bibWriter *bufio.Writer) {
+		for alias, key := range bibMap {
+			bibWriter.WriteString(alias + " " + key + "\n")
+		}
+	})
+}
+
 func InitialiseMainLibrary() bool {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
 	Library.ReadAliasesFiles()
 	Library.CheckAliasesMappings()
-	Library.ReadChallengesFile()
 
 	return true
 }
 
 func OpenMainBibFile() bool {
+	Library.ReadChallengesFiles()
+
 	if Library.ReadBib(BibFile) {
 		Library.ReportLibrarySize()
 		Library.CheckKeyAliasesConsistency()
@@ -220,6 +249,10 @@ func main() {
 			}
 		}
 
+	case len(os.Args) == 3 && os.Args[1] == "-update_map":
+		InitialiseMainLibrary()
+		Library.UpdateBibMap(os.Args[2])
+
 	case len(os.Args) == 3 && os.Args[1] == "-alias":
 		Reporting.SetInteractionOff()
 		InitialiseMainLibrary()
@@ -306,6 +339,6 @@ func main() {
 	}
 
 	if writeChallenges {
-		Library.WriteChallenges()
+		Library.WriteChallengesFiles()
 	}
 }

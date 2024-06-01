@@ -29,12 +29,10 @@ func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
 }
 
 // Generic function to read library related files
-func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading func(string)) bool {
-	FullFilePath := l.FilesRoot + l.BaseName + fileExtension
+func (l *TBibTeXLibrary) readFile(fullFilePath, message string, reading func(string)) bool {
+	l.Progress(message, fullFilePath)
 
-	l.Progress(message, FullFilePath)
-
-	file, err := os.Open(FullFilePath)
+	file, err := os.Open(fullFilePath)
 	if err != nil {
 		return false
 	}
@@ -46,6 +44,11 @@ func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading 
 	}
 
 	return scanner.Err() == nil
+}
+
+// Generic function to read library related files
+func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading func(string)) bool {
+	return l.readFile(l.FilesRoot+l.BaseName+fileExtension, message, reading)
 }
 
 // / Generic binary mapping reader??
@@ -105,14 +108,12 @@ func (l *TBibTeXLibrary) ReadAliasesFiles() {
 	l.readISSNMapping(ISSNFileExtension, ProgressReadingISSNFile, l.AddSeriesISSN)
 }
 
-// Read challenge file
-func (l *TBibTeXLibrary) ReadChallengesFile() {
-	//	l.ChallengesFilePath = l.BaseName + ChallengesFileExtension
-
-	l.readLibraryFile(ChallengesFileExtension, ProgressReadingChallengesFile, func(line string) {
+// Read key field challenge file
+func (l *TBibTeXLibrary) ReadKeyFieldChallengesFile() {
+	l.readLibraryFile(KeyFieldChallengesFileExtension, ProgressReadingKeyFieldChallengesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 4 {
-			l.Warning(WarningChallengeLineTooShort, line)
+			l.Warning(WarningKeyFieldChallengeLineTooShort, line)
 			return
 		}
 
@@ -134,6 +135,40 @@ func (l *TBibTeXLibrary) ReadChallengesFile() {
 			l.SetInteraction(silenced)
 		}
 
-		l.AddChallengeWinner(key, field, challenger, winner)
+		l.AddKeyFieldChallengeWinner(key, field, challenger, winner)
 	})
+}
+
+// Read field challenge file
+func (l *TBibTeXLibrary) ReadFieldChallengesFile() {
+	l.readLibraryFile(FieldChallengesFileExtension, ProgressReadingFieldChallengesFile, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 3 {
+			l.Warning(WarningFieldChallengeLineTooShort, line)
+			return
+		}
+
+		field := elements[0]
+		challenger := elements[1]
+		winner := elements[2]
+
+		if winner != "" {
+			winner = l.NormaliseFieldValue(field, winner)
+		}
+
+		// We do normalise the challengers, but want to ignore error messages, since the challenged values may actually have errors ...
+		if challenger != "" {
+			silenced := l.InteractionIsOff()
+			l.SetInteractionOff()
+			challenger = l.NormaliseFieldValue(field, challenger)
+			l.SetInteraction(silenced)
+		}
+
+		l.AddFieldChallengeWinner(field, challenger, winner)
+	})
+}
+
+func (l *TBibTeXLibrary) ReadChallengesFiles() {
+	l.ReadFieldChallengesFile()
+	l.ReadKeyFieldChallengesFile()
 }

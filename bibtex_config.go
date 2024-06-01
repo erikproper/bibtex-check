@@ -42,7 +42,8 @@ const (
 	OrganisationAliasesFileExtension = ".organisations"
 	SchoolAliasesFileExtension       = ".schools"
 	SeriesAliasesFileExtension       = ".series"
-	ChallengesFileExtension          = ".challenges"
+	KeyFieldChallengesFileExtension  = ".key_field_challenges"
+	FieldChallengesFileExtension     = ".field_challenges"
 	AddressesFileExtension           = ".addresses"
 	ISSNFileExtension                = ".issn"
 )
@@ -182,6 +183,7 @@ func init() {
 
 	BibTeXFieldMap = TStringMap{}
 	// (*) The ones below should all be moved to a config file.
+	BibTeXFieldMap["issue"] = "number"
 	BibTeXFieldMap["editors"] = "editor"
 	BibTeXFieldMap["authors"] = "author"
 	BibTeXFieldMap["contributor"] = "author"

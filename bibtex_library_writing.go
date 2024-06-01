@@ -17,15 +17,14 @@ import (
 	"os"
 )
 
-// Generic function to write library related files
-func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing func(*bufio.Writer)) bool {
-	FullFilePath := l.FilesRoot + l.BaseName + fileExtension
+/// Consistent naming ... XXXFile ...
 
-	l.Progress(message, FullFilePath)
+func (l *TBibTeXLibrary) writeFile(fullFilePath, message string, writing func(*bufio.Writer)) bool {
+	l.Progress(message, fullFilePath)
 
-	BackupFile(FullFilePath)
+	BackupFile(fullFilePath)
 
-	file, err := os.Create(FullFilePath)
+	file, err := os.Create(fullFilePath)
 	if err != nil {
 		return false
 	}
@@ -36,6 +35,11 @@ func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing
 	writer.Flush()
 
 	return true
+}
+
+// Generic function to write library related files
+func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing func(*bufio.Writer)) bool {
+	return l.writeFile(l.FilesRoot+l.BaseName+fileExtension, message, writing)
 }
 
 // Function to write the BibTeX content of the library to a bufio.bWriter buffer
@@ -61,9 +65,9 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 }
 
 // Write the challenges and winners for field values, of this library, to a file
-func (l *TBibTeXLibrary) WriteChallenges() {
-	l.writeLibraryFile(ChallengesFileExtension, ProgressWritingChallengesFile, func(challengeWriter *bufio.Writer) {
-		for key, fieldChallenges := range l.ChallengeWinners {
+func (l *TBibTeXLibrary) WriteKeyFieldChallengesFile() {
+	l.writeLibraryFile(KeyFieldChallengesFileExtension, ProgressWritingKeyFieldChallengesFile, func(challengeWriter *bufio.Writer) {
+		for key, fieldChallenges := range l.KeyFieldChallengeWinners {
 			if l.EntryExists(key) {
 				for field, challenges := range fieldChallenges {
 					for challenger, winner := range challenges {
@@ -75,6 +79,23 @@ func (l *TBibTeXLibrary) WriteChallenges() {
 			}
 		}
 	})
+}
+
+func (l *TBibTeXLibrary) WriteFieldChallengesFile() {
+	l.writeLibraryFile(FieldChallengesFileExtension, ProgressWritingFieldChallengesFile, func(challengeWriter *bufio.Writer) {
+		for field, challenges := range l.FieldChallengeWinners {
+			for challenger, winner := range challenges {
+				if challenger != winner {
+					challengeWriter.WriteString(field + "\t" + challenger + "\t" + winner + "\n")
+				}
+			}
+		}
+	})
+}
+
+func (l *TBibTeXLibrary) WriteChallengesFiles() {
+	l.WriteFieldChallengesFile()
+	l.WriteKeyFieldChallengesFile()
 }
 
 // Write the preferred key aliases from this library, to a bufio.bWriter buffer

@@ -65,7 +65,8 @@ const (
 
 	// Warnings when reading files
 	WarningKeyAliasesLineBadEntries        = "Line in key aliases file must contain precisely two entries: %s"
-	WarningChallengeLineTooShort           = "Line in challenges file is too short: %s"
+	WarningKeyFieldChallengeLineTooShort   = "Line in key field challenges file is too short: %s"
+	WarningFieldChallengeLineTooShort      = "Line in field challenges file is too short: %s"
 	WarningAddressesLineTooShort           = "Line in addresses file is too short: %s"
 	WarningNameAliasesLineTooShort         = "Line in name aliases file is too short: %s"
 	WarningJournalAliasesLineTooShort      = "Line in journal aliases file is too short: %s"
@@ -78,7 +79,8 @@ const (
 
 	// Progress reports for reading/writing files"Line in aliases file is too short: %s"
 	ProgressWritingBibFile                     = "Writing bib file %s"
-	ProgressWritingChallengesFile              = "Writing challenges file %s"
+	ProgressWritingKeyFieldChallengesFile      = "Writing key field challenges file %s"
+	ProgressWritingFieldChallengesFile         = "Writing field challenges file %s"
 	ProgressWritingPreferredKeyAliasesFile     = "Writing preferred key aliases file %s"
 	ProgressWritingAddressesFile               = "Writing addresses file %s"
 	ProgressWritingKeyAliasesFile              = "Writing key aliases file %s"
@@ -91,7 +93,8 @@ const (
 	ProgressWritingSeriesAliasesFile           = "Writing series aliases file %s"
 	ProgressWritingPublisherAliasesFile        = "Writing publisher aliases file %s"
 	ProgressReadingBibFile                     = "Reading bib file %s"
-	ProgressReadingChallengesFile              = "Reading challenges file %s"
+	ProgressReadingKeyFieldChallengesFile      = "Reading key field challenges file %s" // Really all these variations?
+	ProgressReadingFieldChallengesFile         = "Reading field challenges file %s"
 	ProgressReadingAddressesFile               = "Reading organisational addresses file %s"
 	ProgressReadingPreferredKeyAliasesFile     = "Reading preferred key aliases file %s"
 	ProgressReadingKeyAliasesFile              = "Reading key aliases file %s"

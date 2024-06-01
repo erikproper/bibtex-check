@@ -138,12 +138,18 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckURLPresence(key string) {
+	if foundURL := l.EntryFieldValueity(key, "url"); foundURL == "" {
+		if foundDOI := l.EntryFieldValueity(key, "doi"); foundDOI != "" {
+			l.EntryFields[key]["url"] = "https://doi.org/" + foundDOI
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) bool {
 	if *foundDOI == "" {
-		URL := l.EntryFieldValueity(key, field)
-
-		if URL != "" {
-			var DOIURL = regexp.MustCompile(`^http(s|)://((dx.|)doi.org|hdl.handle.net)/`)
+		if URL := l.EntryFieldValueity(key, field); URL != "" {
+			var DOIURL = regexp.MustCompile(`^(doi:|http(s|)://(doi.org|dx.doi.org|hdl.handle.net|doi.acm.org|doi.ieeecomputersociety.org|dl.acm.org/doi|onlinelibrary.wiley.com/doi|publications.amsus.org/doi/abs|press.endocrine.org/doi/abs|doi.apa.org/index.cfm?doi=|www.crcnetbase.com/doi/abs|publications.amsus.org/doi/abs|econtent.hogrefe.com/doi/abs|www.mitpressjournals.org/doi/abs|www.atsjournals.org/doi/abs)/)`)
 
 			DOICandidate := DOIURL.ReplaceAllString(URL, "")
 
@@ -219,7 +225,7 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	// SAFE??
 	if BibTeXBookish.Contains(l.EntryTypes[key]) {
 		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
-		l.UpdateChallengeWinner(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
+		l.UpdateKeyFieldChallengeWinner(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
 	}
 }
@@ -278,16 +284,11 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 			if DOIValueity == "" {
 				DOIValueity = "10.48550/arXiv." + EPrintValue
 			}
-
-			if URLValueity == "" {
-				URLValueity = "https://doi.org/10.48550/arXiv." + EPrintValue
-			}
 		}
 
 		l.EntryFields[key]["eprinttype"] = EPrintTypeValue
 		l.EntryFields[key]["eprint"] = EPrintValue
 		l.EntryFields[key]["doi"] = DOIValueity
-		l.EntryFields[key]["url"] = URLValueity
 
 	case OnJstor:
 		EPrintTypeValue := "jstor"
@@ -330,7 +331,7 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
 	if strings.HasPrefix(DOIValueity, "10.1007/978-") {
 		ISBNCandidate := strings.ReplaceAll(DOIValueity, "10.1007/", "")
 		if IsValidISBN(ISBNCandidate) {
-			l.UpdateChallengeWinner(key, "isbn", l.EntryFields[key]["isbn"], ISBNCandidate)
+			l.UpdateKeyFieldChallengeWinner(key, "isbn", l.EntryFields[key]["isbn"], ISBNCandidate)
 			l.EntryFields[key]["isbn"] = ISBNCandidate
 		}
 	}
@@ -379,6 +380,12 @@ func (l *TBibTeXLibrary) CheckISSN(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckLanguageID(key string) {
+	if l.EntryFieldValueity(key, "langid") == "english" {
+		l.EntryFields[key]["langid"] = ""
+	}
+}
+
 func (l *TBibTeXLibrary) CheckNeedForLocalURL(key string) {
 	LocalURLity := l.EntryFieldValueity(key, "local-url")
 
@@ -411,6 +418,8 @@ func (l *TBibTeXLibrary) CheckEntries() {
 		l.CheckCrossref(key)
 		l.CheckISBNFromDOI(key)
 		l.CheckISSN(key)
+		l.CheckLanguageID(key)
+		l.CheckURLPresence(key)
 		l.CheckURLDateNeed(key)
 	}
 }

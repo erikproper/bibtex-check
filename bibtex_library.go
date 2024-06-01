@@ -61,7 +61,8 @@ type (
 		currentKey                      string                 // The key of the entry we are currently working on.
 		foundDoubles                    bool                   // If set, we found double entries. In this case, we may not want to e.g. write this file.
 		legacyMode                      bool                   // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		ChallengeWinners                TStringStringStringMap // A key and field specific mapping from challenged value to winner values
+		KeyFieldChallengeWinners        TStringStringStringMap // A key and field specific mapping from challenged value to winner values
+		FieldChallengeWinners           TStringStringMap       // A field specific mapping from challenged value to winner values
 		TInteraction                                           // Error reporting channel
 		TBibTeXStream                                          // BibTeX parser
 		migrationMode                   bool
@@ -105,7 +106,8 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 
 	l.currentKey = ""
 	l.foundDoubles = false
-	l.ChallengeWinners = TStringStringStringMap{}
+	l.KeyFieldChallengeWinners = TStringStringStringMap{}
+	l.FieldChallengeWinners = TStringStringMap{}
 
 	if AllowLegacy {
 		l.legacyMode = false
@@ -132,18 +134,24 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 }
 
 // Initial registration of a winner over a challenger for a given entry and its field.
-func (l *TBibTeXLibrary) AddChallengeWinner(entry, field, challenger, winner string) {
-	l.ChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
+func (l *TBibTeXLibrary) AddKeyFieldChallengeWinner(entry, field, challenger, winner string) {
+	l.KeyFieldChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
+
+}
+
+// Initial registration of a winner over a challenger for a given field.
+func (l *TBibTeXLibrary) AddFieldChallengeWinner(field, challenger, winner string) {
+	l.FieldChallengeWinners.SetValueForStringPairMap(field, challenger, winner)
 
 }
 
 // Update the registration of a winner over a challenger for a given entry and its field.
 // As we have a new winner, we also need to update any other existing challenges for this field.
-func (l *TBibTeXLibrary) UpdateChallengeWinner(entry, field, challenger, winner string) {
-	l.AddChallengeWinner(entry, field, challenger, winner)
+func (l *TBibTeXLibrary) UpdateKeyFieldChallengeWinner(entry, field, challenger, winner string) {
+	l.AddKeyFieldChallengeWinner(entry, field, challenger, winner)
 
-	for otherChallenger := range l.ChallengeWinners[entry][field] {
-		l.AddChallengeWinner(entry, field, otherChallenger, winner)
+	for otherChallenger := range l.KeyFieldChallengeWinners[entry][field] {
+		l.AddKeyFieldChallengeWinner(entry, field, otherChallenger, winner)
 	}
 }
 
@@ -391,7 +399,7 @@ func (l *TBibTeXLibrary) AliasExists(alias string) bool {
 
 // Checks if the provided winner is, indeed, the winner of the challenge by the challenger for the provided field of the provided entry.
 func (l *TBibTeXLibrary) CheckChallengeWinner(entry, field, challenger, winner string) bool {
-	return l.ChallengeWinners.GetValueityFromStringTripleMap(entry, field, challenger) == winner
+	return l.KeyFieldChallengeWinners.GetValueityFromStringTripleMap(entry, field, challenger) == winner
 }
 
 /*

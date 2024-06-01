@@ -47,26 +47,22 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current strin
 			// And update the recorded challenges
 			// Note: this is an *update* as we may need to update this as a new winner for other challenges as well.
 
-			//			fmt.Println("KCU", current, "KK")
-			//			fmt.Println("KCH", challenger, "KK")
-			//			fmt.Println("KWI", Library.ChallengeWinners.GetValueityFromStringTripleMap(key, field, challenger), "KK")
-			//			fmt.Println("KNO", NormaliseTitleString(&Library, Library.ChallengeWinners.GetValueityFromStringTripleMap(key, field, challenger)), "KK")
-
 			options := TStringSetNew()
 			options.Add("Y", "y", "n", "N")
 			warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 			question := "Current entry:\n" + l.EntryString(key, "  ") + "Keep the value as is?"
+			// Don't like this via "Warning" ... should be a separate class
 			answer := l.WarningQuestion(question, options, warning, key, field, challenger, current)
-			
+
 			if answer == "y" {
-				l.UpdateChallengeWinner(key, field, challenger, current)
-				l.WriteChallenges()
+				l.UpdateKeyFieldChallengeWinner(key, field, challenger, current)
+				l.WriteChallengesFiles()
 				l.WriteBibTeXFile()
 
 				return current
 			} else if answer == "n" {
-				l.UpdateChallengeWinner(key, field, current, challenger)
-				l.WriteChallenges()
+				l.UpdateKeyFieldChallengeWinner(key, field, current, challenger)
+				l.WriteChallengesFiles()
 				l.WriteBibTeXFile()
 
 				return challenger

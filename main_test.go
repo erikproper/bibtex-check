@@ -23,22 +23,22 @@ func TestStringMaps(t *testing.T) {
 
 	Library = TBibTeXLibrary{}
 
-			options := TStringSetNew()
-			options.Add("a", "y", "n")
-			warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
-			question := "Current entry:\nKeep the value as is?"
-			answer := Library.WarningQuestion(question, options, warning, "key", "field", "challenger", "current")
-fmt.Println(answer)
-//	InitialiseMainLibrary()
+	options := TStringSetNew()
+	options.Add("a", "y", "n")
+	warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
+	question := "Current entry:\nKeep the value as is?"
+	answer := Library.WarningQuestion(question, options, warning, "key", "field", "challenger", "current")
+	fmt.Println(answer)
+	//	InitialiseMainLibrary()
 	//	OpenMainBibFile()
 
 	//	tt := TBibTeXTeX{}
 	//	tt.library = &Library
-//	fmt.Println(NormaliseNamesString(&Library, "Ssebuggwawo, D. and Hoppenbrouwers, Stijn J. B. A. and Proper, Henderik A."))
-//	fmt.Println(NormaliseNamesString(&Library, "Proper, Henderik A."))
-//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92:A"))
-//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92:"))
-//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92::"))
+	//	fmt.Println(NormaliseNamesString(&Library, "Ssebuggwawo, D. and Hoppenbrouwers, Stijn J. B. A. and Proper, Henderik A."))
+	//	fmt.Println(NormaliseNamesString(&Library, "Proper, Henderik A."))
+	//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92:A"))
+	//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92:"))
+	//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92::"))
 	//	fmt.Println(NormaliseTitleString(&Library, "{ConQuer-92}"))
 
 	//	fmt.Println(NormaliseTitleString(&Library, "ConQuer-92 -- 24th Revised Report on -- Meta-Data the {Meta-Data} Conceptual Query Language {LISA-D}"))

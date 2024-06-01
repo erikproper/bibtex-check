@@ -74,7 +74,7 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 		separator = "/"
 	}
 	optionSet += "): "
-	
+
 	fmt.Printf("QUESTION: " + question + " " + optionSet)
 
 	reader := bufio.NewReader(os.Stdin)
@@ -82,13 +82,13 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 	for {
 		option, _ := reader.ReadString('\n')
 		option = option[:len(option)-1]
-		
+
 		validOption = options.Contains(option)
 
 		if validOption {
 			return option
 		}
-		
+
 		fmt.Printf(optionSet)
 	}
 }
