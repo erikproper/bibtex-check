@@ -144,9 +144,9 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, challenger, winner str
 		return
 	}
 	
-//	if l.GenericFieldAliases[field][challenger] == winner {
-//		return
-//	}
+	if l.GenericFieldAliases[field][challenger] == winner {
+		return
+	}
 
 	if currentWinner, challengerIsAlreadyAliased := l.EntryFieldAliases[entry][field][challenger]; challengerIsAlreadyAliased {
 		if currentWinner != winner {
