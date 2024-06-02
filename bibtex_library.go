@@ -49,10 +49,9 @@ type (
 		currentKey                  string                    // The key of the entry we are currently working on.
 		foundDoubles                bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
 		legacyMode                  bool                      // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		EntryFieldAliases           TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
+		EntryFieldAliasToTarget     TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
 		EntryFieldTargetToAliases   TStringStringStringSetMap //
-		//// FIX THESE NAMES
-		GenericFieldAliases         TStringStringMap          // A field specific mapping from challenged value to winner values
+		GenericFieldAliasToTarget   TStringStringMap          // A field specific mapping from challenged value to winner values
 		GenericFieldTargetToAliases TStringStringSetMap       //
 		NoBibFileWriting            bool                      // If set, we should not write out a Bib file for this library as entries might have been lost.
 		NoEntryAliasesFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
@@ -103,8 +102,10 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 
 	l.currentKey = ""
 	l.foundDoubles = false
-	l.EntryFieldAliases = TStringStringStringMap{}
-	l.GenericFieldAliases = TStringStringMap{}
+	l.EntryFieldAliasToTarget = TStringStringStringMap{}
+	l.EntryFieldTargetToAliases = TStringStringStringSetMap{}
+	l.GenericFieldAliasToTarget = TStringStringMap{}
+	l.GenericFieldTargetToAliases = TStringStringSetMap{}
 
 	l.NoBibFileWriting = false
 	l.NoEntryAliasesFileWriting = false
@@ -134,48 +135,90 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 	return true
 }
 
-// Initial registration of a winner over a challenger for a given entry and its field.
-func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, challenger, winner string) {
-	if challenger == "" {
+// Initial registration of a target over a alias for a given entry and its field.
+func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, check bool) {
+	if alias == "" {
 		return
 	}
 
-	if challenger == winner {
-		return
-	}
-	
-	if l.GenericFieldAliases[field][challenger] == winner {
+	if alias == target {
 		return
 	}
 
-	if currentWinner, challengerIsAlreadyAliased := l.EntryFieldAliases[entry][field][challenger]; challengerIsAlreadyAliased {
-		if currentWinner != winner {
-			l.Warning(WarningAmbiguousAlias, challenger, currentWinner, winner)
+	if l.GenericFieldAliasToTarget[field][alias] == target {
+		return
+	}
 
-			return
+	// Check for ambiguity of aliases
+	if check {
+		if currentTarget, aliasIsAlreadyAliased := l.EntryFieldAliasToTarget[entry][field][alias]; aliasIsAlreadyAliased {
+			if currentTarget != target {
+				l.Warning(WarningAmbiguousAlias, alias, currentTarget, target)
+				l.NoEntryAliasesFileWriting = true
+
+				return
+			}
 		}
 	}
 
 	// Set the actual mapping
-	l.EntryFieldAliases.SetValueForStringTripleMap(entry, field, challenger, winner)
+	l.EntryFieldAliasToTarget.SetValueForStringTripleMap(entry, field, alias, target)
 
-	l.EntryFieldTargetToAliases.AddValueToStringTrippleSetMap(entry, field, winner, challenger)
+	// And inverse mapping
+	l.EntryFieldTargetToAliases.AddValueToStringTrippleSetMap(entry, field, target, alias)
 }
 
-// Initial registration of a winner over a challenger for a given field.
-func (l *TBibTeXLibrary) AddGenericFieldAlias(field, challenger, winner string) {
-	if challenger != winner {
-		l.GenericFieldAliases.SetValueForStringPairMap(field, challenger, winner)
+// Update the registration of a target over a alias for a given entry and its field.
+// As we have a new target, we also need to update any other existing challenges for this field.
+func (l *TBibTeXLibrary) UpdateGenericFieldAlias(field, alias, target string) {
+	l.AddGenericFieldAlias(field, alias, target, true)
+
+	for otherChallenger := range l.GenericFieldAliasToTarget[field] {
+		l.AddGenericFieldAlias(field, otherChallenger, target, false)
 	}
 }
 
-// Update the registration of a winner over a challenger for a given entry and its field.
-// As we have a new winner, we also need to update any other existing challenges for this field.
-func (l *TBibTeXLibrary) UpdateKeyFieldChallengeWinner(entry, field, challenger, winner string) {
-	l.AddEntryFieldAlias(entry, field, challenger, winner)
+// Initial registration of a target over a alias for a given field.
+func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check bool) {
+	if alias == "" {
+		return
+	}
 
-	for otherChallenger := range l.EntryFieldAliases[entry][field] {
-		l.AddEntryFieldAlias(entry, field, otherChallenger, winner)
+	if alias == target {
+		return
+	}
+
+	if l.GenericFieldAliasToTarget[field][alias] == target {
+		return
+	}
+
+	// Check for ambiguity of aliases
+	if check {
+		if currentTarget, aliasIsAlreadyAliased := l.GenericFieldAliasToTarget[field][alias]; aliasIsAlreadyAliased {
+			if currentTarget != target {
+				l.Warning(WarningAmbiguousAlias, alias, currentTarget, target)
+				l.NoGenericAliasesFileWriting = true
+
+				return
+			}
+		}
+	}
+
+	// Set the actual mapping
+	l.GenericFieldAliasToTarget.SetValueForStringPairMap(field, alias, target)
+
+	// And inverse mapping
+	l.GenericFieldTargetToAliases.AddValueToStringPairSetMap(field, target, alias)
+
+}
+
+// Update the registration of a target over a alias for a given entry and its field.
+// As we have a new target, we also need to update any other existing challenges for this field.
+func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target string) {
+	l.AddEntryFieldAlias(entry, field, alias, target, true)
+
+	for otherChallenger := range l.EntryFieldAliasToTarget[entry][field] {
+		l.AddEntryFieldAlias(entry, field, otherChallenger, target, false)
 	}
 }
 
@@ -418,8 +461,8 @@ func (l *TBibTeXLibrary) AliasExists(alias string) bool {
 }
 
 // Checks if the provided winner is, indeed, the winner of the challenge by the challenger for the provided field of the provided entry.
-func (l *TBibTeXLibrary) CheckChallengeWinner(entry, field, challenger, winner string) bool {
-	return l.EntryFieldAliases.GetValueityFromStringTripleMap(entry, field, challenger) == winner
+func (l *TBibTeXLibrary) EntryFieldAliasHasTarget(entry, field, challenger, winner string) bool {
+	return l.EntryFieldAliasToTarget.GetValueityFromStringTripleMap(entry, field, challenger) == winner
 }
 
 /*

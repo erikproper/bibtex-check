@@ -71,7 +71,7 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 func (l *TBibTeXLibrary) WriteEntryAliasesFile() {
 	if !l.NoEntryAliasesFileWriting {
 		l.writeLibraryFile(EntryAliasesFileExtension, ProgressWritingEntryAliasesFile, func(challengeWriter *bufio.Writer) {
-			for key, fieldChallenges := range l.EntryFieldAliases {
+			for key, fieldChallenges := range l.EntryFieldAliasToTarget {
 				if l.EntryExists(key) {
 					for field, challenges := range fieldChallenges {
 						for challenger, winner := range challenges {
@@ -89,7 +89,7 @@ func (l *TBibTeXLibrary) WriteEntryAliasesFile() {
 func (l *TBibTeXLibrary) WriteGenericAliasesFile() {
 	if !l.NoGenericAliasesFileWriting {
 		l.writeLibraryFile(GenericAliasesFileExtension, ProgressWritingGenericAliasesFile, func(challengeWriter *bufio.Writer) {
-			for field, challenges := range l.GenericFieldAliases {
+			for field, challenges := range l.GenericFieldAliasToTarget {
 				for challenger, winner := range challenges {
 					if challenger != winner {
 						challengeWriter.WriteString(field + "\t" + l.UnAliasFieldValue(field, winner) + "\t" + challenger + "\n")

@@ -96,12 +96,12 @@ func (l *TBibTeXLibrary) CheckAliases() {
 	l.checkAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
 
 	l.Progress(ProgressCheckingFieldAliasesMapping)
-	for field, aliasMapping := range l.GenericFieldAliases {
+	for field, aliasMapping := range l.GenericFieldAliasToTarget {
 		l.checkAliasesMapping(aliasMapping, l.GenericFieldTargetToAliases[field], WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
 	}
 
-	for key, fieldAliasMapping := range l.EntryFieldAliases {
-		for field, aliasMapping := range fieldAliasMapping {	
+	for key, fieldAliasMapping := range l.EntryFieldAliasToTarget {
+		for field, aliasMapping := range fieldAliasMapping {
 			l.checkAliasesMapping(aliasMapping, l.EntryFieldTargetToAliases[key][field], WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
 		}
 	}
@@ -229,7 +229,7 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	// SAFE??
 	if BibTeXBookish.Contains(l.EntryTypes[key]) {
 		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
-		l.UpdateKeyFieldChallengeWinner(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
+		l.UpdateEntryFieldAlias(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
 	}
 }
@@ -335,7 +335,7 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
 	if strings.HasPrefix(DOIValueity, "10.1007/978-") {
 		ISBNCandidate := strings.ReplaceAll(DOIValueity, "10.1007/", "")
 		if IsValidISBN(ISBNCandidate) {
-			l.UpdateKeyFieldChallengeWinner(key, "isbn", l.EntryFields[key]["isbn"], ISBNCandidate)
+			l.UpdateEntryFieldAlias(key, "isbn", l.EntryFields[key]["isbn"], ISBNCandidate)
 			l.EntryFields[key]["isbn"] = ISBNCandidate
 		}
 	}

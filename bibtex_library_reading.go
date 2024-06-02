@@ -16,7 +16,7 @@ import (
 	"bufio"
 	"os"
 	"strings"
-//	"fmt"
+	// "fmt"
 )
 
 // Read bib files
@@ -128,10 +128,8 @@ func (l *TBibTeXLibrary) ReadEntryAliasesFile() {
 
 		key := elements[0]
 		field := elements[1]
-
 		winner, challenger := l.normalisedWinnerChallengerPair(field, elements[2], elements[3])
-
-		l.AddEntryFieldAlias(key, field, l.UnAliasFieldValue(field, challenger), l.UnAliasFieldValue(field, winner))
+		l.AddEntryFieldAlias(key, field, l.UnAliasFieldValue(field, challenger), l.UnAliasFieldValue(field, winner), true)
 	})
 }
 
@@ -147,7 +145,7 @@ func (l *TBibTeXLibrary) ReadGenericAliasesFile() {
 
 		field := elements[0]
 		winner, challenger := l.normalisedWinnerChallengerPair(field, elements[1], elements[2])
-		l.AddGenericFieldAlias(field, challenger, winner)
+		l.AddGenericFieldAlias(field, challenger, winner, true)
 	})
 }
 
