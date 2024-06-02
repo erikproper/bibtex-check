@@ -40,41 +40,6 @@ func NormalisePersonNameValue(l *TBibTeXLibrary, name string) string {
 	return NormaliseAliassableFieldValue(l.NameAliasToName, name)
 }
 
-// TXT
-func NormaliseAliassableTitleFieldValue(l *TBibTeXLibrary, fieldAliasToAlias TStringMap, value string) string {
-	return NormaliseAliassableFieldValue(fieldAliasToAlias, NormaliseTitleString(l, value))
-}
-
-// Normalise the name of a journal based on the aliases
-func NormaliseJournalValue(l *TBibTeXLibrary, journal string) string {
-	return NormaliseAliassableTitleFieldValue(l, l.JournalAliasToJournal, journal)
-}
-
-// Normalise the name of a school based on the aliases
-func NormaliseSchoolValue(l *TBibTeXLibrary, school string) string {
-	return NormaliseAliassableTitleFieldValue(l, l.SchoolAliasToSchool, school)
-}
-
-// Normalise the name of an institution based on the aliases
-func NormaliseInstitutionValue(l *TBibTeXLibrary, institution string) string {
-	return NormaliseAliassableTitleFieldValue(l, l.InstitutionAliasToInstitution, institution)
-}
-
-// Normalise the name of an organisation based on the aliases
-func NormaliseOrganisationValue(l *TBibTeXLibrary, organisation string) string {
-	return NormaliseAliassableTitleFieldValue(l, l.OrganisationAliasToOrganisation, organisation)
-}
-
-// Normalise the name of a publisher based on the aliases
-func NormalisePublisherValue(l *TBibTeXLibrary, publisher string) string {
-	return NormaliseAliassableTitleFieldValue(l, l.PublisherAliasToPublisher, publisher)
-}
-
-// Normalise the name of a series based on the aliases
-func NormaliseSeriesValue(l *TBibTeXLibrary, series string) string {
-	return NormaliseAliassableTitleFieldValue(l, l.SeriesAliasToSeries, series)
-}
-
 // Normalize number values
 func NormaliseNumberValue(l *TBibTeXLibrary, rawNumber string) string {
 	var (
@@ -432,16 +397,16 @@ func init() {
 	fieldNormalisers["file"] = NormaliseFileValue      // only needed while still allowing l.legacyMode
 	fieldNormalisers["local-url"] = NormaliseFileValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["howpublished"] = NormaliseTitleString
-	fieldNormalisers["institution"] = NormaliseInstitutionValue
+	fieldNormalisers["institution"] = NormaliseTitleString
 	fieldNormalisers["isbn"] = NormaliseISBNValue
 	fieldNormalisers["issn"] = NormaliseISSNValue
-	fieldNormalisers["journal"] = NormaliseJournalValue
+	fieldNormalisers["journal"] = NormaliseTitleString
 	fieldNormalisers["number"] = NormaliseNumberValue
-	fieldNormalisers["organization"] = NormaliseOrganisationValue
+	fieldNormalisers["organization"] = NormaliseTitleString
 	fieldNormalisers["pages"] = NormalisePagesValue
-	fieldNormalisers["publisher"] = NormalisePublisherValue
-	fieldNormalisers["series"] = NormaliseSeriesValue
-	fieldNormalisers["school"] = NormaliseSchoolValue
+	fieldNormalisers["publisher"] = NormaliseTitleString
+	fieldNormalisers["series"] = NormaliseTitleString
+	fieldNormalisers["school"] = NormaliseTitleString
 	fieldNormalisers["title"] = NormaliseTitleString
 	fieldNormalisers["url"] = NormaliseURLValue
 	fieldNormalisers["year"] = NormaliseYearValue

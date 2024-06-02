@@ -55,13 +55,13 @@ func InitialiseMainLibrary() bool {
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
 	Library.ReadAliasesFiles()
-	Library.CheckAliasesMappings()
+	Library.ReadMappingFiles()
+	Library.CheckAliases()
 
 	return true
 }
 
 func OpenMainBibFile() bool {
-	Library.ReadChallengesFiles()
 
 	if Library.ReadBib(BibFile) {
 		Library.ReportLibrarySize()
@@ -83,7 +83,7 @@ func CleanKey(rawKey string) string {
 func main() {
 	Reporting = TInteraction{}
 	writeAliases := false
-	writeChallenges := false
+	writeMappings := false
 	writeBibFile := false
 
 	switch {
@@ -91,14 +91,14 @@ func main() {
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			writeBibFile = true
 			writeAliases = true
-			writeChallenges = true
+			writeMappings = true
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-migrate":
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			writeBibFile = true
 			writeAliases = false
-			writeChallenges = true
+			writeMappings = true
 
 			OldLibrary := TBibTeXLibrary{}
 			OldLibrary.Progress("Reading legacy library")
@@ -106,6 +106,7 @@ func main() {
 			OldLibrary.legacyMode = true
 			OldLibrary.migrationMode = true
 			OldLibrary.ReadAliasesFiles()
+			OldLibrary.ReadMappingFiles()
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
@@ -202,13 +203,14 @@ func main() {
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			writeBibFile = true
 			writeAliases = false
-			writeChallenges = true
+			writeMappings = true
 
 			OldLibrary := TBibTeXLibrary{}
 			OldLibrary.Progress("Reading legacy library")
 			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder, BaseName)
 			OldLibrary.legacyMode = true
 			OldLibrary.ReadAliasesFiles()
+			OldLibrary.ReadMappingFiles()
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
@@ -338,7 +340,7 @@ func main() {
 		Library.WriteAliasesFiles()
 	}
 
-	if writeChallenges {
-		Library.WriteChallengesFiles()
+	if writeMappings {
+		Library.WriteMappingsFiles()
 	}
 }

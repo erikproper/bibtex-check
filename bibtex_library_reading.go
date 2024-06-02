@@ -16,7 +16,7 @@ import (
 	"bufio"
 	"os"
 	"strings"
-	// "fmt"
+//	"fmt"
 )
 
 // Read bib files
@@ -51,7 +51,8 @@ func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading 
 	return l.readFile(l.FilesRoot+l.BaseName+fileExtension, message, reading)
 }
 
-// / Generic binary mapping reader??
+// Generic binary mapping reader!!
+// But, then for <field1> <value1> <field2> <value2?
 func (l *TBibTeXLibrary) readAddressMapping(fileExtension, progress string, addMapping func(alias, target string)) {
 	l.readLibraryFile(fileExtension, progress, func(line string) {
 		elements := strings.Split(line, "\t")
@@ -60,10 +61,10 @@ func (l *TBibTeXLibrary) readAddressMapping(fileExtension, progress string, addM
 			return
 		}
 
-		addMapping(elements[0], elements[1])
+		// Move the dealiases/normalising to the Library addMapping funtion??
+		addMapping(elements[0], l.UnAliasFieldValue("address", l.NormaliseFieldValue("address", elements[1])))
 	})
 }
-
 func (l *TBibTeXLibrary) readISSNMapping(fileExtension, progress string, addMapping func(alias, target string)) {
 	l.readLibraryFile(fileExtension, progress, func(line string) {
 		elements := strings.Split(line, "\t")
@@ -72,7 +73,7 @@ func (l *TBibTeXLibrary) readISSNMapping(fileExtension, progress string, addMapp
 			return
 		}
 
-		addMapping(elements[0], elements[1])
+		addMapping(elements[0], l.UnAliasFieldValue("issn", l.NormaliseFieldValue("issn", elements[1])))
 	})
 }
 
@@ -91,84 +92,72 @@ func (l *TBibTeXLibrary) readAliasesMapping(fileExtension, progress string, addM
 	})
 }
 
-// Read aliases files
-func (l *TBibTeXLibrary) ReadAliasesFiles() {
-	l.readAliasesMapping(KeyAliasesFileExtension, ProgressReadingKeyAliasesFile, l.AddAliasForKey, &l.KeyAliasToKey, &l.KeyToAliases)
-	l.readAliasesMapping(NameAliasesFileExtension, ProgressReadingNameAliasesFile, l.AddNameAlias, &l.NameAliasToName, &l.NameToAliases)
-	l.readAliasesMapping(JournalAliasesFileExtension, ProgressReadingJournalAliasesFile, l.AddAliasForTextString, &l.JournalAliasToJournal, &l.JournalToAliases)
-	l.readAliasesMapping(SeriesAliasesFileExtension, ProgressReadingSeriesAliasesFile, l.AddAliasForTextString, &l.SeriesAliasToSeries, &l.SeriesToAliases)
-	l.readAliasesMapping(SchoolAliasesFileExtension, ProgressReadingSchoolAliasesFile, l.AddAliasForTextString, &l.SchoolAliasToSchool, &l.SchoolToAliases)
-	l.readAliasesMapping(InstitutionAliasesFileExtension, ProgressReadingInstitutionAliasesFile, l.AddAliasForTextString, &l.InstitutionAliasToInstitution, &l.InstitutionToAliases)
-	l.readAliasesMapping(OrganisationAliasesFileExtension, ProgressReadingOrganisationAliasesFile, l.AddAliasForTextString, &l.OrganisationAliasToOrganisation, &l.OrganisationToAliases)
-	l.readAliasesMapping(PublisherAliasesFileExtension, ProgressReadingPublisherAliasesFile, l.AddAliasForTextString, &l.PublisherAliasToPublisher, &l.PublisherToAliases)
-
-	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
-
+func (l *TBibTeXLibrary) ReadMappingFiles() {
 	l.readAddressMapping(AddressesFileExtension, ProgressReadingAddressesFile, l.AddOrganisationalAddress)
 	l.readISSNMapping(ISSNFileExtension, ProgressReadingISSNFile, l.AddSeriesISSN)
 }
 
+func (l *TBibTeXLibrary) normalisedWinnerChallengerPair(field, winner, challenger string) (string, string) {
+	normalisedWinner := ""
+	if winner != "" {
+		normalisedWinner = l.NormaliseFieldValue(field, winner)
+	}
+
+	// We do normalise the challengers, but want to ignore error messages.
+	// The challenged values may actually have errors ...
+	normalisedChallenger := ""
+	if challenger != "" {
+		silenced := l.InteractionIsOff()
+		l.SetInteractionOff()
+		normalisedChallenger = l.NormaliseFieldValue(field, challenger)
+		l.SetInteraction(silenced)
+	}
+
+	return normalisedWinner, normalisedChallenger
+}
+
 // Read key field challenge file
-func (l *TBibTeXLibrary) ReadKeyFieldChallengesFile() {
-	l.readLibraryFile(KeyFieldChallengesFileExtension, ProgressReadingKeyFieldChallengesFile, func(line string) {
+func (l *TBibTeXLibrary) ReadEntryAliasesFile() {
+	l.readLibraryFile(EntryAliasesFileExtension, ProgressReadingEntryAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 4 {
-			l.Warning(WarningKeyFieldChallengeLineTooShort, line)
+			l.Warning(WarningEntryAliasesLineTooShort, line)
+			l.NoEntryAliasesFileWriting = true
 			return
 		}
 
 		key := elements[0]
 		field := elements[1]
-		challenger := elements[2]
-		winner := elements[3]
 
-		if winner != "" {
-			winner = l.NormaliseFieldValue(field, winner)
-		}
+		winner, challenger := l.normalisedWinnerChallengerPair(field, elements[2], elements[3])
 
-		// We do normalise the challengers, but want to ignore error messages.
-		// The challenged values may actually have errors ...
-		if challenger != "" {
-			silenced := l.InteractionIsOff()
-			l.SetInteractionOff()
-			challenger = l.NormaliseFieldValue(field, challenger)
-			l.SetInteraction(silenced)
-		}
-
-		l.AddKeyFieldChallengeWinner(key, field, challenger, winner)
+		l.AddEntryFieldAlias(key, field, l.UnAliasFieldValue(field, challenger), l.UnAliasFieldValue(field, winner))
 	})
 }
 
 // Read field challenge file
-func (l *TBibTeXLibrary) ReadFieldChallengesFile() {
-	l.readLibraryFile(FieldChallengesFileExtension, ProgressReadingFieldChallengesFile, func(line string) {
+func (l *TBibTeXLibrary) ReadGenericAliasesFile() {
+	l.readLibraryFile(GenericAliasesFileExtension, ProgressReadingGenericAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 3 {
-			l.Warning(WarningFieldChallengeLineTooShort, line)
+			l.Warning(WarningGenericAliasesLineTooShort, line)
+			l.NoGenericAliasesFileWriting = true
 			return
 		}
 
 		field := elements[0]
-		challenger := elements[1]
-		winner := elements[2]
-
-		if winner != "" {
-			winner = l.NormaliseFieldValue(field, winner)
-		}
-
-		// We do normalise the challengers, but want to ignore error messages, since the challenged values may actually have errors ...
-		if challenger != "" {
-			silenced := l.InteractionIsOff()
-			l.SetInteractionOff()
-			challenger = l.NormaliseFieldValue(field, challenger)
-			l.SetInteraction(silenced)
-		}
-
-		l.AddFieldChallengeWinner(field, challenger, winner)
+		winner, challenger := l.normalisedWinnerChallengerPair(field, elements[1], elements[2])
+		l.AddGenericFieldAlias(field, challenger, winner)
 	})
 }
 
-func (l *TBibTeXLibrary) ReadChallengesFiles() {
-	l.ReadFieldChallengesFile()
-	l.ReadKeyFieldChallengesFile()
+// Read aliases files
+func (l *TBibTeXLibrary) ReadAliasesFiles() {
+	l.ReadGenericAliasesFile()
+	l.ReadEntryAliasesFile()
+
+	l.readAliasesMapping(KeyAliasesFileExtension, ProgressReadingKeyAliasesFile, l.AddAliasForKey, &l.KeyAliasToKey, &l.KeyToAliases)
+	l.readAliasesMapping(NameAliasesFileExtension, ProgressReadingNameAliasesFile, l.AddAliasForName, &l.NameAliasToName, &l.NameToAliases)
+
+	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
 }

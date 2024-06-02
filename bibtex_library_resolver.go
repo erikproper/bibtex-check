@@ -56,13 +56,13 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challenger, current strin
 
 			if answer == "y" {
 				l.UpdateKeyFieldChallengeWinner(key, field, challenger, current)
-				l.WriteChallengesFiles()
+				l.WriteMappingsFiles()
 				l.WriteBibTeXFile()
 
 				return current
 			} else if answer == "n" {
 				l.UpdateKeyFieldChallengeWinner(key, field, current, challenger)
-				l.WriteChallengesFiles()
+				l.WriteMappingsFiles()
 				l.WriteBibTeXFile()
 
 				return challenger

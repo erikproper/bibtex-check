@@ -13,11 +13,12 @@
 package main
 
 type (
-	TStringMap             map[string]string
-	TStringStringMap       map[string]TStringMap
-	TStringStringStringMap map[string]TStringStringMap
-	TStringSetMap          map[string]TStringSet
-	TStringStringSetMap    map[string]TStringSetMap
+	TStringMap                map[string]string
+	TStringStringMap          map[string]TStringMap
+	TStringStringStringMap    map[string]TStringStringMap
+	TStringSetMap             map[string]TStringSet
+	TStringStringSetMap       map[string]TStringSetMap
+	TStringStringStringSetMap map[string]TStringStringSetMap
 )
 
 /*
@@ -207,4 +208,28 @@ func (m *TStringStringSetMap) AddValueToStringPairSetMap(i, j, v string) {
 	}
 
 	(*m)[i][j].Set().Add(v)
+}
+
+// Safely add an element to a string set map
+func (m *TStringStringStringSetMap) AddValueToStringTrippleSetMap(i, j, k, v string) {
+	if (*m) == nil {
+		(*m) = TStringStringStringSetMap{}
+	}
+
+	_, hasMap := (*m)[i]
+	if !hasMap {
+		(*m)[i] = TStringStringSetMap{}
+	}
+
+	_, hasMap = (*m)[i][j]
+	if !hasMap {
+		(*m)[i][j] = TStringSetMap{}
+	}
+
+	_, hasSet := (*m)[i][j][k]
+	if !hasSet {
+		(*m)[i][j][k] = TStringSetNew()
+	}
+
+	(*m)[i][j][k].Set().Add(v)
 }

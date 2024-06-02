@@ -15,6 +15,7 @@ package main
 import (
 	"bufio"
 	"os"
+	// "fmt"
 )
 
 /// Consistent naming ... XXXFile ...
@@ -47,55 +48,56 @@ func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing
 // - As we ignore preambles, these are not written.
 // - When we start managing the groups (of keys) the way Bibdesk does, we need to ensure that their embedded as an XML structure embedded in a comment, is updated.
 func (l *TBibTeXLibrary) WriteBibTeXFile() {
-	l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
-		// Write out the entries and their fields
-		for entry := range l.EntryTypes {
-			bibWriter.WriteString(l.EntryString(entry))
-			bibWriter.WriteString("\n")
-		}
-
-		if !l.migrationMode {
-			// Write out the comments
-			for _, comment := range l.Comments {
-				bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
+	if !l.NoBibFileWriting {
+		l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
+			// Write out the entries and their fields
+			for entry := range l.EntryTypes {
+				bibWriter.WriteString(l.EntryString(entry))
 				bibWriter.WriteString("\n")
 			}
-		}
-	})
+
+			if !l.migrationMode {
+				// Write out the comments
+				for _, comment := range l.Comments {
+					bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
+					bibWriter.WriteString("\n")
+				}
+			}
+		})
+	}
 }
 
 // Write the challenges and winners for field values, of this library, to a file
-func (l *TBibTeXLibrary) WriteKeyFieldChallengesFile() {
-	l.writeLibraryFile(KeyFieldChallengesFileExtension, ProgressWritingKeyFieldChallengesFile, func(challengeWriter *bufio.Writer) {
-		for key, fieldChallenges := range l.KeyFieldChallengeWinners {
-			if l.EntryExists(key) {
-				for field, challenges := range fieldChallenges {
-					for challenger, winner := range challenges {
-						if challenger != winner {
-							challengeWriter.WriteString(key + "\t" + field + "\t" + challenger + "\t" + winner + "\n")
+func (l *TBibTeXLibrary) WriteEntryAliasesFile() {
+	if !l.NoEntryAliasesFileWriting {
+		l.writeLibraryFile(EntryAliasesFileExtension, ProgressWritingEntryAliasesFile, func(challengeWriter *bufio.Writer) {
+			for key, fieldChallenges := range l.EntryFieldAliases {
+				if l.EntryExists(key) {
+					for field, challenges := range fieldChallenges {
+						for challenger, winner := range challenges {
+							if challenger != winner {
+								challengeWriter.WriteString(key + "\t" + field + "\t" + l.UnAliasEntryFieldValue(key, field, winner) + "\t" + challenger + "\n")
+							}
 						}
 					}
 				}
 			}
-		}
-	})
+		})
+	}
 }
 
-func (l *TBibTeXLibrary) WriteFieldChallengesFile() {
-	l.writeLibraryFile(FieldChallengesFileExtension, ProgressWritingFieldChallengesFile, func(challengeWriter *bufio.Writer) {
-		for field, challenges := range l.FieldChallengeWinners {
-			for challenger, winner := range challenges {
-				if challenger != winner {
-					challengeWriter.WriteString(field + "\t" + challenger + "\t" + winner + "\n")
+func (l *TBibTeXLibrary) WriteGenericAliasesFile() {
+	if !l.NoGenericAliasesFileWriting {
+		l.writeLibraryFile(GenericAliasesFileExtension, ProgressWritingGenericAliasesFile, func(challengeWriter *bufio.Writer) {
+			for field, challenges := range l.GenericFieldAliases {
+				for challenger, winner := range challenges {
+					if challenger != winner {
+						challengeWriter.WriteString(field + "\t" + l.UnAliasFieldValue(field, winner) + "\t" + challenger + "\n")
+					}
 				}
 			}
-		}
-	})
-}
-
-func (l *TBibTeXLibrary) WriteChallengesFiles() {
-	l.WriteFieldChallengesFile()
-	l.WriteKeyFieldChallengesFile()
+		})
+	}
 }
 
 // Write the preferred key aliases from this library, to a bufio.bWriter buffer
@@ -139,16 +141,13 @@ func (l *TBibTeXLibrary) writeISSNMapping(fileExtension, progress string, ISSNMa
 
 func (l *TBibTeXLibrary) WriteAliasesFiles() {
 	l.writeAliasesMapping(KeyAliasesFileExtension, ProgressWritingKeyAliasesFile, l.KeyAliasToKey)
-	l.writeAliasesMapping(NameAliasesFileExtension, ProgressWritingNameAliasesFile, l.NameAliasToName)
-	l.writeAliasesMapping(JournalAliasesFileExtension, ProgressWritingJournalAliasesFile, l.JournalAliasToJournal)
-	l.writeAliasesMapping(SeriesAliasesFileExtension, ProgressWritingSeriesAliasesFile, l.SeriesAliasToSeries)
-	l.writeAliasesMapping(SchoolAliasesFileExtension, ProgressWritingSchoolAliasesFile, l.SchoolAliasToSchool)
-	l.writeAliasesMapping(InstitutionAliasesFileExtension, ProgressWritingInstitutionAliasesFile, l.InstitutionAliasToInstitution)
-	l.writeAliasesMapping(OrganisationAliasesFileExtension, ProgressWritingOrganisationAliasesFile, l.OrganisationAliasToOrganisation)
-	l.writeAliasesMapping(PublisherAliasesFileExtension, ProgressWritingPublisherAliasesFile, l.PublisherAliasToPublisher)
-
 	l.writeLibraryFile(PreferredKeyAliasesFileExtension, ProgressWritingPreferredKeyAliasesFile, l.writePreferredKeyAliases)
 
+	l.WriteGenericAliasesFile()
+	l.WriteEntryAliasesFile()
+}
+
+func (l *TBibTeXLibrary) WriteMappingsFiles() {
 	l.writeAddressMapping(AddressesFileExtension, ProgressWritingAddressesFile, l.OrganisationalAddresses)
 	l.writeISSNMapping(ISSNFileExtension, ProgressWritingISSNFile, l.SeriesToISSN)
 }

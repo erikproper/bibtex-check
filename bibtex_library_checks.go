@@ -75,9 +75,7 @@ func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
  *
  */
 
-func (l *TBibTeXLibrary) checkAliasesMapping(aliasMap TStringMap, inverseMap TStringSetMap, progress, warningUsedAsAlias, warningTargetIsAlias string) {
-	l.Progress(progress)
-
+func (l *TBibTeXLibrary) checkAliasesMapping(aliasMap TStringMap, inverseMap TStringSetMap, warningUsedAsAlias, warningTargetIsAlias string) {
 	// Note: when we find an issue, we will not immediately stop as we want to list all issues.
 	for alias, target := range aliasMap {
 		if aliasedTarget, targetIsUsedAsAlias := aliasMap[target]; targetIsUsedAsAlias {
@@ -92,15 +90,21 @@ func (l *TBibTeXLibrary) checkAliasesMapping(aliasMap TStringMap, inverseMap TSt
 	}
 }
 
-func (l *TBibTeXLibrary) CheckAliasesMappings() {
-	l.checkAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, ProgressCheckingKeyAliasesMapping, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
-	l.checkAliasesMapping(l.NameAliasToName, l.NameToAliases, ProgressCheckingNameAliasesMapping, WarningAliasIsName, WarningAliasTargetNameIsAlias)
-	l.checkAliasesMapping(l.JournalAliasToJournal, l.JournalToAliases, ProgressCheckingJournalAliasesMapping, WarningAliasIsJournal, WarningAliasTargetJournalIsAlias)
-	l.checkAliasesMapping(l.SchoolAliasToSchool, l.SchoolToAliases, ProgressCheckingSchoolAliasesMapping, WarningAliasIsSchool, WarningAliasTargetSchoolIsAlias)
-	l.checkAliasesMapping(l.InstitutionAliasToInstitution, l.InstitutionToAliases, ProgressCheckingInstitutionAliasesMapping, WarningAliasIsInstitution, WarningAliasTargetInstitutionIsAlias)
-	l.checkAliasesMapping(l.OrganisationAliasToOrganisation, l.OrganisationToAliases, ProgressCheckingOrganisationAliasesMapping, WarningAliasIsOrganisation, WarningAliasTargetOrganisationIsAlias)
-	l.checkAliasesMapping(l.SeriesAliasToSeries, l.SeriesToAliases, ProgressCheckingSeriesAliasesMapping, WarningAliasIsSeries, WarningAliasTargetSeriesIsAlias)
-	l.checkAliasesMapping(l.PublisherAliasToPublisher, l.PublisherToAliases, ProgressCheckingPublisherAliasesMapping, WarningAliasIsPublisher, WarningAliasTargetPublisherIsAlias)
+func (l *TBibTeXLibrary) CheckAliases() {
+	l.Progress(ProgressCheckingKeyAliasesMapping)
+
+	l.checkAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+
+	l.Progress(ProgressCheckingFieldAliasesMapping)
+	for field, aliasMapping := range l.GenericFieldAliases {
+		l.checkAliasesMapping(aliasMapping, l.GenericFieldTargetToAliases[field], WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+	}
+
+	for key, fieldAliasMapping := range l.EntryFieldAliases {
+		for field, aliasMapping := range fieldAliasMapping {	
+			l.checkAliasesMapping(aliasMapping, l.EntryFieldTargetToAliases[key][field], WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+		}
+	}
 }
 
 /*

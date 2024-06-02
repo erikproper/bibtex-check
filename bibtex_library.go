@@ -27,46 +27,40 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name                            string                 // Name of the library
-		FilesRoot                       string                 // Path to folder with library related files
-		BaseName                        string                 // BaseName of the library related files
-		Comments                        []string               // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields                     TStringStringMap       // Per entry key, the fields associated to the actual entries.
-		TitleIndex                      TStringSetMap          //
-		BookTitleIndex                  TStringSetMap          //
-		ISBNIndex                       TStringSetMap          //
-		BDSKFileIndex                   TStringSetMap          //
-		DOIIndex                        TStringSetMap          //
-		EntryTypes                      TStringMap             // Per entry key, the type of the enty.
-		KeyAliasToKey                   TStringMap             // Mapping from key aliases to the actual entry key.
-		SeriesToISSN                    TStringMap             // Mapping from series/journals to ISSN
-		KeyToAliases                    TStringSetMap          // The inverted version of KeyAliasToKey NEEEEEEEDED??????
-		PreferredKeyAliases             TStringMap             // Per entry key, the preferred alias
-		NameAliasToName                 TStringMap             // Mapping from name aliases to the actual name.
-		NameToAliases                   TStringSetMap          // The inverted version of NameAliasToName
-		JournalAliasToJournal           TStringMap             // Mapping from journal aliases to the actual journal.
-		JournalToAliases                TStringSetMap          // The inverted version of JournalAliasToJournal.
-		SchoolAliasToSchool             TStringMap             // Mapping from school aliases to the actual school.
-		SchoolToAliases                 TStringSetMap          // The inverted version of SchoolAliasToSchool.
-		InstitutionAliasToInstitution   TStringMap             // Mapping from institution aliases to the actual institution.
-		InstitutionToAliases            TStringSetMap          // The inverted version of InstitutionAliasToInstitution.
-		OrganisationAliasToOrganisation TStringMap             // Mapping from organisation aliases to the actual organisation.
-		OrganisationToAliases           TStringSetMap          // The inverted version of OrganisationAliasToOrganisation.
-		SeriesAliasToSeries             TStringMap             // Mapping from series aliases to the actual publisher.
-		SeriesToAliases                 TStringSetMap          // The inverted version of SeriesAliasToSeries.
-		PublisherAliasToPublisher       TStringMap             // Mapping from publisher aliases to the actual publisher.
-		PublisherToAliases              TStringSetMap          // The inverted version of PublisherAliasToPublisher.
-		OrganisationalAddresses         TStringMap             // Addresses of publishers, organisations, etc.
-		illegalFields                   TStringSet             // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		currentKey                      string                 // The key of the entry we are currently working on.
-		foundDoubles                    bool                   // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		legacyMode                      bool                   // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		KeyFieldChallengeWinners        TStringStringStringMap // A key and field specific mapping from challenged value to winner values
-		FieldChallengeWinners           TStringStringMap       // A field specific mapping from challenged value to winner values
-		TInteraction                                           // Error reporting channel
-		TBibTeXStream                                          // BibTeX parser
-		migrationMode                   bool
+		name                        string                    // Name of the library
+		FilesRoot                   string                    // Path to folder with library related files
+		BaseName                    string                    // BaseName of the library related files
+		Comments                    []string                  // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields                 TStringStringMap          // Per entry key, the fields associated to the actual entries.
+		TitleIndex                  TStringSetMap             //
+		BookTitleIndex              TStringSetMap             //
+		ISBNIndex                   TStringSetMap             //
+		BDSKFileIndex               TStringSetMap             //
+		DOIIndex                    TStringSetMap             //
+		EntryTypes                  TStringMap                // Per entry key, the type of the enty.
+		KeyAliasToKey               TStringMap                // Mapping from key aliases to the actual entry key.
+		SeriesToISSN                TStringMap                // Mapping from series/journals to ISSN
+		KeyToAliases                TStringSetMap             // The inverted version of KeyAliasToKey NEEEEEEEDED??????
+		PreferredKeyAliases         TStringMap                // Per entry key, the preferred alias
+		NameAliasToName             TStringMap                // Mapping from name aliases to the actual name.
+		NameToAliases               TStringSetMap             // The inverted version of NameAliasToName
+		OrganisationalAddresses     TStringMap                // Addresses of publishers, organisations, etc.
+		illegalFields               TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		currentKey                  string                    // The key of the entry we are currently working on.
+		foundDoubles                bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		legacyMode                  bool                      // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
+		EntryFieldAliases           TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
+		EntryFieldTargetToAliases   TStringStringStringSetMap //
+		//// FIX THESE NAMES
+		GenericFieldAliases         TStringStringMap          // A field specific mapping from challenged value to winner values
+		GenericFieldTargetToAliases TStringStringSetMap       //
+		NoBibFileWriting            bool                      // If set, we should not write out a Bib file for this library as entries might have been lost.
+		NoEntryAliasesFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
+		NoGenericAliasesFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
+		migrationMode               bool
 		TBibTeXTeX
+		TInteraction  // Error reporting channel
+		TBibTeXStream // BibTeX parser
 	}
 )
 
@@ -104,10 +98,17 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 		l.KeyToAliases = TStringSetMap{}
 	}
 
+	l.EntryFieldTargetToAliases = TStringStringStringSetMap{}
+	l.GenericFieldTargetToAliases = TStringStringSetMap{}
+
 	l.currentKey = ""
 	l.foundDoubles = false
-	l.KeyFieldChallengeWinners = TStringStringStringMap{}
-	l.FieldChallengeWinners = TStringStringMap{}
+	l.EntryFieldAliases = TStringStringStringMap{}
+	l.GenericFieldAliases = TStringStringMap{}
+
+	l.NoBibFileWriting = false
+	l.NoEntryAliasesFileWriting = false
+	l.NoGenericAliasesFileWriting = false
 
 	if AllowLegacy {
 		l.legacyMode = false
@@ -134,24 +135,47 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 }
 
 // Initial registration of a winner over a challenger for a given entry and its field.
-func (l *TBibTeXLibrary) AddKeyFieldChallengeWinner(entry, field, challenger, winner string) {
-	l.KeyFieldChallengeWinners.SetValueForStringTripleMap(entry, field, challenger, winner)
+func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, challenger, winner string) {
+	if challenger == "" {
+		return
+	}
 
+	if challenger == winner {
+		return
+	}
+	
+//	if l.GenericFieldAliases[field][challenger] == winner {
+//		return
+//	}
+
+	if currentWinner, challengerIsAlreadyAliased := l.EntryFieldAliases[entry][field][challenger]; challengerIsAlreadyAliased {
+		if currentWinner != winner {
+			l.Warning(WarningAmbiguousAlias, challenger, currentWinner, winner)
+
+			return
+		}
+	}
+
+	// Set the actual mapping
+	l.EntryFieldAliases.SetValueForStringTripleMap(entry, field, challenger, winner)
+
+	l.EntryFieldTargetToAliases.AddValueToStringTrippleSetMap(entry, field, winner, challenger)
 }
 
 // Initial registration of a winner over a challenger for a given field.
-func (l *TBibTeXLibrary) AddFieldChallengeWinner(field, challenger, winner string) {
-	l.FieldChallengeWinners.SetValueForStringPairMap(field, challenger, winner)
-
+func (l *TBibTeXLibrary) AddGenericFieldAlias(field, challenger, winner string) {
+	if challenger != winner {
+		l.GenericFieldAliases.SetValueForStringPairMap(field, challenger, winner)
+	}
 }
 
 // Update the registration of a winner over a challenger for a given entry and its field.
 // As we have a new winner, we also need to update any other existing challenges for this field.
 func (l *TBibTeXLibrary) UpdateKeyFieldChallengeWinner(entry, field, challenger, winner string) {
-	l.AddKeyFieldChallengeWinner(entry, field, challenger, winner)
+	l.AddEntryFieldAlias(entry, field, challenger, winner)
 
-	for otherChallenger := range l.KeyFieldChallengeWinners[entry][field] {
-		l.AddKeyFieldChallengeWinner(entry, field, otherChallenger, winner)
+	for otherChallenger := range l.EntryFieldAliases[entry][field] {
+		l.AddEntryFieldAlias(entry, field, otherChallenger, winner)
 	}
 }
 
@@ -229,18 +253,14 @@ func (l *TBibTeXLibrary) MaybeAddReorderedName(alias, name string, aliasMap *TSt
 }
 
 // Add a new name alias
-func (l *TBibTeXLibrary) AddNameAlias(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
+func (l *TBibTeXLibrary) AddAliasForName(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
 	l.MaybeAddReorderedName(name, name, aliasMap, inverseMap)
 	l.MaybeAddReorderedName(alias, name, aliasMap, inverseMap)
 
 	l.AddAlias(alias, name, aliasMap, inverseMap, true)
 }
 
-// Add a new text string alias
-func (l *TBibTeXLibrary) AddAliasForTextString(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
-	l.AddAlias(NormaliseTitleString(l, alias), NormaliseTitleString(l, original), aliasMap, inverseMap, true)
-}
-
+// Do we still need this one?
 // Add a new key alias (for use in generic read function)
 func (l *TBibTeXLibrary) AddAliasForKey(alias, key string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
 	if alias != key {
@@ -399,7 +419,7 @@ func (l *TBibTeXLibrary) AliasExists(alias string) bool {
 
 // Checks if the provided winner is, indeed, the winner of the challenge by the challenger for the provided field of the provided entry.
 func (l *TBibTeXLibrary) CheckChallengeWinner(entry, field, challenger, winner string) bool {
-	return l.KeyFieldChallengeWinners.GetValueityFromStringTripleMap(entry, field, challenger) == winner
+	return l.EntryFieldAliases.GetValueityFromStringTripleMap(entry, field, challenger) == winner
 }
 
 /*
@@ -497,6 +517,11 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 		l.currentKey = key
 	}
 
+	if !BibTeXAllowedEntries.Contains(entryType) {
+		l.Warning(WarningUnknownEntryType, l.currentKey, entryType)
+		l.NoBibFileWriting = true
+	}
+
 	// Check if an entry with the given key already exists
 	if l.EntryExists(l.currentKey) {
 		// When the entry already exists, we need to report that we found doubles, as well as possibly resolve the entry type.
@@ -524,7 +549,7 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	// Here we only need to take care of the normalisation and processing of field values.
 	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
 
-	newValue := l.ProcessFieldValue(field, value)
+	newValue := l.ProcessEntryFieldValue(l.currentKey, field, value)
 	currentValue := l.EntryFieldValueity(l.currentKey, field)
 
 	// Assign the new value, while, if needed, resolve it with the current value

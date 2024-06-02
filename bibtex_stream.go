@@ -139,8 +139,11 @@ func (b *TBibTeXStream) SkipToNextEntry(from string) bool {
 
 // When we run into a syntax error, we need to report this.
 // However, when we're in the process of skipping to a next entry, we need to remain silent about further errors, until we have reached the next entry.
-// Therefore, we will use MaybeReportError with the skippingEntry condition
-func (b *TBibTeXStream) MaybeReportError(message string, context ...any) bool {
+// Therefore, we will use ReportParsingError with the skippingEntry condition
+func (b *TBibTeXStream) ReportParsingError(message string, context ...any) bool {
+	// If we needed to report an error, then do not write the BibFile after an update
+	b.library.NoBibFileWriting = true
+
 	if !b.skippingEntry {
 		b.ReportError(message, context...)
 		b.succeeded = false
@@ -202,14 +205,14 @@ func (b *TBibTeXStream) ThisTokenWasCharacter(character byte) bool {
 // The Forced version of ThisTokenWasCharacterIn, with an error message if not found.
 func (b *TBibTeXStream) ForcedThisTokenWasCharacterIn(S TByteSet) bool {
 	return b.ThisCharacterWasIn(S) ||
-		b.MaybeReportError(ErrorCharacterNotIn, S.String()) ||
+		b.ReportParsingError(ErrorCharacterNotIn, S.String()) ||
 		b.SkipToNextEntry("")
 }
 
 // The Forced version of ThisTokenWasCharacter, with an error message if not found.
 func (b *TBibTeXStream) ForcedThisTokenWasCharacter(character byte) bool {
 	return b.ThisTokenWasCharacter(character) ||
-		b.MaybeReportError(ErrorMissingCharacter, string(character), string(b.ThisCharacter())) ||
+		b.ReportParsingError(ErrorMissingCharacter, string(character), string(b.ThisCharacter())) ||
 		b.SkipToNextEntry("")
 }
 
@@ -305,7 +308,7 @@ func (b *TBibTeXStream) EntryType() bool {
 // Forced EntryTypes
 func (b *TBibTeXStream) ForcedEntryType() bool {
 	return b.EntryType() ||
-		b.MaybeReportError(ErrorMissingEntryType) ||
+		b.ReportParsingError(ErrorMissingEntryType) ||
 		b.SkipToNextEntry(EntryTypeClass)
 }
 
@@ -318,7 +321,7 @@ func (b *TBibTeXStream) AddStringDefinition(name string, s *string) bool {
 	if defined {
 		*s += value
 	} else {
-		b.MaybeReportError(ErrorUnknownString, name)
+		b.ReportParsingError(ErrorUnknownString, name)
 	}
 
 	return true
@@ -368,7 +371,7 @@ func (b *TBibTeXStream) FieldValue(value *string) bool {
 // Forced FieldValue
 func (b *TBibTeXStream) ForcedFieldValue(value *string) bool {
 	return b.FieldValue(value) ||
-		b.MaybeReportError(ErrorMissingFieldValue) ||
+		b.ReportParsingError(ErrorMissingFieldValue) ||
 		b.SkipToNextEntry(FieldValueClass)
 }
 
@@ -439,7 +442,7 @@ func (b *TBibTeXStream) EntryDefinitionBody() bool {
 // ForcedEntryDefinitionBody
 func (b *TBibTeXStream) ForcedEntryDefinitionBody() bool {
 	return b.EntryDefinitionBody() ||
-		b.MaybeReportError(ErrorMissingEntryBody) ||
+		b.ReportParsingError(ErrorMissingEntryBody) ||
 		b.SkipToNextEntry(EntryBodyClass)
 }
 

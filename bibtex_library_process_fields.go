@@ -13,32 +13,30 @@
 package main
 
 // Definition of the map for field processors
-type TFieldProcessors = map[string]func(*TBibTeXLibrary, string) string
+type TFieldProcessors = map[string]func(*TBibTeXLibrary, string)
 
 var fieldProcessors TFieldProcessors
 
 // When we have a DBLP field, we can use this as an alias
-func processDBLPValue(l *TBibTeXLibrary, value string) string {
+func processDBLPValue(l *TBibTeXLibrary, value string) {
 	if !l.legacyMode {
 		l.AddKeyAlias("DBLP:"+value, l.currentKey)
 	}
-
-	return value
 }
 
 // The general function call to process field values.
 // It always, first, conducts a normalisation of the field value.
 // If a field specific process function exists, then it is applied on the normalise value.
 // Otherwise, we simply return the normalised value.
-func (l *TBibTeXLibrary) ProcessFieldValue(field, value string) string {
-	normalisedValue := l.NormaliseFieldValue(field, value)
+func (l *TBibTeXLibrary) ProcessEntryFieldValue(entry, field, value string) string {
+	normalisedValue := l.UnAliasEntryFieldValue(entry, field, l.NormaliseFieldValue(field, value))
 
 	valueProcessor, hasProcessor := fieldProcessors[field]
 	if hasProcessor {
-		return valueProcessor(l, normalisedValue)
-	} else {
-		return normalisedValue
+		valueProcessor(l, normalisedValue)
 	}
+
+	return normalisedValue
 }
 
 func init() {
