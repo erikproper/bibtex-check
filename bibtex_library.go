@@ -369,15 +369,17 @@ func (l *TBibTeXLibrary) ReportLibrarySize() {
 // ONLY needed for migration???
 // Lookup the entry key and type for a given key/alias 
 func (l *TBibTeXLibrary) DeAliasEntryKeyWithType(key string) (string, string, bool) {
-	if entryType, isKey := l.EntryTypes[DeAliasEntryKey(key)]; isKey {
-		return lookupKey, entryType, true
+	deAliasedKey := l.DeAliasEntryKey(key)
+	
+	if entryType, isKey := l.EntryTypes[deAliasedKey]; isKey {
+		return deAliasedKey, entryType, true
 	} 
 	
 	return "", "", false
 }
 
 // Lookup the entry key for a given key/alias
-func (l *TBibTeXLibrary) DeAliasEntryKey(key string) (string, bool) {
+func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
 	lookupKey, isAlias := l.KeyAliasToKey[key]
 	
 	if isAlias {
@@ -412,13 +414,11 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 		for field, value := range fields {
 			if l.EntryAllowsForField(key, field) {
 				if value != "" {
-					if field == "crossref" {
-						result += linePrefix + "   " + field + " = {" + NormaliseCrossrefValue(l, value) + "},\n"
-					} else if field == "file" {
+					if field == "file" {
 						result += linePrefix + "   local-url = {" + value + "},\n"
-					} else {
-						result += linePrefix + "   " + field + " = {" + value + "},\n"
-					}
+					} 
+					
+					result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
 				}
 			}
 		}

@@ -191,17 +191,6 @@ func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
 	return strings.TrimSpace(rawYear)
 }
 
-func NormaliseCrossrefValue(l *TBibTeXLibrary, crossref string) string {
-	// Remove leading/trailing spaces
-	trimmedCrossref := strings.TrimSpace(crossref)
-
-	if key, isKey := l.DeAliasEntryKey(trimmedCrossref); isKey {
-		return key
-	}
-
-	return trimmedCrossref
-}
-
 func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
 	var trimDashes = regexp.MustCompile(`-+`)
 
@@ -390,7 +379,6 @@ func init() {
 	fieldNormalisers["bdsk-url-8"] = NormaliseURLValue
 	fieldNormalisers["bdsk-url-9"] = NormaliseURLValue
 	fieldNormalisers["booktitle"] = NormaliseTitleString
-	fieldNormalisers["crossref"] = NormaliseCrossrefValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["urldate"] = NormaliseDateValue
 	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString

@@ -62,7 +62,7 @@ func (l *TBibTeXLibrary) readAddressMapping(fileExtension, progress string, addM
 		}
 
 		// Move the dealiases/normalising to the Library addMapping funtion??
-		addMapping(elements[0], l.UnAliasFieldValue("address", l.NormaliseFieldValue("address", elements[1])))
+		addMapping(elements[0], l.DeAliasFieldValue("address", l.NormaliseFieldValue("address", elements[1])))
 	})
 }
 func (l *TBibTeXLibrary) readISSNMapping(fileExtension, progress string, addMapping func(alias, target string)) {
@@ -73,7 +73,7 @@ func (l *TBibTeXLibrary) readISSNMapping(fileExtension, progress string, addMapp
 			return
 		}
 
-		addMapping(elements[0], l.UnAliasFieldValue("issn", l.NormaliseFieldValue("issn", elements[1])))
+		addMapping(elements[0], l.DeAliasFieldValue("issn", l.NormaliseFieldValue("issn", elements[1])))
 	})
 }
 
@@ -129,7 +129,7 @@ func (l *TBibTeXLibrary) ReadEntryAliasesFile() {
 		key := elements[0]
 		field := elements[1]
 		winner, challenger := l.normalisedWinnerChallengerPair(field, elements[2], elements[3])
-		l.AddEntryFieldAlias(key, field, l.UnAliasFieldValue(field, challenger), l.UnAliasFieldValue(field, winner), true)
+		l.AddEntryFieldAlias(key, field, l.DeAliasFieldValue(field, challenger), l.DeAliasFieldValue(field, winner), true)
 	})
 }
 

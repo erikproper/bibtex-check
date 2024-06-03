@@ -29,7 +29,7 @@ func processDBLPValue(l *TBibTeXLibrary, value string) {
 // If a field specific process function exists, then it is applied on the normalise value.
 // Otherwise, we simply return the normalised value.
 func (l *TBibTeXLibrary) ProcessEntryFieldValue(entry, field, value string) string {
-	normalisedValue := l.UnAliasEntryFieldValue(entry, field, l.NormaliseFieldValue(field, value))
+	normalisedValue := l.DeAliasEntryFieldValue(entry, field, l.NormaliseFieldValue(field, value))
 
 	valueProcessor, hasProcessor := fieldProcessors[field]
 	if hasProcessor {

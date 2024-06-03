@@ -76,7 +76,7 @@ func (l *TBibTeXLibrary) WriteEntryAliasesFile() {
 					for field, challenges := range fieldChallenges {
 						for challenger, winner := range challenges {
 							if challenger != winner {
-								challengeWriter.WriteString(key + "\t" + field + "\t" + l.UnAliasEntryFieldValue(key, field, winner) + "\t" + challenger + "\n")
+								challengeWriter.WriteString(key + "\t" + field + "\t" + l.DeAliasEntryFieldValue(key, field, winner) + "\t" + challenger + "\n")
 							}
 						}
 					}
@@ -92,7 +92,7 @@ func (l *TBibTeXLibrary) WriteGenericAliasesFile() {
 			for field, challenges := range l.GenericFieldAliasToTarget {
 				for challenger, winner := range challenges {
 					if challenger != winner {
-						challengeWriter.WriteString(field + "\t" + l.UnAliasFieldValue(field, winner) + "\t" + challenger + "\n")
+						challengeWriter.WriteString(field + "\t" + l.DeAliasFieldValue(field, winner) + "\t" + challenger + "\n")
 					}
 				}
 			}
