@@ -228,7 +228,7 @@ func main() {
 			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
 			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA
 			for oldEntry, oldType := range OldLibrary.EntryTypes {
-				newKey, newType, isEntry := Library.LookupEntryKeyWithType(stripUniquePrefix.ReplaceAllString(oldEntry, ""))
+				newKey, newType, isEntry := Library.DeAliasEntryKeyWithType(stripUniquePrefix.ReplaceAllString(oldEntry, ""))
 
 				if isEntry {
 					// We don't have a set type function??
@@ -261,7 +261,6 @@ func main() {
 
 		// Function call.
 		alias, ok := Library.PreferredKeyAliases[CleanKey(os.Args[2])]
-
 		if ok {
 			fmt.Println(alias)
 		}
@@ -270,21 +269,14 @@ func main() {
 		Reporting.SetInteractionOff()
 
 		if InitialiseMainLibrary() && OpenMainBibFile() {
-			actualKey, ok := Library.LookupEntryKey(CleanKey(os.Args[2]))
-			if ok {
-				fmt.Println(Library.EntryString(actualKey))
-			}
+			fmt.Println(Library.EntryString(Library.DeAliasEntryKey(CleanKey(os.Args[2]))))
 		}
 
 	case len(os.Args) > 2 && os.Args[1] == "-key":
 		Reporting.SetInteractionOff()
 
 		if InitialiseMainLibrary() && OpenMainBibFile() {
-			// Function call.
-			actualKey, ok := Library.LookupEntryKey(CleanKey(os.Args[2]))
-			if ok {
-				fmt.Println(actualKey)
-			}
+			fmt.Println(Library.DeAliasEntryKey(CleanKey(os.Args[2])))
 		}
 
 	case len(os.Args) > 3 && os.Args[1] == "-map":

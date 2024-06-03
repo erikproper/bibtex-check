@@ -366,33 +366,25 @@ func (l *TBibTeXLibrary) ReportLibrarySize() {
 	l.Progress(ProgressLibrarySize, l.name, l.LibrarySize())
 }
 
-// Lookup the entry key and type for a given key/alias
-func (l *TBibTeXLibrary) LookupEntryKeyWithType(key string) (string, string, bool) {
-	lookupKey, isAlias := l.KeyAliasToKey[key]
-	if !isAlias {
-		lookupKey = key
-	}
-
-	if entryType, isKey := l.EntryTypes[lookupKey]; isKey {
+// ONLY needed for migration???
+// Lookup the entry key and type for a given key/alias 
+func (l *TBibTeXLibrary) DeAliasEntryKeyWithType(key string) (string, string, bool) {
+	if entryType, isKey := l.EntryTypes[DeAliasEntryKey(key)]; isKey {
 		return lookupKey, entryType, true
-	} else {
-		return "", "", false
-	}
+	} 
+	
+	return "", "", false
 }
 
 // Lookup the entry key for a given key/alias
-func (l *TBibTeXLibrary) LookupEntryKey(key string) (string, bool) {
+func (l *TBibTeXLibrary) DeAliasEntryKey(key string) (string, bool) {
 	lookupKey, isAlias := l.KeyAliasToKey[key]
-	if !isAlias {
-		lookupKey = key
+	
+	if isAlias {
+		return lookupKey
 	}
-
-	if _, isKey := l.EntryTypes[lookupKey]; isKey {
-		return lookupKey, true
-	} else {
-		return "", false
-	}
-
+	
+	return key
 }
 
 // Create a string (with newlines) with a BibTeX based representation of the provided key, while using an optional prefix for each line.

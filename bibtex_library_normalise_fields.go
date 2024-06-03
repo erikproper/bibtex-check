@@ -195,7 +195,7 @@ func NormaliseCrossrefValue(l *TBibTeXLibrary, crossref string) string {
 	// Remove leading/trailing spaces
 	trimmedCrossref := strings.TrimSpace(crossref)
 
-	if key, isKey := Library.LookupEntryKey(trimmedCrossref); isKey {
+	if key, isKey := l.DeAliasEntryKey(trimmedCrossref); isKey {
 		return key
 	}
 
