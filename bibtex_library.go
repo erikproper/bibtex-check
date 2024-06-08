@@ -27,36 +27,39 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name                        string                    // Name of the library
-		FilesRoot                   string                    // Path to folder with library related files
-		BaseName                    string                    // BaseName of the library related files
-		Comments                    []string                  // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields                 TStringStringMap          // Per entry key, the fields associated to the actual entries.
-		TitleIndex                  TStringSetMap             //
-		BookTitleIndex              TStringSetMap             //
-		ISBNIndex                   TStringSetMap             //
-		BDSKFileIndex               TStringSetMap             //
-		DOIIndex                    TStringSetMap             //
-		EntryTypes                  TStringMap                // Per entry key, the type of the enty.
-		KeyAliasToKey               TStringMap                // Mapping from key aliases to the actual entry key.
-		SeriesToISSN                TStringMap                // Mapping from series/journals to ISSN
-		KeyToAliases                TStringSetMap             // The inverted version of KeyAliasToKey NEEEEEEEDED??????
-		PreferredKeyAliases         TStringMap                // Per entry key, the preferred alias
-		NameAliasToName             TStringMap                // Mapping from name aliases to the actual name.
-		NameToAliases               TStringSetMap             // The inverted version of NameAliasToName
-		OrganisationalAddresses     TStringMap                // Addresses of publishers, organisations, etc.
-		illegalFields               TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		currentKey                  string                    // The key of the entry we are currently working on.
-		foundDoubles                bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		legacyMode                  bool                      // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
-		EntryFieldAliasToTarget     TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
-		EntryFieldTargetToAliases   TStringStringStringSetMap //
-		GenericFieldAliasToTarget   TStringStringMap          // A field specific mapping from challenged value to winner values
-		GenericFieldTargetToAliases TStringStringSetMap       //
-		NoBibFileWriting            bool                      // If set, we should not write out a Bib file for this library as entries might have been lost.
-		NoEntryAliasesFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
-		NoGenericAliasesFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
-		migrationMode               bool
+		name                             string                    // Name of the library
+		FilesRoot                        string                    // Path to folder with library related files
+		BaseName                         string                    // BaseName of the library related files
+		Comments                         []string                  // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields                      TStringStringMap          // Per entry key, the fields associated to the actual entries.
+		TitleIndex                       TStringSetMap             //
+		BookTitleIndex                   TStringSetMap             //
+		ISBNIndex                        TStringSetMap             //
+		BDSKFileIndex                    TStringSetMap             //
+		DOIIndex                         TStringSetMap             //
+		EntryTypes                       TStringMap                // Per entry key, the type of the enty.
+		KeyAliasToKey                    TStringMap                // Mapping from key aliases to the actual entry key.
+		FieldMappings                    TStringStringStringMap    // field/value to field/value mapping
+		KeyToAliases                     TStringSetMap             // The inverted version of KeyAliasToKey NEEEEEEEDED??????
+		PreferredKeyAliases              TStringMap                // Per entry key, the preferred alias
+		NameAliasToName                  TStringMap                // Mapping from name aliases to the actual name.
+		NameToAliases                    TStringSetMap             // The inverted version of NameAliasToName
+		illegalFields                    TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		currentKey                       string                    // The key of the entry we are currently working on.
+		foundDoubles                     bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		legacyMode                       bool                      // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
+		EntryFieldAliasToTarget          TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
+		EntryFieldTargetToAliases        TStringStringStringSetMap //
+		GenericFieldAliasToTarget        TStringStringMap          // A field specific mapping from challenged value to winner values
+		GenericFieldTargetToAliases      TStringStringSetMap       //
+		NoBibFileWriting                 bool                      // If set, we should not write out a Bib file for this library as entries might have been lost.
+		NoEntryFieldAliasesFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
+		NoGenericFieldAliasesFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
+		NoKeyAliasesFileWriting          bool
+		NoPreferredKeyAliasesFileWriting bool
+		NoNameAliasesFileWriting         bool
+		NoFieldMappingsFileWriting       bool
+		migrationMode                    bool
 		TBibTeXTeX
 		TInteraction  // Error reporting channel
 		TBibTeXStream // BibTeX parser
@@ -81,6 +84,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.BaseName = baseName
 
 	l.Comments = []string{}
+	l.FieldMappings = TStringStringStringMap{}
 	l.EntryFields = TStringStringMap{}
 	l.TitleIndex = TStringSetMap{}
 	l.BookTitleIndex = TStringSetMap{}
@@ -108,8 +112,12 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.GenericFieldTargetToAliases = TStringStringSetMap{}
 
 	l.NoBibFileWriting = false
-	l.NoEntryAliasesFileWriting = false
-	l.NoGenericAliasesFileWriting = false
+	l.NoEntryFieldAliasesFileWriting = false
+	l.NoGenericFieldAliasesFileWriting = false
+	l.NoKeyAliasesFileWriting = false
+	l.NoPreferredKeyAliasesFileWriting = false
+	l.NoNameAliasesFileWriting = false
+	l.NoFieldMappingsFileWriting = false
 
 	if AllowLegacy {
 		l.legacyMode = false
@@ -154,7 +162,7 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 		if currentTarget, aliasIsAlreadyAliased := l.EntryFieldAliasToTarget[entry][field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
 				l.Warning(WarningAmbiguousAlias, alias, currentTarget, target)
-				l.NoEntryAliasesFileWriting = true
+				l.NoEntryFieldAliasesFileWriting = true
 
 				return
 			}
@@ -168,7 +176,7 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 	l.EntryFieldTargetToAliases.AddValueToStringTrippleSetMap(entry, field, target, alias)
 }
 
-// Update the registration of a target over a alias for a given entry and its field.
+// Update the registration of a target over an alias for a given entry and its field.
 // As we have a new target, we also need to update any other existing challenges for this field.
 func (l *TBibTeXLibrary) UpdateGenericFieldAlias(field, alias, target string) {
 	l.AddGenericFieldAlias(field, alias, target, true)
@@ -197,7 +205,7 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 		if currentTarget, aliasIsAlreadyAliased := l.GenericFieldAliasToTarget[field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
 				l.Warning(WarningAmbiguousAlias, alias, currentTarget, target)
-				l.NoGenericAliasesFileWriting = true
+				l.NoGenericFieldAliasesFileWriting = true
 
 				return
 			}
@@ -234,7 +242,7 @@ func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
 		return
 	}
 
-	if !PreferredKeyAliasIsValid(alias) {
+	if !IsValidPreferredKeyAlias(alias) {
 		l.Warning(WarningInvalidPreferredKeyAlias, alias, key)
 
 		return
@@ -325,24 +333,8 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 	l.AddAliasForKey(alias, key, &l.KeyAliasToKey, &l.KeyToAliases)
 }
 
-func (l *TBibTeXLibrary) AddOrganisationalAddress(organisationRaw, addressRaw string) {
-	organisation := NormaliseTitleString(l, organisationRaw)
-	address := NormaliseTitleString(l, addressRaw)
-
-	if currentAddress, organisationHasAddress := l.OrganisationalAddresses[organisation]; organisationHasAddress {
-		if currentAddress != address {
-			l.Warning(WarningAmbiguousAddress, organisation, currentAddress, address)
-
-			return
-		}
-	}
-
-	// Set the actual mapping
-	l.OrganisationalAddresses.SetValueForStringMap(organisation, address)
-}
-
-func (l *TBibTeXLibrary) AddSeriesISSN(name, ISSN string) {
-	l.SeriesToISSN.SetValueForStringMap(name, NormaliseISSNValue(l, ISSN))
+func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, targetValue string) {
+	l.FieldMappings.SetValueForStringTripleMap(sourceField, sourceValue, targetField, targetValue)
 }
 
 /*
@@ -367,25 +359,25 @@ func (l *TBibTeXLibrary) ReportLibrarySize() {
 }
 
 // ONLY needed for migration???
-// Lookup the entry key and type for a given key/alias 
+// Lookup the entry key and type for a given key/alias
 func (l *TBibTeXLibrary) DeAliasEntryKeyWithType(key string) (string, string, bool) {
 	deAliasedKey := l.DeAliasEntryKey(key)
-	
+
 	if entryType, isKey := l.EntryTypes[deAliasedKey]; isKey {
 		return deAliasedKey, entryType, true
-	} 
-	
+	}
+
 	return "", "", false
 }
 
 // Lookup the entry key for a given key/alias
 func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
 	lookupKey, isAlias := l.KeyAliasToKey[key]
-	
+
 	if isAlias {
 		return lookupKey
 	}
-	
+
 	return key
 }
 
@@ -414,10 +406,10 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 		for field, value := range fields {
 			if l.EntryAllowsForField(key, field) {
 				if value != "" {
-					if field == "file" {
+					if field == "file" && l.legacyMode {
 						result += linePrefix + "   local-url = {" + value + "},\n"
-					} 
-					
+					}
+
 					result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
 				}
 			}
@@ -598,22 +590,16 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	return true
 }
 
-func (l *TBibTeXLibrary) MaybeApplyOrganisationalAddressMapping(key, field string) {
-	if fieldValue := l.EntryFieldValueity(key, field); fieldValue != "" {
-		if address, isMapped := l.OrganisationalAddresses[fieldValue]; isMapped {
-			/////// SAFE!!
-			l.EntryFields[key]["address"] = address
+func (l *TBibTeXLibrary) MaybeApplyFieldMappings(key string) {
+	for sourceField, sourceValue := range l.EntryFields[key] {
+		for targetField, targetValue := range l.FieldMappings[sourceField][sourceValue] {
+			l.SetEntryFieldValue(key, targetField, targetValue)
 		}
 	}
 }
 
 // Finish recording the current library entry
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
-	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "organization")
-	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "institution")
-	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "school")
-	l.MaybeApplyOrganisationalAddressMapping(l.currentKey, "publisher")
-
 	for BDSKFileField := range BibTeXBDSKFileFields.Elements() {
 		if BDSKFile := l.EntryFieldValueity(l.currentKey, BDSKFileField); BDSKFile != "" {
 			if l.BDSKFileIndex[BDSKFile].Set().Contains(l.currentKey) {
@@ -655,6 +641,8 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 			}
 		}
 	}
+
+	l.MaybeApplyFieldMappings(l.currentKey)
 
 	return true
 }

@@ -51,50 +51,27 @@ func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading 
 	return l.readFile(l.FilesRoot+l.BaseName+fileExtension, message, reading)
 }
 
-// Generic binary mapping reader!!
-// But, then for <field1> <value1> <field2> <value2?
-func (l *TBibTeXLibrary) readAddressMapping(fileExtension, progress string, addMapping func(alias, target string)) {
-	l.readLibraryFile(fileExtension, progress, func(line string) {
+func (l *TBibTeXLibrary) UpdateFieldValue(field, value string) string {
+	return l.DeAliasFieldValue(field, l.NormaliseFieldValue(field, value))
+}
+
+func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
+	l.readLibraryFile(FieldMappingsFileExtension, ProgressReadingFieldMappingsFile, func(line string) {
 		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning(WarningAddressesLineTooShort, line)
+		if len(elements) < 4 {
+			l.Warning(WarningFieldMappingsTooShort, line)
+			l.NoFieldMappingsFileWriting = true
 			return
 		}
 
-		// Move the dealiases/normalising to the Library addMapping funtion??
-		addMapping(elements[0], l.DeAliasFieldValue("address", l.NormaliseFieldValue("address", elements[1])))
+		sourceField := elements[0]
+		sourceValue := l.UpdateFieldValue(sourceField, elements[1])
+
+		targetField := elements[2]
+		targetValue := l.UpdateFieldValue(targetField, elements[3])
+
+		l.AddFieldMapping(sourceField, sourceValue, targetField, targetValue)
 	})
-}
-func (l *TBibTeXLibrary) readISSNMapping(fileExtension, progress string, addMapping func(alias, target string)) {
-	l.readLibraryFile(fileExtension, progress, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning(WarningISSNLineTooShort, line)
-			return
-		}
-
-		addMapping(elements[0], l.DeAliasFieldValue("issn", l.NormaliseFieldValue("issn", elements[1])))
-	})
-}
-
-// General function to read aliases mapping files
-// These files contain two strings per line, separated by a tab, where the second string is an alias for the latter.
-// The addMapping is needed as a function, as this involves different implementations per field
-func (l *TBibTeXLibrary) readAliasesMapping(fileExtension, progress string, addMapping func(alias, target string, aliasMap *TStringMap, inverseMap *TStringSetMap), aliasMap *TStringMap, inverseMap *TStringSetMap) {
-	l.readLibraryFile(fileExtension, progress, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning(WarningAliasesLineTooShort, line)
-			return
-		}
-
-		addMapping(elements[1], elements[0], aliasMap, inverseMap)
-	})
-}
-
-func (l *TBibTeXLibrary) ReadMappingFiles() {
-	l.readAddressMapping(AddressesFileExtension, ProgressReadingAddressesFile, l.AddOrganisationalAddress)
-	l.readISSNMapping(ISSNFileExtension, ProgressReadingISSNFile, l.AddSeriesISSN)
 }
 
 func (l *TBibTeXLibrary) normalisedWinnerChallengerPair(field, winner, challenger string) (string, string) {
@@ -117,12 +94,12 @@ func (l *TBibTeXLibrary) normalisedWinnerChallengerPair(field, winner, challenge
 }
 
 // Read key field challenge file
-func (l *TBibTeXLibrary) ReadEntryAliasesFile() {
-	l.readLibraryFile(EntryAliasesFileExtension, ProgressReadingEntryAliasesFile, func(line string) {
+func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
+	l.readLibraryFile(EntryFieldAliasesFileExtension, ProgressReadingEntryFieldAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 4 {
-			l.Warning(WarningEntryAliasesLineTooShort, line)
-			l.NoEntryAliasesFileWriting = true
+			l.Warning(WarningEntryFieldAliasesLineTooShort, line)
+			l.NoEntryFieldAliasesFileWriting = true
 			return
 		}
 
@@ -134,12 +111,12 @@ func (l *TBibTeXLibrary) ReadEntryAliasesFile() {
 }
 
 // Read field challenge file
-func (l *TBibTeXLibrary) ReadGenericAliasesFile() {
-	l.readLibraryFile(GenericAliasesFileExtension, ProgressReadingGenericAliasesFile, func(line string) {
+func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
+	l.readLibraryFile(GenericFieldAliasesFileExtension, ProgressReadingGenericFieldAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 3 {
-			l.Warning(WarningGenericAliasesLineTooShort, line)
-			l.NoGenericAliasesFileWriting = true
+			l.Warning(WarningGenericFieldAliasesLineTooShort, line)
+			l.NoGenericFieldAliasesFileWriting = true
 			return
 		}
 
@@ -149,13 +126,43 @@ func (l *TBibTeXLibrary) ReadGenericAliasesFile() {
 	})
 }
 
+func (l *TBibTeXLibrary) ReadKeyAliasesFile() {
+	l.readLibraryFile(KeyAliasesFileExtension, ProgressReadingKeyAliasesFile, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
+			l.Warning(WarningAliasesLineTooShort, line)
+			l.NoKeyAliasesFileWriting = true
+			return
+		}
+
+		// Why pass on &l.KeyAliasToKey, &l.KeyToAliases???
+		l.AddAliasForKey(elements[1], elements[0], &l.KeyAliasToKey, &l.KeyToAliases)
+	})
+}
+
+func (l *TBibTeXLibrary) ReadPreferredKeyAliasesFile() {
+	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
+}
+
+func (l *TBibTeXLibrary) ReadNameAliasesFile() {
+	l.readLibraryFile(NameAliasesFileExtension, ProgressReadingNameAliasesFile, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
+			l.Warning(WarningAliasesLineTooShort, line)
+			l.NoNameAliasesFileWriting = true
+			return
+		}
+
+		// Why pass on &l.NameAliasToName, &l.NameToAliases???
+		l.AddAliasForName(elements[1], elements[0], &l.NameAliasToName, &l.NameToAliases)
+	})
+}
+
 // Read aliases files
 func (l *TBibTeXLibrary) ReadAliasesFiles() {
-	l.ReadGenericAliasesFile()
-	l.ReadEntryAliasesFile()
-
-	l.readAliasesMapping(KeyAliasesFileExtension, ProgressReadingKeyAliasesFile, l.AddAliasForKey, &l.KeyAliasToKey, &l.KeyToAliases)
-	l.readAliasesMapping(NameAliasesFileExtension, ProgressReadingNameAliasesFile, l.AddAliasForName, &l.NameAliasToName, &l.NameToAliases)
-
-	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
+	l.ReadKeyAliasesFile()
+	l.ReadPreferredKeyAliasesFile()
+	l.ReadNameAliasesFile()
+	l.ReadGenericFieldAliasesFile()
+	l.ReadEntryFieldAliasesFile()
 }

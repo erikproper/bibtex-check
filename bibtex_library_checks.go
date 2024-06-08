@@ -10,6 +10,8 @@
  *
  */
 
+///// Are these really all "checks"??? The actual checks might even be done while reading the entries.
+
 package main
 
 import (
@@ -26,14 +28,14 @@ import (
 
 // Checks if a given alias fits the desired format of [a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
 // Examples: gordijn2002e3value, overbeek2010matchmaking, ...
-func PreferredKeyAliasIsValid(alias string) bool {
+func IsValidPreferredKeyAlias(alias string) bool {
 	var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
 
 	return validPreferredKeyAlias.MatchString(alias)
 }
 
 // Checks if a given ISSN fits the desired format
-func CheckISSNValidity(ISSN string) bool {
+func IsValidISSN(ISSN string) bool {
 	var validISSN = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9,X]$`)
 
 	return validISSN.MatchString(ISSN)
@@ -47,14 +49,14 @@ func IsValidISBN(ISBN string) bool {
 }
 
 // Checks if a given year is indeed a year
-func CheckYearValidity(year string) bool {
+func IsValidYear(year string) bool {
 	var validYear = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]$`)
 
 	return validYear.MatchString(year)
 }
 
 // Checks if a given date is indeed a date
-func CheckDateValidity(date string) bool {
+func IsValidDate(date string) bool {
 	var validDate = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$`)
 
 	return validDate.MatchString(date)
@@ -168,6 +170,12 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 	return false
 }
 
+func (l *TBibTeXLibrary) CheckTitlePresence(key string) {
+	if l.EntryFieldValueity(key, "title") == "" {
+		l.Warning(WarningEmptyTitle, key)
+	}
+}
+
 func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 	foundDOI := l.EntryFieldValueity(key, "doi")
 
@@ -208,7 +216,7 @@ func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
 	if !l.PreferredKeyAliasExists(key) {
 		///// CLEANER
 		for alias := range l.KeyToAliases[key].Set().Elements() {
-			if PreferredKeyAliasIsValid(alias) {
+			if IsValidPreferredKeyAlias(alias) {
 				// If we have no defined preferred alias, then we can use this one if it would be a valid preferred alias
 				l.AddPreferredKeyAlias(alias)
 			} else {
@@ -216,7 +224,7 @@ func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
 				loweredAlias := strings.ToLower(alias)
 
 				// We do have to make sure the new alias is not already in use, and if it is then a valid alias.
-				if !l.AliasExists(loweredAlias) && PreferredKeyAliasIsValid(loweredAlias) {
+				if !l.AliasExists(loweredAlias) && IsValidPreferredKeyAlias(loweredAlias) {
 					l.AddKeyAlias(loweredAlias, key)
 					l.AddPreferredKeyAlias(loweredAlias)
 				}
@@ -362,25 +370,11 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 }
 
 func (l *TBibTeXLibrary) BDSKFileValueMatches(key, field, localURL string) bool {
-	return strings.HasSuffix(BDSKFile(l.EntryFieldValueity(key, field)), localURL)
-}
-
-func (l *TBibTeXLibrary) tryGetISSN(key, field string, ISSN *string) bool {
-	if fieldValueity := l.EntryFieldValueity(key, field); fieldValueity != "" {
-		newISSN, isMapped := l.SeriesToISSN[fieldValueity]
-		*ISSN = newISSN
-
-		return isMapped
-	}
-
-	return false
-}
-
-func (l *TBibTeXLibrary) CheckISSN(key string) {
-	var newISSN string
-
-	if l.tryGetISSN(key, "series", &newISSN) || l.tryGetISSN(key, "journal", &newISSN) {
-		l.EntryFields[key]["issn"] = newISSN
+	FilePath := BDSKFile(l.EntryFieldValueity(key, field))
+	if FilePath == "" {
+		return false
+	} else {
+		return strings.HasSuffix(localURL, FilePath)
 	}
 }
 
@@ -391,23 +385,34 @@ func (l *TBibTeXLibrary) CheckLanguageID(key string) {
 }
 
 func (l *TBibTeXLibrary) CheckNeedForLocalURL(key string) {
-	LocalURLity := l.EntryFieldValueity(key, "local-url")
+	LocalURL := l.EntryFieldValueity(key, "local-url")
 
-	if LocalURLity != "" {
-		if l.BDSKFileValueMatches(key, "bdsk-file-1", LocalURLity) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-2", LocalURLity) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-3", LocalURLity) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-4", LocalURLity) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-5", LocalURLity) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-6", LocalURLity) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-7", LocalURLity) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-8", LocalURLity) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-9", LocalURLity) {
-			l.EntryFields[key]["local-url"] = ""
+	if LocalURL == "" {
+		// We also seem to use this in main.go ... so maybe a function?
+		LocalURL = Library.FilesRoot + FilesFolder + key + ".pdf"
+		if !FileExists(LocalURL) {
+			LocalURL = ""
+		}
+	}
+
+	if LocalURL != "" {
+		if l.BDSKFileValueMatches(key, "bdsk-file-1", LocalURL) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-2", LocalURL) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-3", LocalURL) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-4", LocalURL) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-5", LocalURL) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-6", LocalURL) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-7", LocalURL) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-8", LocalURL) ||
+			l.BDSKFileValueMatches(key, "bdsk-file-9", LocalURL) {
+
+			LocalURL = ""
 		} else {
 			l.Warning(WarningKeyHasLocalURL, key)
 		}
 	}
+
+	l.EntryFields[key]["local-url"] = LocalURL
 }
 
 func (l *TBibTeXLibrary) CheckEntries() {
@@ -421,9 +426,9 @@ func (l *TBibTeXLibrary) CheckEntries() {
 		l.CheckEPrint(key)
 		l.CheckCrossref(key)
 		l.CheckISBNFromDOI(key)
-		l.CheckISSN(key)
 		l.CheckLanguageID(key)
 		l.CheckURLPresence(key)
+		l.CheckTitlePresence(key)
 		l.CheckURLDateNeed(key)
 	}
 }

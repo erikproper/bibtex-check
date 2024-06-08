@@ -116,7 +116,7 @@ func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 		trimmedISSN = trimmedISSN[0:4] + "-" + trimmedISSN[4:8]
 
 		// A final check if we have a proper ISSN
-		if CheckISSNValidity(trimmedISSN) {
+		if IsValidISSN(trimmedISSN) {
 			return trimmedISSN
 		}
 	}
@@ -163,7 +163,7 @@ func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
 	// Remove leading/trailing spaces
 	trimmedDate := strings.TrimSpace(rawDate)
 
-	if CheckDateValidity(trimmedDate) {
+	if IsValidDate(trimmedDate) {
 		return trimmedDate
 	}
 
@@ -179,7 +179,7 @@ func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
 	// Remove leading/trailing spaces
 	trimmedYear := strings.TrimSpace(rawYear)
 
-	if CheckYearValidity(trimmedYear) {
+	if IsValidYear(trimmedYear) {
 		return trimmedYear
 	}
 
@@ -292,13 +292,6 @@ func NormaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
 	}
 }
 
-// Check if the provided BibDesk file (in base64 encoded format) is present.
-// If not present, we should just ignore the field.
-// But still give a warning.
-func NormaliseBDSKFileValueOld(l *TBibTeXLibrary, value string) string {
-	return NormaliseBDSKFileValue(l, l.currentKey, value)
-}
-
 func BDSKFile(value string) string {
 	if value != "" {
 		// Decode the provided value, and get the payload as a string.
@@ -323,7 +316,7 @@ func BDSKFile(value string) string {
 	}
 }
 
-func NormaliseBDSKFileValue(l *TBibTeXLibrary, key, value string) string {
+func NormaliseBDSKFileValue(l *TBibTeXLibrary, value string) string {
 	if fileName := BDSKFile(value); fileName != "" {
 		// See if the file exists
 		if FileExists(l.FilesRoot + fileName) {
@@ -331,8 +324,9 @@ func NormaliseBDSKFileValue(l *TBibTeXLibrary, key, value string) string {
 			return value
 		} else {
 			// If it is not there, create a warning, and return empty
+			///// currentKey ...???
 			if !l.legacyMode {
-				l.Warning(WarningMissingFile, fileName, key)
+				l.Warning(WarningMissingFile, fileName, l.currentKey)
 			}
 
 			return ""
@@ -360,15 +354,15 @@ func init() {
 	fieldNormalisers = TFieldNormalisers{}
 	fieldNormalisers["author"] = NormaliseNamesString
 	fieldNormalisers["address"] = NormaliseTitleString
-	fieldNormalisers["bdsk-file-1"] = NormaliseBDSKFileValueOld
-	fieldNormalisers["bdsk-file-2"] = NormaliseBDSKFileValueOld
-	fieldNormalisers["bdsk-file-3"] = NormaliseBDSKFileValueOld
-	fieldNormalisers["bdsk-file-4"] = NormaliseBDSKFileValueOld
-	fieldNormalisers["bdsk-file-5"] = NormaliseBDSKFileValueOld
-	fieldNormalisers["bdsk-file-6"] = NormaliseBDSKFileValueOld
-	fieldNormalisers["bdsk-file-7"] = NormaliseBDSKFileValueOld
-	fieldNormalisers["bdsk-file-8"] = NormaliseBDSKFileValueOld
-	fieldNormalisers["bdsk-file-9"] = NormaliseBDSKFileValueOld
+	fieldNormalisers["bdsk-file-1"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-2"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-3"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-4"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-5"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-6"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-7"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-8"] = NormaliseBDSKFileValue
+	fieldNormalisers["bdsk-file-9"] = NormaliseBDSKFileValue
 	fieldNormalisers["bdsk-url-1"] = NormaliseURLValue
 	fieldNormalisers["bdsk-url-2"] = NormaliseURLValue
 	fieldNormalisers["bdsk-url-3"] = NormaliseURLValue

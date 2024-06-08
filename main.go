@@ -55,7 +55,7 @@ func InitialiseMainLibrary() bool {
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
 	Library.ReadAliasesFiles()
-	Library.ReadMappingFiles()
+	Library.ReadFieldMappingsFile()
 	Library.CheckAliases()
 
 	return true
@@ -94,6 +94,20 @@ func main() {
 			writeMappings = true
 		}
 
+	case len(os.Args) == 2 && os.Args[1] == "-pdfs":
+		Reporting.SetInteractionOff()
+		if InitialiseMainLibrary() && OpenMainBibFile() {
+			for key := range Library.EntryTypes {
+				filePath := Library.FilesRoot + FilesFolder + key + ".pdf"
+				if !FileExists(filePath) {
+					URL := Library.EntryFieldValueity(key, "url")
+					if URL != "" && URL[len(URL)-4:] == ".pdf" {
+						fmt.Println("get direct", filePath, "\""+URL+"\"")
+					}
+				}
+			}
+		}
+
 	case len(os.Args) == 2 && os.Args[1] == "-migrate":
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			writeBibFile = true
@@ -106,7 +120,7 @@ func main() {
 			OldLibrary.legacyMode = true
 			OldLibrary.migrationMode = true
 			OldLibrary.ReadAliasesFiles()
-			OldLibrary.ReadMappingFiles()
+			OldLibrary.ReadFieldMappingsFile()
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
@@ -128,8 +142,8 @@ func main() {
 				OldLibrary.CheckBookishTitles(key)
 				OldLibrary.CheckEPrint(key)
 				OldLibrary.CheckISBNFromDOI(key)
-				OldLibrary.CheckISSN(key)
 				OldLibrary.CheckURLDateNeed(key)
+				OldLibrary.MaybeApplyFieldMappings(key)
 			}
 
 			for key := range OldLibrary.EntryTypes {
@@ -210,7 +224,7 @@ func main() {
 			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder, BaseName)
 			OldLibrary.legacyMode = true
 			OldLibrary.ReadAliasesFiles()
-			OldLibrary.ReadMappingFiles()
+			OldLibrary.ReadFieldMappingsFile()
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
@@ -300,7 +314,7 @@ func main() {
 	case len(os.Args) > 2 && os.Args[1] == "-preferred":
 		alias := CleanKey(os.Args[2])
 
-		if PreferredKeyAliasIsValid(alias) {
+		if IsValidPreferredKeyAlias(alias) {
 			writeAliases = true
 
 			InitialiseMainLibrary()
@@ -321,18 +335,15 @@ func main() {
 		fmt.Println(os.Args)
 	}
 
-	if writeBibFile {
-		Library.WriteBibTeXFile()
-	}
-
-	//	Library.ReadAliasesFiles()/
-	//	Library.ReadChallenges()
-
 	if writeAliases {
 		Library.WriteAliasesFiles()
 	}
 
 	if writeMappings {
 		Library.WriteMappingsFiles()
+	}
+
+	if writeBibFile {
+		Library.WriteBibTeXFile()
 	}
 }

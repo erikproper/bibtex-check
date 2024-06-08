@@ -30,16 +30,16 @@ var (
 const (
 	// The prefix used for the generated keys
 	// (*) Should go into a config file.
-	KeyPrefix = "EP" // (*)
+	KeyPrefix   = "EP" // (*)
+	FilesFolder = "Files/"
 
 	BibFileExtension                 = ".bib"
 	KeyAliasesFileExtension          = ".keys"
 	PreferredKeyAliasesFileExtension = ".preferred"
 	NameAliasesFileExtension         = ".names"
-	EntryAliasesFileExtension        = ".entry_aliases"
-	GenericAliasesFileExtension      = ".generic_aliases"
-	AddressesFileExtension           = ".addresses"
-	ISSNFileExtension                = ".issn"
+	EntryFieldAliasesFileExtension   = ".entry_aliases"
+	GenericFieldAliasesFileExtension = ".generic_aliases"
+	FieldMappingsFileExtension       = ".mappings"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field
