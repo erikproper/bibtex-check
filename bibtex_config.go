@@ -19,6 +19,7 @@ var (
 	BibTeXImportFields       TStringSet            // Set of fields we would consider importing
 	BibTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
 	BibTeXBDSKFileFields     TStringSet
+	BibTeXBDSKURLFields      TStringSet
 	BibTeXAllowedEntries     TStringSet // Aggregation of the allowed entry types
 	BibTeXBookish            TStringSet // All book-alike entry types
 	BibTeXFieldMap           TStringMap // Mapping of field names, to enable aliases and automatic corrections
@@ -102,6 +103,7 @@ func init() {
 	BibTeXImportFields.Initialise()
 	BibTeXBookish.Initialise()
 	BibTeXBDSKFileFields.Initialise()
+	BibTeXBDSKURLFields.Initialise()
 
 	AddAllowedEntryFields(
 		"article", "journal", "volume", "number", "pages", "month", "issn")
@@ -148,6 +150,9 @@ func init() {
 	//////	WOULD be nice to then Unite this one to AllowedFields, but this requires a special version of AddAllowedFields as that one does some checks ...
 	BibTeXBDSKFileFields.Add("bdsk-file-1", "bdsk-file-2", "bdsk-file-3", "bdsk-file-4", "bdsk-file-5",
 		"bdsk-file-6", "bdsk-file-7", "bdsk-file-8", "bdsk-file-9")
+
+	BibTeXBDSKURLFields.Add("bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
+		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9")
 
 	AddAllowedFields(
 		"date-added", "date-modified",

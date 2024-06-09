@@ -13,7 +13,10 @@
 
 package main
 
-import "maps"
+import (
+	"maps"
+	"sort"
+)
 
 // Functions that create/add/remove/unite/etc sets, return a pointer to the given set to enable concatenation of operators.
 // For instance s.Initialise().Add("Hello").Add("World").Delete("Hello")
@@ -21,13 +24,16 @@ import "maps"
 // String sets are essentially defined as a mapping to an empty struct.
 // However, we also want to select the way it is represented as a string.
 // Therefore, we use a struct to represent this in a combined way.
-type TStringSetElements map[string]struct{}
-type TStringSet struct {
-	elements  TStringSetElements // The elements in the set
-	verbalise bool               // Setting to determine the style used in converting sets to strings:
-	//                           // - Verbalised:   "june", "juli", and "august"
-	//                           // - Mathematical: { "june", "juli", "august" }
-}
+type (
+	TStringSetElements       map[string]struct{}
+	TStringSetSortedElements sort.StringSlice
+	TStringSet               struct {
+		elements  TStringSetElements // The elements in the set
+		verbalise bool               // Setting to determine the style used in converting sets to strings:
+		//                           // - Verbalised:   "june", "juli", and "august"
+		//                           // - Mathematical: { "june", "juli", "august" }
+	}
+)
 
 // Create a new string set.
 func TStringSetNew() TStringSet {
@@ -74,6 +80,18 @@ func (s *TStringSet) Size() int {
 // Returns a map with the elements contained in the set.
 func (s *TStringSet) Elements() TStringSetElements {
 	return s.elements
+}
+
+// Returns a slice with the elements contained in the set sorted based on their string value
+func (s *TStringSet) ElementsSorted() TStringSetSortedElements {
+	elements := make([]string, 0, s.Size())
+
+	for e := range s.elements {
+		elements = append(elements, e)
+	}
+	sort.Strings(elements)
+
+	return elements
 }
 
 // Add elements.

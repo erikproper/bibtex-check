@@ -104,6 +104,11 @@ func main() {
 					if URL != "" && URL[len(URL)-4:] == ".pdf" {
 						fmt.Println("get direct", filePath, "\""+URL+"\"")
 					}
+
+					DOI := Library.EntryFieldValueity(key, "doi")
+					if strings.HasPrefix(DOI, "10.1007/") {
+						fmt.Println("get springer", filePath, "\""+DOI+"\"")
+					}
 				}
 			}
 		}

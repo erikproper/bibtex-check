@@ -36,6 +36,7 @@ type (
 		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                        TStringSetMap             //
 		BDSKFileIndex                    TStringSetMap             //
+		BDSKURLIndex                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
 		EntryTypes                       TStringMap                // Per entry key, the type of the enty.
 		KeyAliasToKey                    TStringMap                // Mapping from key aliases to the actual entry key.
@@ -90,6 +91,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.BookTitleIndex = TStringSetMap{}
 	l.ISBNIndex = TStringSetMap{}
 	l.BDSKFileIndex = TStringSetMap{}
+	l.BDSKURLIndex = TStringSetMap{}
 	l.DOIIndex = TStringSetMap{}
 	l.EntryTypes = TStringMap{}
 	l.KeyAliasToKey = TStringMap{}
@@ -600,13 +602,39 @@ func (l *TBibTeXLibrary) MaybeApplyFieldMappings(key string) {
 
 // Finish recording the current library entry
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
+	BSDKFileCount := 0
 	for BDSKFileField := range BibTeXBDSKFileFields.Elements() {
 		if BDSKFile := l.EntryFieldValueity(l.currentKey, BDSKFileField); BDSKFile != "" {
 			if l.BDSKFileIndex[BDSKFile].Set().Contains(l.currentKey) {
-				l.Warning("Double DSK file within entry %s", l.currentKey)
+				l.Warning("Cleaning double DSK file within entry %s", l.currentKey)
 				l.EntryFields[l.currentKey][BDSKFileField] = ""
 			} else {
+				BSDKFileCount++
 				l.BDSKFileIndex.AddValueToStringSetMap(BDSKFile, l.currentKey)
+			}
+		}
+	}
+	if BSDKFileCount > 1 {
+		l.Warning("Multiple DSK files for entry %s", l.currentKey)
+	}
+
+	URLity := l.EntryFieldValueity(l.currentKey, "url")
+	URLNeedsInclusion := URLity != ""
+	for _, BDSKURLField := range BibTeXBDSKURLFields.ElementsSorted() {
+		BDSKURL := l.EntryFieldValueity(l.currentKey, BDSKURLField)
+
+		if BDSKURL == "" && !URLNeedsInclusion {
+			l.EntryFields[l.currentKey][BDSKURLField] = URLity
+			BDSKURL = URLity
+			URLNeedsInclusion = false
+		}
+
+		if BDSKURL != "" {
+			if l.BDSKURLIndex[BDSKURL].Set().Contains(l.currentKey) {
+				l.Warning("Cleaning double DSK url within entry %s", l.currentKey)
+				l.EntryFields[l.currentKey][BDSKURLField] = ""
+			} else {
+				l.BDSKURLIndex.AddValueToStringSetMap(BDSKURL, l.currentKey)
 			}
 		}
 	}
