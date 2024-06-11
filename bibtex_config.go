@@ -18,14 +18,16 @@ var (
 	BibTeXAllowedEntryFields map[string]TStringSet // Per entry type, the allowed field
 	BibTeXImportFields       TStringSet            // Set of fields we would consider importing
 	BibTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
-	BibTeXBDSKFileFields     TStringSet
-	BibTeXBDSKURLFields      TStringSet
-	BibTeXAllowedEntries     TStringSet // Aggregation of the allowed entry types
-	BibTeXBookish            TStringSet // All book-alike entry types
-	BibTeXFieldMap           TStringMap // Mapping of field names, to enable aliases and automatic corrections
-	BibTeXEntryMap           TStringMap // Mapping of entry names, to enable automatic corrections
-	BibTeXDefaultStrings     TStringMap // The default string definitions that will be used when opening a BibTeX file
-	BibTeXCrossrefType       TStringMap // Entry type mapping for crossrefs
+	BibTeXMustInheritFields  TStringSet            //
+	BibTeXMayInheritFields   TStringSet            //
+	BibTeXBDSKFileFields     TStringSet            //
+	BibTeXBDSKURLFields      TStringSet            //
+	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entry types
+	BibTeXBookish            TStringSet            // All book-alike entry types
+	BibTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
+	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
+	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
+	BibTeXCrossrefType       TStringMap            // Entry type mapping for crossrefs
 )
 
 const (
@@ -104,6 +106,8 @@ func init() {
 	BibTeXBookish.Initialise()
 	BibTeXBDSKFileFields.Initialise()
 	BibTeXBDSKURLFields.Initialise()
+	BibTeXMustInheritFields.Initialise()
+	BibTeXMayInheritFields.Initialise()
 
 	AddAllowedEntryFields(
 		"article", "journal", "volume", "number", "pages", "month", "issn")
@@ -139,12 +143,13 @@ func init() {
 	// (*) The above ones are the official ones. It makes sense to allow a config file to add to these.
 
 	AddAllowedFields(
-		"month", "year", "note", "annote", "doi", "key", "author", "title",
-		"alias", "dblp", "researchgate",
+		"month", "year", "note", "doi", "key", "author", "title",
+		"dblp", "researchgate",
 		"eprinttype", "eprint",
 		"local-url", "langid",
 		"url", "urldate", "urloriginal")
 
+	// Needed for what?? Legacy? Import??
 	BibTeXImportFields.Unite(BibTeXAllowedFields)
 
 	//////	WOULD be nice to then Unite this one to AllowedFields, but this requires a special version of AddAllowedFields as that one does some checks ...
@@ -170,6 +175,15 @@ func init() {
 	BibTeXCrossrefType["inproceedings"] = "proceedings"
 	BibTeXCrossrefType["incollection"] = "book"
 	BibTeXCrossrefType["inbook"] = "book"
+
+	BibTeXMustInheritFields.Add("booktitle", "year", "editor", "publisher", "volume", "number", "series",
+		"address", "month", "edition", "issn", "isbn", "address", "type", "organization")
+	BibTeXMayInheritFields.Add("doi", "url", "bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
+		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9")
+
+	// Consistency checks:
+	// - Target of BibTeXCrossrefType must always be bookish
+	// - BibTeXMustInheritFields must be among the fields of bookish entries.
 
 	BibTeXEntryMap = TStringMap{}
 	BibTeXEntryMap["conference"] = "inproceedings"

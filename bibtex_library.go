@@ -50,7 +50,7 @@ type (
 		foundDoubles                     bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
 		legacyMode                       bool                      // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
 		EntryFieldAliasToTarget          TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
-		EntryFieldTargetToAliases        TStringStringStringSetMap //
+		EntryFieldTargetToAliases        TStringStringStringSetMap // DO WE NEED THE INVERSES??
 		GenericFieldAliasToTarget        TStringStringMap          // A field specific mapping from challenged value to winner values
 		GenericFieldTargetToAliases      TStringStringSetMap       //
 		NoBibFileWriting                 bool                      // If set, we should not write out a Bib file for this library as entries might have been lost.
@@ -183,8 +183,10 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 func (l *TBibTeXLibrary) UpdateGenericFieldAlias(field, alias, target string) {
 	l.AddGenericFieldAlias(field, alias, target, true)
 
-	for otherChallenger := range l.GenericFieldAliasToTarget[field] {
-		l.AddGenericFieldAlias(field, otherChallenger, target, false)
+	for otherAlias, otherTarget := range l.GenericFieldAliasToTarget[field] {
+		if otherTarget == alias {
+			l.AddGenericFieldAlias(field, otherAlias, target, false)
+		}
 	}
 }
 
@@ -227,8 +229,10 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target string) {
 	l.AddEntryFieldAlias(entry, field, alias, target, true)
 
-	for otherChallenger := range l.EntryFieldAliasToTarget[entry][field] {
-		l.AddEntryFieldAlias(entry, field, otherChallenger, target, false)
+	for otherAlias, otherTarget := range l.EntryFieldAliasToTarget[entry][field] {
+		if otherTarget == alias {
+			l.AddEntryFieldAlias(entry, field, otherAlias, target, false)
+		}
 	}
 }
 
@@ -562,7 +566,7 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 
 		// Resolve the double typing issue
 		// Post legacy migration, we still need to do this, but then we will always have: key == l.currentKey
-		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.EntryTypes[l.currentKey])
+		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, "", EntryTypeField, entryType, l.EntryTypes[l.currentKey])
 	} else {
 		l.EntryFields[l.currentKey] = TStringMap{}
 		l.EntryTypes[l.currentKey] = entryType
@@ -582,7 +586,7 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	currentValue := l.EntryFieldValueity(l.currentKey, field)
 
 	// Assign the new value, while, if needed, resolve it with the current value
-	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, field, newValue, currentValue)
+	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, "", field, newValue, currentValue)
 
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {

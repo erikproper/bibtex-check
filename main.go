@@ -107,7 +107,7 @@ func main() {
 
 					DOI := Library.EntryFieldValueity(key, "doi")
 					if strings.HasPrefix(DOI, "10.1007/") {
-						fmt.Println("get springer", filePath, "\""+DOI+"\"")
+						fmt.Println("get springer", filePath, "\"https://link.springer.com/chapter/"+DOI+"#preview\"")
 					}
 				}
 			}
@@ -251,7 +251,9 @@ func main() {
 
 				if isEntry {
 					// We don't have a set type function??
-					Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
+					Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, "", EntryTypeField, oldType, newType)
+
+					crossrefKey := Library.EntryFieldValueity(newKey, "crossref")
 
 					// EntryFields function???
 					for oldField, oldValue := range OldLibrary.EntryFields[oldEntry] {
@@ -263,7 +265,19 @@ func main() {
 
 						// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
 						if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
-							Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+							if crossrefKey != "" &&  BibTeXMustInheritFields.Contains(oldField) {
+								target := Library.MaybeResolveFieldValue(crossrefKey, oldEntry, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
+		
+								if oldField == "booktitle" {
+									if Library.EntryFields[crossrefKey]["title"] == Library.EntryFields[crossrefKey]["booktitle"] {
+										Library.EntryFields[crossrefKey]["title"] = target
+									}
+								}
+
+								Library.EntryFields[crossrefKey][oldField] = target
+							} else {
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, "", oldField, oldValue, Library.EntryFields[newKey][oldField])							
+							}
 						}
 					}
 				}

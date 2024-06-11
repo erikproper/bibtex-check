@@ -74,7 +74,7 @@ func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
 	})
 }
 
-func (l *TBibTeXLibrary) normalisedWinnerChallengerPair(field, winner, challenger string) (string, string) {
+func (l *TBibTeXLibrary) normalisedAliasTargetPair(field, winner, challenger string) (string, string) {
 	normalisedWinner := ""
 	if winner != "" {
 		normalisedWinner = l.NormaliseFieldValue(field, winner)
@@ -105,7 +105,7 @@ func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
 
 		key := elements[0]
 		field := elements[1]
-		winner, challenger := l.normalisedWinnerChallengerPair(field, elements[2], elements[3])
+		winner, challenger := l.normalisedAliasTargetPair(field, elements[2], elements[3])
 		l.AddEntryFieldAlias(key, field, l.DeAliasFieldValue(field, challenger), l.DeAliasFieldValue(field, winner), true)
 	})
 }
@@ -121,7 +121,7 @@ func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
 		}
 
 		field := elements[0]
-		winner, challenger := l.normalisedWinnerChallengerPair(field, elements[1], elements[2])
+		winner, challenger := l.normalisedAliasTargetPair(field, elements[1], elements[2])
 		l.AddGenericFieldAlias(field, challenger, winner, true)
 	})
 }

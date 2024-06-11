@@ -236,7 +236,7 @@ func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
 func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	// SAFE??
 	if BibTeXBookish.Contains(l.EntryTypes[key]) {
-		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
+		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "", "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
 		l.UpdateEntryFieldAlias(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
 	}
@@ -349,22 +349,60 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckCrossrefMustInheritField(crossrefKey, key, field string) {
+	if challenge, hasChallenge := l.EntryFields[key][field]; hasChallenge {
+		target := l.MaybeResolveFieldValue(crossrefKey, key, field, challenge, l.EntryFieldValueity(crossrefKey, field))
+		
+		if field == "booktitle" {
+			if l.EntryFields[crossrefKey]["title"] == l.EntryFields[crossrefKey]["booktitle"] {
+				l.EntryFields[crossrefKey]["title"] = target
+			}
+		}
+
+		l.EntryFields[crossrefKey][field] = target
+
+		for otherChallenger := range l.EntryFieldAliasToTarget[key][field] {
+			l.AddEntryFieldAlias(crossrefKey, field, otherChallenger, target, false)
+		}
+
+		// This check should not be necessary, but ...
+		if target != "" {
+			l.EntryFields[key][field] = ""
+			
+			delete(l.EntryFieldAliasToTarget[key], field)
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) CheckCrossrefMayInheritField(crossrefKey, key, field string) {
+	if crossrefValue, hasCrossrefValue := l.EntryFields[crossrefKey][field]; hasCrossrefValue {
+		if crossrefValue == l.EntryFields[key][field] {
+			l.EntryFields[key][field] = ""
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	Crossrefity := l.EntryFieldValueity(key, "crossref")
+	EntryType := l.EntryTypes[key]
 
 	if Crossrefity != "" {
-		EntryType := l.EntryTypes[key]
-
 		if CrossrefType, CrossrefExists := l.EntryTypes[Crossrefity]; CrossrefExists {
-			if BibTeXCrossrefType[EntryType] != CrossrefType {
-				l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", EntryType, key, CrossrefType, Crossrefity)
+			if BibTeXCrossrefType[EntryType] == CrossrefType {
+				for field := range BibTeXMustInheritFields.Elements() {
+					l.CheckCrossrefMustInheritField(Crossrefity, key, field)
+				}
 
-				return
+				for field := range BibTeXMayInheritFields.Elements() {
+					l.CheckCrossrefMayInheritField(Crossrefity, key, field)
+				}
+
+				l.CheckBookishTitles(CrossrefType)
+			} else {
+				l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", EntryType, key, CrossrefType, Crossrefity)
 			}
 		} else {
 			l.Warning("Target %s of crossref from %s does not exist.", Crossrefity, key)
-
-			return
 		}
 	}
 }

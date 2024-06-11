@@ -19,68 +19,73 @@ package main
 // Still a major construction site.
 //
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
-func (l *TBibTeXLibrary) ResolveFieldValue(key, field, alias, current string) string {
-	// OK. The key, field, and alias are needed here. But, current is likely to be derivable from l with key and field.
+func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challenge, current string) string {
+	// OK. The key, field, and challenge are needed here. But, current is likely to be derivable from l with key and field.
 	// But ... needs to be checked once done with the legacy migration.
 
-	// If the the alias equals the current one, we can just return the current one.
-	if current == alias {
+	// If the the challenge equals the current one, we can just return the current one.
+	if current == challenge {
 		return current
 	}
 
 	if !l.legacyMode {
-		// So we have a difference between a non-empty current value and the alias.
+		// So we have a difference between the current value and the challenge.
 		// So, who is the target ...
 
-		if l.EntryFieldAliasHasTarget(key, field, current, alias) {
-			// It is recorded that the alias is the target over the current value.
-			// So, we can return the alias as the target
-			return alias
+		if l.EntryFieldAliasHasTarget(key, field, current, challenge) {
+			// It is recorded that the challenge is the target over the current value.
+			// So, we can return the challenge as the target
+			return challenge
 
-		} else if l.EntryFieldAliasHasTarget(key, field, alias, current) {
-			// It is recorded that the current value is the target over the alias
+		} else if l.EntryFieldAliasHasTarget(key, field, challenge, current) {
+			// It is recorded that the current value is the target over the challenge
 			// So, we can return the current value as the target
 
 			return current
+			
 		} else {
-			// If no target is recorded, we need to ask the user ...
+			// If no target for an alias is recorded, we need to ask the user ...
 			// And update the recorded challenges
 			// Note: this is an *update* as we may need to update this as a new target for other challenges as well.
 
+			if childKey != "" {
+				l.Warning("Issue while pushing field %s from %s to %s", field, childKey, key)
+			}
+			
 			options := TStringSetNew()
 			options.Add("Y", "y", "n", "N")
 			warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 			question := "Current entry:\n" + l.EntryString(key, "  ") + "Keep the value as is?"
 			// Don't like this via "Warning" ... should be a separate class
-			answer := l.WarningQuestion(question, options, warning, key, field, alias, current)
+			answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
 
 			if answer == "y" {
-				l.UpdateEntryFieldAlias(key, field, alias, current)
+				l.UpdateEntryFieldAlias(key, field, challenge, current)
 				l.WriteAliasesFiles()
 				l.WriteBibTeXFile()
 
 				return current
 
 			} else if answer == "n" {
-				l.UpdateEntryFieldAlias(key, field, current, alias)
+				l.UpdateEntryFieldAlias(key, field, current, challenge)
 				l.WriteAliasesFiles()
 				l.WriteBibTeXFile()
 
-				return alias
+				return challenge
 
 			} else if answer == "Y" {
-				l.UpdateGenericFieldAlias(field, alias, current)
+				l.UpdateGenericFieldAlias(field, challenge, current)
 				l.WriteAliasesFiles()
 				l.WriteBibTeXFile()
 
 				return current
 
 			} else if answer == "N" {
-				l.UpdateGenericFieldAlias(field, current, alias)
+				l.UpdateGenericFieldAlias(field, current, challenge)
 				l.WriteAliasesFiles()
 				l.WriteBibTeXFile()
 
-				return alias
+				return challenge
 
 			}
 		}
@@ -90,10 +95,12 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, alias, current string) st
 }
 
 // If the current value is empty, then we can assign the alias.
-func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, field, alias, current string) string {
+func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, childKey, field, challenge, current string) string {
 	if current == "" {
-		return alias
+		return challenge
+	} else if challenge == "" {
+		return current
 	} else {
-		return l.ResolveFieldValue(key, field, alias, current)
+		return l.ResolveFieldValue(key, childKey, field, challenge, current)
 	}
 }
