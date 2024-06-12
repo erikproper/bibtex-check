@@ -330,7 +330,7 @@ func main() {
 
 				key := keyStrings[len(keyStrings)-1]
 				for _, alias := range keyStrings[1 : len(keyStrings)-1] {
-					fmt.Println("Merging", alias, "to", key)
+					Library.MergeEntries(alias, key)
 				}
 			}
 		}

@@ -334,6 +334,10 @@ func (l *TBibTeXLibrary) AddAliasForKey(alias, key string, aliasMap *TStringMap,
 	}
 }
 
+func (l *TBibTeXLibrary) MergeEntries(source, target string) {
+	fmt.Println("Merging", source, "to", target)
+}
+
 // Add a new key alias
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 	l.AddAliasForKey(alias, key, &l.KeyAliasToKey, &l.KeyToAliases)
