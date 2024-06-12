@@ -152,6 +152,30 @@ func (l *TBibTeXLibrary) CheckURLPresence(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckBDSKURLCompleteness(key string) {
+	URLity := l.EntryFieldValueity(key, "url")
+	URLNeedsInclusion := URLity != ""
+
+	for _, BDSKURLField := range BibTeXBDSKURLFields.ElementsSorted() {
+		BDSKURL := l.EntryFieldValueity(key, BDSKURLField)
+
+		if BDSKURL == "" && !URLNeedsInclusion {
+			l.EntryFields[key][BDSKURLField] = URLity
+			BDSKURL = URLity
+			URLNeedsInclusion = false
+		}
+
+		if BDSKURL != "" {
+			if l.BDSKURLIndex[BDSKURL].Set().Contains(key) {
+				l.Warning("Cleaning double DSK url within entry %s", key)
+				l.EntryFields[key][BDSKURLField] = ""
+			} else {
+				l.BDSKURLIndex.AddValueToStringSetMap(BDSKURL, key)
+			}
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) bool {
 	if *foundDOI == "" {
 		if URL := l.EntryFieldValueity(key, field); URL != "" {
@@ -179,6 +203,7 @@ func (l *TBibTeXLibrary) CheckTitlePresence(key string) {
 func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 	foundDOI := l.EntryFieldValueity(key, "doi")
 
+	// Should involve a for loop for the bdsk-url's
 	if foundDOI == "" {
 		if l.tryGetDOIFromURL(key, "url", &foundDOI) ||
 			l.tryGetDOIFromURL(key, "bdsk-url-1", &foundDOI) ||
@@ -407,22 +432,15 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	}
 }
 
-func (l *TBibTeXLibrary) BDSKFileValueMatches(key, field, localURL string) bool {
-	FilePath := BDSKFile(l.EntryFieldValueity(key, field))
-	if FilePath == "" {
-		return false
+func (l *TBibTeXLibrary) updateLocalURL(BDSKFieldValue, localURL string) string {
+	if FilePath := BDSKFile(BDSKFieldValue); FilePath != "" && strings.HasSuffix(localURL, FilePath) {
+		return ""
 	} else {
-		return strings.HasSuffix(localURL, FilePath)
+		return localURL
 	}
 }
 
-func (l *TBibTeXLibrary) CheckLanguageID(key string) {
-	if l.EntryFieldValueity(key, "langid") == "english" {
-		l.EntryFields[key]["langid"] = ""
-	}
-}
-
-func (l *TBibTeXLibrary) CheckNeedForLocalURL(key string) {
+func (l *TBibTeXLibrary) CheckFileReference(key string) {
 	LocalURL := l.EntryFieldValueity(key, "local-url")
 
 	if LocalURL == "" {
@@ -433,40 +451,54 @@ func (l *TBibTeXLibrary) CheckNeedForLocalURL(key string) {
 		}
 	}
 
-	if LocalURL != "" {
-		if l.BDSKFileValueMatches(key, "bdsk-file-1", LocalURL) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-2", LocalURL) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-3", LocalURL) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-4", LocalURL) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-5", LocalURL) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-6", LocalURL) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-7", LocalURL) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-8", LocalURL) ||
-			l.BDSKFileValueMatches(key, "bdsk-file-9", LocalURL) {
+	BSDKFileCount := 0
+	for index, BDSKFileField := range BibTeXBDSKFileFields.ElementsSorted() {
+		if BDSKFile := l.EntryFieldValueity(key, BDSKFileField); BDSKFile != "" {
+			BSDKFileCount++
+			if BSDKFileCount > 1 {
+				l.Warning("Multiple DSK files within entry %s", key)
+			}
 
-			LocalURL = ""
-		} else {
-			l.Warning(WarningKeyHasLocalURL, key)
+			if index > 0 && l.EntryFieldValueity(key, FirstBDSKFileField) == "" {
+				l.EntryFields[key][FirstBDSKFileField] = BDSKFile
+				l.EntryFields[key][BDSKFileField] = ""
+			}
+
+			LocalURL = l.updateLocalURL(BDSKFile, LocalURL)
 		}
 	}
 
+	if LocalURL != "" {
+		l.Warning("Entry %s has local-url field", key)
+	}
 	l.EntryFields[key]["local-url"] = LocalURL
+}
+
+func (l *TBibTeXLibrary) CheckLanguageID(key string) {
+	if l.EntryFieldValueity(key, "langid") == "english" {
+		l.EntryFields[key]["langid"] = ""
+	}
+}
+
+func (l *TBibTeXLibrary) CheckEntry(key string) {
+	l.CheckPreferredKeyAliasesConsistency(key)
+	l.CheckDOIPresence(key)
+	l.CheckBookishTitles(key)
+	l.CheckEPrint(key)
+	l.CheckCrossref(key)
+	l.CheckISBNFromDOI(key)
+	l.CheckLanguageID(key)
+	l.CheckTitlePresence(key)
+	l.CheckURLPresence(key)
+	l.CheckURLDateNeed(key)
+	l.CheckBDSKURLCompleteness(key)
+	l.CheckFileReference(key)
 }
 
 func (l *TBibTeXLibrary) CheckEntries() {
 	l.Progress(ProgressCheckingConsistencyOfEntries)
 
 	for key := range l.EntryTypes {
-		l.CheckPreferredKeyAliasesConsistency(key)
-		l.CheckDOIPresence(key)
-		l.CheckNeedForLocalURL(key)
-		l.CheckBookishTitles(key)
-		l.CheckEPrint(key)
-		l.CheckCrossref(key)
-		l.CheckISBNFromDOI(key)
-		l.CheckLanguageID(key)
-		l.CheckURLPresence(key)
-		l.CheckTitlePresence(key)
-		l.CheckURLDateNeed(key)
+		l.CheckEntry(key)
 	}
 }

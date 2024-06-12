@@ -143,11 +143,11 @@ func main() {
 
 			for key := range OldLibrary.EntryTypes {
 				OldLibrary.CheckDOIPresence(key)
-				OldLibrary.CheckNeedForLocalURL(key)
 				OldLibrary.CheckBookishTitles(key)
 				OldLibrary.CheckEPrint(key)
 				OldLibrary.CheckISBNFromDOI(key)
 				OldLibrary.CheckURLDateNeed(key)
+				OldLibrary.CheckFileReference(key)
 				OldLibrary.MaybeApplyFieldMappings(key)
 			}
 

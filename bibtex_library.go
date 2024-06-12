@@ -35,7 +35,6 @@ type (
 		TitleIndex                       TStringSetMap             //
 		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                        TStringSetMap             //
-		BDSKFileIndex                    TStringSetMap             //
 		BDSKURLIndex                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
 		EntryTypes                       TStringMap                // Per entry key, the type of the enty.
@@ -90,7 +89,6 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.TitleIndex = TStringSetMap{}
 	l.BookTitleIndex = TStringSetMap{}
 	l.ISBNIndex = TStringSetMap{}
-	l.BDSKFileIndex = TStringSetMap{}
 	l.BDSKURLIndex = TStringSetMap{}
 	l.DOIIndex = TStringSetMap{}
 	l.EntryTypes = TStringMap{}
@@ -335,7 +333,38 @@ func (l *TBibTeXLibrary) AddAliasForKey(alias, key string, aliasMap *TStringMap,
 }
 
 func (l *TBibTeXLibrary) MergeEntries(source, target string) {
-	fmt.Println("Merging", source, "to", target)
+	if l.EntryExists(source) && l.EntryExists(target) {
+		fmt.Println("Checking source entry")
+		l.CheckEntry(source)
+
+		fmt.Println("Checking target entry")
+		l.CheckEntry(target)
+
+		fmt.Println("Merging", source, "to", target)
+
+		sourceType := l.EntryTypes[source]
+		targetType := l.EntryTypes[target]
+		targetType = Library.ResolveFieldValue(target, "", EntryTypeField, sourceType, targetType)
+		Library.EntryTypes[target] = targetType
+
+		RegularFields := TStringSet{}
+		RegularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
+		RegularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
+		for RegularField := range RegularFields.Elements() {
+			if !BibTeXBDSKURLFields.Contains(RegularField) && !BibTeXBDSKFileFields.Contains(RegularField) {
+				fmt.Println("RF", RegularField)
+			}
+		}
+
+		// Resolving for bdsk files:
+		//   - Regular fields
+		//   - If both have associated files, check if they are the same conctent-wise
+		//   - Unite/merge the BDSK-URL set via double for loop
+		//   - Also update the XML stuff ... replace key in the comments. Should be safe for now
+		//   - Guess we should integrate that into the mapping functionality …
+		//   - Include effects on entry_aliases; all aliases of the merge_source become aliases for the merge_target
+		//  \cite{EP-2024-05-25-08-47-54,EP-2024-05-25-13-01-48,EP-2024-05-25-08-46-31,EP-2024-05-25-14-11-23}
+	}
 }
 
 // Add a new key alias
@@ -610,43 +639,6 @@ func (l *TBibTeXLibrary) MaybeApplyFieldMappings(key string) {
 
 // Finish recording the current library entry
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
-	BSDKFileCount := 0
-	for BDSKFileField := range BibTeXBDSKFileFields.Elements() {
-		if BDSKFile := l.EntryFieldValueity(l.currentKey, BDSKFileField); BDSKFile != "" {
-			if l.BDSKFileIndex[BDSKFile].Set().Contains(l.currentKey) {
-				l.Warning("Cleaning double DSK file within entry %s", l.currentKey)
-				l.EntryFields[l.currentKey][BDSKFileField] = ""
-			} else {
-				BSDKFileCount++
-				l.BDSKFileIndex.AddValueToStringSetMap(BDSKFile, l.currentKey)
-			}
-		}
-	}
-	if BSDKFileCount > 1 {
-		l.Warning("Multiple DSK files for entry %s", l.currentKey)
-	}
-
-	URLity := l.EntryFieldValueity(l.currentKey, "url")
-	URLNeedsInclusion := URLity != ""
-	for _, BDSKURLField := range BibTeXBDSKURLFields.ElementsSorted() {
-		BDSKURL := l.EntryFieldValueity(l.currentKey, BDSKURLField)
-
-		if BDSKURL == "" && !URLNeedsInclusion {
-			l.EntryFields[l.currentKey][BDSKURLField] = URLity
-			BDSKURL = URLity
-			URLNeedsInclusion = false
-		}
-
-		if BDSKURL != "" {
-			if l.BDSKURLIndex[BDSKURL].Set().Contains(l.currentKey) {
-				l.Warning("Cleaning double DSK url within entry %s", l.currentKey)
-				l.EntryFields[l.currentKey][BDSKURLField] = ""
-			} else {
-				l.BDSKURLIndex.AddValueToStringSetMap(BDSKURL, l.currentKey)
-			}
-		}
-	}
-
 	if ISBN := l.EntryFieldValueity(l.currentKey, "isbn"); ISBN != "" {
 		l.ISBNIndex.AddValueToStringSetMap(ISBN, l.currentKey)
 	}

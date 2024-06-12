@@ -28,6 +28,7 @@ var (
 	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
 	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
 	BibTeXCrossrefType       TStringMap            // Entry type mapping for crossrefs
+	FirstBDSKFileField       string
 )
 
 const (
@@ -155,6 +156,7 @@ func init() {
 	//////	WOULD be nice to then Unite this one to AllowedFields, but this requires a special version of AddAllowedFields as that one does some checks ...
 	BibTeXBDSKFileFields.Add("bdsk-file-1", "bdsk-file-2", "bdsk-file-3", "bdsk-file-4", "bdsk-file-5",
 		"bdsk-file-6", "bdsk-file-7", "bdsk-file-8", "bdsk-file-9")
+	FirstBDSKFileField = BibTeXBDSKFileFields.ElementsSorted()[0]
 
 	BibTeXBDSKURLFields.Add("bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9")
