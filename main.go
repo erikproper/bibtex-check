@@ -265,9 +265,9 @@ func main() {
 
 						// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
 						if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
-							if crossrefKey != "" &&  BibTeXMustInheritFields.Contains(oldField) {
+							if crossrefKey != "" && BibTeXMustInheritFields.Contains(oldField) {
 								target := Library.MaybeResolveFieldValue(crossrefKey, oldEntry, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
-		
+
 								if oldField == "booktitle" {
 									if Library.EntryFields[crossrefKey]["title"] == Library.EntryFields[crossrefKey]["booktitle"] {
 										Library.EntryFields[crossrefKey]["title"] = target
@@ -276,7 +276,7 @@ func main() {
 
 								Library.EntryFields[crossrefKey][oldField] = target
 							} else {
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, "", oldField, oldValue, Library.EntryFields[newKey][oldField])							
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, "", oldField, oldValue, Library.EntryFields[newKey][oldField])
 							}
 						}
 					}
@@ -310,6 +310,29 @@ func main() {
 
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			fmt.Println(Library.DeAliasEntryKey(CleanKey(os.Args[2])))
+		}
+
+	case len(os.Args) > 2 && os.Args[1] == "-merge":
+		keysString := ""
+
+		for _, keyString := range os.Args[2:] {
+			keysString += "," + CleanKey(keyString)
+		}
+		keyStrings := strings.Split(keysString, ",")
+
+		if len(keyStrings) < 3 {
+			fmt.Println("Need at least two keys for this ...")
+		} else {
+			if InitialiseMainLibrary() && OpenMainBibFile() {
+				writeBibFile = true
+				writeAliases = true
+				writeMappings = true
+
+				key := keyStrings[len(keyStrings)-1]
+				for _, alias := range keyStrings[1 : len(keyStrings)-1] {
+					fmt.Println("Merging", alias, "to", key)
+				}
+			}
 		}
 
 	case len(os.Args) > 3 && os.Args[1] == "-map":

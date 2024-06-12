@@ -23,12 +23,14 @@ func TestStringMaps(t *testing.T) {
 
 	Library = TBibTeXLibrary{}
 
-	options := TStringSetNew()
-	options.Add("a", "y", "n")
-	warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
-	question := "Current entry:\nKeep the value as is?"
-	answer := Library.WarningQuestion(question, options, warning, "key", "field", "challenger", "current")
-	fmt.Println(answer)
+	fmt.Println(NormaliseISBNValue(&Library, "ISBN-10: 9783540291695"))
+
+	//options := TStringSetNew()
+	//options.Add("a", "y", "n")
+	//warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
+	//question := "Current entry:\nKeep the value as is?"
+	//answer := Library.WarningQuestion(question, options, warning, "key", "field", "challenger", "current")
+	//fmt.Println(answer)
 	//	InitialiseMainLibrary()
 	//	OpenMainBibFile()
 

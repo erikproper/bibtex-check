@@ -352,7 +352,7 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
 func (l *TBibTeXLibrary) CheckCrossrefMustInheritField(crossrefKey, key, field string) {
 	if challenge, hasChallenge := l.EntryFields[key][field]; hasChallenge {
 		target := l.MaybeResolveFieldValue(crossrefKey, key, field, challenge, l.EntryFieldValueity(crossrefKey, field))
-		
+
 		if field == "booktitle" {
 			if l.EntryFields[crossrefKey]["title"] == l.EntryFields[crossrefKey]["booktitle"] {
 				l.EntryFields[crossrefKey]["title"] = target
@@ -368,7 +368,7 @@ func (l *TBibTeXLibrary) CheckCrossrefMustInheritField(crossrefKey, key, field s
 		// This check should not be necessary, but ...
 		if target != "" {
 			l.EntryFields[key][field] = ""
-			
+
 			delete(l.EntryFieldAliasToTarget[key], field)
 		}
 	}

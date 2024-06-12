@@ -133,7 +133,7 @@ func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	var (
 		trimmedISBN   string
-		trimISBNStart = regexp.MustCompile(`^ *(ISBN|isbn)[-]?[(10|13]?[:]? *`)
+		trimISBNStart = regexp.MustCompile(`^ *(ISBN|isbn)[-]?(10|13|)[:]? *`)
 	)
 
 	// Remove ISBN: from the start

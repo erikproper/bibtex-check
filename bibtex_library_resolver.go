@@ -42,7 +42,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challenge, curr
 			// So, we can return the current value as the target
 
 			return current
-			
+
 		} else {
 			// If no target for an alias is recorded, we need to ask the user ...
 			// And update the recorded challenges
@@ -51,7 +51,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challenge, curr
 			if childKey != "" {
 				l.Warning("Issue while pushing field %s from %s to %s", field, childKey, key)
 			}
-			
+
 			options := TStringSetNew()
 			options.Add("Y", "y", "n", "N")
 			warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
