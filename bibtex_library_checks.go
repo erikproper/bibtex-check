@@ -153,24 +153,18 @@ func (l *TBibTeXLibrary) CheckURLPresence(key string) {
 }
 
 func (l *TBibTeXLibrary) CheckBDSKURLCompleteness(key string) {
-	URLity := l.EntryFieldValueity(key, "url")
-	URLNeedsInclusion := URLity != ""
+	URLSet := TStringSet{}
+	URLSet.Initialise()
 
 	for _, BDSKURLField := range BibTeXBDSKURLFields.ElementsSorted() {
 		BDSKURL := l.EntryFieldValueity(key, BDSKURLField)
 
-		if BDSKURL == "" && !URLNeedsInclusion {
-			l.EntryFields[key][BDSKURLField] = URLity
-			BDSKURL = URLity
-			URLNeedsInclusion = false
-		}
-
 		if BDSKURL != "" {
-			if l.BDSKURLIndex[BDSKURL].Set().Contains(key) {
-				l.Warning("Cleaning double DSK url within entry %s", key)
+			if URLSet.Contains(BDSKURL) {
+				l.Warning("Cleaning double DSK url within entry %s for field %s", key, BDSKURLField)
 				l.EntryFields[key][BDSKURLField] = ""
 			} else {
-				l.BDSKURLIndex.AddValueToStringSetMap(BDSKURL, key)
+				URLSet.Add(BDSKURL)
 			}
 		}
 	}

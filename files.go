@@ -15,10 +15,20 @@ package main
 
 import (
 	"fmt"
+	"github.com/udhos/equalfile"
 	"io"
 	"os"
 	"time"
 )
+
+// Consistency of names .. FileXXX or XXXFile
+
+func EqualFiles(file1, file2 string) bool {
+	cmp := equalfile.New(nil, equalfile.Options{}) // compare using single mode
+	equal, _ := cmp.CompareFile(file1, file2)
+
+	return equal
+}
 
 // Get a unique timestamp to be used as part of the filename of backups.
 func timestamp() string {
@@ -62,6 +72,19 @@ func BackupFile(sourceFile string) bool {
 
 // Check if the given file exists or not.
 func FileExists(fileName string) bool {
-	_, err := os.Stat(fileName)
-	return err == nil
+	info, err := os.Stat(fileName)
+
+	if os.IsNotExist(err) {
+		return false
+	}
+
+	return !info.IsDir()
+}
+
+func FileRename(oldName, newName string) {
+	os.Rename(oldName, newName)
+}
+
+func FileDelete(file string) {
+	os.Remove(file)
 }

@@ -62,28 +62,24 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challenge, curr
 			if answer == "y" {
 				l.UpdateEntryFieldAlias(key, field, challenge, current)
 				l.WriteAliasesFiles()
-				l.WriteBibTeXFile()
 
 				return current
 
 			} else if answer == "n" {
 				l.UpdateEntryFieldAlias(key, field, current, challenge)
 				l.WriteAliasesFiles()
-				l.WriteBibTeXFile()
 
 				return challenge
 
 			} else if answer == "Y" {
 				l.UpdateGenericFieldAlias(field, challenge, current)
 				l.WriteAliasesFiles()
-				l.WriteBibTeXFile()
 
 				return current
 
 			} else if answer == "N" {
 				l.UpdateGenericFieldAlias(field, current, challenge)
 				l.WriteAliasesFiles()
-				l.WriteBibTeXFile()
 
 				return challenge
 

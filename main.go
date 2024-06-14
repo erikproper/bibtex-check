@@ -337,8 +337,10 @@ func main() {
 
 	case len(os.Args) > 3 && os.Args[1] == "-map":
 		if InitialiseMainLibrary() && OpenMainBibFile() {
-			keysString := ""
+			writeBibFile = true
 			writeAliases = true
+			writeMappings = true
+			keysString := ""
 
 			for _, keyString := range os.Args[2:] {
 				keysString += "," + CleanKey(keyString)
@@ -348,8 +350,8 @@ func main() {
 			key := keyStrings[len(keyStrings)-1]
 			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 				fmt.Println("Mapping", alias, "to", key)
+				Library.UpdateGroupKeys(alias, key)
 				Library.AddKeyAlias(alias, key)
-				Library.WriteAliasesFiles()
 			}
 		}
 

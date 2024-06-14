@@ -143,6 +143,12 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 	return true
 }
 
+func (l *TBibTeXLibrary) UpdateGroupKeys(source, target string) {
+	for i, c := range l.Comments {
+		l.Comments[i] = strings.ReplaceAll(c, source, target)
+	}
+}
+
 // Initial registration of a target over a alias for a given entry and its field.
 func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, check bool) {
 	if alias == "" {
@@ -230,6 +236,16 @@ func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target strin
 	for otherAlias, otherTarget := range l.EntryFieldAliasToTarget[entry][field] {
 		if otherTarget == alias {
 			l.AddEntryFieldAlias(entry, field, otherAlias, target, false)
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) ReassignEntryFieldAliases(source, target string) {
+	for field, AliasAssignments := range l.EntryFieldAliasToTarget[source] {
+		for alias, winner := range AliasAssignments {
+			if dealiasedWinner := l.DeAliasEntryFieldValue(target, field, winner); dealiasedWinner != "" {
+				l.AddEntryFieldAlias(target, field, alias, dealiasedWinner, false)
+			}
 		}
 	}
 }
@@ -332,38 +348,104 @@ func (l *TBibTeXLibrary) AddAliasForKey(alias, key string, aliasMap *TStringMap,
 	}
 }
 
+func (l *TBibTeXLibrary) FilePath(key string) string {
+	file := BDSKFile(l.EntryFieldValueity(key, FirstBDSKFileField))
+
+	if file == "" {
+		file = l.EntryFieldValueity(key, "local-url")
+	} else {
+		file = l.FilesRoot + file
+	}
+
+	if file != "" && FileExists(file) {
+		return file
+	} else {
+		return ""
+	}
+}
+
+func (l *TBibTeXLibrary) ReassignFile(target, sourceFile string) {
+	localURL := Library.FilesRoot + FilesFolder + target + ".pdf"
+	FileRename(sourceFile, localURL)
+	l.EntryFields[target][FirstBDSKFileField] = ""
+	l.EntryFields[target]["local-url"] = localURL
+}
+
 func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 	if l.EntryExists(source) && l.EntryExists(target) {
-		fmt.Println("Checking source entry")
+		l.Progress("Merging %s to %s", source, target)
+
+		l.Progress("Checking source entry %s", source)
 		l.CheckEntry(source)
 
-		fmt.Println("Checking target entry")
+		l.Progress("Checking target entry %s", target)
 		l.CheckEntry(target)
-
-		fmt.Println("Merging", source, "to", target)
 
 		sourceType := l.EntryTypes[source]
 		targetType := l.EntryTypes[target]
 		targetType = Library.ResolveFieldValue(target, "", EntryTypeField, sourceType, targetType)
 		Library.EntryTypes[target] = targetType
 
-		RegularFields := TStringSet{}
-		RegularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
-		RegularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
-		for RegularField := range RegularFields.Elements() {
-			if !BibTeXBDSKURLFields.Contains(RegularField) && !BibTeXBDSKFileFields.Contains(RegularField) {
-				fmt.Println("RF", RegularField)
+		regularFields := TStringSet{}
+		regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
+		regularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
+		for regularField := range regularFields.Elements() {
+			// Do we need Library.EntryFields still as (implied) parameter, once we're done with migrating/legacy??
+			Library.EntryFields[target][regularField] = Library.MaybeResolveFieldValue(target, "", regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField])
+		}
+
+		URLSet := TStringSet{}
+		URLSet.Initialise()
+
+		targetIndex := 0
+		sourceIndex := 0
+		// Do this as an overall "constant"??
+		SortedBibTeXBDSKURLFields := BibTeXBDSKURLFields.ElementsSorted()
+
+		for targetIndex < len(SortedBibTeXBDSKURLFields) && sourceIndex < len(SortedBibTeXBDSKURLFields) {
+			targetURLety := l.EntryFieldValueity(target, SortedBibTeXBDSKURLFields[targetIndex])
+			if targetURLety == "" {
+				sourceURLety := l.EntryFieldValueity(source, SortedBibTeXBDSKURLFields[sourceIndex])
+
+				if sourceURLety != "" && !URLSet.Contains(sourceURLety) {
+					l.EntryFields[target][SortedBibTeXBDSKURLFields[targetIndex]] = sourceURLety
+					URLSet.Add(sourceURLety)
+				}
+
+				sourceIndex++
+			} else {
+				URLSet.Add(targetURLety)
+
+				targetIndex++
 			}
 		}
 
-		// Resolving for bdsk files:
-		//   - Regular fields
-		//   - If both have associated files, check if they are the same conctent-wise
-		//   - Unite/merge the BDSK-URL set via double for loop
-		//   - Also update the XML stuff ... replace key in the comments. Should be safe for now
-		//   - Guess we should integrate that into the mapping functionality …
-		//   - Include effects on entry_aliases; all aliases of the merge_source become aliases for the merge_target
-		//  \cite{EP-2024-05-25-08-47-54,EP-2024-05-25-13-01-48,EP-2024-05-25-08-46-31,EP-2024-05-25-14-11-23}
+		if sourceIndex < len(SortedBibTeXBDSKURLFields) && targetIndex == len(SortedBibTeXBDSKURLFields) {
+			l.Warning("Too many BDSK urls for entry %s", target)
+		}
+
+		if sourceFile := l.FilePath(source); sourceFile != "" {
+			if targetFile := l.FilePath(target); targetFile == "" {
+				l.ReassignFile(target, sourceFile)
+			} else {
+				if EqualFiles(sourceFile, targetFile) {
+					FileDelete(sourceFile)
+				} else {
+					if l.WarningYesNoQuestion("Keep current", "Non-equal files; choice needed\nFor %s\nChallenge: %s\nCurrent:   %s", target, sourceFile, targetFile) {
+						FileDelete(sourceFile)
+					} else {
+						l.ReassignFile(target, sourceFile)
+					}
+				}
+			}
+		}
+
+		l.UpdateGroupKeys(source, target)
+		l.AddKeyAlias(source, target)
+		l.ReassignEntryFieldAliases(source, target)
+
+		delete(l.EntryTypes, source)
+		delete(l.EntryFields, source)
 	}
 }
 
