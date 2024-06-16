@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -494,5 +495,33 @@ func (l *TBibTeXLibrary) CheckEntries() {
 
 	for key := range l.EntryTypes {
 		l.CheckEntry(key)
+	}
+}
+
+func (l *TBibTeXLibrary) CheckFiles() {
+	l.Progress("Checking for superfluous and duplicate files.")
+	filePath := Library.FilesRoot + FilesFolder
+
+	entries, err := os.ReadDir(filePath)
+	if err != nil {
+		return
+	}
+
+	for _, e := range entries {
+		fileName := e.Name()
+		if strings.HasSuffix(fileName, ".pdf") {
+			key := strings.TrimSuffix(fileName, ".pdf")
+			if l.EntryExists(key) {
+				l.FileMD5Index.AddValueToStringSetMap(MD5ForFile(filePath+fileName), key)
+			} else {
+				l.Warning("File %s is not associated to any entry", fileName)
+			}
+		}
+	}
+
+	for _, Keys := range l.FileMD5Index {
+		if Keys.Size() > 1 {
+			l.Warning("Entries seem to have the same file: %s", Keys.String())
+		}
 	}
 }

@@ -14,12 +14,32 @@
 package main
 
 import (
+	"crypto/md5"
 	"fmt"
 	"github.com/udhos/equalfile"
 	"io"
 	"os"
 	"time"
 )
+
+func MD5ForFile(file string) string {
+	source, err := os.Open(file)
+
+	if err != nil {
+		return "1"
+	}
+
+	defer source.Close()
+
+	hash := md5.New()
+	_, err = io.Copy(hash, source)
+
+	if err != nil {
+		return "2"
+	}
+
+	return fmt.Sprintf("%x", hash.Sum(nil))
+}
 
 // Consistency of names .. FileXXX or XXXFile
 

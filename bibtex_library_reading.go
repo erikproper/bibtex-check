@@ -144,6 +144,20 @@ func (l *TBibTeXLibrary) ReadPreferredKeyAliasesFile() {
 	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
 }
 
+func (l *TBibTeXLibrary) ReadNonDoublesFile() {
+	l.readLibraryFile(NonDoublesFileExtension, ProgressReadingNonDoublesFile, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
+			l.Warning(WarningAliasesLineTooShort, line)
+			l.NoNonDoublesFileWriting = true
+			return
+		}
+
+		// Why pass on &l.NameAliasToName, &l.NameToAliases???
+		l.AddNonDoubles(elements[0],elements[1])
+	})
+}
+
 func (l *TBibTeXLibrary) ReadNameAliasesFile() {
 	l.readLibraryFile(NameAliasesFileExtension, ProgressReadingNameAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")

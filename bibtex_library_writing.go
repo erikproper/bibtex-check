@@ -84,6 +84,24 @@ func (l *TBibTeXLibrary) WriteEntryFieldAliasesFile() {
 	}
 }
 
+func (l *TBibTeXLibrary) WriteNonDoublesFile() {
+	if !l.NoNonDoublesFileWriting {
+		l.writeLibraryFile(NonDoublesFileExtension, ProgressWritingNonDoublesFile, func(challengeWriter *bufio.Writer) {
+			for key, set := range l.NonDoubles {
+				if key == l.DeAliasEntryKey(key) {
+					for nonDouble := range set.Elements() {
+						if nonDouble != key && nonDouble == l.DeAliasEntryKey(nonDouble) {
+							challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
+						}
+
+						l.NonDoubles[key].Set().Delete(key)
+					}
+				}
+			}
+		})
+	}
+}
+
 func (l *TBibTeXLibrary) WriteGenericFieldAliasesFile() {
 	if !l.NoGenericFieldAliasesFileWriting {
 		l.writeLibraryFile(GenericFieldAliasesFileExtension, ProgressWritingGenericFieldAliasesFile, func(challengeWriter *bufio.Writer) {

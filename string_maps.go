@@ -191,6 +191,20 @@ func (m *TStringSetMap) AddValueToStringSetMap(i, v string) {
 	(*m)[i].Set().Add(v)
 }
 
+// /// Also the other ones ... makes AddValueToStringSetMap obsolete
+func (m *TStringSetMap) StringSet(i string) *TStringSet {
+	if (*m) == nil {
+		(*m) = TStringSetMap{}
+	}
+
+	_, hasSet := (*m)[i]
+	if !hasSet {
+		(*m)[i] = TStringSetNew()
+	}
+
+	return (*m)[i].Set()
+}
+
 // Safely add an element to a string set map
 func (m *TStringStringSetMap) AddValueToStringPairSetMap(i, j, v string) {
 	if (*m) == nil {

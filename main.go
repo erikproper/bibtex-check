@@ -66,7 +66,6 @@ func OpenMainBibFile() bool {
 	if Library.ReadBib(BibFile) {
 		Library.ReportLibrarySize()
 		Library.CheckKeyAliasesConsistency()
-		Library.CheckEntries()
 
 		//Library.CreateTitleIndex()
 
@@ -92,6 +91,9 @@ func main() {
 			writeBibFile = true
 			writeAliases = true
 			writeMappings = true
+
+			Library.CheckEntries()
+			Library.CheckFiles()
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-pdfs":
@@ -223,6 +225,7 @@ func main() {
 			writeBibFile = true
 			writeAliases = false
 			writeMappings = true
+			Library.CheckEntries()
 
 			OldLibrary := TBibTeXLibrary{}
 			OldLibrary.Progress("Reading legacy library")
@@ -324,6 +327,8 @@ func main() {
 			fmt.Println("Need at least two keys for this ...")
 		} else {
 			if InitialiseMainLibrary() && OpenMainBibFile() {
+				Library.CheckEntries()
+
 				writeBibFile = true
 				writeAliases = true
 				writeMappings = true
@@ -335,8 +340,38 @@ func main() {
 			}
 		}
 
+	case len(os.Args) == 2 && os.Args[1] == "-undouble":
+		if InitialiseMainLibrary() && OpenMainBibFile() {
+			Library.CheckEntries()
+			Library.CheckFiles()
+			Library.ReadNonDoublesFile()
+
+			for _, Keys := range Library.FileMD5Index {
+				if Keys.Size() > 1 {
+					sortedKeys := Keys.ElementsSorted()
+					for _, a := range sortedKeys {
+						if a == Library.DeAliasEntryKey(a) {
+							for _, b := range sortedKeys {
+								if b == Library.DeAliasEntryKey(b) {
+									fmt.Println("Maybe merge %s %s", a, b)
+								}
+							}
+						}
+					}
+				}
+			}
+
+			Library.WriteNonDoublesFile()
+			
+			writeBibFile = true
+			writeAliases = true
+			writeMappings = true
+		}
+
 	case len(os.Args) > 3 && os.Args[1] == "-map":
 		if InitialiseMainLibrary() && OpenMainBibFile() {
+			Library.CheckEntries()
+
 			writeBibFile = true
 			writeAliases = true
 			writeMappings = true

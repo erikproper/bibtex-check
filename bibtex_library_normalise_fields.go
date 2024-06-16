@@ -265,31 +265,31 @@ func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
 
 // Legacy ... will be removed once we have migrated all legacy and files.
 func NormaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
-//	var (
-//		trimFileStart = regexp.MustCompile(`^.*/Zotero/storage/`)
-//		trimFileEnd   = regexp.MustCompile(`.pdf:.*$`)
-//		trimmedFile   string
-//	)
+	//	var (
+	//		trimFileStart = regexp.MustCompile(`^.*/Zotero/storage/`)
+	//		trimFileEnd   = regexp.MustCompile(`.pdf:.*$`)
+	//		trimmedFile   string
+	//	)
 
-//	if l.legacyMode {
-//		trimmedFile = trimFileStart.ReplaceAllString(rawFile, "")
-//		trimmedFile = trimFileEnd.ReplaceAllString(trimmedFile, "") + ".pdf"
-//		trimmedFile = strings.ReplaceAll(trimmedFile, "--", "-")
-//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\`a}", "à")
-//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\'e}", "é")
-//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\~a}", "ã")
-//
-//		// Hardwired ... legacy!!
-//		if FileExists("/Users/erikproper/BiBTeX/Zotero/" + trimmedFile) {
-//			return "/Users/erikproper/BiBTeX/Zotero/" + trimmedFile
-//		} else if FileExists("/Users/erikproper/Zotero/storage/" + trimmedFile) {
-//			return "/Users/erikproper/Zotero/storage/" + trimmedFile
-//		} else {
-//			return ""
-//		}
-//	} else {
-		return ""
-//	}
+	//	if l.legacyMode {
+	//		trimmedFile = trimFileStart.ReplaceAllString(rawFile, "")
+	//		trimmedFile = trimFileEnd.ReplaceAllString(trimmedFile, "") + ".pdf"
+	//		trimmedFile = strings.ReplaceAll(trimmedFile, "--", "-")
+	//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\`a}", "à")
+	//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\'e}", "é")
+	//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\~a}", "ã")
+	//
+	//		// Hardwired ... legacy!!
+	//		if FileExists("/Users/erikproper/BiBTeX/Zotero/" + trimmedFile) {
+	//			return "/Users/erikproper/BiBTeX/Zotero/" + trimmedFile
+	//		} else if FileExists("/Users/erikproper/Zotero/storage/" + trimmedFile) {
+	//			return "/Users/erikproper/Zotero/storage/" + trimmedFile
+	//		} else {
+	//			return ""
+	//		}
+	//	} else {
+	return ""
+	// }
 }
 
 func BDSKFile(value string) string {

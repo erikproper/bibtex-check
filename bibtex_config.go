@@ -44,6 +44,7 @@ const (
 	EntryFieldAliasesFileExtension   = ".entry_aliases"
 	GenericFieldAliasesFileExtension = ".generic_aliases"
 	FieldMappingsFileExtension       = ".mappings"
+	NonDoublesFileExtension          = ".non_double"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field

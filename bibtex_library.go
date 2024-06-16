@@ -36,7 +36,9 @@ type (
 		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                        TStringSetMap             //
 		BDSKURLIndex                     TStringSetMap             //
+		FileMD5Index                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
+		NonDoubles                       TStringSetMap             //
 		EntryTypes                       TStringMap                // Per entry key, the type of the enty.
 		KeyAliasToKey                    TStringMap                // Mapping from key aliases to the actual entry key.
 		FieldMappings                    TStringStringStringMap    // field/value to field/value mapping
@@ -58,6 +60,7 @@ type (
 		NoKeyAliasesFileWriting          bool
 		NoPreferredKeyAliasesFileWriting bool
 		NoNameAliasesFileWriting         bool
+		NoNonDoublesFileWriting          bool
 		NoFieldMappingsFileWriting       bool
 		migrationMode                    bool
 		TBibTeXTeX
@@ -91,6 +94,8 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.ISBNIndex = TStringSetMap{}
 	l.BDSKURLIndex = TStringSetMap{}
 	l.DOIIndex = TStringSetMap{}
+	l.FileMD5Index = TStringSetMap{}
+	l.NonDoubles = TStringSetMap{}
 	l.EntryTypes = TStringMap{}
 	l.KeyAliasToKey = TStringMap{}
 	l.NameAliasToName = TStringMap{}
@@ -446,6 +451,8 @@ func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 
 		delete(l.EntryTypes, source)
 		delete(l.EntryFields, source)
+
+		l.CheckEntry(target)
 	}
 }
 
@@ -755,6 +762,15 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 	l.MaybeApplyFieldMappings(l.currentKey)
 
 	return true
+}
+
+func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
+	s := TStringSet{}
+	s.Initialise().Add(a, b).Unite(l.NonDoubles[a]).Unite(l.NonDoubles[b])
+
+	for c := range s.Elements() {
+		l.NonDoubles[c] = s
+	}
 }
 
 func init() {
