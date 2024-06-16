@@ -15,7 +15,7 @@ package main
 import (
 	"bufio"
 	"os"
-	// "fmt"
+	//"fmt"
 )
 
 func (l *TBibTeXLibrary) writeFile(fullFilePath, message string, writing func(*bufio.Writer)) bool {
@@ -93,8 +93,8 @@ func (l *TBibTeXLibrary) WriteNonDoublesFile() {
 						if nonDouble != key && nonDouble == l.DeAliasEntryKey(nonDouble) {
 							challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
 						}
-
-						l.NonDoubles[key].Set().Delete(key)
+						
+						l.NonDoubles[key].Set().Delete(nonDouble)
 					}
 				}
 			}

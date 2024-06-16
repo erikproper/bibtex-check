@@ -328,6 +328,7 @@ func main() {
 		} else {
 			if InitialiseMainLibrary() && OpenMainBibFile() {
 				Library.CheckEntries()
+				Library.ReadNonDoublesFile()
 
 				writeBibFile = true
 				writeAliases = true
@@ -337,6 +338,8 @@ func main() {
 				for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 					Library.MergeEntries(alias, key)
 				}
+				
+				Library.WriteNonDoublesFile()
 			}
 		}
 

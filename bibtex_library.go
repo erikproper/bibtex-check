@@ -447,6 +447,7 @@ func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 
 		l.UpdateGroupKeys(source, target)
 		l.AddKeyAlias(source, target)
+		l.AddNonDoubles(source, target)
 		l.ReassignEntryFieldAliases(source, target)
 
 		delete(l.EntryTypes, source)
