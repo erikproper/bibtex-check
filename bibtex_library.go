@@ -457,6 +457,24 @@ func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 	}
 }
 
+func (l *TBibTeXLibrary) MaybeMergeEntries(source, target string) {
+	// Function .. to abstract?
+	if source != target && !l.NonDoubles[source].Set().Contains(target) {
+		l.Warning("Found potential double entries")
+		
+		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\n\nSecond entry:\n%s", l.EntryString(source, "  "),  l.EntryString(target, "  ")) {
+			l.MergeEntries(source, target)
+		} else {
+			l.AddNonDoubles(source, target)
+		}
+		
+		l.WriteNonDoublesFile()
+		l.WriteAliasesFiles()
+		l.WriteMappingsFiles()
+		l.WriteBibTeXFile()
+	}
+}
+
 // Add a new key alias
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 	l.AddAliasForKey(alias, key, &l.KeyAliasToKey, &l.KeyToAliases)

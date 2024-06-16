@@ -93,8 +93,6 @@ func (l *TBibTeXLibrary) WriteNonDoublesFile() {
 						if nonDouble != key && nonDouble == l.DeAliasEntryKey(nonDouble) {
 							challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
 						}
-						
-						l.NonDoubles[key].Set().Delete(nonDouble)
 					}
 				}
 			}
