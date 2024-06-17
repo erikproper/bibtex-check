@@ -457,9 +457,23 @@ func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 	}
 }
 
+func (l *TBibTeXLibrary) FieldProvesNonDoubleness(source, target, field string) bool {
+	sourceValue := l.EntryFieldValueity(source, field)
+	targetValue := l.EntryFieldValueity(target, field)
+	
+	return !(sourceValue == "" || targetValue == "" || sourceValue == targetValue)
+}
+
+func (l *TBibTeXLibrary) ProvenNonDoubleness(source, target string) bool {
+	return l.FieldProvesNonDoubleness(source, target, "title") || 
+		l.FieldProvesNonDoubleness(source, target, "booktitle") || 
+		l.FieldProvesNonDoubleness(source, target, "doi") || 
+		l.FieldProvesNonDoubleness(source, target, "chapter") 
+}
+
 func (l *TBibTeXLibrary) MaybeMergeEntries(source, target string) {
 	// Function .. to abstract?
-	if source != target && !l.NonDoubles[source].Set().Contains(target) {
+	if source != target && !l.ProvenNonDoubleness(source, target) && !l.NonDoubles[source].Set().Contains(target) {
 		l.Warning("Found potential double entries")
 
 		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", l.EntryString(source, "  "), l.EntryString(target, "  ")) {

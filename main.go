@@ -356,7 +356,9 @@ func main() {
 						if a == Library.DeAliasEntryKey(a) {
 							for _, b := range sortedKeys {
 								if b == Library.DeAliasEntryKey(b) {
-									Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+									if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "proceedings" {
+										Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+									}
 								}
 							}
 						}
@@ -371,7 +373,9 @@ func main() {
 						if a == Library.DeAliasEntryKey(a) {
 							for _, b := range sortedKeys {
 								if b == Library.DeAliasEntryKey(b) {
-									Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+									if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "proceedings" {
+										Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+									}
 								}
 							}
 						}

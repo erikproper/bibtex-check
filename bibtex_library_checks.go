@@ -138,6 +138,10 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 			}
 		}
 
+		if !AllowLegacy && !l.EntryExists(key) {
+			l.Warning("Target %s of alias %s does not exist", key, alias)
+		}
+
 		if _, aliasIsActuallyKeyToEntry := l.EntryFields[alias]; aliasIsActuallyKeyToEntry {
 			// Aliases cannot be keys themselves.
 			l.Warning(WarningAliasIsKey, alias)
@@ -403,26 +407,36 @@ func (l *TBibTeXLibrary) CheckCrossrefMayInheritField(crossrefKey, key, field st
 }
 
 func (l *TBibTeXLibrary) CheckCrossref(key string) {
-	Crossrefity := l.EntryFieldValueity(key, "crossref")
 	EntryType := l.EntryTypes[key]
 
-	if Crossrefity != "" {
-		if CrossrefType, CrossrefExists := l.EntryTypes[Crossrefity]; CrossrefExists {
-			if BibTeXCrossrefType[EntryType] == CrossrefType {
-				for field := range BibTeXMustInheritFields.Elements() {
-					l.CheckCrossrefMustInheritField(Crossrefity, key, field)
-				}
+	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[EntryType]; hasAllowedCrossrefType {
+		Crossrefety := l.EntryFieldValueity(key, "crossref")
 
-				for field := range BibTeXMayInheritFields.Elements() {
-					l.CheckCrossrefMayInheritField(Crossrefity, key, field)
-				}
+		if Crossrefety == "" {
+			// Use BOOKtitle to search for title
+			// If set is larger than 1, first optimise
+			// Iterate over all valid ones
+			// 
+		}
 
-				l.CheckBookishTitles(CrossrefType)
+		if Crossrefety != "" {
+			if CrossrefType, CrossrefExists := l.EntryTypes[Crossrefety]; CrossrefExists {
+				if allowedCrossrefType == CrossrefType {
+					for field := range BibTeXMustInheritFields.Elements() {
+						l.CheckCrossrefMustInheritField(Crossrefety, key, field)
+					}
+
+					for field := range BibTeXMayInheritFields.Elements() {
+						l.CheckCrossrefMayInheritField(Crossrefety, key, field)
+					}
+
+					l.CheckBookishTitles(CrossrefType)
+				} else {
+					l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", EntryType, key, CrossrefType, Crossrefety)
+				}
 			} else {
-				l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", EntryType, key, CrossrefType, Crossrefity)
+				l.Warning("Target %s of crossref from %s does not exist.", Crossrefety, key)
 			}
-		} else {
-			l.Warning("Target %s of crossref from %s does not exist.", Crossrefity, key)
 		}
 	}
 }
