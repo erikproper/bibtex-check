@@ -413,13 +413,12 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 		Crossrefety := l.EntryFieldValueity(key, "crossref")
 
 		if Crossrefety == "" {
-			// Use BOOKtitle to search for title
-			// If set is larger than 1, first optimise
-			// Iterate over all valid ones
-			// 
-		}
-
-		if Crossrefety != "" {
+			//if l.EntryFieldValueity(key, "booktitle") == "" {
+			//	l.Warning("Empty booktitle, and empty crossref, for entry %s of type %s", key, EntryType)
+			//} else {
+			//	// Create!
+			//}
+		} else {
 			if CrossrefType, CrossrefExists := l.EntryTypes[Crossrefety]; CrossrefExists {
 				if allowedCrossrefType == CrossrefType {
 					for field := range BibTeXMustInheritFields.Elements() {
@@ -490,18 +489,24 @@ func (l *TBibTeXLibrary) CheckLanguageID(key string) {
 }
 
 func (l *TBibTeXLibrary) CheckEntry(key string) {
-	l.CheckPreferredKeyAliasesConsistency(key)
-	l.CheckDOIPresence(key)
-	l.CheckBookishTitles(key)
-	l.CheckEPrint(key)
-	l.CheckCrossref(key)
-	l.CheckISBNFromDOI(key)
-	l.CheckLanguageID(key)
-	l.CheckTitlePresence(key)
-	l.CheckURLPresence(key)
-	l.CheckURLDateNeed(key)
-	l.CheckBDSKURLCompleteness(key)
-	l.CheckFileReference(key)
+	if l.EntryExists(key) {
+		l.CheckPreferredKeyAliasesConsistency(key)
+		l.CheckDOIPresence(key)
+		l.CheckBookishTitles(key)
+		l.CheckEPrint(key)
+		l.CheckCrossref(key)
+
+		// CheckCrossref can lead to a merger of entries for now ...
+		if l.EntryExists(key) {
+			l.CheckISBNFromDOI(key)
+			l.CheckLanguageID(key)
+			l.CheckTitlePresence(key)
+			l.CheckURLPresence(key)
+			l.CheckURLDateNeed(key)
+			l.CheckBDSKURLCompleteness(key)
+			l.CheckFileReference(key)
+		}
+	}
 }
 
 func (l *TBibTeXLibrary) CheckEntries() {

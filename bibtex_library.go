@@ -380,12 +380,6 @@ func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 	if l.EntryExists(source) && l.EntryExists(target) {
 		l.Progress("Merging %s to %s", source, target)
 
-		l.Progress("Checking source entry %s", source)
-		l.CheckEntry(source)
-
-		l.Progress("Checking target entry %s", target)
-		l.CheckEntry(target)
-
 		sourceType := l.EntryTypes[source]
 		targetType := l.EntryTypes[target]
 		targetType = Library.ResolveFieldValue(target, "", EntryTypeField, sourceType, targetType)
@@ -453,22 +447,29 @@ func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 		delete(l.EntryTypes, source)
 		delete(l.EntryFields, source)
 
-		l.CheckEntry(target)
+		Library.CheckEntry(target)
+		
+		Library.WriteNonDoublesFile()
+		Library.WriteAliasesFiles()
+		Library.WriteMappingsFiles()
+		Library.WriteBibTeXFile()
 	}
 }
 
 func (l *TBibTeXLibrary) FieldProvesNonDoubleness(source, target, field string) bool {
 	sourceValue := l.EntryFieldValueity(source, field)
 	targetValue := l.EntryFieldValueity(target, field)
-	
+
 	return !(sourceValue == "" || targetValue == "" || sourceValue == targetValue)
 }
 
 func (l *TBibTeXLibrary) ProvenNonDoubleness(source, target string) bool {
-	return l.FieldProvesNonDoubleness(source, target, "title") || 
-		l.FieldProvesNonDoubleness(source, target, "booktitle") || 
-		l.FieldProvesNonDoubleness(source, target, "doi") || 
-		l.FieldProvesNonDoubleness(source, target, "chapter") 
+	return l.FieldProvesNonDoubleness(source, target, "title") ||
+		l.FieldProvesNonDoubleness(source, target, "booktitle") ||
+		l.FieldProvesNonDoubleness(source, target, "crossref") ||
+		l.FieldProvesNonDoubleness(source, target, "doi") ||
+		l.FieldProvesNonDoubleness(source, target, "edition") ||
+		l.FieldProvesNonDoubleness(source, target, "chapter")
 }
 
 func (l *TBibTeXLibrary) MaybeMergeEntries(source, target string) {
@@ -487,6 +488,22 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(source, target string) {
 		l.WriteMappingsFiles()
 		l.WriteBibTeXFile()
 	}
+}
+
+func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
+	if keys.Size() > 1 {
+		sortedKeys := keys.ElementsSorted()
+		for _, a := range sortedKeys {
+			if a == l.DeAliasEntryKey(a) {
+				for _, b := range sortedKeys {
+					if b == l.DeAliasEntryKey(b) {
+						l.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+					}
+				}
+			}
+		}
+	}
+
 }
 
 // Add a new key alias
