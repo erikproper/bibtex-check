@@ -338,7 +338,7 @@ func main() {
 				for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 					Library.MergeEntries(alias, key)
 				}
-				
+
 				Library.WriteNonDoublesFile()
 			}
 		}
@@ -348,6 +348,21 @@ func main() {
 			Library.CheckEntries()
 			Library.CheckFiles()
 			Library.ReadNonDoublesFile()
+
+			for _, Keys := range Library.TitleIndex {
+				if Keys.Size() > 1 {
+					sortedKeys := Keys.ElementsSorted()
+					for _, a := range sortedKeys {
+						if a == Library.DeAliasEntryKey(a) {
+							for _, b := range sortedKeys {
+								if b == Library.DeAliasEntryKey(b) {
+									Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+								}
+							}
+						}
+					}
+				}
+			}
 
 			for _, Keys := range Library.FileMD5Index {
 				if Keys.Size() > 1 {
@@ -365,7 +380,7 @@ func main() {
 			}
 
 			Library.WriteNonDoublesFile()
-			
+
 			writeBibFile = true
 			writeAliases = true
 			writeMappings = true

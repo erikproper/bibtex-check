@@ -154,7 +154,7 @@ func (l *TBibTeXLibrary) ReadNonDoublesFile() {
 		}
 
 		// Why pass on &l.NameAliasToName, &l.NameToAliases???
-		l.AddNonDoubles(elements[0],elements[1])
+		l.AddNonDoubles(elements[0], elements[1])
 	})
 }
 

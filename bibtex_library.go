@@ -461,13 +461,13 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(source, target string) {
 	// Function .. to abstract?
 	if source != target && !l.NonDoubles[source].Set().Contains(target) {
 		l.Warning("Found potential double entries")
-		
-		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\n\nSecond entry:\n%s", l.EntryString(source, "  "),  l.EntryString(target, "  ")) {
+
+		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", l.EntryString(source, "  "), l.EntryString(target, "  ")) {
 			l.MergeEntries(source, target)
 		} else {
 			l.AddNonDoubles(source, target)
 		}
-		
+
 		l.WriteNonDoublesFile()
 		l.WriteAliasesFiles()
 		l.WriteMappingsFiles()
@@ -530,7 +530,7 @@ func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
 
 // Create a string (with newlines) with a BibTeX based representation of the provided key, while using an optional prefix for each line.
 func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
-	fields, knownEntry := l.EntryFields[key]
+	_, knownEntry := l.EntryFields[key]
 
 	if knownEntry {
 		// Combine all prefixes into one
@@ -549,16 +549,14 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
 		}
 
-		// Iterate over the fields and their values
-		for field, value := range fields {
-			if l.EntryAllowsForField(key, field) {
-				if value != "" {
-					if field == "file" && l.legacyMode {
-						result += linePrefix + "   local-url = {" + value + "},\n"
-					}
-
-					result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
+		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
+		for _, field := range BibTeXAllowedEntryFields[l.EntryTypes[key]].Set().ElementsSorted() {
+			if value := l.EntryFieldValueity(key, field); value != "" {
+				if field == "file" && l.legacyMode {
+					result += linePrefix + "   local-url = {" + value + "},\n"
 				}
+
+				result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
 			}
 		}
 
