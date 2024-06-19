@@ -78,16 +78,19 @@ func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
  *
  */
 
+// ALways same error message ....
 func (l *TBibTeXLibrary) checkAliasesMapping(aliasMap TStringMap, inverseMap TStringSetMap, warningUsedAsAlias, warningTargetIsAlias string) {
 	// Note: when we find an issue, we will not immediately stop as we want to list all issues.
 	for alias, target := range aliasMap {
 		if aliasedTarget, targetIsUsedAsAlias := aliasMap[target]; targetIsUsedAsAlias {
 			// We cannot alias aliases
+			fmt.Println("Pong")
 			l.Warning(warningTargetIsAlias, alias, target, aliasedTarget)
 		}
 
 		if _, aliasIsUsedAsTargetForAlias := inverseMap[alias]; aliasIsUsedAsTargetForAlias {
 			// Aliases should not be keys themselves.
+			fmt.Println("Ping")
 			l.Warning(warningUsedAsAlias, alias)
 		}
 	}
@@ -263,6 +266,22 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "", "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
 		l.UpdateEntryFieldAlias(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
+	}
+	if strings.Contains(l.EntryFields[key]["booktitle"], "proc.") || strings.Contains(l.EntryFields[key]["booktitle"], "Proc.") ||
+		strings.Contains(l.EntryFields[key]["booktitle"], "proceedings") || strings.Contains(l.EntryFields[key]["booktitle"], "Proceedings") ||
+		strings.Contains(l.EntryFields[key]["booktitle"], "workshop") || strings.Contains(l.EntryFields[key]["booktitle"], "Workshop") ||
+		strings.Contains(l.EntryFields[key]["booktitle"], "conference") || strings.Contains(l.EntryFields[key]["booktitle"], "Conference") {
+		if l.EntryFields[key]["title"] == l.EntryFields[key]["booktitle"] {
+			if l.EntryTypes[key] != "proceedings" {
+				fmt.Println("Expected an proceedings", key)
+				l.EntryTypes[key] = "proceedings"
+			}
+		} else {
+			if l.EntryTypes[key] != "inproceedings" {
+				fmt.Println("Expected an inproceedings", key)
+				l.EntryTypes[key] = "inproceedings"
+			}
+		}
 	}
 }
 
@@ -540,7 +559,7 @@ func (l *TBibTeXLibrary) CheckFiles() {
 
 	for _, Keys := range l.FileMD5Index {
 		if Keys.Size() > 1 {
-			l.Warning("Entries seem to have the same file: %s", Keys.String())
+			//l.Warning("Entries seem to have the same file: %s", Keys.String())
 		}
 	}
 }

@@ -447,12 +447,7 @@ func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 		delete(l.EntryTypes, source)
 		delete(l.EntryFields, source)
 
-		Library.CheckEntry(target)
-		
-		Library.WriteNonDoublesFile()
-		Library.WriteAliasesFiles()
-		Library.WriteMappingsFiles()
-		Library.WriteBibTeXFile()
+		l.CheckEntry(target)
 	}
 }
 

@@ -79,6 +79,14 @@ func CleanKey(rawKey string) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(rawKey, "\\cite{", ""), "cite{", ""), "}", ""))
 }
 
+func Test(key string) bool {
+	return Library.EntryTypes[Library.DeAliasEntryKey(key)] == "inbook" ||
+		Library.EntryTypes[Library.DeAliasEntryKey(key)] == "incollection" //||
+	//Library.EntryTypes[Library.DeAliasEntryKey(key)] == "inproceedings" //||
+	//Library.EntryTypes[Library.DeAliasEntryKey(key)] == "proceedings" //||
+	//Library.EntryTypes[Library.DeAliasEntryKey(key)] == "book"
+}
+
 func main() {
 	Reporting = TInteraction{}
 	writeAliases := false
@@ -349,6 +357,7 @@ func main() {
 			Library.CheckFiles()
 			Library.ReadNonDoublesFile()
 
+			Count := 0
 			for _, Keys := range Library.TitleIndex {
 				if Keys.Size() > 1 {
 					sortedKeys := Keys.ElementsSorted()
@@ -356,11 +365,28 @@ func main() {
 						if a == Library.DeAliasEntryKey(a) {
 							for _, b := range sortedKeys {
 								if b == Library.DeAliasEntryKey(b) {
-									if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "incollection" {
-									//if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "inproceedings" {
-									//if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "proceedings" {
-									//if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "book" {
+									if Test(a) || Test(b) {
+										Count++
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			for _, Keys := range Library.TitleIndex {
+				if Keys.Size() > 1 {
+					sortedKeys := Keys.ElementsSorted()
+					for _, a := range sortedKeys {
+						if a == Library.DeAliasEntryKey(a) {
+							for _, b := range sortedKeys {
+								if b == Library.DeAliasEntryKey(b) {
+									if Test(a) || Test(b) {
+										fmt.Println("To do:", Count)
 										Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+										Count--
+
 									}
 								}
 							}
@@ -376,10 +402,7 @@ func main() {
 						if a == Library.DeAliasEntryKey(a) {
 							for _, b := range sortedKeys {
 								if b == Library.DeAliasEntryKey(b) {
-									if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "incollection" {
-									//if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "inproceedings" {
-									//if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "proceedings" {
-									//if Library.EntryTypes[Library.DeAliasEntryKey(a)] == "book" {
+									if Test(a) {
 										Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
 									}
 								}

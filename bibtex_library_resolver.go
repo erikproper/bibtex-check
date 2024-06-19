@@ -28,6 +28,18 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challenge, curr
 		return current
 	}
 
+	//
+	//
+	// Also clean out when writing the alias file ...
+	//
+	if field == "date-modified" || field == "date-added" {
+		if current < challenge {
+			return current
+		} else {
+			return challenge
+		}
+	}
+
 	if !l.legacyMode {
 		// So we have a difference between the current value and the challenge.
 		// So, who is the target ...
