@@ -69,7 +69,7 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 	r.Warning(warning, context...)
 	optionSet := "("
 	separator := ""
-	for option := range options.Elements() {
+	for _, option := range options.ElementsSorted() {
 		optionSet += separator + option
 		separator = "/"
 	}

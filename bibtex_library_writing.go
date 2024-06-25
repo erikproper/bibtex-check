@@ -91,9 +91,7 @@ func (l *TBibTeXLibrary) WriteNonDoublesFile() {
 				if key == l.DeAliasEntryKey(key) {
 					for nonDouble := range set.Elements() {
 						if nonDouble != key && nonDouble == l.DeAliasEntryKey(nonDouble) {
-							if !l.ProvenNonDoubleness(key, nonDouble) {
-								challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
-							}
+							challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
 						}
 					}
 				}

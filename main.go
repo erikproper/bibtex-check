@@ -296,7 +296,7 @@ func main() {
 		InitialiseMainLibrary()
 
 		// Function call.
-		alias, ok := Library.PreferredKeyAliases[CleanKey(os.Args[2])]
+		alias, ok := Library.PreferredKeyAliases[Library.DeAliasEntryKey(CleanKey(os.Args[2]))]
 		if ok {
 			fmt.Println(alias)
 		}
@@ -334,7 +334,7 @@ func main() {
 				writeAliases = true
 				writeMappings = true
 
-				key := keyStrings[len(keyStrings)-1]
+				key := Library.DeAliasEntryKey(keyStrings[len(keyStrings)-1])
 				for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 					Library.MergeEntries(alias, key)
 				}
@@ -358,34 +358,23 @@ func main() {
 			fmt.Println("Files with likely same content:", Count)
 
 			for _, Keys := range Library.FileMD5Index {
-				if Keys.Size() > 1 {
-					sortedKeys := Keys.ElementsSorted()
-					for _, a := range sortedKeys {
-						if a == Library.DeAliasEntryKey(a) {
-							for _, b := range sortedKeys {
-								if b == Library.DeAliasEntryKey(b) {
-									Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
-								}
-							}
-						}
-					}
-				}
+				Library.MaybeMergeEntrySet(Keys)
 			}
 
-			for _, Keys := range Library.TitleIndex {
-				if Keys.Size() > 1 {
-					sortedKeys := Keys.ElementsSorted()
-					for _, a := range sortedKeys {
-						if a == Library.DeAliasEntryKey(a) {
-							for _, b := range sortedKeys {
-								if b == Library.DeAliasEntryKey(b) {
-									Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
-								}
-							}
-						}
-					}
-				}
-			}
+			//			for _, Keys := range Library.TitleIndex {
+			//				if Keys.Size() > 1 {
+			//					sortedKeys := Keys.ElementsSorted()
+			//					for _, a := range sortedKeys {
+			//						if a == Library.DeAliasEntryKey(a) {
+			//							for _, b := range sortedKeys {
+			//								if b == Library.DeAliasEntryKey(b) {
+			//									Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+			//								}
+			//							}
+			//						}
+			//					}
+			//				}
+			//			}
 
 			Library.WriteNonDoublesFile()
 
@@ -408,11 +397,12 @@ func main() {
 			}
 			keyStrings := strings.Split(keysString, ",")
 
-			key := keyStrings[len(keyStrings)-1]
+			key := Library.DeAliasEntryKey(keyStrings[len(keyStrings)-1])
 			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 				fmt.Println("Mapping", alias, "to", key)
 				Library.UpdateGroupKeys(alias, key)
 				Library.AddKeyAlias(alias, key)
+				Library.CheckPreferredKeyAliasesConsistency(key)
 			}
 		}
 

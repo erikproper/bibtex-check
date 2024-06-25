@@ -18,6 +18,11 @@ import (
 	// "os"
 )
 
+// Definition of the map for field processors
+type TFieldIndexers = map[string]func(string) string
+
+var fieldIndexers TFieldIndexers
+
 func ISBNIndexer(input string) string {
 	return strings.ReplaceAll(input, "-", "")
 }
@@ -62,4 +67,24 @@ func TeXStringIndexer(input string) string {
 	cleaned = strings.ToLower(cleaned)
 
 	return cleaned
+}
+
+func (l *TBibTeXLibrary) IndexEntryFieldValue(entry, field, value string) string {
+	indexedValue := l.DeAliasEntryFieldValue(entry, field, l.NormaliseFieldValue(field, value))
+
+	valueIndexer, hasIndexer := fieldIndexers[field]
+	if hasIndexer {
+		valueIndexer(indexedValue)
+	}
+
+	return indexedValue
+}
+
+func init() {
+	// Define the processing functions.
+	fieldIndexers = TFieldIndexers{}
+
+	fieldIndexers["booktitle"] = TeXStringIndexer
+	fieldIndexers["title"] = TeXStringIndexer
+	fieldIndexers["isbn"] = ISBNIndexer
 }

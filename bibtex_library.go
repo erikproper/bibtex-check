@@ -376,8 +376,12 @@ func (l *TBibTeXLibrary) ReassignFile(target, sourceFile string) {
 	l.EntryFields[target]["local-url"] = localURL
 }
 
-func (l *TBibTeXLibrary) MergeEntries(source, target string) {
-	if l.EntryExists(source) && l.EntryExists(target) {
+func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) {
+	// Fix names
+	source := l.DeAliasEntryKey(sourceRAW)
+	target := l.DeAliasEntryKey(targetRAW)
+
+	if source != target && l.EntryExists(source) && l.EntryExists(target) {
 		l.Progress("Merging %s to %s", source, target)
 
 		sourceType := l.EntryTypes[source]
@@ -451,25 +455,8 @@ func (l *TBibTeXLibrary) MergeEntries(source, target string) {
 	}
 }
 
-func (l *TBibTeXLibrary) FieldProvesNonDoubleness(source, target, field string) bool {
-	sourceValue := l.EntryFieldValueity(source, field)
-	targetValue := l.EntryFieldValueity(target, field)
-
-	return !(sourceValue == "" || targetValue == "" || sourceValue == targetValue)
-}
-
-func (l *TBibTeXLibrary) ProvenNonDoubleness(source, target string) bool {
-	return l.FieldProvesNonDoubleness(source, target, "title") ||
-		l.FieldProvesNonDoubleness(source, target, "booktitle") ||
-		l.FieldProvesNonDoubleness(source, target, "crossref") ||
-		l.FieldProvesNonDoubleness(source, target, "doi") ||
-		l.FieldProvesNonDoubleness(source, target, "edition") ||
-		l.FieldProvesNonDoubleness(source, target, "chapter")
-}
-
 func (l *TBibTeXLibrary) MaybeMergeEntries(source, target string) {
-	// Function .. to abstract?
-	if source != target && !l.ProvenNonDoubleness(source, target) && !l.NonDoubles[source].Set().Contains(target) {
+	if source != target && !l.NonDoubles[source].Set().Contains(target) {
 		l.Warning("Found potential double entries")
 
 		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", l.EntryString(source, "  "), l.EntryString(target, "  ")) {
@@ -487,18 +474,19 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(source, target string) {
 
 func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
 	if keys.Size() > 1 {
-		sortedKeys := keys.ElementsSorted()
-		for _, a := range sortedKeys {
-			if a == l.DeAliasEntryKey(a) {
-				for _, b := range sortedKeys {
-					if b == l.DeAliasEntryKey(b) {
-						l.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+		sortedkeys := keys.ElementsSorted()
+		for _, a := range sortedkeys {
+			aDeAlias := l.DeAliasEntryKey(a)
+			if a == aDeAlias {
+				for _, b := range sortedkeys {
+					bDeAlias := l.DeAliasEntryKey(b)
+					if b == bDeAlias {
+						l.MaybeMergeEntries(aDeAlias, bDeAlias)
 					}
 				}
 			}
 		}
 	}
-
 }
 
 // Add a new key alias
