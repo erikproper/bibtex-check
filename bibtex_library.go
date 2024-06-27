@@ -455,11 +455,26 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) {
 	}
 }
 
-func (l *TBibTeXLibrary) MaybeMergeEntries(source, target string) {
+func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
+	// Fix names
+	source := l.DeAliasEntryKey(sourceRAW)
+	target := l.DeAliasEntryKey(targetRAW)
+	
 	if source != target && !l.NonDoubles[source].Set().Contains(target) {
 		l.Warning("Found potential double entries")
+		
+		sourceEntry := l.EntryString(source, "  ")
+		targetEntry := l.EntryString(target, "  ")
+		
+		if sourceEntry == "" {
+			l.Warning("Empty source entry: %s", source)
+		}
 
-		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", l.EntryString(source, "  "), l.EntryString(target, "  ")) {
+		if targetEntry == "" {
+			l.Warning("Empty target entry: %s", target)
+		}
+		
+		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
 			l.MergeEntries(source, target)
 		} else {
 			l.AddNonDoubles(source, target)

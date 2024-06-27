@@ -349,14 +349,6 @@ func main() {
 			Library.CheckFiles()
 			Library.ReadNonDoublesFile()
 
-			Count := 0
-			for _, Keys := range Library.FileMD5Index {
-				if Keys.Size() > 1 {
-					Count += Keys.Size() - 1
-				}
-			}
-			fmt.Println("Files with likely same content:", Count)
-
 			for _, Keys := range Library.FileMD5Index {
 				Library.MaybeMergeEntrySet(Keys)
 			}

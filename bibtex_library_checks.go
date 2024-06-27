@@ -557,9 +557,13 @@ func (l *TBibTeXLibrary) CheckFiles() {
 		}
 	}
 
-	for _, Keys := range l.FileMD5Index {
+	Count := 0
+	for _, Keys := range Library.FileMD5Index {
 		if Keys.Size() > 1 {
-			//l.Warning("Entries seem to have the same file: %s", Keys.String())
+			Count += Keys.Size() - 1
 		}
+	}
+	if Count > 0 {
+		l.Warning("Found %d files with same content as at least one other file", Count)
 	}
 }
