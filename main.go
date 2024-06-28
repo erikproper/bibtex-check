@@ -353,6 +353,70 @@ func main() {
 				Library.MaybeMergeEntrySet(Keys)
 			}
 
+			count := 0
+			for key := range Library.EntryTypes {
+				crossrefety := Library.EntryFieldValueity(key, "crossref")
+				if crossrefety != "" {
+					title := Library.EntryFieldValueity(crossrefety, "title")
+					if title != "" {
+						// Should be via a function!
+						Keys := Library.TitleIndex[TeXStringIndexer(title)]
+						if Keys.Size() > 1 {
+							count += Keys.Size()
+						}
+					}
+					title = Library.EntryFieldValueity(key, "title")
+					if title != "" {
+						// Should be via a function!
+						Keys := Library.TitleIndex[TeXStringIndexer(title)]
+						if Keys.Size() > 1 {
+							count += Keys.Size()
+						}
+					}
+				}
+			}
+			fmt.Println("Work:", count)
+			
+			for key := range Library.EntryTypes {
+				crossrefety := Library.EntryFieldValueity(Library.DeAliasEntryKey(key), "crossref")
+				if crossrefety != "" {
+					title := Library.EntryFieldValueity(Library.DeAliasEntryKey(crossrefety), "title")
+					if title != "" {
+						// Should be via a function!
+						Keys := Library.TitleIndex[TeXStringIndexer(title)]
+						if Keys.Size() > 1 {
+							sortedKeys := Keys.ElementsSorted()
+							for _, a := range sortedKeys {
+								if a == Library.DeAliasEntryKey(a) {
+									for _, b := range sortedKeys {
+										if b == Library.DeAliasEntryKey(b) {
+											Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+										}
+									}
+								}
+							}
+						}
+					}
+
+					title = Library.EntryFieldValueity(Library.DeAliasEntryKey(key), "title")
+					if title != "" {
+						// Should be via a function!
+						Keys := Library.TitleIndex[TeXStringIndexer(title)]
+						if Keys.Size() > 1 {
+							sortedKeys := Keys.ElementsSorted()
+							for _, a := range sortedKeys {
+								if a == Library.DeAliasEntryKey(a) {
+									for _, b := range sortedKeys {
+										if b == Library.DeAliasEntryKey(b) {
+											Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 			//			for _, Keys := range Library.TitleIndex {
 			//				if Keys.Size() > 1 {
 			//					sortedKeys := Keys.ElementsSorted()

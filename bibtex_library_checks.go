@@ -561,6 +561,7 @@ func (l *TBibTeXLibrary) CheckFiles() {
 	for _, Keys := range Library.FileMD5Index {
 		if Keys.Size() > 1 {
 			Count += Keys.Size() - 1
+			l.Warning("File, with same content, is used by two different entries: %s", Keys.String())
 		}
 	}
 	if Count > 0 {
