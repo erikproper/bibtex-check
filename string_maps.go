@@ -94,16 +94,15 @@ func (m *TStringStringStringMap) IsMappedStringTripple(i, j, k string) bool {
  * Mappings
  *
  */
-func (m *TStringMap) GetDomainFromStringMap TStringSet {
-  domain := TStringSetNew()
+func (m *TStringMap) GetDomainFromStringMap() TStringSet {
+	domain := TStringSetNew()
 
-  for element, _ := range m {
-    domain.Add(element)
-  }
+	for element := range *m {
+		domain.Add(element)
+	}
 
-  return domain
+	return domain
 }
-
 
 /*
  *
