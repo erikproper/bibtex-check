@@ -76,7 +76,7 @@ func OpenMainBibFile() bool {
 }
 
 func FIXThatShouldBeChecks(key string) {
-	Library.CheckNeedToMergeForEqualEntryTitle(key)
+	Library.CheckNeedToMergeForEqualTitles(key)
 }
 
 func CleanKey(rawKey string) string {

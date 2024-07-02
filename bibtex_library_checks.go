@@ -426,18 +426,12 @@ func (l *TBibTeXLibrary) CheckCrossrefMayInheritField(crossrefKey, key, field st
 }
 
 func (l *TBibTeXLibrary) CheckCrossref(key string) {
-	EntryType := l.EntryTypes[key]
+	entryType := l.EntryTypes[key]
 
-	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[EntryType]; hasAllowedCrossrefType {
+	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
 		Crossrefety := l.EntryFieldValueity(key, "crossref")
 
-		if Crossrefety == "" {
-			//if l.EntryFieldValueity(key, "booktitle") == "" {
-			//	l.Warning("Empty booktitle, and empty crossref, for entry %s of type %s", key, EntryType)
-			//} else {
-			//	// Create!
-			//}
-		} else {
+		if Crossrefety != "" {
 			if CrossrefType, CrossrefExists := l.EntryTypes[Crossrefety]; CrossrefExists {
 				if allowedCrossrefType == CrossrefType {
 					for field := range BibTeXMustInheritFields.Elements() {
@@ -450,12 +444,14 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 
 					l.CheckBookishTitles(CrossrefType)
 				} else {
-					l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", EntryType, key, CrossrefType, Crossrefety)
+					l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", entryType, key, CrossrefType, Crossrefety)
 				}
 			} else {
 				l.Warning("Target %s of crossref from %s does not exist.", Crossrefety, key)
 			}
 		}
+	} else {
+		l.Warning("Entry %s of type %s is not allowed to have a crossref", key, entryType)
 	}
 }
 
@@ -507,7 +503,8 @@ func (l *TBibTeXLibrary) CheckLanguageID(key string) {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(title string) {
+func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
+	title := l.EntryFieldValueity(l.DeAliasEntryKey(key), "title")
 	if title != "" {
 		// Should be via a function!
 		Keys := Library.TitleIndex[TeXStringIndexer(title)]
@@ -524,14 +521,6 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(title string) {
 			}
 		}
 	}
-}
-
-func (l *TBibTeXLibrary) CheckNeedToMergeForEqualEntryTitle(key string) {
-	l.CheckNeedToMergeForEqualTitles(l.EntryFieldValueity(l.DeAliasEntryKey(key), "title"))
-}
-
-func (l *TBibTeXLibrary) CheckNeedToMergeForEqualEntryBookTitle(key string) {
-	l.CheckNeedToMergeForEqualTitles(l.EntryFieldValueity(l.DeAliasEntryKey(key), "booktitle"))
 }
 
 func (l *TBibTeXLibrary) CheckEntry(key string) {
