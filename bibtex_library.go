@@ -336,23 +336,6 @@ func (l *TBibTeXLibrary) AddAliasForName(alias, name string, aliasMap *TStringMa
 	l.AddAlias(alias, name, aliasMap, inverseMap, true)
 }
 
-// Do we still need this one?
-// Add a new key alias (for use in generic read function)
-func (l *TBibTeXLibrary) AddAliasForKey(alias, key string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
-	if alias != key {
-		if _, aliasIsUsedAsKeyForSomeAlias := (*inverseMap)[alias]; aliasIsUsedAsKeyForSomeAlias {
-			for oldAlias := range (*inverseMap)[alias].Set().Elements() {
-				l.AddAlias(oldAlias, key, aliasMap, inverseMap, false)
-				l.moveKeyAliasPreference(oldAlias, alias, key)
-			}
-
-			delete(*inverseMap, alias)
-		}
-
-		l.AddAlias(alias, key, aliasMap, inverseMap, false)
-	}
-}
-
 func (l *TBibTeXLibrary) FilePath(key string) string {
 	file := BDSKFile(l.EntryFieldValueity(key, FirstBDSKFileField))
 
@@ -376,7 +359,7 @@ func (l *TBibTeXLibrary) ReassignFile(target, sourceFile string) {
 	l.EntryFields[target]["local-url"] = localURL
 }
 
-func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) {
+func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 	// Fix names
 	source := l.DeAliasEntryKey(sourceRAW)
 	target := l.DeAliasEntryKey(targetRAW)
@@ -389,11 +372,12 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) {
 		targetType = Library.ResolveFieldValue(target, "", EntryTypeField, sourceType, targetType)
 		Library.EntryTypes[target] = targetType
 
+		// Can be like a constant ...
 		regularFields := TStringSet{}
 		regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
 		regularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
 		for regularField := range regularFields.Elements() {
-			// Do we need Library.EntryFields still as (implied) parameter, once we're done with migrating/legacy??
+			// Do we need Library.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
 			Library.EntryFields[target][regularField] = Library.MaybeResolveFieldValue(target, "", regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField])
 		}
 
@@ -453,6 +437,8 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) {
 
 		l.CheckEntry(target)
 	}
+
+	return target
 }
 
 func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
@@ -504,9 +490,20 @@ func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
 	}
 }
 
-// Add a new key alias
+// Add a new key alias ... AddAliasForKey would be the more consistent name
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
-	l.AddAliasForKey(alias, key, &l.KeyAliasToKey, &l.KeyToAliases)
+	if alias != key {
+		if _, aliasIsUsedAsKeyForSomeAlias := l.KeyToAliases[alias]; aliasIsUsedAsKeyForSomeAlias {
+			for oldAlias := range l.KeyToAliases[alias].Set().Elements() {
+				l.AddAlias(oldAlias, key, &l.KeyAliasToKey, &l.KeyToAliases, false)
+				l.moveKeyAliasPreference(oldAlias, alias, key)
+			}
+
+			delete(l.KeyToAliases, alias)
+		}
+
+		l.AddAlias(alias, key, &l.KeyAliasToKey, &l.KeyToAliases, false)
+	}
 }
 
 func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, targetValue string) {

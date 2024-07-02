@@ -75,6 +75,26 @@ func OpenMainBibFile() bool {
 	}
 }
 
+func MaybeMergeEqualTitles(key string) {
+	title := Library.EntryFieldValueity(Library.DeAliasEntryKey(key), "title")
+	if title != "" {
+		// Should be via a function!
+		Keys := Library.TitleIndex[TeXStringIndexer(title)]
+		if Keys.Size() > 1 {
+			sortedKeys := Keys.ElementsSorted()
+			for _, a := range sortedKeys {
+				if a == Library.DeAliasEntryKey(a) {
+					for _, b := range sortedKeys {
+						if b == Library.DeAliasEntryKey(b) {
+							Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func CleanKey(rawKey string) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(rawKey, "\\cite{", ""), "cite{", ""), "}", ""))
 }
@@ -323,24 +343,24 @@ func main() {
 		}
 		keyStrings := strings.Split(keysString, ",")
 
-		if len(keyStrings) < 3 {
-			fmt.Println("Need at least two keys for this ...")
-		} else {
-			if InitialiseMainLibrary() && OpenMainBibFile() {
-				Library.CheckEntries()
-				Library.ReadNonDoublesFile()
+		if InitialiseMainLibrary() && OpenMainBibFile() {
+			Library.CheckEntries()
+			Library.ReadNonDoublesFile()
 
-				writeBibFile = true
-				writeAliases = true
-				writeMappings = true
+			writeBibFile = true
+			writeAliases = true
+			writeMappings = true
 
-				key := Library.DeAliasEntryKey(keyStrings[len(keyStrings)-1])
-				for _, alias := range keyStrings[1 : len(keyStrings)-1] {
-					Library.MergeEntries(alias, key)
-				}
-
-				Library.WriteNonDoublesFile()
+			key := Library.DeAliasEntryKey(keyStrings[len(keyStrings)-1])
+			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
+				Library.MergeEntries(alias, key)
 			}
+
+			for _, key := range keyStrings[1 : len(keyStrings)] {
+				MaybeMergeEqualTitles(key)
+			}
+
+			Library.WriteNonDoublesFile()
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-undouble":
@@ -376,62 +396,15 @@ func main() {
 				}
 			}
 			fmt.Println("Work:", count)
-			
+
 			for key := range Library.EntryTypes {
 				crossrefety := Library.EntryFieldValueity(Library.DeAliasEntryKey(key), "crossref")
-				if crossrefety != "" {
-					title := Library.EntryFieldValueity(Library.DeAliasEntryKey(crossrefety), "title")
-					if title != "" {
-						// Should be via a function!
-						Keys := Library.TitleIndex[TeXStringIndexer(title)]
-						if Keys.Size() > 1 {
-							sortedKeys := Keys.ElementsSorted()
-							for _, a := range sortedKeys {
-								if a == Library.DeAliasEntryKey(a) {
-									for _, b := range sortedKeys {
-										if b == Library.DeAliasEntryKey(b) {
-											Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
-										}
-									}
-								}
-							}
-						}
-					}
 
-					title = Library.EntryFieldValueity(Library.DeAliasEntryKey(key), "title")
-					if title != "" {
-						// Should be via a function!
-						Keys := Library.TitleIndex[TeXStringIndexer(title)]
-						if Keys.Size() > 1 {
-							sortedKeys := Keys.ElementsSorted()
-							for _, a := range sortedKeys {
-								if a == Library.DeAliasEntryKey(a) {
-									for _, b := range sortedKeys {
-										if b == Library.DeAliasEntryKey(b) {
-											Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
-										}
-									}
-								}
-							}
-						}
-					}
+				if crossrefety != "" {
+					MaybeMergeEqualTitles(crossrefety)
+					MaybeMergeEqualTitles(key)
 				}
 			}
-			//			for _, Keys := range Library.TitleIndex {
-			//				if Keys.Size() > 1 {
-			//					sortedKeys := Keys.ElementsSorted()
-			//					for _, a := range sortedKeys {
-			//						if a == Library.DeAliasEntryKey(a) {
-			//							for _, b := range sortedKeys {
-			//								if b == Library.DeAliasEntryKey(b) {
-			//									Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
-			//								}
-			//							}
-			//						}
-			//					}
-			//				}
-			//			}
-
 			Library.WriteNonDoublesFile()
 
 			writeBibFile = true
@@ -459,6 +432,7 @@ func main() {
 				Library.UpdateGroupKeys(alias, key)
 				Library.AddKeyAlias(alias, key)
 				Library.CheckPreferredKeyAliasesConsistency(key)
+				MaybeMergeEqualTitles(alias)
 			}
 		}
 
@@ -476,6 +450,7 @@ func main() {
 			}
 
 			Library.AddPreferredKeyAlias(alias)
+			Library.NoEntryFieldAliasesFileWriting = true //// Temporary hack
 			Library.WriteAliasesFiles()
 		} else {
 			fmt.Println("Not a valid preferred alias.")

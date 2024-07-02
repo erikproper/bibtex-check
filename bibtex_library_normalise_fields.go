@@ -341,6 +341,11 @@ func NormaliseBDSKFileValue(l *TBibTeXLibrary, value string) string {
 	}
 }
 
+// Can't we solve this differently? An array of func (l TBibTeXLibrary) X (string) string functions??
+func NormaliseCrossref(l *TBibTeXLibrary, crossref string) string {
+	return l.DeAliasEntryKey(crossref)
+}
+
 // The general function call to Normalise field values.
 // If a field specific Normalisation function exists, then it is applied.
 // Otherwise, we only remove leading/trailing spaces.
@@ -357,8 +362,8 @@ func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 func init() {
 	// Define the Normaliser functions.
 	fieldNormalisers = TFieldNormalisers{}
-	fieldNormalisers["author"] = NormaliseNamesString
 	fieldNormalisers["address"] = NormaliseTitleString
+	fieldNormalisers["author"] = NormaliseNamesString
 	fieldNormalisers["bdsk-file-1"] = NormaliseBDSKFileValue
 	fieldNormalisers["bdsk-file-2"] = NormaliseBDSKFileValue
 	fieldNormalisers["bdsk-file-3"] = NormaliseBDSKFileValue
@@ -378,23 +383,25 @@ func init() {
 	fieldNormalisers["bdsk-url-8"] = NormaliseURLValue
 	fieldNormalisers["bdsk-url-9"] = NormaliseURLValue
 	fieldNormalisers["booktitle"] = NormaliseTitleString
-	fieldNormalisers["urldate"] = NormaliseDateValue
+	fieldNormalisers["crossref"] = NormaliseCrossref
 	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString
-	fieldNormalisers["file"] = NormaliseFileValue      // only needed while still allowing l.legacyMode
-	fieldNormalisers["local-url"] = NormaliseFileValue // only needed while still allowing l.legacyMode
+	fieldNormalisers["file"] = NormaliseFileValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["howpublished"] = NormaliseTitleString
 	fieldNormalisers["institution"] = NormaliseTitleString
 	fieldNormalisers["isbn"] = NormaliseISBNValue
 	fieldNormalisers["issn"] = NormaliseISSNValue
 	fieldNormalisers["journal"] = NormaliseTitleString
+	fieldNormalisers["local-url"] = NormaliseFileValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["number"] = NormaliseNumberValue
 	fieldNormalisers["organization"] = NormaliseTitleString
 	fieldNormalisers["pages"] = NormalisePagesValue
 	fieldNormalisers["publisher"] = NormaliseTitleString
-	fieldNormalisers["series"] = NormaliseTitleString
 	fieldNormalisers["school"] = NormaliseTitleString
+	fieldNormalisers["series"] = NormaliseTitleString
 	fieldNormalisers["title"] = NormaliseTitleString
 	fieldNormalisers["url"] = NormaliseURLValue
+	fieldNormalisers["urldate"] = NormaliseDateValue
 	fieldNormalisers["year"] = NormaliseYearValue
+
 }

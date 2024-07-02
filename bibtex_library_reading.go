@@ -135,8 +135,7 @@ func (l *TBibTeXLibrary) ReadKeyAliasesFile() {
 			return
 		}
 
-		// Why pass on &l.KeyAliasToKey, &l.KeyToAliases???
-		l.AddAliasForKey(elements[1], elements[0], &l.KeyAliasToKey, &l.KeyToAliases)
+		l.AddKeyAlias(elements[1], elements[0])
 	})
 }
 

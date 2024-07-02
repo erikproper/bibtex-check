@@ -19,7 +19,10 @@ package main
 // Still a major construction site.
 //
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
-func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challenge, current string) string {
+func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challengeRAW, currentRAW string) string {
+	current := l.NormaliseFieldValue(field, currentRAW)
+	challenge := l.NormaliseFieldValue(field, challengeRAW)
+
 	// OK. The key, field, and challenge are needed here. But, current is likely to be derivable from l with key and field.
 	// But ... needs to be checked once done with the legacy migration.
 
@@ -32,21 +35,39 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challenge, curr
 	//
 	// Also clean out when writing the alias file ...
 	//
-	if field == "date-modified" || field == "date-added" {
-		if current < challenge {
-			return current
-		} else {
-			return challenge
-		}
-	}
-
 	if !l.legacyMode {
+		if field == "crossref" {
+			if current == challenge {
+				return current
+
+			} else {
+				if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?", "Different crossrefs (%s,  %s) for entries that you want to merge.", current, challenge) {
+					return l.MergeEntries(current, challenge)
+
+				} else {
+					return current
+
+				}
+			}
+		}
+
+		if field == "date-modified" || field == "date-added" {
+			if current < challenge {
+				return current
+
+			} else {
+				return challenge
+
+			}
+		}
+
 		// So we have a difference between the current value and the challenge.
 		// So, who is the target ...
 
 		if l.EntryFieldAliasHasTarget(key, field, current, challenge) {
 			// It is recorded that the challenge is the target over the current value.
 			// So, we can return the challenge as the target
+
 			return challenge
 
 		} else if l.EntryFieldAliasHasTarget(key, field, challenge, current) {
