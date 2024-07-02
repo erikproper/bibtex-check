@@ -462,14 +462,13 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 
 		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
 			l.MergeEntries(source, target)
+			l.WriteAliasesFiles()
+			l.WriteMappingsFiles()
+			l.WriteBibTeXFile()
 		} else {
 			l.AddNonDoubles(source, target)
+			l.WriteNonDoublesFile()
 		}
-
-		l.WriteNonDoublesFile()
-		l.WriteAliasesFiles()
-		l.WriteMappingsFiles()
-		l.WriteBibTeXFile()
 	}
 }
 

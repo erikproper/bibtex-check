@@ -75,24 +75,8 @@ func OpenMainBibFile() bool {
 	}
 }
 
-func MaybeMergeEqualTitles(key string) {
-	title := Library.EntryFieldValueity(Library.DeAliasEntryKey(key), "title")
-	if title != "" {
-		// Should be via a function!
-		Keys := Library.TitleIndex[TeXStringIndexer(title)]
-		if Keys.Size() > 1 {
-			sortedKeys := Keys.ElementsSorted()
-			for _, a := range sortedKeys {
-				if a == Library.DeAliasEntryKey(a) {
-					for _, b := range sortedKeys {
-						if b == Library.DeAliasEntryKey(b) {
-							Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
-						}
-					}
-				}
-			}
-		}
-	}
+func FIXThatShouldBeChecks(key string) {
+	Library.CheckNeedToMergeForEqualEntryTitle(key)
 }
 
 func CleanKey(rawKey string) string {
@@ -356,8 +340,8 @@ func main() {
 				Library.MergeEntries(alias, key)
 			}
 
-			for _, key := range keyStrings[1 : len(keyStrings)] {
-				MaybeMergeEqualTitles(key)
+			for _, key := range keyStrings[1:] {
+				FIXThatShouldBeChecks(key)
 			}
 
 			Library.WriteNonDoublesFile()
@@ -369,41 +353,8 @@ func main() {
 			Library.CheckFiles()
 			Library.ReadNonDoublesFile()
 
-			for _, Keys := range Library.FileMD5Index {
-				Library.MaybeMergeEntrySet(Keys)
-			}
-
-			count := 0
 			for key := range Library.EntryTypes {
-				crossrefety := Library.EntryFieldValueity(key, "crossref")
-				if crossrefety != "" {
-					title := Library.EntryFieldValueity(crossrefety, "title")
-					if title != "" {
-						// Should be via a function!
-						Keys := Library.TitleIndex[TeXStringIndexer(title)]
-						if Keys.Size() > 1 {
-							count += Keys.Size()
-						}
-					}
-					title = Library.EntryFieldValueity(key, "title")
-					if title != "" {
-						// Should be via a function!
-						Keys := Library.TitleIndex[TeXStringIndexer(title)]
-						if Keys.Size() > 1 {
-							count += Keys.Size()
-						}
-					}
-				}
-			}
-			fmt.Println("Work:", count)
-
-			for key := range Library.EntryTypes {
-				crossrefety := Library.EntryFieldValueity(Library.DeAliasEntryKey(key), "crossref")
-
-				if crossrefety != "" {
-					MaybeMergeEqualTitles(crossrefety)
-					MaybeMergeEqualTitles(key)
-				}
+				FIXThatShouldBeChecks(key)
 			}
 			Library.WriteNonDoublesFile()
 
@@ -432,8 +383,9 @@ func main() {
 				Library.UpdateGroupKeys(alias, key)
 				Library.AddKeyAlias(alias, key)
 				Library.CheckPreferredKeyAliasesConsistency(key)
-				MaybeMergeEqualTitles(alias)
 			}
+
+			FIXThatShouldBeChecks(key)
 		}
 
 	case len(os.Args) > 2 && os.Args[1] == "-preferred":

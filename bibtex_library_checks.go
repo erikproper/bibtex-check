@@ -507,6 +507,33 @@ func (l *TBibTeXLibrary) CheckLanguageID(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(title string) {
+	if title != "" {
+		// Should be via a function!
+		Keys := Library.TitleIndex[TeXStringIndexer(title)]
+		if Keys.Size() > 1 {
+			sortedKeys := Keys.ElementsSorted()
+			for _, a := range sortedKeys {
+				if a == Library.DeAliasEntryKey(a) {
+					for _, b := range sortedKeys {
+						if b == Library.DeAliasEntryKey(b) {
+							Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) CheckNeedToMergeForEqualEntryTitle(key string) {
+	l.CheckNeedToMergeForEqualTitles(l.EntryFieldValueity(l.DeAliasEntryKey(key), "title"))
+}
+
+func (l *TBibTeXLibrary) CheckNeedToMergeForEqualEntryBookTitle(key string) {
+	l.CheckNeedToMergeForEqualTitles(l.EntryFieldValueity(l.DeAliasEntryKey(key), "booktitle"))
+}
+
 func (l *TBibTeXLibrary) CheckEntry(key string) {
 	if l.EntryExists(key) {
 		l.CheckPreferredKeyAliasesConsistency(key)

@@ -341,11 +341,6 @@ func NormaliseBDSKFileValue(l *TBibTeXLibrary, value string) string {
 	}
 }
 
-// Can't we solve this differently? An array of func (l TBibTeXLibrary) X (string) string functions??
-func NormaliseCrossref(l *TBibTeXLibrary, crossref string) string {
-	return l.DeAliasEntryKey(crossref)
-}
-
 // The general function call to Normalise field values.
 // If a field specific Normalisation function exists, then it is applied.
 // Otherwise, we only remove leading/trailing spaces.
@@ -383,7 +378,6 @@ func init() {
 	fieldNormalisers["bdsk-url-8"] = NormaliseURLValue
 	fieldNormalisers["bdsk-url-9"] = NormaliseURLValue
 	fieldNormalisers["booktitle"] = NormaliseTitleString
-	fieldNormalisers["crossref"] = NormaliseCrossref
 	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString
 	fieldNormalisers["file"] = NormaliseFileValue // only needed while still allowing l.legacyMode

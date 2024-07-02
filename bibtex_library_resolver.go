@@ -20,8 +20,8 @@ package main
 //
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
 func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challengeRAW, currentRAW string) string {
-	current := l.NormaliseFieldValue(field, currentRAW)
-	challenge := l.NormaliseFieldValue(field, challengeRAW)
+	current := l.DeAliasFieldValue(field, currentRAW)
+	challenge := l.DeAliasFieldValue(field, challengeRAW)
 
 	// OK. The key, field, and challenge are needed here. But, current is likely to be derivable from l with key and field.
 	// But ... needs to be checked once done with the legacy migration.
