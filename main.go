@@ -23,7 +23,7 @@ const (
 	MainLibrary  = "main"
 )
 
-// SEPARATE FILE
+// Put this one in a SEPARATE FILE
 // Update bib mapping file
 func (l *TBibTeXLibrary) UpdateBibMap(file string) {
 	bibMap := TStringMap{}
@@ -77,6 +77,8 @@ func OpenMainBibFile() bool {
 
 func FIXThatShouldBeChecks(key string) {
 	Library.CheckNeedToMergeForEqualTitles(key)
+	Library.CheckNeedToSplitBookishEntry(key)
+	Library.CheckDBLP(key)
 }
 
 func CleanKey(rawKey string) string {
@@ -97,7 +99,11 @@ func main() {
 			writeMappings = true
 
 			Library.CheckEntries()
+
+			// This reading should be done on-demand
+			Library.ReadNonDoublesFile()
 			Library.CheckFiles()
+			Library.WriteNonDoublesFile()
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-pdfs":
@@ -319,6 +325,30 @@ func main() {
 			fmt.Println(Library.DeAliasEntryKey(CleanKey(os.Args[2])))
 		}
 
+	case len(os.Args) > 2 && os.Args[1] == "-fix":
+		keysString := ""
+
+		for _, keyString := range os.Args[2:] {
+			keysString += "," + CleanKey(keyString)
+		}
+		keyStrings := strings.Split(keysString, ",")
+
+		if InitialiseMainLibrary() && OpenMainBibFile() {
+			Library.CheckEntries()
+			Library.ReadNonDoublesFile()
+
+			writeBibFile = true
+			writeAliases = true
+			writeMappings = true
+
+			for _, key := range keyStrings[1:] {
+				fmt.Println("Fixing", key)
+				FIXThatShouldBeChecks(key)
+			}
+
+			Library.WriteNonDoublesFile()
+		}
+
 	case len(os.Args) > 2 && os.Args[1] == "-merge":
 		keysString := ""
 
@@ -350,8 +380,9 @@ func main() {
 	case len(os.Args) == 2 && os.Args[1] == "-undouble":
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			Library.CheckEntries()
-			Library.CheckFiles()
 			Library.ReadNonDoublesFile()
+
+			Library.CheckFiles()
 
 			for key := range Library.EntryTypes {
 				FIXThatShouldBeChecks(key)
@@ -385,6 +416,7 @@ func main() {
 				Library.CheckPreferredKeyAliasesConsistency(key)
 			}
 
+			Library.CheckEntries()
 			FIXThatShouldBeChecks(key)
 		}
 

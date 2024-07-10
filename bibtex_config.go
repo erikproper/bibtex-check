@@ -20,10 +20,12 @@ var (
 	BibTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
 	BibTeXMustInheritFields  TStringSet            //
 	BibTeXMayInheritFields   TStringSet            //
+	BibTeXInheritableFields  TStringSet            //
 	BibTeXBDSKFileFields     TStringSet            //
 	BibTeXBDSKURLFields      TStringSet            //
 	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entry types
 	BibTeXBookish            TStringSet            // All book-alike entry types
+	BibTeXCrossreffer        TStringSet            //
 	BibTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
 	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
 	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
@@ -106,10 +108,12 @@ func init() {
 	BibTeXAllowedFields.Initialise()
 	BibTeXImportFields.Initialise()
 	BibTeXBookish.Initialise()
+	BibTeXCrossreffer.Initialise()
 	BibTeXBDSKFileFields.Initialise()
 	BibTeXBDSKURLFields.Initialise()
 	BibTeXMustInheritFields.Initialise()
 	BibTeXMayInheritFields.Initialise()
+	BibTeXInheritableFields.Initialise()
 
 	AddAllowedEntryFields(
 		"article", "journal", "volume", "number", "pages", "month", "issn")
@@ -172,9 +176,11 @@ func init() {
 	// It makes sense to allow a config file to add to these, and move some of the above to this config file as well.
 	// For instance "researchgate" and "urloriginal"
 
+	// Refactor ...
 	BibTeXBookish.Add("proceedings", "book")
-
+	BibTeXCrossreffer.Add("inproceedings", "incollection", "inbook")
 	BibTeXCrossrefType = TStringMap{}
+	// Fill Crossreffer. Target must be Bookish
 	BibTeXCrossrefType["inproceedings"] = "proceedings"
 	BibTeXCrossrefType["incollection"] = "book"
 	BibTeXCrossrefType["inbook"] = "book"
@@ -183,7 +189,7 @@ func init() {
 		"address", "month", "edition", "issn", "isbn", "address", "type", "organization")
 	BibTeXMayInheritFields.Add("doi", "url", "bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9")
-
+	BibTeXInheritableFields.Unite(BibTeXMustInheritFields).Unite(BibTeXMayInheritFields)
 	// Consistency checks:
 	// - Target of BibTeXCrossrefType must always be bookish
 	// - BibTeXMustInheritFields must be among the fields of bookish entries.

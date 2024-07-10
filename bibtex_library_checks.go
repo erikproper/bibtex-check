@@ -392,65 +392,66 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckCrossrefMustInheritField(crossrefKey, key, field string) {
-	if challenge, hasChallenge := l.EntryFields[key][field]; hasChallenge {
-		target := l.MaybeResolveFieldValue(crossrefKey, key, field, challenge, l.EntryFieldValueity(crossrefKey, field))
+func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefKey, key, field string) {
+	if BibTeXMustInheritFields.Contains(field) {
+		if challenge, hasChallenge := l.EntryFields[key][field]; hasChallenge {
+			target := l.MaybeResolveFieldValue(crossrefKey, key, field, challenge, l.EntryFieldValueity(crossrefKey, field))
 
-		if field == "booktitle" {
-			if l.EntryFields[crossrefKey]["title"] == l.EntryFields[crossrefKey]["booktitle"] {
-				l.EntryFields[crossrefKey]["title"] = target
+			l.EntryFields[crossrefKey][field] = target
+
+			if field == "booktitle" {
+				currentTitle := l.EntryFieldValueity(crossrefKey, "title")
+				newTitle := l.MaybeResolveFieldValue(crossrefKey, key, field, target, currentTitle)
+
+				if currentTitle != newTitle {
+					l.TitleIndex.DeleteValueFromStringSetMap(TeXStringIndexer(currentTitle), crossrefKey)
+
+					/// Refactor this into a function. We need this more often.
+					l.EntryFields[crossrefKey]["title"] = newTitle
+					l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(newTitle), crossrefKey)
+				}
+			}
+
+			for otherChallenger := range l.EntryFieldAliasToTarget[key][field] {
+				l.AddEntryFieldAlias(crossrefKey, field, otherChallenger, target, false)
+			}
+
+			if target != "" {
+				delete(l.EntryFields[key], field)
+				delete(l.EntryFieldAliasToTarget[key], field)
 			}
 		}
-
-		l.EntryFields[crossrefKey][field] = target
-
-		for otherChallenger := range l.EntryFieldAliasToTarget[key][field] {
-			l.AddEntryFieldAlias(crossrefKey, field, otherChallenger, target, false)
-		}
-
-		// This check should not be necessary, but ...
-		if target != "" {
-			l.EntryFields[key][field] = ""
-
-			delete(l.EntryFieldAliasToTarget[key], field)
-		}
-	}
-}
-
-func (l *TBibTeXLibrary) CheckCrossrefMayInheritField(crossrefKey, key, field string) {
-	if crossrefValue, hasCrossrefValue := l.EntryFields[crossrefKey][field]; hasCrossrefValue {
-		if crossrefValue == l.EntryFields[key][field] {
-			l.EntryFields[key][field] = ""
+	} else if BibTeXMayInheritFields.Contains(field) {
+		if crossrefValue, hasCrossrefValue := l.EntryFields[crossrefKey][field]; hasCrossrefValue {
+			// No need to override the child value, when it is the same as the parent's value
+			if crossrefValue == l.EntryFields[key][field] {
+				l.EntryFields[key][field] = ""
+			}
 		}
 	}
 }
 
 func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	entryType := l.EntryTypes[key]
+	crossrefety := l.EntryFieldValueity(key, "crossref")
 
 	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
-		Crossrefety := l.EntryFieldValueity(key, "crossref")
-
-		if Crossrefety != "" {
-			if CrossrefType, CrossrefExists := l.EntryTypes[Crossrefety]; CrossrefExists {
+		if crossrefety != "" {
+			if CrossrefType, CrossrefExists := l.EntryTypes[crossrefety]; CrossrefExists {
 				if allowedCrossrefType == CrossrefType {
-					for field := range BibTeXMustInheritFields.Elements() {
-						l.CheckCrossrefMustInheritField(Crossrefety, key, field)
-					}
-
-					for field := range BibTeXMayInheritFields.Elements() {
-						l.CheckCrossrefMayInheritField(Crossrefety, key, field)
+					for field := range BibTeXInheritableFields.Elements() {
+						l.CheckCrossrefInheritableField(crossrefety, key, field)
 					}
 
 					l.CheckBookishTitles(CrossrefType)
 				} else {
-					l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", entryType, key, CrossrefType, Crossrefety)
+					l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", entryType, key, CrossrefType, crossrefety)
 				}
 			} else {
-				l.Warning("Target %s of crossref from %s does not exist.", Crossrefety, key)
+				l.Warning("Target %s of crossref from %s does not exist.", crossrefety, key)
 			}
 		}
-	} else {
+	} else if crossrefety != "" {
 		l.Warning("Entry %s of type %s is not allowed to have a crossref", key, entryType)
 	}
 }
@@ -503,7 +504,41 @@ func (l *TBibTeXLibrary) CheckLanguageID(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) {
+	key := l.DeAliasEntryKey(keyRAW) // Dealias, while we are likely to do this immediately after a merge (for now)
+	// After merging all doubles, we can do this as part of the consistency check and CheckCrossref in particular, and then don't need to dealias.
+
+	if BibTeXCrossreffer.Contains(l.EntryTypes[key]) {
+		crossrefKey := l.EntryFieldValueity(l.DeAliasEntryKey(key), "crossref")
+		if crossrefKey == "" {
+			entryType := Library.EntryTypes[key]
+			bookTitle := l.EntryFieldValueity(l.DeAliasEntryKey(key), "booktitle")
+			if bookTitle == "" {
+				l.Warning("Empty booktitle for a bookish entry %s of type %s", key, entryType)
+				return
+			} else {
+				crossrefType := BibTeXCrossrefType[entryType]
+				crossrefKey = l.NewKey()
+
+				// refactor this with func (l *TBibTeXLibrary) AssignField(field, value string) and StartRecordingEntry
+				l.EntryFields[crossrefKey] = TStringMap{}
+				l.EntryFields[crossrefKey]["title"] = bookTitle
+				l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), crossrefKey)
+				l.EntryTypes[crossrefKey] = crossrefType
+
+				l.EntryFields[key]["crossref"] = crossrefKey
+				l.CheckCrossref(key)
+			}
+		}
+
+		if crossrefKey != "" {
+			l.CheckNeedToMergeForEqualTitles(crossrefKey) // Until we’ve undoubled all
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
+	// Why not do l.DeAliasEntryKey(key) always as part of l.EntryFieldValueity ???
 	title := l.EntryFieldValueity(l.DeAliasEntryKey(key), "title")
 	if title != "" {
 		// Should be via a function!
@@ -523,13 +558,78 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
+	key := l.DeAliasEntryKey(keyRAW) // Needed??
+	entryType := l.EntryTypes[key] /// function?
+	entryDBLP := l.EntryFieldValueity(key, "dblp")
+	
+	if BibTeXCrossreffer.Contains(entryType) {
+		crossref := l.EntryFieldValueity(key, "crossref")
+		crossrefDBLP := l.EntryFieldValueity(crossref, "dblp")
+
+		parentDBLP := l.MaybeGetDBLPCrossref(entryDBLP)
+		// Function
+		parentKey := l.LookupDBLPKey(parentDBLP)
+
+	    if crossref == "" {
+			if parentKey != "" {
+	        	l.EntryFields[key]["crossref"] = parentKey
+	        	crossref = parentKey
+	        }
+		} 
+		
+		if crossrefDBLP == "" {
+			if parentDBLP != "" {
+				l.EntryFields[crossref]["dblp"] = parentDBLP
+				crossrefDBLP = parentDBLP
+			}
+		}
+		 
+		if crossref == "" {
+	   		l.Warning("Crossref entry type without a crossref %s", key)
+	   	}
+	   	
+	   	if entryDBLP != "" && crossrefDBLP == "" {
+			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossref, key, entryDBLP)
+		} 
+		
+		if entryDBLP == "" && crossrefDBLP != "" {
+			l.Warning("Child entry %s does not have a dblp key, while the parent %s does have dblp key %s", key, crossref, parentDBLP)
+		}
+		
+		if crossrefDBLP != parentDBLP {
+			l.Warning("Inconsistency regarding parent/crossref DBLP for %s. We have %s and %s", key, crossrefDBLP, parentDBLP)
+		}
+	}
+
+	// Add parent to child check for bookish
+	if BibTeXBookish.Contains(entryType) {
+		fmt.Println("Ping", key, entryType, entryDBLP)	
+		l.ForEachChildOfDBLPKey(entryDBLP, func (childDBLP string) {
+			// Function
+			childKey := l.LookupDBLPKey(childDBLP)
+
+			if childKey != "" {
+				childCrossref := l.EntryFieldValueity(childKey, "crossref")
+				if childCrossref == "" {
+					l.EntryFields[childKey]["crossref"] = key
+				} else if childCrossref != key {
+					l.Warning("Child with DBLP key %s of entry %s refers to a different parent %s", childDBLP, key, childCrossref)
+				}
+			} else {
+				fmt.Println("Import and merge", childDBLP, "with crossref", entryDBLP)
+			}
+		})
+	}
+}
+
 func (l *TBibTeXLibrary) CheckEntry(key string) {
 	if l.EntryExists(key) {
 		l.CheckPreferredKeyAliasesConsistency(key)
 		l.CheckDOIPresence(key)
-		l.CheckBookishTitles(key)
 		l.CheckEPrint(key)
 		l.CheckCrossref(key)
+		l.CheckBookishTitles(key)
 
 		// CheckCrossref can lead to a merger of entries for now ...
 		if l.EntryExists(key) {
@@ -573,14 +673,10 @@ func (l *TBibTeXLibrary) CheckFiles() {
 		}
 	}
 
-	Count := 0
 	for _, Keys := range Library.FileMD5Index {
 		if Keys.Size() > 1 {
-			Count += Keys.Size() - 1
-			l.Warning("File, with same content, is used by two different entries: %s", Keys.String())
+			l.Warning("File, with same content, is used by multiple different entries: %s", Keys.String())
+			l.MaybeMergeEntrySet(Keys)
 		}
-	}
-	if Count > 0 {
-		l.Warning("Found %d files with same content as at least one other file", Count)
 	}
 }

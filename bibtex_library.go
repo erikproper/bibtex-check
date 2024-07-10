@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -553,6 +554,16 @@ func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
 	return key
 }
 
+func (l *TBibTeXLibrary) LookupDBLPKey(key string) string {
+	lookupKey, isAlias := l.KeyAliasToKey["DBLP:" + key]
+
+	if isAlias {
+		return lookupKey
+	} else {
+		return ""
+	}
+}
+
 // Create a string (with newlines) with a BibTeX based representation of the provided key, while using an optional prefix for each line.
 func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 	_, knownEntry := l.EntryFields[key]
@@ -760,6 +771,10 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	return true
 }
 
+func (l *TBibTeXLibrary) UpdateFieldValue(field, value string) string {
+	return l.DeAliasFieldValue(field, l.NormaliseFieldValue(field, value))
+}
+
 func (l *TBibTeXLibrary) MaybeApplyFieldMappings(key string) {
 	for sourceField, sourceValue := range l.EntryFields[key] {
 		for targetField, targetValue := range l.FieldMappings[sourceField][sourceValue] {
@@ -770,21 +785,21 @@ func (l *TBibTeXLibrary) MaybeApplyFieldMappings(key string) {
 
 // Finish recording the current library entry
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
-	if ISBN := l.EntryFieldValueity(l.currentKey, "isbn"); ISBN != "" {
-		l.ISBNIndex.AddValueToStringSetMap(ISBN, l.currentKey)
-	}
+	//	if ISBN := l.EntryFieldValueity(l.currentKey, "isbn"); ISBN != "" {
+	//		l.ISBNIndex.AddValueToStringSetMap(ISBN, l.currentKey)
+	//	}
 
-	if DOI := l.EntryFieldValueity(l.currentKey, "doi"); DOI != "" {
-		l.DOIIndex.AddValueToStringSetMap(DOI, l.currentKey)
-	}
+	//	if DOI := l.EntryFieldValueity(l.currentKey, "doi"); DOI != "" {
+	//		l.DOIIndex.AddValueToStringSetMap(DOI, l.currentKey)
+	//	}
 
 	if title := l.EntryFieldValueity(l.currentKey, "title"); title != "" {
 		l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(title), l.currentKey)
 	}
 
-	if bookTitle := l.EntryFieldValueity(l.currentKey, "booktitle"); bookTitle != "" {
-		l.BookTitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), l.currentKey)
-	}
+	//	if bookTitle := l.EntryFieldValueity(l.currentKey, "booktitle"); bookTitle != "" {
+	//		l.BookTitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), l.currentKey)
+	//	}
 
 	// Check if no illegal fields were used
 	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
@@ -796,6 +811,9 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 			if !l.EntryAllowsForField(key, field) {
 				if l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryTypes[key]) {
 					delete(l.EntryFields[key], field)
+				} else {
+					l.Warning("Stopping programme. Please fix this manually.")
+					os.Exit(0)
 				}
 			}
 		}

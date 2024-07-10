@@ -16,7 +16,7 @@ import (
 	"bufio"
 	"os"
 	"strings"
-	// "fmt"
+	//"fmt"
 )
 
 // Read bib files
@@ -30,7 +30,9 @@ func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
 
 // Generic function to read library related files
 func (l *TBibTeXLibrary) readFile(fullFilePath, message string, reading func(string)) bool {
-	l.Progress(message, fullFilePath)
+	if message != "" {
+		l.Progress(message, fullFilePath)
+	}
 
 	file, err := os.Open(fullFilePath)
 	if err != nil {
@@ -46,13 +48,29 @@ func (l *TBibTeXLibrary) readFile(fullFilePath, message string, reading func(str
 	return scanner.Err() == nil
 }
 
+func (l *TBibTeXLibrary) readDBLPKeyFile(DBLPKey, fileName string, reading func(string)) bool {
+	return l.readFile(l.FilesRoot+"DBLPScraper/bib/"+DBLPKey+"/"+fileName, "", reading)
+}
+
+func (l *TBibTeXLibrary) ForEachChildOfDBLPKey(DBLPKey string, work func(string)) {
+	l.readDBLPKeyFile(DBLPKey, "children", work)
+}
+
+func (l *TBibTeXLibrary) MaybeGetDBLPCrossref(DBLPKey string) string {
+	crossrefDBLPKey := ""
+
+	l.readDBLPKeyFile(DBLPKey, "crossref", func(key string) {
+		if key != "" {
+			crossrefDBLPKey = key
+		}
+	})
+	
+	return crossrefDBLPKey
+}
+
 // Generic function to read library related files
 func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading func(string)) bool {
 	return l.readFile(l.FilesRoot+l.BaseName+fileExtension, message, reading)
-}
-
-func (l *TBibTeXLibrary) UpdateFieldValue(field, value string) string {
-	return l.DeAliasFieldValue(field, l.NormaliseFieldValue(field, value))
 }
 
 func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
