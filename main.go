@@ -318,7 +318,7 @@ func main() {
 			fmt.Println(Library.EntryString(Library.DeAliasEntryKey(CleanKey(os.Args[2]))))
 		}
 
-	case len(os.Args) > 2 && os.Args[1] == "-key":
+	case len(os.Args) == 3 && os.Args[1] == "-key":
 		Reporting.SetInteractionOff()
 
 		if InitialiseMainLibrary() && OpenMainBibFile() {
@@ -342,8 +342,23 @@ func main() {
 			writeMappings = true
 
 			for _, key := range keyStrings[1:] {
-				fmt.Println("Fixing", key)
 				FIXThatShouldBeChecks(key)
+			}
+
+			Library.WriteNonDoublesFile()
+		}
+
+	case len(os.Args) == 3 && os.Args[1] == "-dblp_add":
+		if InitialiseMainLibrary() && OpenMainBibFile() {
+			Library.CheckEntries()
+			Library.ReadNonDoublesFile()
+
+			writeBibFile = true
+			writeAliases = true
+			writeMappings = true
+
+			if Library.LookupDBLPKey(os.Args[2]) == "" {
+				FIXThatShouldBeChecks(Library.AddDBLPEntry(os.Args[2], ""))
 			}
 
 			Library.WriteNonDoublesFile()
@@ -371,7 +386,9 @@ func main() {
 			}
 
 			for _, key := range keyStrings[1:] {
-				FIXThatShouldBeChecks(key)
+				if Library.DeAliasEntryKey(key) == key {
+					FIXThatShouldBeChecks(key)
+				}
 			}
 
 			Library.WriteNonDoublesFile()

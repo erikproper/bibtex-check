@@ -64,7 +64,7 @@ func (l *TBibTeXLibrary) MaybeGetDBLPCrossref(DBLPKey string) string {
 			crossrefDBLPKey = key
 		}
 	})
-	
+
 	return crossrefDBLPKey
 }
 

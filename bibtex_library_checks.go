@@ -90,7 +90,6 @@ func (l *TBibTeXLibrary) checkAliasesMapping(aliasMap TStringMap, inverseMap TSt
 
 		if _, aliasIsUsedAsTargetForAlias := inverseMap[alias]; aliasIsUsedAsTargetForAlias {
 			// Aliases should not be keys themselves.
-			fmt.Println("Ping")
 			l.Warning(warningUsedAsAlias, alias)
 		}
 	}
@@ -433,7 +432,12 @@ func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefKey, key, field s
 
 func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	entryType := l.EntryTypes[key]
-	crossrefety := l.EntryFieldValueity(key, "crossref")
+	crossrefetyRAW := l.EntryFieldValueity(key, "crossref")
+
+	crossrefety := l.DeAliasEntryKey(crossrefetyRAW)
+	if crossrefety == "" {
+		crossrefety = crossrefetyRAW
+	}
 
 	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
 		if crossrefety != "" {
@@ -560,9 +564,9 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 
 func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	key := l.DeAliasEntryKey(keyRAW) // Needed??
-	entryType := l.EntryTypes[key] /// function?
+	entryType := l.EntryTypes[key]   /// function?
 	entryDBLP := l.EntryFieldValueity(key, "dblp")
-	
+
 	if BibTeXCrossreffer.Contains(entryType) {
 		crossref := l.EntryFieldValueity(key, "crossref")
 		crossrefDBLP := l.EntryFieldValueity(crossref, "dblp")
@@ -571,53 +575,54 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		// Function
 		parentKey := l.LookupDBLPKey(parentDBLP)
 
-	    if crossref == "" {
+		if crossref == "" {
 			if parentKey != "" {
-	        	l.EntryFields[key]["crossref"] = parentKey
-	        	crossref = parentKey
-	        }
-		} 
-		
+				l.EntryFields[key]["crossref"] = parentKey
+				crossref = parentKey
+			}
+		}
+
 		if crossrefDBLP == "" {
 			if parentDBLP != "" {
 				l.EntryFields[crossref]["dblp"] = parentDBLP
 				crossrefDBLP = parentDBLP
 			}
+		} else {
+			if parentDBLP != "" && crossrefDBLP != parentDBLP {
+				l.Warning("Inconsistency regarding parent/crossref DBLP for %s. We have %s and %s", key, crossrefDBLP, parentDBLP)
+			}
 		}
-		 
+
 		if crossref == "" {
-	   		l.Warning("Crossref entry type without a crossref %s", key)
-	   	}
-	   	
-	   	if entryDBLP != "" && crossrefDBLP == "" {
-			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossref, key, entryDBLP)
-		} 
-		
-		if entryDBLP == "" && crossrefDBLP != "" {
-			l.Warning("Child entry %s does not have a dblp key, while the parent %s does have dblp key %s", key, crossref, parentDBLP)
+			l.Warning("Crossref entry type without a crossref %s", key)
 		}
-		
-		if crossrefDBLP != parentDBLP {
-			l.Warning("Inconsistency regarding parent/crossref DBLP for %s. We have %s and %s", key, crossrefDBLP, parentDBLP)
+
+		if entryDBLP != "" && crossrefDBLP == "" {
+			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossref, key, entryDBLP)
+		}
+
+		if entryDBLP == "" && crossrefDBLP != "" {
+			l.Warning("Child entry %s does not have a dblp key, while the parent %s does have dblp key %s", key, crossref, crossrefDBLP)
 		}
 	}
 
 	// Add parent to child check for bookish
 	if BibTeXBookish.Contains(entryType) {
-		fmt.Println("Ping", key, entryType, entryDBLP)	
-		l.ForEachChildOfDBLPKey(entryDBLP, func (childDBLP string) {
+		l.ForEachChildOfDBLPKey(entryDBLP, func(childDBLP string) {
 			// Function
 			childKey := l.LookupDBLPKey(childDBLP)
 
 			if childKey != "" {
-				childCrossref := l.EntryFieldValueity(childKey, "crossref")
+				childCrossref := l.DeAliasEntryKey(l.EntryFieldValueity(childKey, "crossref"))
 				if childCrossref == "" {
 					l.EntryFields[childKey]["crossref"] = key
 				} else if childCrossref != key {
-					l.Warning("Child with DBLP key %s of entry %s refers to a different parent %s", childDBLP, key, childCrossref)
+					if l.WarningYesNoQuestion("Shall I merge these entries as well?", "Child with DBLP key %s of entry %s refers to a different parent %s", childDBLP, key, childCrossref) {
+						key = l.MergeEntries(childCrossref, key)
+					}
 				}
 			} else {
-				fmt.Println("Import and merge", childDBLP, "with crossref", entryDBLP)
+				Library.AddDBLPEntry(childDBLP, key)
 			}
 		})
 	}

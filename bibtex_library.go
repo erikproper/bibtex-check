@@ -64,6 +64,7 @@ type (
 		NoNonDoublesFileWriting          bool
 		NoFieldMappingsFileWriting       bool
 		migrationMode                    bool
+		IgnoreIllegalFields              bool
 		TBibTeXTeX
 		TInteraction  // Error reporting channel
 		TBibTeXStream // BibTeX parser
@@ -124,6 +125,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.NoPreferredKeyAliasesFileWriting = false
 	l.NoNameAliasesFileWriting = false
 	l.NoFieldMappingsFileWriting = false
+	l.IgnoreIllegalFields = false
 
 	if AllowLegacy {
 		l.legacyMode = false
@@ -555,7 +557,7 @@ func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
 }
 
 func (l *TBibTeXLibrary) LookupDBLPKey(key string) string {
-	lookupKey, isAlias := l.KeyAliasToKey["DBLP:" + key]
+	lookupKey, isAlias := l.KeyAliasToKey["DBLP:"+key]
 
 	if isAlias {
 		return lookupKey
@@ -647,7 +649,7 @@ func (l *TBibTeXLibrary) NewKey() string {
 	// We're not allowed to move into the future.
 	if KeyTime.After(time.Now()) {
 		///////// WAAARNING
-		fmt.Println("Sleep on key generation")
+		l.Warning("Sleep on key generation")
 		for KeyTime.After(time.Now()) {
 			// Sleep ...
 		}
@@ -687,7 +689,7 @@ func (l *TBibTeXLibrary) StartRecordingToLibrary() bool {
 // Finish recording to the library
 func (l *TBibTeXLibrary) FinishRecordingToLibrary() bool {
 	// If we did encounter illegal fields we need to issue a warning.
-	if !l.legacyMode && l.illegalFields.Size() > 0 {
+	if !l.legacyMode && !l.IgnoreIllegalFields && l.illegalFields.Size() > 0 {
 		l.Warning(WarningUnknownFields, l.illegalFields.String())
 	}
 
@@ -809,7 +811,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 			// Check if the field is allowed for this type.
 			// If not, we need to ask if it can be deleted.
 			if !l.EntryAllowsForField(key, field) {
-				if l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryTypes[key]) {
+				if l.IgnoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryTypes[key]) {
 					delete(l.EntryFields[key], field)
 				} else {
 					l.Warning("Stopping programme. Please fix this manually.")
@@ -831,6 +833,25 @@ func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
 	for c := range s.Elements() {
 		l.NonDoubles[c] = s
 	}
+}
+
+func (l *TBibTeXLibrary) AddDBLPEntry(keyDBLP, crossref string) string {
+	l.IgnoreIllegalFields = true
+	l.ParseBibFile(l.FilesRoot + "DBLPScraper/bib/" + keyDBLP + "/bib")
+	l.IgnoreIllegalFields = false
+
+	// Post l.currentKey solution, we should not have to deal with this work around
+	key := l.NewKey()
+	l.EntryFields[key] = TStringMap{}
+	l.EntryFields[key]["crossref"] = crossref
+	l.EntryFields[key]["dblp"] = keyDBLP
+	l.EntryTypes[key] = l.EntryTypes["DBLP:"+keyDBLP]
+	l.MergeEntries("DBLP:"+keyDBLP, key)
+
+	l.CheckNeedToSplitBookishEntry(key)
+	l.CheckNeedToMergeForEqualTitles(key)
+
+	return l.DeAliasEntryKey(key)
 }
 
 func init() {
