@@ -264,7 +264,7 @@ func main() {
 
 				if isEntry {
 					// We don't have a set type function??
-					Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, "", EntryTypeField, oldType, newType)
+					Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
 
 					crossrefKey := Library.EntryFieldValueity(newKey, "crossref")
 
@@ -279,7 +279,7 @@ func main() {
 						// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
 						if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
 							if crossrefKey != "" && BibTeXMustInheritFields.Contains(oldField) {
-								target := Library.MaybeResolveFieldValue(crossrefKey, oldEntry, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
+								target := Library.MaybeResolveFieldValue(crossrefKey, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
 
 								if oldField == "booktitle" {
 									if Library.EntryFields[crossrefKey]["title"] == Library.EntryFields[crossrefKey]["booktitle"] {
@@ -289,7 +289,7 @@ func main() {
 
 								Library.EntryFields[crossrefKey][oldField] = target
 							} else {
-								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, "", oldField, oldValue, Library.EntryFields[newKey][oldField])
+								Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
 							}
 						}
 					}
@@ -325,6 +325,25 @@ func main() {
 			fmt.Println(Library.DeAliasEntryKey(CleanKey(os.Args[2])))
 		}
 
+	case len(os.Args) == 2 && os.Args[1] == "-fixall":
+		if InitialiseMainLibrary() && OpenMainBibFile() {
+			Library.CheckEntries()
+			Library.ReadNonDoublesFile()
+
+			Library.CheckFiles()
+
+			for key := range Library.EntryTypes {
+				if Library.EntryFieldValueity(key, "dblp") != "" {
+					FIXThatShouldBeChecks(key)
+				}
+			}
+			Library.WriteNonDoublesFile()
+
+			writeBibFile = true
+			writeAliases = true
+			writeMappings = true
+		}
+
 	case len(os.Args) > 2 && os.Args[1] == "-fix":
 		keysString := ""
 
@@ -337,15 +356,15 @@ func main() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
 
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
-
 			for _, key := range keyStrings[1:] {
 				FIXThatShouldBeChecks(key)
 			}
 
 			Library.WriteNonDoublesFile()
+
+			writeBibFile = true
+			writeAliases = true
+			writeMappings = true
 		}
 
 	case len(os.Args) == 3 && os.Args[1] == "-dblp_add":
@@ -392,23 +411,6 @@ func main() {
 			}
 
 			Library.WriteNonDoublesFile()
-		}
-
-	case len(os.Args) == 2 && os.Args[1] == "-undouble":
-		if InitialiseMainLibrary() && OpenMainBibFile() {
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
-
-			Library.CheckFiles()
-
-			for key := range Library.EntryTypes {
-				FIXThatShouldBeChecks(key)
-			}
-			Library.WriteNonDoublesFile()
-
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
 		}
 
 	case len(os.Args) > 3 && os.Args[1] == "-map":

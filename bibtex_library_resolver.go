@@ -19,7 +19,7 @@ package main
 // Still a major construction site.
 //
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
-func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challengeRAW, currentRAW string) string {
+func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challengeRAW, currentRAW string) string {
 	current := l.DeAliasFieldValue(field, currentRAW)
 	challenge := l.DeAliasFieldValue(field, challengeRAW)
 
@@ -81,10 +81,6 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challengeRAW, c
 			// And update the recorded challenges
 			// Note: this is an *update* as we may need to update this as a new target for other challenges as well.
 
-			if childKey != "" {
-				l.Warning("Issue while pushing field %s from %s to %s", field, childKey, key)
-			}
-
 			options := TStringSetNew()
 			options.Add("Y", "y", "n", "N")
 			warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
@@ -124,12 +120,12 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, childKey, field, challengeRAW, c
 }
 
 // If the current value is empty, then we can assign the alias.
-func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, childKey, field, challenge, current string) string {
+func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, field, challenge, current string) string {
 	if current == "" {
 		return challenge
 	} else if challenge == "" {
 		return current
 	} else {
-		return l.ResolveFieldValue(key, childKey, field, challenge, current)
+		return l.ResolveFieldValue(key, field, challenge, current)
 	}
 }

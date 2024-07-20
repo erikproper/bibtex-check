@@ -262,7 +262,7 @@ func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
 func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	// SAFE??
 	if BibTeXBookish.Contains(l.EntryTypes[key]) {
-		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "", "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
+		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
 		l.UpdateEntryFieldAlias(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
 	}
@@ -394,13 +394,13 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
 func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefKey, key, field string) {
 	if BibTeXMustInheritFields.Contains(field) {
 		if challenge, hasChallenge := l.EntryFields[key][field]; hasChallenge {
-			target := l.MaybeResolveFieldValue(crossrefKey, key, field, challenge, l.EntryFieldValueity(crossrefKey, field))
+			target := l.MaybeResolveFieldValue(crossrefKey, field, challenge, l.EntryFieldValueity(crossrefKey, field))
 
 			l.EntryFields[crossrefKey][field] = target
 
 			if field == "booktitle" {
 				currentTitle := l.EntryFieldValueity(crossrefKey, "title")
-				newTitle := l.MaybeResolveFieldValue(crossrefKey, key, field, target, currentTitle)
+				newTitle := l.MaybeResolveFieldValue(crossrefKey, field, target, currentTitle)
 
 				if currentTitle != newTitle {
 					l.TitleIndex.DeleteValueFromStringSetMap(TeXStringIndexer(currentTitle), crossrefKey)
@@ -568,48 +568,39 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	entryDBLP := l.EntryFieldValueity(key, "dblp")
 
 	if BibTeXCrossreffer.Contains(entryType) {
-		crossref := l.EntryFieldValueity(key, "crossref")
-		crossrefDBLP := l.EntryFieldValueity(crossref, "dblp")
+		crossrefKey := l.EntryFieldValueity(key, "crossref")
+		crossrefDBLP := l.EntryFieldValueity(crossrefKey, "dblp")
 
 		parentDBLP := l.MaybeGetDBLPCrossref(entryDBLP)
-		// Function
 		parentKey := l.LookupDBLPKey(parentDBLP)
 
-		if crossref == "" {
-			if parentKey != "" {
-				l.EntryFields[key]["crossref"] = parentKey
-				crossref = parentKey
-			}
+		if parentKey != "" && crossrefKey != parentKey {
+			l.EntryFields[key]["crossref"] = parentKey
+			crossrefKey = parentKey
+			crossrefDBLP = parentDBLP
 		}
 
-		if crossrefDBLP == "" {
-			if parentDBLP != "" {
-				l.EntryFields[crossref]["dblp"] = parentDBLP
-				crossrefDBLP = parentDBLP
-			}
-		} else {
-			if parentDBLP != "" && crossrefDBLP != parentDBLP {
-				l.Warning("Inconsistency regarding parent/crossref DBLP for %s. We have %s and %s", key, crossrefDBLP, parentDBLP)
-			}
+		if crossrefDBLP == "" && parentDBLP != "" {
+			l.EntryFields[crossrefKey]["dblp"] = parentDBLP
+			crossrefDBLP = parentDBLP
 		}
 
-		if crossref == "" {
+		if crossrefKey == "" {
 			l.Warning("Crossref entry type without a crossref %s", key)
 		}
 
 		if entryDBLP != "" && crossrefDBLP == "" {
-			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossref, key, entryDBLP)
+			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossrefKey, key, entryDBLP)
 		}
 
 		if entryDBLP == "" && crossrefDBLP != "" {
-			l.Warning("Child entry %s does not have a dblp key, while the parent %s does have dblp key %s", key, crossref, crossrefDBLP)
+			l.Warning("Child entry %s does not have a dblp key, while the parent %s does have dblp key %s", key, crossrefKey, crossrefDBLP)
 		}
 	}
 
 	// Add parent to child check for bookish
 	if BibTeXBookish.Contains(entryType) {
 		l.ForEachChildOfDBLPKey(entryDBLP, func(childDBLP string) {
-			// Function
 			childKey := l.LookupDBLPKey(childDBLP)
 
 			if childKey != "" {
@@ -617,12 +608,10 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 				if childCrossref == "" {
 					l.EntryFields[childKey]["crossref"] = key
 				} else if childCrossref != key {
-					if l.WarningYesNoQuestion("Shall I merge these entries as well?", "Child with DBLP key %s of entry %s refers to a different parent %s", childDBLP, key, childCrossref) {
-						key = l.MergeEntries(childCrossref, key)
-					}
+					l.Warning("Child with DBLP key %s of entry %s refers to a different parent %s", childDBLP, key, childCrossref)
 				}
 			} else {
-				Library.AddDBLPEntry(childDBLP, key)
+				l.AddDBLPEntry(childDBLP, key)
 			}
 		})
 	}

@@ -372,7 +372,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 
 		sourceType := l.EntryTypes[source]
 		targetType := l.EntryTypes[target]
-		targetType = Library.ResolveFieldValue(target, "", EntryTypeField, sourceType, targetType)
+		targetType = Library.ResolveFieldValue(target, EntryTypeField, sourceType, targetType)
 		Library.EntryTypes[target] = targetType
 
 		// Can be like a constant ...
@@ -381,7 +381,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 		regularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
 		for regularField := range regularFields.Elements() {
 			// Do we need Library.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
-			Library.EntryFields[target][regularField] = Library.MaybeResolveFieldValue(target, "", regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField])
+			Library.EntryFields[target][regularField] = Library.MaybeResolveFieldValue(target, regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField])
 		}
 
 		URLSet := TStringSet{}
@@ -743,7 +743,7 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 
 		// Resolve the double typing issue
 		// Post legacy migration, we still need to do this, but then we will always have: key == l.currentKey
-		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, "", EntryTypeField, entryType, l.EntryTypes[l.currentKey])
+		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.EntryTypes[l.currentKey])
 	} else {
 		l.EntryFields[l.currentKey] = TStringMap{}
 		l.EntryTypes[l.currentKey] = entryType
@@ -763,7 +763,7 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	currentValue := l.EntryFieldValueity(l.currentKey, field)
 
 	// Assign the new value, while, if needed, resolve it with the current value
-	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, "", field, newValue, currentValue)
+	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, field, newValue, currentValue)
 
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {
