@@ -835,23 +835,53 @@ func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
 	}
 }
 
-func (l *TBibTeXLibrary) AddDBLPEntry(keyDBLP, crossref string) string {
-	l.IgnoreIllegalFields = true
-	l.ParseBibFile(l.FilesRoot + "DBLPScraper/bib/" + keyDBLP + "/bib")
-	l.IgnoreIllegalFields = false
+func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(keyDBLP, key string) bool {
+	if key != "" {
+		DBLPBibFile := l.FilesRoot + "DBLPScraper/bib/" + keyDBLP + "/bib"
+		if FileExists(DBLPBibFile) {
+			l.IgnoreIllegalFields = true
+			if l.ParseBibFile(DBLPBibFile) {
+				l.IgnoreIllegalFields = false
 
-	// Post l.currentKey solution, we should not have to deal with this work around
+				l.EntryFields[key]["dblp"] = keyDBLP
+				l.MergeEntries("DBLP:"+keyDBLP, key)
+
+				l.CheckNeedToSplitBookishEntry(key)
+
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (l *TBibTeXLibrary) MaybeAddDBLPEntry(keyDBLP string) string {
 	key := l.NewKey()
-	l.EntryFields[key] = TStringMap{}
-	l.EntryFields[key]["crossref"] = crossref
-	l.EntryFields[key]["dblp"] = keyDBLP
-	l.EntryTypes[key] = l.EntryTypes["DBLP:"+keyDBLP]
-	l.MergeEntries("DBLP:"+keyDBLP, key)
+	if l.MaybeMergeDBLPEntry(keyDBLP, key) {
+		return key
+	}
 
-	l.CheckNeedToSplitBookishEntry(key)
-	l.CheckNeedToMergeForEqualTitles(key)
+	return ""
+}
 
-	return l.DeAliasEntryKey(key)
+func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(keyDBLP, crossref string) string {
+	key := l.MaybeAddDBLPEntry(keyDBLP)
+	if key != "" && crossref != "" {
+		l.EntryFields[key]["crossref"] = crossref
+
+		return key
+	}
+
+	return ""
+}
+
+func (l *TBibTeXLibrary) MaybeSyncDBLPEntry(key string) {
+	l.Warning("Syncing entry %s with the DBLP version", key)
+
+	keyDBLP := l.EntryFieldValueity(key, "dblp")
+
+	l.MaybeMergeDBLPEntry(keyDBLP, key)
 }
 
 func init() {

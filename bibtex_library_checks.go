@@ -564,7 +564,10 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 
 func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	key := l.DeAliasEntryKey(keyRAW) // Needed??
-	entryType := l.EntryTypes[key]   /// function?
+
+	l.MaybeSyncDBLPEntry(key)
+
+	entryType := l.EntryTypes[key] /// function?
 	entryDBLP := l.EntryFieldValueity(key, "dblp")
 
 	if BibTeXCrossreffer.Contains(entryType) {
@@ -611,7 +614,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 					l.Warning("Child with DBLP key %s of entry %s refers to a different parent %s", childDBLP, key, childCrossref)
 				}
 			} else {
-				l.AddDBLPEntry(childDBLP, key)
+				l.MaybeAddDBLPChildEntry(childDBLP, key)
 			}
 		})
 	}

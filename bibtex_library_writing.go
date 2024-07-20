@@ -88,9 +88,9 @@ func (l *TBibTeXLibrary) WriteNonDoublesFile() {
 	if !l.NoNonDoublesFileWriting {
 		l.writeLibraryFile(NonDoublesFileExtension, ProgressWritingNonDoublesFile, func(challengeWriter *bufio.Writer) {
 			for key, set := range l.NonDoubles {
-				if key == l.DeAliasEntryKey(key) {
+				if key == l.DeAliasEntryKey(key) && l.EntryExists(key) {
 					for nonDouble := range set.Elements() {
-						if nonDouble != key && nonDouble == l.DeAliasEntryKey(nonDouble) {
+						if nonDouble != key && nonDouble == l.DeAliasEntryKey(nonDouble) && l.EntryExists(nonDouble) {
 							challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
 						}
 					}

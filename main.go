@@ -377,7 +377,10 @@ func main() {
 			writeMappings = true
 
 			if Library.LookupDBLPKey(os.Args[2]) == "" {
-				FIXThatShouldBeChecks(Library.AddDBLPEntry(os.Args[2], ""))
+				Added := Library.MaybeAddDBLPEntry(os.Args[2])
+				if Added != "" {
+					FIXThatShouldBeChecks(Added)
+				}
 			}
 
 			Library.WriteNonDoublesFile()
