@@ -364,7 +364,7 @@ func (l *TBibTeXLibrary) ReassignFile(target, sourceFile string) {
 
 func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 	// Fix names
-	source := l.DeAliasEntryKey(sourceRAW)
+	source := sourceRAW //l.DeAliasEntryKey(sourceRAW)
 	target := l.DeAliasEntryKey(targetRAW)
 
 	if source != target && l.EntryExists(source) && l.EntryExists(target) {
@@ -877,9 +877,9 @@ func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(keyDBLP, crossref string) string
 }
 
 func (l *TBibTeXLibrary) MaybeSyncDBLPEntry(key string) {
-	l.Warning("Syncing entry %s with the DBLP version", key)
-
 	keyDBLP := l.EntryFieldValueity(key, "dblp")
+
+	l.Progress("Syncing entry %s with the DBLP version %s", key, keyDBLP)
 
 	l.MaybeMergeDBLPEntry(keyDBLP, key)
 }

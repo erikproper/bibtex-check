@@ -236,6 +236,7 @@ func main() {
 			writeAliases = false
 			writeMappings = true
 			Library.CheckEntries()
+			Library.ReadNonDoublesFile()
 
 			OldLibrary := TBibTeXLibrary{}
 			OldLibrary.Progress("Reading legacy library")
@@ -262,7 +263,7 @@ func main() {
 			for oldEntry, oldType := range OldLibrary.EntryTypes {
 				newKey, newType, isEntry := Library.DeAliasEntryKeyWithType(stripUniquePrefix.ReplaceAllString(oldEntry, ""))
 
-				if isEntry {
+				if false && isEntry && Library.EntryFieldValueity(newKey, "dblp") != "" {
 					// We don't have a set type function??
 					Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
 
@@ -293,6 +294,14 @@ func main() {
 							}
 						}
 					}
+
+					FIXThatShouldBeChecks(newKey)
+	
+					Library.WriteNonDoublesFile()
+				} 
+				
+				if !isEntry {
+					fmt.Println("Old entry is not mapped:", stripUniquePrefix.ReplaceAllString(oldEntry, ""))
 				}
 			}
 		}
@@ -329,8 +338,6 @@ func main() {
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
-
-			Library.CheckFiles()
 
 			for key := range Library.EntryTypes {
 				if Library.EntryFieldValueity(key, "dblp") != "" {
