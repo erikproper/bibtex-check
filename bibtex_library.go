@@ -362,86 +362,91 @@ func (l *TBibTeXLibrary) ReassignFile(target, sourceFile string) {
 	l.EntryFields[target]["local-url"] = localURL
 }
 
+///// SPLIT!!
 func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
-	// Fix names
-	source := sourceRAW //l.DeAliasEntryKey(sourceRAW)
-	target := l.DeAliasEntryKey(targetRAW)
+	if sourceRAW != "" && targetRAW != "" {
+		// Fix names
+		source := sourceRAW //l.DeAliasEntryKey(sourceRAW)
+		target := l.DeAliasEntryKey(targetRAW)
+	
+		if source != target && l.EntryExists(source) { // }&& l.EntryExists(target) {
+			l.Progress("Merging %s to %s", source, target)
 
-	if source != target && l.EntryExists(source) && l.EntryExists(target) {
-		l.Progress("Merging %s to %s", source, target)
+			sourceType := l.EntryTypes[source]
+			targetType := l.EntryTypes[target]
+			targetType = Library.MaybeResolveFieldValue(target, EntryTypeField, sourceType, targetType)
+			Library.EntryTypes[target] = targetType
 
-		sourceType := l.EntryTypes[source]
-		targetType := l.EntryTypes[target]
-		targetType = Library.ResolveFieldValue(target, EntryTypeField, sourceType, targetType)
-		Library.EntryTypes[target] = targetType
-
-		// Can be like a constant ...
-		regularFields := TStringSet{}
-		regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
-		regularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
-		for regularField := range regularFields.Elements() {
-			// Do we need Library.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
-			Library.EntryFields[target][regularField] = Library.MaybeResolveFieldValue(target, regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField])
-		}
-
-		URLSet := TStringSet{}
-		URLSet.Initialise()
-
-		targetIndex := 0
-		sourceIndex := 0
-		// Do this as an overall "constant"??
-		SortedBibTeXBDSKURLFields := BibTeXBDSKURLFields.ElementsSorted()
-
-		for targetIndex < len(SortedBibTeXBDSKURLFields) && sourceIndex < len(SortedBibTeXBDSKURLFields) {
-			targetURLety := l.EntryFieldValueity(target, SortedBibTeXBDSKURLFields[targetIndex])
-			if targetURLety == "" {
-				sourceURLety := l.EntryFieldValueity(source, SortedBibTeXBDSKURLFields[sourceIndex])
-
-				if sourceURLety != "" && !URLSet.Contains(sourceURLety) {
-					l.EntryFields[target][SortedBibTeXBDSKURLFields[targetIndex]] = sourceURLety
-					URLSet.Add(sourceURLety)
-				}
-
-				sourceIndex++
-			} else {
-				URLSet.Add(targetURLety)
-
-				targetIndex++
+			// Can be like a constant ...
+			regularFields := TStringSet{}
+			regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
+			regularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
+			for regularField := range regularFields.Elements() {
+				// Do we need Library.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
+				Library.EntryFields.SetValueForStringPairMap(target, regularField, Library.MaybeResolveFieldValue(target, regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField]))
 			}
-		}
 
-		if sourceIndex < len(SortedBibTeXBDSKURLFields) && targetIndex == len(SortedBibTeXBDSKURLFields) {
-			l.Warning("Too many BDSK urls for entry %s", target)
-		}
+			URLSet := TStringSet{}
+			URLSet.Initialise()
 
-		if sourceFile := l.FilePath(source); sourceFile != "" {
-			if targetFile := l.FilePath(target); targetFile == "" {
-				l.ReassignFile(target, sourceFile)
-			} else {
-				if EqualFiles(sourceFile, targetFile) {
-					FileDelete(sourceFile)
+			targetIndex := 0
+			sourceIndex := 0
+			// Do this as an overall "constant"??
+			SortedBibTeXBDSKURLFields := BibTeXBDSKURLFields.ElementsSorted()
+
+			for targetIndex < len(SortedBibTeXBDSKURLFields) && sourceIndex < len(SortedBibTeXBDSKURLFields) {
+				targetURLety := l.EntryFieldValueity(target, SortedBibTeXBDSKURLFields[targetIndex])
+				if targetURLety == "" {
+					sourceURLety := l.EntryFieldValueity(source, SortedBibTeXBDSKURLFields[sourceIndex])
+
+					if sourceURLety != "" && !URLSet.Contains(sourceURLety) {
+						l.EntryFields[target][SortedBibTeXBDSKURLFields[targetIndex]] = sourceURLety
+						URLSet.Add(sourceURLety)
+					}
+
+					sourceIndex++
 				} else {
-					if l.WarningYesNoQuestion("Keep current", "Non-equal files; choice needed\nFor %s\nChallenge: %s\nCurrent:   %s", target, sourceFile, targetFile) {
+					URLSet.Add(targetURLety)
+
+					targetIndex++
+				}
+			}
+
+			if sourceIndex < len(SortedBibTeXBDSKURLFields) && targetIndex == len(SortedBibTeXBDSKURLFields) {
+				l.Warning("Too many BDSK urls for entry %s", target)
+			}
+
+			if sourceFile := l.FilePath(source); sourceFile != "" {
+				if targetFile := l.FilePath(target); targetFile == "" {
+					l.ReassignFile(target, sourceFile)
+				} else {
+					if EqualFiles(sourceFile, targetFile) {
 						FileDelete(sourceFile)
 					} else {
-						l.ReassignFile(target, sourceFile)
+						if l.WarningYesNoQuestion("Keep current", "Non-equal files; choice needed\nFor %s\nChallenge: %s\nCurrent:   %s", target, sourceFile, targetFile) {
+							FileDelete(sourceFile)
+						} else {
+							l.ReassignFile(target, sourceFile)
+						}
 					}
 				}
 			}
+
+			l.UpdateGroupKeys(source, target)
+			l.AddKeyAlias(source, target)
+			l.AddNonDoubles(source, target)
+			l.ReassignEntryFieldAliases(source, target)
+
+			delete(l.EntryTypes, source)
+			delete(l.EntryFields, source)
+
+			l.CheckEntry(target)
 		}
 
-		l.UpdateGroupKeys(source, target)
-		l.AddKeyAlias(source, target)
-		l.AddNonDoubles(source, target)
-		l.ReassignEntryFieldAliases(source, target)
-
-		delete(l.EntryTypes, source)
-		delete(l.EntryFields, source)
-
-		l.CheckEntry(target)
+		return target
 	}
 
-	return target
+	return ""
 }
 
 func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
@@ -843,10 +848,8 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(keyDBLP, key string) bool {
 			if l.ParseBibFile(DBLPBibFile) {
 				l.IgnoreIllegalFields = false
 
-				l.EntryFields[key]["dblp"] = keyDBLP
 				l.MergeEntries("DBLP:"+keyDBLP, key)
-
-				l.CheckNeedToSplitBookishEntry(key)
+				l.EntryFields[key]["dblp"] = keyDBLP
 
 				return true
 			}
@@ -868,6 +871,10 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(keyDBLP string) string {
 func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(keyDBLP, crossref string) string {
 	key := l.MaybeAddDBLPEntry(keyDBLP)
 	if key != "" && crossref != "" {
+		l.CheckNeedToSplitBookishEntry(key)
+
+		l.MergeEntries(l.EntryFieldValueity(key, "crossref"), crossref)
+
 		l.EntryFields[key]["crossref"] = crossref
 
 		return key

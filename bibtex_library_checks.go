@@ -508,7 +508,7 @@ func (l *TBibTeXLibrary) CheckLanguageID(key string) {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) {
+func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 	key := l.DeAliasEntryKey(keyRAW) // Dealias, while we are likely to do this immediately after a merge (for now)
 	// After merging all doubles, we can do this as part of the consistency check and CheckCrossref in particular, and then don't need to dealias.
 
@@ -519,7 +519,6 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) {
 			bookTitle := l.EntryFieldValueity(l.DeAliasEntryKey(key), "booktitle")
 			if bookTitle == "" {
 				l.Warning("Empty booktitle for a bookish entry %s of type %s", key, entryType)
-				return
 			} else {
 				crossrefType := BibTeXCrossrefType[entryType]
 				crossrefKey = l.NewKey()
@@ -531,14 +530,11 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) {
 				l.EntryTypes[crossrefKey] = crossrefType
 
 				l.EntryFields[key]["crossref"] = crossrefKey
-				l.CheckCrossref(key)
 			}
 		}
-
-		if crossrefKey != "" {
-			l.CheckNeedToMergeForEqualTitles(crossrefKey) // Until we’ve undoubled all
-		}
 	}
+
+	return ""
 }
 
 func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
@@ -608,10 +604,8 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 
 			if childKey != "" {
 				childCrossref := l.DeAliasEntryKey(l.EntryFieldValueity(childKey, "crossref"))
-				if childCrossref == "" {
+				if childCrossref == "" || childCrossref != key {
 					l.EntryFields[childKey]["crossref"] = key
-				} else if childCrossref != key {
-					l.Warning("Child with DBLP key %s of entry %s refers to a different parent %s", childDBLP, key, childCrossref)
 				}
 			} else {
 				l.MaybeAddDBLPChildEntry(childDBLP, key)
