@@ -362,13 +362,13 @@ func (l *TBibTeXLibrary) ReassignFile(target, sourceFile string) {
 	l.EntryFields[target]["local-url"] = localURL
 }
 
-///// SPLIT!!
+// /// SPLIT!!
 func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 	if sourceRAW != "" && targetRAW != "" {
 		// Fix names
 		source := sourceRAW //l.DeAliasEntryKey(sourceRAW)
 		target := l.DeAliasEntryKey(targetRAW)
-	
+
 		if source != target && l.EntryExists(source) { // }&& l.EntryExists(target) {
 			l.Progress("Merging %s to %s", source, target)
 
@@ -760,7 +760,7 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 // Assign a value to a field
 // Post legacy ... we may want to add a key as well, when the parser maintains the current key on that side.
 func (l *TBibTeXLibrary) AssignField(field, value string) bool {
-	// Note: The parser for BibTeX streams is responsible for the mapping of field name alises, such as editors to editor, etc.
+	// Note: The parser for BibTeX streams is responsible for the mapping of field name aliases, such as editors to editor, etc.
 	// Here we only need to take care of the normalisation and processing of field values.
 	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
 

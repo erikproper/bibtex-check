@@ -397,5 +397,4 @@ func init() {
 	fieldNormalisers["url"] = NormaliseURLValue
 	fieldNormalisers["urldate"] = NormaliseDateValue
 	fieldNormalisers["year"] = NormaliseYearValue
-
 }

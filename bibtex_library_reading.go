@@ -185,7 +185,7 @@ func (l *TBibTeXLibrary) ReadNameAliasesFile() {
 		}
 
 		// Why pass on &l.NameAliasToName, &l.NameToAliases???
-		l.AddAliasForName(elements[1], elements[0], &l.NameAliasToName, &l.NameToAliases)
+		l.AddAliasForName(ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]), &l.NameAliasToName, &l.NameToAliases)
 	})
 }
 
