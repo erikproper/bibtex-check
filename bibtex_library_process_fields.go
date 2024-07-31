@@ -12,6 +12,8 @@
 
 package main
 
+//import "fmt"
+
 // Definition of the map for field processors
 type TFieldProcessors = map[string]func(*TBibTeXLibrary, string)
 
@@ -19,9 +21,7 @@ var fieldProcessors TFieldProcessors
 
 // When we have a DBLP field, we can use this as an alias
 func processDBLPValue(l *TBibTeXLibrary, value string) {
-	if !l.legacyMode {
 		l.AddKeyAlias("DBLP:"+value, l.currentKey)
-	}
 }
 
 // The general function call to process field values.

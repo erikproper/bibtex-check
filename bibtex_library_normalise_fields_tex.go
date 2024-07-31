@@ -156,7 +156,7 @@ func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, ne
 }
 
 func ApplyLaTeXMap (s string) string {
-	result := strings.ReplaceAll(s, " - ", " -- ")
+	result := strings.ReplaceAll(strings.ReplaceAll(s, " - ", " -- "), "{-}", "-")
 
 	for source, target := range LaTeXMap {
 		result = strings.ReplaceAll(result, "{" + source + "}", target)

@@ -119,7 +119,7 @@ func (l *TBibTeXLibrary) WritePreferredKeyAliasesFile() {
 	if !l.NoPreferredKeyAliasesFileWriting {
 		l.writeLibraryFile(PreferredKeyAliasesFileExtension, ProgressWritingPreferredKeyAliasesFile, func(aliasWriter *bufio.Writer) {
 			for key, alias := range Library.PreferredKeyAliases {
-				if key != alias && AllowLegacy {
+				if key != alias {
 					aliasWriter.WriteString(alias + "\n")
 				}
 			}

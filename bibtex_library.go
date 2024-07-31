@@ -509,7 +509,7 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 			delete(l.KeyToAliases, alias)
 		}
 
-		l.AddAlias(alias, key, &l.KeyAliasToKey, &l.KeyToAliases, false)
+		l.AddAlias(alias, key, &l.KeyAliasToKey, &l.KeyToAliases, !AllowLegacy) // Post legacy ... is the true/false needed at all??
 	}
 }
 
