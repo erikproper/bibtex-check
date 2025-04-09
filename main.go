@@ -142,14 +142,7 @@ func main() {
 
 			BibTeXParser := TBibTeXStream{}
 			BibTeXParser.Initialise(Reporting, &OldLibrary)
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old1.bib")
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old2.bib")
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old3.bib")
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old4.bib")
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old5.bib")
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old6.bib")
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old7.bib")
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old8.bib")
+			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old.bib")
 
 			OldLibrary.ReportLibrarySize()
 
@@ -163,7 +156,7 @@ func main() {
 				if Library.EntryFieldValueity(newKey, "dblp") != "" {
 					if isEntry && Library.EntryFieldValueity(newKey, "dblp") != "" {
 						// We don't have a set type function??
-						Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, EntryTypeField, oldType, newType)
+						Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, oldEntry, EntryTypeField, oldType, newType)
 
 						crossrefKey := Library.EntryFieldValueity(newKey, "crossref")
 
@@ -178,7 +171,7 @@ func main() {
 							// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
 							if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
 								if crossrefKey != "" && BibTeXMustInheritFields.Contains(oldField) {
-									target := Library.MaybeResolveFieldValue(crossrefKey, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
+									target := Library.MaybeResolveFieldValue(crossrefKey, oldEntry, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
 
 									if oldField == "booktitle" {
 										if Library.EntryFields[crossrefKey]["title"] == Library.EntryFields[crossrefKey]["booktitle"] {
@@ -188,7 +181,7 @@ func main() {
 
 									Library.EntryFields[crossrefKey][oldField] = target
 								} else {
-									Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldField, oldValue, Library.EntryFields[newKey][oldField])
+									Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldEntry, oldField, oldValue, Library.EntryFields[newKey][oldField])
 								}
 							}
 						}

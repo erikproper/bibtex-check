@@ -6,7 +6,7 @@
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
- * Version of: 06.05.2024
+ * Version of: 30.04.2025
  *
  */
 
@@ -37,7 +37,7 @@ func NormaliseAliassableFieldValue(fieldAliasToAlias TStringMap, value string) s
 
 // Normalise the name of a person based on the aliases
 func NormalisePersonNameValue(l *TBibTeXLibrary, name string) string {
-	return NormaliseAliassableFieldValue(l.NameAliasToName, name)
+	return NormaliseAliassableFieldValue(l.NameAliasToName, strings.TrimSpace(name))
 }
 
 // Normalize number values

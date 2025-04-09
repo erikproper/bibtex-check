@@ -262,7 +262,7 @@ func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
 func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	// SAFE??
 	if BibTeXBookish.Contains(l.EntryTypes[key]) {
-		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
+		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
 		l.UpdateEntryFieldAlias(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
 	}
@@ -394,13 +394,13 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
 func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefKey, key, field string) {
 	if BibTeXMustInheritFields.Contains(field) {
 		if challenge, hasChallenge := l.EntryFields[key][field]; hasChallenge {
-			target := l.MaybeResolveFieldValue(crossrefKey, field, challenge, l.EntryFieldValueity(crossrefKey, field))
+			target := l.MaybeResolveFieldValue(crossrefKey, key, field, challenge, l.EntryFieldValueity(crossrefKey, field))
 
 			l.EntryFields[crossrefKey][field] = target
 
 			if field == "booktitle" {
 				currentTitle := l.EntryFieldValueity(crossrefKey, "title")
-				newTitle := l.MaybeResolveFieldValue(crossrefKey, field, target, currentTitle)
+				newTitle := l.MaybeResolveFieldValue(crossrefKey, key, field, target, currentTitle)
 
 				if currentTitle != newTitle {
 					l.TitleIndex.DeleteValueFromStringSetMap(TeXStringIndexer(currentTitle), crossrefKey)
@@ -516,12 +516,14 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 		crossrefKey := l.EntryFieldValueity(l.DeAliasEntryKey(key), "crossref")
 		if crossrefKey == "" {
 			entryType := Library.EntryTypes[key]
+
 			bookTitle := l.EntryFieldValueity(l.DeAliasEntryKey(key), "booktitle")
 			if bookTitle == "" {
 				l.Warning("Empty booktitle for a bookish entry %s of type %s", key, entryType)
 			} else {
 				crossrefType := BibTeXCrossrefType[entryType]
 				crossrefKey = l.NewKey()
+				l.KeyIsTemporary.Add(crossrefKey)
 
 				// refactor this with func (l *TBibTeXLibrary) AssignField(field, value string) and StartRecordingEntry
 				l.EntryFields[crossrefKey] = TStringMap{}

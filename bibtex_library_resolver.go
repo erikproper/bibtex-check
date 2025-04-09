@@ -19,7 +19,7 @@ package main
 // Still a major construction site.
 //
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
-func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challengeRAW, currentRAW string) string {
+func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRAW, currentRAW string) string {
 	current := l.DeAliasFieldValue(field, currentRAW)
 	challenge := l.DeAliasFieldValue(field, challengeRAW)
 
@@ -41,7 +41,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challengeRAW, currentRAW 
 				return current
 
 			} else {
-				if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?", "Different crossrefs (%s,  %s) for entries that you want to merge.", current, challenge) {
+				if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?", "Different crossrefs (%s, %s) for entries (%s, %s) that you want to merge.", current, challenge, key, challengeKey) {
 					return l.MergeEntries(current, challenge)
 
 				} else {
@@ -120,12 +120,12 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, field, challengeRAW, currentRAW 
 }
 
 // If the current value is empty, then we can assign the alias.
-func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, field, challenge, current string) string {
+func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challenge, current string) string {
 	if current == "" {
 		return challenge
 	} else if challenge == "" {
 		return current
 	} else {
-		return l.ResolveFieldValue(key, field, challenge, current)
+		return l.ResolveFieldValue(key, challengeKey, field, challenge, current)
 	}
 }

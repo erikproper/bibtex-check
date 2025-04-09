@@ -167,6 +167,10 @@ func init() {
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9")
 
 	AddAllowedFields(
+		"repositum")
+	// Handle for repositum of TU Wien
+
+	AddAllowedFields(
 		"date-added", "date-modified",
 		"bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9",

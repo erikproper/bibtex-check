@@ -21,7 +21,7 @@ var fieldProcessors TFieldProcessors
 
 // When we have a DBLP field, we can use this as an alias
 func processDBLPValue(l *TBibTeXLibrary, value string) {
-		l.AddKeyAlias("DBLP:"+value, l.currentKey)
+	l.AddKeyAlias("DBLP:"+value, l.currentKey)
 }
 
 // The general function call to process field values.

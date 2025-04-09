@@ -44,6 +44,7 @@ type (
 		KeyAliasToKey                    TStringMap                // Mapping from key aliases to the actual entry key.
 		FieldMappings                    TStringStringStringMap    // field/value to field/value mapping
 		KeyToAliases                     TStringSetMap             // The inverted version of KeyAliasToKey NEEEEEEEDED??????
+		KeyIsTemporary                   TStringSet                // Keys that are generated for temporary reasons
 		PreferredKeyAliases              TStringMap                // Per entry key, the preferred alias
 		NameAliasToName                  TStringMap                // Mapping from name aliases to the actual name.
 		NameToAliases                    TStringSetMap             // The inverted version of NameAliasToName
@@ -100,6 +101,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.NonDoubles = TStringSetMap{}
 	l.EntryTypes = TStringMap{}
 	l.KeyAliasToKey = TStringMap{}
+	l.KeyIsTemporary = TStringSetNew()
 	l.NameAliasToName = TStringMap{}
 	l.PreferredKeyAliases = TStringMap{}
 
@@ -374,7 +376,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 
 			sourceType := l.EntryTypes[source]
 			targetType := l.EntryTypes[target]
-			targetType = Library.MaybeResolveFieldValue(target, EntryTypeField, sourceType, targetType)
+			targetType = Library.MaybeResolveFieldValue(target, source, EntryTypeField, sourceType, targetType)
 			Library.EntryTypes[target] = targetType
 
 			// Can be like a constant ...
@@ -383,7 +385,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			regularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
 			for regularField := range regularFields.Elements() {
 				// Do we need Library.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
-				Library.EntryFields.SetValueForStringPairMap(target, regularField, Library.MaybeResolveFieldValue(target, regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField]))
+				Library.EntryFields.SetValueForStringPairMap(target, regularField, Library.MaybeResolveFieldValue(target, source, regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField]))
 			}
 
 			URLSet := TStringSet{}
@@ -433,8 +435,11 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			}
 
 			l.UpdateGroupKeys(source, target)
-			l.AddKeyAlias(source, target)
-			l.AddNonDoubles(source, target)
+
+			if !l.KeyIsTemporary.Contains(source) {
+				l.AddKeyAlias(source, target)
+				l.AddNonDoubles(source, target)
+			}
 			l.ReassignEntryFieldAliases(source, target)
 
 			delete(l.EntryTypes, source)
@@ -748,7 +753,7 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 
 		// Resolve the double typing issue
 		// Post legacy migration, we still need to do this, but then we will always have: key == l.currentKey
-		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, EntryTypeField, entryType, l.EntryTypes[l.currentKey])
+		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, key, EntryTypeField, entryType, l.EntryTypes[l.currentKey])
 	} else {
 		l.EntryFields[l.currentKey] = TStringMap{}
 		l.EntryTypes[l.currentKey] = entryType
@@ -768,7 +773,7 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	currentValue := l.EntryFieldValueity(l.currentKey, field)
 
 	// Assign the new value, while, if needed, resolve it with the current value
-	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, field, newValue, currentValue)
+	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, l.currentKey, field, newValue, currentValue)
 
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {
