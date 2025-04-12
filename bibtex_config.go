@@ -167,6 +167,10 @@ func init() {
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9")
 
 	AddAllowedFields(
+		"file")
+	// JabRef
+
+	AddAllowedFields(
 		"repositum")
 	// Handle for repositum of TU Wien
 

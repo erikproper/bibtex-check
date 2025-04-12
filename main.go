@@ -124,7 +124,7 @@ func main() {
 			}
 		}
 
-	case len(os.Args) == 2 && os.Args[1] == "-legacy":
+	case len(os.Args) == 2 && os.Args[1] == "-legacy": // Keep for -import / -sync
 		if InitialiseMainLibrary() && OpenMainBibFile() {
 			writeBibFile = true
 			writeAliases = false
@@ -241,7 +241,12 @@ func main() {
 
 			for key := range Library.EntryTypes {
 				if Library.EntryFieldValueity(key, "dblp") != "" {
-					FIXThatShouldBeChecks(key)
+					if Library.EntryTypes[key] == "book" ||
+						Library.EntryTypes[key] == "incollection" ||
+						Library.EntryTypes[key] == "inbook" ||
+						Library.EntryTypes[key] == "article" {
+						FIXThatShouldBeChecks(key)
+					}
 				}
 			}
 			Library.WriteNonDoublesFile()

@@ -470,12 +470,15 @@ func (l *TBibTeXLibrary) updateLocalURL(BDSKFieldValue, localURL string) string 
 
 func (l *TBibTeXLibrary) CheckFileReference(key string) {
 	LocalURL := l.EntryFieldValueity(key, "local-url")
+	JRFile := LocalURL
 
 	if LocalURL == "" {
 		// We also seem to use this in main.go ... so maybe a function?
 		LocalURL = Library.FilesRoot + FilesFolder + key + ".pdf"
+		JRFile = FilesFolder + key + ".pdf"
 		if !FileExists(LocalURL) {
 			LocalURL = ""
+			JRFile = ""
 		}
 	}
 
@@ -500,6 +503,7 @@ func (l *TBibTeXLibrary) CheckFileReference(key string) {
 		l.Warning("Entry %s has local-url field", key)
 	}
 	l.EntryFields[key]["local-url"] = LocalURL
+	l.EntryFields[key]["file"] = JRFile
 }
 
 func (l *TBibTeXLibrary) CheckLanguageID(key string) {

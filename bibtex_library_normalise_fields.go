@@ -288,7 +288,7 @@ func NormaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
 	//			return ""
 	//		}
 	//	} else {
-	return ""
+	return rawFile
 	// }
 }
 

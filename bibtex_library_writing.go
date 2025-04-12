@@ -14,8 +14,8 @@ package main
 
 import (
 	"bufio"
-	"os"
 	//"fmt"
+	"os"
 )
 
 func (l *TBibTeXLibrary) writeFile(fullFilePath, message string, writing func(*bufio.Writer)) bool {
@@ -41,6 +41,10 @@ func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing
 	return l.writeFile(l.FilesRoot+l.BaseName+fileExtension, message, writing)
 }
 
+func (l *TBibTeXLibrary) writeJRLibraryFile(fileExtension, message string, writing func(*bufio.Writer)) bool {
+	return l.writeFile(l.FilesRoot+l.BaseName+"_JR"+fileExtension, message, writing)
+}
+
 // Function to write the BibTeX content of the library to a bufio.bWriter buffer
 // Notes:
 // - As we ignore preambles, these are not written.
@@ -61,6 +65,31 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 					bibWriter.WriteString("\n")
 				}
 			}
+		})
+	}
+	l.WriteJRBibTeXFile()
+}
+
+// Function to write the BibTeX content of the library to a bufio.bWriter buffer
+// Notes:
+// - As we ignore preambles, these are not written.
+// - When we start managing the groups (of keys) the way Bibdesk does, we need to ensure that their embedded as an XML structure embedded in a comment, is updated.
+func (l *TBibTeXLibrary) WriteJRBibTeXFile() {
+	if !l.NoBibFileWriting {
+		l.writeJRLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
+			// Write out the entries and their fields
+			for entry := range l.EntryTypes {
+				bibWriter.WriteString(l.EntryJRString(entry))
+				bibWriter.WriteString("\n")
+			}
+
+			//			if !l.migrationMode {
+			//				// Write out the comments
+			//				for _, comment := range l.Comments {
+			//					bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
+			//					bibWriter.WriteString("\n")
+			//				}
+			//			}
 		})
 	}
 }
@@ -91,7 +120,9 @@ func (l *TBibTeXLibrary) WriteNonDoublesFile() {
 				if key == l.DeAliasEntryKey(key) && l.EntryExists(key) {
 					for nonDouble := range set.Elements() {
 						if nonDouble != key && nonDouble == l.DeAliasEntryKey(nonDouble) && l.EntryExists(nonDouble) {
-							challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
+							if !l.EvidenceForBeingDifferentEntries(key, nonDouble) {
+								challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
+							}
 						}
 					}
 				}

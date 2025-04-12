@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"regexp"
 )
 
 /*
@@ -454,12 +455,21 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 	return ""
 }
 
+func EvidencedUnequal(a, b string) bool {
+	return a != "" && b != "" && a != b
+}
+
+func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string) bool {
+	return /**/ EvidencedUnequal(l.EntryFieldValueity(source, "dblp"), l.EntryFieldValueity(target, "dblp")) ||
+		/*   */ EvidencedUnequal(l.EntryFieldValueity(source, "doi"), l.EntryFieldValueity(target, "doi"))
+}
+
 func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 	// Fix names
 	source := l.DeAliasEntryKey(sourceRAW)
 	target := l.DeAliasEntryKey(targetRAW)
 
-	if source != target && !l.NonDoubles[source].Set().Contains(target) {
+	if source != target && !l.NonDoubles[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
 		l.Warning("Found potential double entries")
 
 		sourceEntry := l.EntryString(source, "  ")
@@ -607,6 +617,79 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 				result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
 			}
 		}
+
+		// Close the entry statement
+		result += linePrefix + "}\n"
+
+		return result
+	} else {
+		// When the specified entry does not exist, all we can do is return the empty string
+		return ""
+	}
+}
+
+//	var (
+//		trimDOIStart = regexp.MustCompile(`^(doi:|http(s|)://[a-z,.]*/)`)
+//		trimmedDOI   string
+//	)
+
+//	// Remove leading/trailing spaces
+//	trimmedDOI = strings.TrimSpace(rawDOI)
+//	// Remove doi: or http://XXX from the start
+//	trimmedDOI = trimDOIStart.ReplaceAllString(trimmedDOI, "")
+//	// Some publishers of BibTeX files use a "{$\_$}" in the doi. We prefer not to.
+//	trimmedDOI = strings.ReplaceAll(trimmedDOI, "\\_", "_")
+//	trimmedDOI = strings.ReplaceAll(trimmedDOI, "{$", "")
+//	trimmedDOI = strings.ReplaceAll(trimmedDOI, "$}", "")
+
+//	return trimmedDOI
+
+func CleanJRDate (s string) string {
+	var trimJRDate = regexp.MustCompile(`+.*`)
+	
+	return trimJRDate.ReplaceAllString(s, "")
+}
+
+func (l *TBibTeXLibrary) EntryJRString(key string, prefixes ...string) string {
+	_, knownEntry := l.EntryFields[key]
+
+	if knownEntry {
+		// Combine all prefixes into one
+		linePrefix := ""
+		for _, prefix := range prefixes {
+			linePrefix += prefix
+		}
+
+		result := ""
+		// Add the type and key
+		if !l.migrationMode {
+			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
+		} else if realKey, isAlias := Library.KeyAliasToKey[key]; isAlias {
+			result = linePrefix + "@" + l.EntryTypes[key] + "{" + realKey + ",\n"
+		} else {
+			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
+		}
+
+		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
+		for _, field := range BibTeXAllowedEntryFields[l.EntryTypes[key]].Set().ElementsSorted() {
+			if value := l.EntryFieldValueity(key, field); value != "" {
+				if BibTeXBDSKFileFields.Contains(field) || BibTeXBDSKURLFields.Contains(field) {
+					// Skip
+				} else if field == "date-added" {
+					result += linePrefix + "   creationdate = {" + value + "},\n"
+				} else if field == "date-modified" {
+					result += linePrefix + "   modificationdate = {" + value + "},\n"
+				} else if field == "file" {
+					result += linePrefix + "   file = {:" + value + ":PDF},\n"
+				} else {
+					result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
+				}
+			}
+		}
+
+		// date-added / creationdate
+		// date-modified / modificationdate
+		// 2024-05-25 18:55:24 +0200 ==> 2025-04-12T17:56:24
 
 		// Close the entry statement
 		result += linePrefix + "}\n"
