@@ -1,0 +1,26 @@
+- Export groups:
+  ErikProper.groups:
+  <group>	<key>
+
+
+- Reading names:
+	Many to ID; ID to "the one"
+	Stable ID??
+	The "the one" should be a "DBLP challenged" one
+
+- DBLP matching ... then do a fix for crossreferables ...
+- DBLP Scrape checker ... all accounted for ... and ... all needed there?
+
+---
+- Simplify key mapping
+  - Keep an ErikProper.keys, but only for EP ones with a non EP alias
+  - ErikProper.preferred should then have two fields
+  - Also have an erikp.keys as well as a basvg.keys, etc.
+- Importer / sync with a helper mapping like erikp.keys
+- Empower with a key mapper for known keys
+----
+- Optional removes on export: URL needed? DOI needed? Etc
+----
+- Write sorted
+----
+
