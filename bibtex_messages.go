@@ -58,7 +58,6 @@ const (
 	WarningAliasTargetPublisherIsAlias      = "Alias %s has a target publisher %s, which is actually an alias for %s."
 	WarningBadAlias                         = "Alias %s for %s does not comply to the rules."
 	WarningIllegalField                     = "Field \"%s\", with value \"%s\", is not allowed for entry %s of type %s."
-	WarningKeyHasLocalURL                   = "Entry %s has a local-url field."
 	QuestionIgnore                          = "Ignore this field?"
 	ProgressCheckingConsistencyOfEntries    = "Checking consistency and completeness of the library entries."
 	ProgressCheckingConsistencyOfKeyAliases = "Checking consistency and completeness of key aliases."

@@ -15,9 +15,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
-	"regexp"
 )
 
 /*
@@ -37,7 +37,6 @@ type (
 		TitleIndex                       TStringSetMap             //
 		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                        TStringSetMap             //
-		BDSKURLIndex                     TStringSetMap             //
 		FileMD5Index                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
 		NonDoubles                       TStringSetMap             //
@@ -96,7 +95,6 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.TitleIndex = TStringSetMap{}
 	l.BookTitleIndex = TStringSetMap{}
 	l.ISBNIndex = TStringSetMap{}
-	l.BDSKURLIndex = TStringSetMap{}
 	l.DOIIndex = TStringSetMap{}
 	l.FileMD5Index = TStringSetMap{}
 	l.NonDoubles = TStringSetMap{}
@@ -152,12 +150,6 @@ func (l *TBibTeXLibrary) AddComment(comment string) bool {
 	l.Comments = append(l.Comments, comment)
 
 	return true
-}
-
-func (l *TBibTeXLibrary) UpdateGroupKeys(source, target string) {
-	for i, c := range l.Comments {
-		l.Comments[i] = strings.ReplaceAll(c, source, target)
-	}
 }
 
 // Initial registration of a target over a alias for a given entry and its field.
@@ -342,30 +334,25 @@ func (l *TBibTeXLibrary) AddAliasForName(alias, name string, aliasMap *TStringMa
 	l.AddAlias(alias, name, aliasMap, inverseMap, true)
 }
 
-func (l *TBibTeXLibrary) FilePath(key string) string {
-	file := BDSKFile(l.EntryFieldValueity(key, FirstBDSKFileField))
+func (l *TBibTeXLibrary) FileReferencety(key string) string {
+	var (
+		trimFileReferenceStart = regexp.MustCompile(`^[~:]*:`)
+		trimFileReferenceEnd   = regexp.MustCompile(`:[^:]*$`)
+	)
 
-	if file == "" {
-		file = l.EntryFieldValueity(key, "local-url")
-	} else {
-		file = l.FilesRoot + file
-	}
+	FileReference := l.EntryFieldValueity(key, "file")
 
-	if file != "" && FileExists(file) {
-		return file
-	} else {
-		return ""
-	}
+	// Remove leading/trailing stuff
+	FileReference = trimFileReferenceStart.ReplaceAllString(FileReference, "")
+	FileReference = trimFileReferenceEnd.ReplaceAllString(FileReference, "")
+
+	return FileReference
 }
 
-func (l *TBibTeXLibrary) ReassignFile(target, sourceFile string) {
-	localURL := Library.FilesRoot + FilesFolder + target + ".pdf"
-	FileRename(sourceFile, localURL)
-	l.EntryFields[target][FirstBDSKFileField] = ""
-	l.EntryFields[target]["local-url"] = localURL
-}
-
-// /// SPLIT!!
+// /// SPLIT??
+///// fix source/target orders ... 
+///// MergeEntryFromTo(source, target)
+/////   ResolveFieldValueOfAgainst(current, challenge)
 func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 	if sourceRAW != "" && targetRAW != "" {
 		// Fix names
@@ -383,59 +370,10 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			// Can be like a constant ...
 			regularFields := TStringSet{}
 			regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
-			regularFields.Subtract(BibTeXBDSKURLFields).Subtract(BibTeXBDSKFileFields)
 			for regularField := range regularFields.Elements() {
 				// Do we need Library.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
 				Library.EntryFields.SetValueForStringPairMap(target, regularField, Library.MaybeResolveFieldValue(target, source, regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField]))
 			}
-
-			URLSet := TStringSet{}
-			URLSet.Initialise()
-
-			targetIndex := 0
-			sourceIndex := 0
-			// Do this as an overall "constant"??
-			SortedBibTeXBDSKURLFields := BibTeXBDSKURLFields.ElementsSorted()
-
-			for targetIndex < len(SortedBibTeXBDSKURLFields) && sourceIndex < len(SortedBibTeXBDSKURLFields) {
-				targetURLety := l.EntryFieldValueity(target, SortedBibTeXBDSKURLFields[targetIndex])
-				if targetURLety == "" {
-					sourceURLety := l.EntryFieldValueity(source, SortedBibTeXBDSKURLFields[sourceIndex])
-
-					if sourceURLety != "" && !URLSet.Contains(sourceURLety) {
-						l.EntryFields[target][SortedBibTeXBDSKURLFields[targetIndex]] = sourceURLety
-						URLSet.Add(sourceURLety)
-					}
-
-					sourceIndex++
-				} else {
-					URLSet.Add(targetURLety)
-
-					targetIndex++
-				}
-			}
-
-			if sourceIndex < len(SortedBibTeXBDSKURLFields) && targetIndex == len(SortedBibTeXBDSKURLFields) {
-				l.Warning("Too many BDSK urls for entry %s", target)
-			}
-
-			if sourceFile := l.FilePath(source); sourceFile != "" {
-				if targetFile := l.FilePath(target); targetFile == "" {
-					l.ReassignFile(target, sourceFile)
-				} else {
-					if EqualFiles(sourceFile, targetFile) {
-						FileDelete(sourceFile)
-					} else {
-						if l.WarningYesNoQuestion("Keep current", "Non-equal files; choice needed\nFor %s\nChallenge: %s\nCurrent:   %s", target, sourceFile, targetFile) {
-							FileDelete(sourceFile)
-						} else {
-							l.ReassignFile(target, sourceFile)
-						}
-					}
-				}
-			}
-
-			l.UpdateGroupKeys(source, target)
 
 			if !l.KeyIsTemporary.Contains(source) {
 				l.AddKeyAlias(source, target)
@@ -610,10 +548,6 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
 		for _, field := range BibTeXAllowedEntryFields[l.EntryTypes[key]].Set().ElementsSorted() {
 			if value := l.EntryFieldValueity(key, field); value != "" {
-				if field == "file" && l.legacyMode {
-					result += linePrefix + "   local-url = {" + value + "},\n"
-				}
-
 				result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
 			}
 		}
@@ -628,26 +562,10 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 	}
 }
 
-//	var (
-//		trimDOIStart = regexp.MustCompile(`^(doi:|http(s|)://[a-z,.]*/)`)
-//		trimmedDOI   string
-//	)
+func CleanJRDate(s string) string {
+	var trimJRDate = regexp.MustCompile(` \+.*`)
 
-//	// Remove leading/trailing spaces
-//	trimmedDOI = strings.TrimSpace(rawDOI)
-//	// Remove doi: or http://XXX from the start
-//	trimmedDOI = trimDOIStart.ReplaceAllString(trimmedDOI, "")
-//	// Some publishers of BibTeX files use a "{$\_$}" in the doi. We prefer not to.
-//	trimmedDOI = strings.ReplaceAll(trimmedDOI, "\\_", "_")
-//	trimmedDOI = strings.ReplaceAll(trimmedDOI, "{$", "")
-//	trimmedDOI = strings.ReplaceAll(trimmedDOI, "$}", "")
-
-//	return trimmedDOI
-
-func CleanJRDate (s string) string {
-	var trimJRDate = regexp.MustCompile(`+.*`)
-	
-	return trimJRDate.ReplaceAllString(s, "")
+	return strings.Replace(trimJRDate.ReplaceAllString(s, ""), " ", "T", -1)
 }
 
 func (l *TBibTeXLibrary) EntryJRString(key string, prefixes ...string) string {
@@ -670,26 +588,12 @@ func (l *TBibTeXLibrary) EntryJRString(key string, prefixes ...string) string {
 			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
 		}
 
-		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
+		/// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
 		for _, field := range BibTeXAllowedEntryFields[l.EntryTypes[key]].Set().ElementsSorted() {
 			if value := l.EntryFieldValueity(key, field); value != "" {
-				if BibTeXBDSKFileFields.Contains(field) || BibTeXBDSKURLFields.Contains(field) {
-					// Skip
-				} else if field == "date-added" {
-					result += linePrefix + "   creationdate = {" + value + "},\n"
-				} else if field == "date-modified" {
-					result += linePrefix + "   modificationdate = {" + value + "},\n"
-				} else if field == "file" {
-					result += linePrefix + "   file = {:" + value + ":PDF},\n"
-				} else {
-					result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
-				}
+				result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
 			}
 		}
-
-		// date-added / creationdate
-		// date-modified / modificationdate
-		// 2024-05-25 18:55:24 +0200 ==> 2025-04-12T17:56:24
 
 		// Close the entry statement
 		result += linePrefix + "}\n"
@@ -732,35 +636,57 @@ func (l *TBibTeXLibrary) EntryFieldAliasHasTarget(entry, field, challenger, winn
  */
 
 // As the bibtex keys we generate are day and time based (down to seconds only), we need to have enough "room" to quickly generate new keys.
-// By taking the time of starting the programme as the based, we can at least generate keys from that point in time on.
+// By taking the time of starting the programme as the base, we can at least generate keys from that point in time on.
 // However, we should never go beyond the present time, of course.
-var KeyTime time.Time // The time used for the latest generated key. Is set (see init() below) at the start of the programme.
+var (
+	ForwardKeyTime  time.Time // The time used for the latest generated key. Is set (see init() below) at the start of the programme.
+	BackwardKeyTime time.Time // XXXXXXXXXXXXXXXXXXXXXX. Is set (see init() below) at the start of the programme.
+)
 
-// Generate a new key based on the KeyTime.
-func (l *TBibTeXLibrary) NewKey() string {
-
-	// We're not allowed to move into the future.
-	if KeyTime.After(time.Now()) {
-		///////// WAAARNING
-		l.Warning("Sleep on key generation")
-		for KeyTime.After(time.Now()) {
-			// Sleep ...
-		}
-	}
-
-	// Create the actual new key
-	key := fmt.Sprintf(
+// ////// Place me somehwere
+func KeyFromTime(KeyTime time.Time) string {
+	return fmt.Sprintf(
 		"%s-%04d-%02d-%02d-%02d-%02d-%02d",
 		KeyPrefix,
-		KeyTime.Year(),
+		ForwardKeyTime.Year(),
 		int(KeyTime.Month()),
 		KeyTime.Day(),
 		KeyTime.Hour(),
 		KeyTime.Minute(),
 		KeyTime.Second())
+}
 
-	// Move to the next time for which we can generate a key.
-	KeyTime = KeyTime.Add(time.Second)
+// ////// Place me somehwere
+func (l *TBibTeXLibrary) IsKnownKey(key string) bool {
+	_, KnownOriginalKey := l.EntryFields[key]
+	_, KnownAliasKey := l.KeyAliasToKey[key]
+
+	return KnownOriginalKey || KnownAliasKey
+}
+
+// Generate a new key based on the ForwardKeyTime.
+func (l *TBibTeXLibrary) NewKey() string {
+	var key string
+
+	// We're not allowed to move into the future.
+	if ForwardKeyTime.After(time.Now()) {
+		l.Warning("Still thinking it would be key: %s", KeyFromTime(ForwardKeyTime))
+		l.Warning("Seeing if this works fron %s to: ", KeyFromTime(BackwardKeyTime), KeyFromTime(BackwardKeyTime.Add(-time.Second)))
+		// If we can't move forward, then look for a free key in the past
+		for key = KeyFromTime(BackwardKeyTime); l.IsKnownKey(key); {
+			// Move backward in time
+			BackwardKeyTime = BackwardKeyTime.Add(time.Duration(-1) * time.Second)
+
+			// Create the actual new key
+			key = KeyFromTime(BackwardKeyTime)
+		}
+	} else {
+		// Create the actual new key
+		key = KeyFromTime(ForwardKeyTime)
+
+		// Move to the next time for which we can generate a key.
+		ForwardKeyTime = ForwardKeyTime.Add(time.Second)
+	}
 
 	return key
 }
@@ -981,5 +907,6 @@ func (l *TBibTeXLibrary) MaybeSyncDBLPEntry(key string) {
 
 func init() {
 	// Set this at the start so we have enough keys to be generated by the time we need them.
-	KeyTime = time.Now()
+	ForwardKeyTime = time.Now()
+	BackwardKeyTime = ForwardKeyTime
 }

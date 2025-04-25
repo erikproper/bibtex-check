@@ -92,8 +92,11 @@ func BackupFile(sourceFile string) bool {
 
 // Check if the given file exists or not.
 func FileExists(fileName string) bool {
-	info, err := os.Stat(fileName)
+	if fileName == "" {
+		return false
+	}
 
+	info, err := os.Stat(fileName)
 	if os.IsNotExist(err) {
 		return false
 	}

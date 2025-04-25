@@ -159,24 +159,6 @@ func (l *TBibTeXLibrary) CheckURLPresence(key string) {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckBDSKURLCompleteness(key string) {
-	URLSet := TStringSet{}
-	URLSet.Initialise()
-
-	for _, BDSKURLField := range BibTeXBDSKURLFields.ElementsSorted() {
-		BDSKURL := l.EntryFieldValueity(key, BDSKURLField)
-
-		if BDSKURL != "" {
-			if URLSet.Contains(BDSKURL) {
-				l.Warning("Cleaning double DSK url within entry %s for field %s", key, BDSKURLField)
-				l.EntryFields[key][BDSKURLField] = ""
-			} else {
-				URLSet.Add(BDSKURL)
-			}
-		}
-	}
-}
-
 func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) bool {
 	if *foundDOI == "" {
 		if URL := l.EntryFieldValueity(key, field); URL != "" {
@@ -204,18 +186,8 @@ func (l *TBibTeXLibrary) CheckTitlePresence(key string) {
 func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 	foundDOI := l.EntryFieldValueity(key, "doi")
 
-	// Should involve a for loop for the bdsk-url's
 	if foundDOI == "" {
-		if l.tryGetDOIFromURL(key, "url", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-1", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-2", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-3", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-4", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-5", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-6", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-7", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-8", &foundDOI) ||
-			l.tryGetDOIFromURL(key, "bdsk-url-9", &foundDOI) {
+		if l.tryGetDOIFromURL(key, "url", &foundDOI) {
 
 			// If we found a doi in the URL, then assign it
 			fmt.Println("Found DOI", foundDOI, "for", key)
@@ -460,50 +432,12 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	}
 }
 
-func (l *TBibTeXLibrary) updateLocalURL(BDSKFieldValue, localURL string) string {
-	if FilePath := BDSKFile(BDSKFieldValue); FilePath != "" && strings.HasSuffix(localURL, FilePath) {
-		return ""
-	} else {
-		return localURL
-	}
+func (l *TBibTeXLibrary) CheckFileReferences(key, otherKey string) {
+	l.EntryFields[key]["file"] = l.ResolveFileReferences(key, otherKey)
 }
 
 func (l *TBibTeXLibrary) CheckFileReference(key string) {
-	LocalURL := l.EntryFieldValueity(key, "local-url")
-	JRFile := LocalURL
-
-	if LocalURL == "" {
-		// We also seem to use this in main.go ... so maybe a function?
-		LocalURL = Library.FilesRoot + FilesFolder + key + ".pdf"
-		JRFile = FilesFolder + key + ".pdf"
-		if !FileExists(LocalURL) {
-			LocalURL = ""
-			JRFile = ""
-		}
-	}
-
-	BSDKFileCount := 0
-	for index, BDSKFileField := range BibTeXBDSKFileFields.ElementsSorted() {
-		if BDSKFile := l.EntryFieldValueity(key, BDSKFileField); BDSKFile != "" {
-			BSDKFileCount++
-			if BSDKFileCount > 1 {
-				l.Warning("Multiple DSK files within entry %s", key)
-			}
-
-			if index > 0 && l.EntryFieldValueity(key, FirstBDSKFileField) == "" {
-				l.EntryFields[key][FirstBDSKFileField] = BDSKFile
-				l.EntryFields[key][BDSKFileField] = ""
-			}
-
-			LocalURL = l.updateLocalURL(BDSKFile, LocalURL)
-		}
-	}
-
-	if LocalURL != "" {
-		l.Warning("Entry %s has local-url field", key)
-	}
-	l.EntryFields[key]["local-url"] = LocalURL
-	l.EntryFields[key]["file"] = JRFile
+	l.CheckFileReferences(key, key)
 }
 
 func (l *TBibTeXLibrary) CheckLanguageID(key string) {
@@ -635,7 +569,6 @@ func (l *TBibTeXLibrary) CheckEntry(key string) {
 			l.CheckTitlePresence(key)
 			l.CheckURLPresence(key)
 			l.CheckURLDateNeed(key)
-			l.CheckBDSKURLCompleteness(key)
 			l.CheckFileReference(key)
 		}
 	}
@@ -650,15 +583,16 @@ func (l *TBibTeXLibrary) CheckEntries() {
 }
 
 func (l *TBibTeXLibrary) CheckFiles() {
+	// CONSTANT!!!!
 	l.Progress("Checking for superfluous and duplicate files.")
 	filePath := Library.FilesRoot + FilesFolder
 
-	entries, err := os.ReadDir(filePath)
+	files, err := os.ReadDir(filePath)
 	if err != nil {
 		return
 	}
 
-	for _, e := range entries {
+	for _, e := range files {
 		fileName := e.Name()
 		if strings.HasSuffix(fileName, ".pdf") {
 			key := strings.TrimSuffix(fileName, ".pdf")
@@ -672,7 +606,7 @@ func (l *TBibTeXLibrary) CheckFiles() {
 
 	for _, Keys := range Library.FileMD5Index {
 		if Keys.Size() > 1 {
-			l.Warning("File, with same content, is used by multiple different entries: %s", Keys.String())
+			l.Warning("File, with same content, is used by multiple different files: %s", Keys.String())
 			l.MaybeMergeEntrySet(Keys)
 		}
 	}

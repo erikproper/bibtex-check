@@ -13,7 +13,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"regexp"
 	"strings"
 	//"fmt"
@@ -88,6 +87,13 @@ func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 	trimmedURL = strings.ReplaceAll(trimmedURL, "$}", "")
 	// Same with "%5C" which is an encoded \_
 	trimmedURL = strings.ReplaceAll(trimmedURL, "%5C", "_")
+	// In config file?
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://ceur-ws.org/", "https://ceur-ws.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://hdl.handle.net/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://hdl.handle.net/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://doi.ieeecomputersociety.org/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://doi.ieeecomputersociety.org/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://doi.org/", "https://doi.org/")
 
 	return trimmedURL
 }
@@ -191,6 +197,18 @@ func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
 	return strings.TrimSpace(rawYear)
 }
 
+func NormaliseGroupsValue(l *TBibTeXLibrary, groups string) string {
+	groupSet := TStringSetNew()
+
+	// Generic Setify(string, delimiter) function??
+	groupMap := strings.Split(groups, ",")
+	for group := range groupMap {
+		groupSet.Add(strings.TrimSpace(groupMap[group]))
+	}
+
+	return groupSet.Stringify()
+}
+
 func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
 	var trimDashes = regexp.MustCompile(`-+`)
 
@@ -263,84 +281,6 @@ func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
 	return rangesList
 }
 
-// Legacy ... will be removed once we have migrated all legacy and files.
-func NormaliseFileValue(l *TBibTeXLibrary, rawFile string) string {
-	//	var (
-	//		trimFileStart = regexp.MustCompile(`^.*/Zotero/storage/`)
-	//		trimFileEnd   = regexp.MustCompile(`.pdf:.*$`)
-	//		trimmedFile   string
-	//	)
-
-	//	if l.legacyMode {
-	//		trimmedFile = trimFileStart.ReplaceAllString(rawFile, "")
-	//		trimmedFile = trimFileEnd.ReplaceAllString(trimmedFile, "") + ".pdf"
-	//		trimmedFile = strings.ReplaceAll(trimmedFile, "--", "-")
-	//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\`a}", "à")
-	//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\'e}", "é")
-	//		trimmedFile = strings.ReplaceAll(trimmedFile, "{\\~a}", "ã")
-	//
-	//		// Hardwired ... legacy!!
-	//		if FileExists("/Users/erikproper/BiBTeX/Zotero/" + trimmedFile) {
-	//			return "/Users/erikproper/BiBTeX/Zotero/" + trimmedFile
-	//		} else if FileExists("/Users/erikproper/Zotero/storage/" + trimmedFile) {
-	//			return "/Users/erikproper/Zotero/storage/" + trimmedFile
-	//		} else {
-	//			return ""
-	//		}
-	//	} else {
-	return rawFile
-	// }
-}
-
-func BDSKFile(value string) string {
-	if value != "" {
-		// Decode the provided value, and get the payload as a string.
-		data, _ := base64.StdEncoding.DecodeString(value)
-		payload := string(data)
-
-		// Find start of filename.
-		fileNameStart := strings.Index(payload, "relativePathXbookmark") + len("relativePathXbookmark") + 3
-		// Find the end of the filename
-		fileNameEnd := strings.Index(payload, ".pdf") + 4
-
-		// If we cannot find the ".pdf", there is not really a file.
-		if fileNameEnd <= 4 {
-			return ""
-		}
-
-		// We use the raw payload as the default filename
-		fileName := payload
-		// But if we have a correct "cutout" of the filename we will use that:
-		if 0 <= fileNameStart && fileNameStart < fileNameEnd && fileNameEnd <= len(payload) {
-			fileName = payload[fileNameStart:fileNameEnd]
-		}
-
-		return fileName
-	} else {
-		return ""
-	}
-}
-
-func NormaliseBDSKFileValue(l *TBibTeXLibrary, value string) string {
-	if fileName := BDSKFile(value); fileName != "" {
-		// See if the file exists
-		if FileExists(l.FilesRoot + fileName) {
-			// If it's there, we can return the original value as-is
-			return value
-		} else {
-			// If it is not there, create a warning, and return empty
-			///// currentKey ...???
-			if !l.legacyMode {
-				l.Warning(WarningMissingFile, fileName, l.currentKey)
-			}
-
-			return ""
-		}
-	} else {
-		return ""
-	}
-}
-
 // The general function call to Normalise field values.
 // If a field specific Normalisation function exists, then it is applied.
 // Otherwise, we only remove leading/trailing spaces.
@@ -359,34 +299,15 @@ func init() {
 	fieldNormalisers = TFieldNormalisers{}
 	fieldNormalisers["address"] = NormaliseTitleString
 	fieldNormalisers["author"] = NormaliseNamesString
-	fieldNormalisers["bdsk-file-1"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-2"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-3"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-4"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-5"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-6"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-7"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-8"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-file-9"] = NormaliseBDSKFileValue
-	fieldNormalisers["bdsk-url-1"] = NormaliseURLValue
-	fieldNormalisers["bdsk-url-2"] = NormaliseURLValue
-	fieldNormalisers["bdsk-url-3"] = NormaliseURLValue
-	fieldNormalisers["bdsk-url-4"] = NormaliseURLValue
-	fieldNormalisers["bdsk-url-5"] = NormaliseURLValue
-	fieldNormalisers["bdsk-url-6"] = NormaliseURLValue
-	fieldNormalisers["bdsk-url-7"] = NormaliseURLValue
-	fieldNormalisers["bdsk-url-8"] = NormaliseURLValue
-	fieldNormalisers["bdsk-url-9"] = NormaliseURLValue
 	fieldNormalisers["booktitle"] = NormaliseTitleString
 	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString
-	fieldNormalisers["file"] = NormaliseFileValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["howpublished"] = NormaliseTitleString
+	fieldNormalisers["groups"] = NormaliseGroupsValue
 	fieldNormalisers["institution"] = NormaliseTitleString
 	fieldNormalisers["isbn"] = NormaliseISBNValue
 	fieldNormalisers["issn"] = NormaliseISSNValue
 	fieldNormalisers["journal"] = NormaliseTitleString
-	fieldNormalisers["local-url"] = NormaliseFileValue // only needed while still allowing l.legacyMode
 	fieldNormalisers["number"] = NormaliseNumberValue
 	fieldNormalisers["organization"] = NormaliseTitleString
 	fieldNormalisers["pages"] = NormalisePagesValue

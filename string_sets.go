@@ -190,6 +190,40 @@ func (s *TStringSet) Contains(elements ...string) bool {
 	return true
 }
 
+//// RETHING STring and Stringify
+//// Could include a function to prepare the values, and then the ", and ", and" or "and" options
+//// So, set a "format" function as parameter in the TStringSet
+//// Same with overall wrapping with eg "{ ... }"
+//// NOTE: Same for ordering it I guess ...
+
+func (s TStringSet) Stringify() string {
+	head := ""
+	tail := ""
+
+	for _, element := range s.ElementsSorted() {
+		if head == "" {
+			head = tail
+		} else {
+			head += ", " + tail
+		}
+		tail = element
+	}
+
+	if s.verbalise {
+		if head == "" {
+			return tail
+		} else {
+			return head + " and " + tail
+		}
+	} else {
+		if head == "" {
+			return tail
+		} else {
+			return head + ", " + tail
+		}
+	}
+}
+
 // Convert strings sets to a string.
 // Depending on the settings regarding Verbalised/Mathematical, different styles of strings will be created:
 // - Verbalised:   "june", juli", and "august"
@@ -198,7 +232,7 @@ func (s TStringSet) String() string {
 	head := ""
 	tail := ""
 
-	for element := range s.elements {
+	for _, element := range s.ElementsSorted() {
 		if head == "" {
 			head = tail
 		} else {

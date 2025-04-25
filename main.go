@@ -162,12 +162,6 @@ func main() {
 
 						// EntryFields function???
 						for oldField, oldValue := range OldLibrary.EntryFields[oldEntry] {
-							if oldField == "file" {
-								if oldValue != "" && Library.EntryFields[newKey]["bdsk-file-1"] == "" {
-									Library.EntryFields[newKey]["local-url"] = oldValue
-								}
-							}
-
 							// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
 							if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
 								if crossrefKey != "" && BibTeXMustInheritFields.Contains(oldField) {
@@ -243,7 +237,15 @@ func main() {
 				if Library.EntryFieldValueity(key, "dblp") != "" {
 					if Library.EntryTypes[key] == "book" ||
 						Library.EntryTypes[key] == "incollection" ||
+						Library.EntryTypes[key] == "misc" ||
 						Library.EntryTypes[key] == "inbook" ||
+						Library.EntryTypes[key] == "booklet" ||
+						Library.EntryTypes[key] == "manual" ||
+						Library.EntryTypes[key] == "mastersthesis" ||
+						Library.EntryTypes[key] == "phdthesis" ||
+						Library.EntryTypes[key] == "techreport" ||
+						Library.EntryTypes[key] == "proceedings" ||
+						Library.EntryTypes[key] == "inproceedings" ||
 						Library.EntryTypes[key] == "article" {
 						FIXThatShouldBeChecks(key)
 					}
@@ -345,7 +347,6 @@ func main() {
 			key := Library.DeAliasEntryKey(keyStrings[len(keyStrings)-1])
 			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 				fmt.Println("Mapping", alias, "to", key)
-				Library.UpdateGroupKeys(alias, key)
 				Library.AddKeyAlias(alias, key)
 				Library.CheckPreferredKeyAliasesConsistency(key)
 			}

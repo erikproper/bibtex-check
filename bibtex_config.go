@@ -21,8 +21,6 @@ var (
 	BibTeXMustInheritFields  TStringSet            //
 	BibTeXMayInheritFields   TStringSet            //
 	BibTeXInheritableFields  TStringSet            //
-	BibTeXBDSKFileFields     TStringSet            //
-	BibTeXBDSKURLFields      TStringSet            //
 	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entry types
 	BibTeXBookish            TStringSet            // All book-alike entry types
 	BibTeXCrossreffer        TStringSet            //
@@ -30,7 +28,6 @@ var (
 	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
 	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
 	BibTeXCrossrefType       TStringMap            // Entry type mapping for crossrefs
-	FirstBDSKFileField       string
 )
 
 const (
@@ -109,8 +106,6 @@ func init() {
 	BibTeXImportFields.Initialise()
 	BibTeXBookish.Initialise()
 	BibTeXCrossreffer.Initialise()
-	BibTeXBDSKFileFields.Initialise()
-	BibTeXBDSKURLFields.Initialise()
 	BibTeXMustInheritFields.Initialise()
 	BibTeXMayInheritFields.Initialise()
 	BibTeXInheritableFields.Initialise()
@@ -151,38 +146,19 @@ func init() {
 	AddAllowedFields(
 		"month", "year", "note", "doi", "key", "author", "title",
 		"dblp", "researchgate",
-		"eprinttype", "eprint",
-		"local-url", "langid",
+		"eprinttype", "eprint", "langid",
 		"url", "urldate", "urloriginal")
 
 	// Needed for what?? Legacy? Import??
 	BibTeXImportFields.Unite(BibTeXAllowedFields)
 
-	//////	WOULD be nice to then Unite this one to AllowedFields, but this requires a special version of AddAllowedFields as that one does some checks ...
-	BibTeXBDSKFileFields.Add("bdsk-file-1", "bdsk-file-2", "bdsk-file-3", "bdsk-file-4", "bdsk-file-5",
-		"bdsk-file-6", "bdsk-file-7", "bdsk-file-8", "bdsk-file-9")
-	FirstBDSKFileField = BibTeXBDSKFileFields.ElementsSorted()[0]
-
-	BibTeXBDSKURLFields.Add("bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
-		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9")
-
+	// Jabref
 	AddAllowedFields(
-		"file")
-	// JabRef
+		"creationdate", "modificationdate", "groups", "file", "owner")
 
 	AddAllowedFields(
 		"repositum")
 	// Handle for repositum of TU Wien
-
-	AddAllowedFields(
-		"date-added", "date-modified",
-		"bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
-		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9",
-		"bdsk-file-1", "bdsk-file-2", "bdsk-file-3", "bdsk-file-4", "bdsk-file-5",
-		"bdsk-file-6", "bdsk-file-7", "bdsk-file-8", "bdsk-file-9")
-	// (*) The above ones are the ones needed for my purposes in the BiBDesk contect.
-	// It makes sense to allow a config file to add to these, and move some of the above to this config file as well.
-	// For instance "researchgate" and "urloriginal"
 
 	// Refactor ...
 	BibTeXBookish.Add("proceedings", "book")
@@ -195,8 +171,7 @@ func init() {
 
 	BibTeXMustInheritFields.Add("booktitle", "year", "editor", "publisher", "volume", "number", "series",
 		"address", "month", "edition", "issn", "isbn", "address", "type", "organization")
-	BibTeXMayInheritFields.Add("doi", "url", "bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
-		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9")
+	BibTeXMayInheritFields.Add("doi", "url")
 	BibTeXInheritableFields.Unite(BibTeXMustInheritFields).Unite(BibTeXMayInheritFields)
 	// Consistency checks:
 	// - Target of BibTeXCrossrefType must always be bookish
