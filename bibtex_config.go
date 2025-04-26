@@ -37,7 +37,7 @@ const (
 	FilesFolder = "Files/"
 
 	BibFileExtension                 = ".bib"
-	GroupsFileExtension              = ".group"
+	GroupsFileExtension              = ".groups"
 	KeyAliasesFileExtension          = ".keys"
 	PreferredKeyAliasesFileExtension = ".preferred"
 	NameAliasesFileExtension         = ".names"

@@ -14,6 +14,7 @@ package main
 
 import (
 	"bufio"
+	"strings"
 	//"fmt"
 	"os"
 )
@@ -67,8 +68,13 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 	l.writeLibraryFile(GroupsFileExtension, ProgressWritingGroupsFile, func(groupsWriter *bufio.Writer) {
 		// Write out the entries and their fields
 		for entry := range l.EntryTypes {
-			groupsWriter.WriteString(entry + "" + l.EntryFieldValueity(entry, "doi"))
-			groupsWriter.WriteString("\n")
+			groups := l.EntryFieldValueity(entry, "groups")
+			if groups != "" {
+				groupMap := strings.Split(groups, ",")
+				for group := range groupMap {
+					groupsWriter.WriteString(entry + "	" + strings.TrimSpace(groupMap[group]) + "\n")
+				}
+			}
 		}
 	})
 }
