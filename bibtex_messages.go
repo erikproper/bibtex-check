@@ -73,6 +73,7 @@ const (
 
 	// Progress reports for reading/writing files"Line in aliases file is too short: %s"
 	ProgressWritingBibFile                 = "Writing bib file %s"
+	ProgressWritingGroupsFile              = "Writing groups file %s"
 	ProgressWritingNonDoublesFile          = "Writing non_doubles file %s"
 	ProgressWritingGenericFieldAliasesFile = "Writing generic field aliases file %s"
 	ProgressWritingEntryFieldAliasesFile   = "Writing entry field aliases file %s"

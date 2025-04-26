@@ -37,6 +37,7 @@ const (
 	FilesFolder = "Files/"
 
 	BibFileExtension                 = ".bib"
+	GroupsFileExtension              = ".group"
 	KeyAliasesFileExtension          = ".keys"
 	PreferredKeyAliasesFileExtension = ".preferred"
 	NameAliasesFileExtension         = ".names"
@@ -195,7 +196,6 @@ func init() {
 	BibTeXFieldMap["contributors"] = "author"
 	BibTeXFieldMap["ee"] = "url"
 	BibTeXFieldMap["language"] = "langid"
-	BibTeXFieldMap["group"] = "groups"
 
 	// We probably want to get rid of these, as soon as we're finished with the legacy migration.
 	// Although the "_" seems to occur in "harvested" libraries as well.

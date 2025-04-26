@@ -44,7 +44,6 @@ func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing
 // Function to write the BibTeX content of the library to a bufio.bWriter buffer
 // Notes:
 // - As we ignore preambles, these are not written.
-// - When we start managing the groups (of keys) the way Bibdesk does, we need to ensure that their embedded as an XML structure embedded in a comment, is updated.
 func (l *TBibTeXLibrary) WriteBibTeXFile() {
 	if !l.NoBibFileWriting {
 		l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
@@ -63,6 +62,15 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 			}
 		})
 	}
+
+	// Writing the groups
+	l.writeLibraryFile(GroupsFileExtension, ProgressWritingGroupsFile, func(groupsWriter *bufio.Writer) {
+		// Write out the entries and their fields
+		for entry := range l.EntryTypes {
+			groupsWriter.WriteString(entry + "" + l.EntryFieldValueity(entry, "doi"))
+			groupsWriter.WriteString("\n")
+		}
+	})
 }
 
 // Write the challenges and winners for field values, of this library, to a file

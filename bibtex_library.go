@@ -350,9 +350,9 @@ func (l *TBibTeXLibrary) FileReferencety(key string) string {
 }
 
 // /// SPLIT??
-///// fix source/target orders ... 
-///// MergeEntryFromTo(source, target)
-/////   ResolveFieldValueOfAgainst(current, challenge)
+// /// fix source/target orders ...
+// /// MergeEntryFromTo(source, target)
+// ///   ResolveFieldValueOfAgainst(current, challenge)
 func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 	if sourceRAW != "" && targetRAW != "" {
 		// Fix names
@@ -670,6 +670,8 @@ func (l *TBibTeXLibrary) NewKey() string {
 
 	// We're not allowed to move into the future.
 	if ForwardKeyTime.After(time.Now()) {
+		l.Warning("Still thinking it would be key: %s", KeyFromTime(ForwardKeyTime))
+		l.Warning("Seeing if this works fron %s to: ", KeyFromTime(BackwardKeyTime), KeyFromTime(BackwardKeyTime.Add(-time.Second)))
 		// If we can't move forward, then look for a free key in the past
 		for key = KeyFromTime(BackwardKeyTime); l.IsKnownKey(key); {
 			// Move backward in time

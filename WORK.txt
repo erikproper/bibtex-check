@@ -1,7 +1,7 @@
 - Export groups:
   ErikProper.groups:
   <group>	<key>
-
+- Get CV to work again
 
 - Reading names:
 	Many to ID; ID to "the one"
