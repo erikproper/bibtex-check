@@ -123,8 +123,9 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 	l.Progress(ProgressCheckingConsistencyOfKeyAliases)
 
 	for alias, key := range l.KeyAliasToKey {
+		// WORK!!
 		// Once we're not in legacy mode anymore, then we need to enforce l.EntryExists(key)
-		if AllowLegacy && l.EntryExists(key) {
+		if l.EntryExists(key) {
 			// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced key.
 			if strings.Index(alias, "DBLP:") == 0 {
 				dblpAlias := alias[5:]
@@ -140,7 +141,7 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 			}
 		}
 
-		if !AllowLegacy && !l.EntryExists(key) {
+		if !l.EntryExists(key) {
 			l.Warning("Target %s of alias %s does not exist", key, alias)
 		}
 

@@ -48,23 +48,30 @@ func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing
 func (l *TBibTeXLibrary) WriteBibTeXFile() {
 	if !l.NoBibFileWriting {
 		l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
-			// Write out the entries and their fields
+			// Write out the entries and their fields, but do so in a crossref friendly order. So first the non-bookish, and then the bookish ones
 			for entry := range l.EntryTypes {
-				bibWriter.WriteString(l.EntryString(entry))
-				bibWriter.WriteString("\n")
-			}
-
-			if !l.migrationMode {
-				// Write out the comments
-				for _, comment := range l.Comments {
-					bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
+				if !BibTeXBookish.Contains(l.EntryTypes[entry]) {
+					bibWriter.WriteString(l.EntryString(entry))
 					bibWriter.WriteString("\n")
 				}
+			}
+
+			for entry := range l.EntryTypes {
+				if BibTeXBookish.Contains(l.EntryTypes[entry]) {
+					bibWriter.WriteString(l.EntryString(entry))
+					bibWriter.WriteString("\n")
+				}
+			}
+
+			// Write out the comments
+			for _, comment := range l.Comments {
+				bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
+				bibWriter.WriteString("\n")
 			}
 		})
 	}
 
-	// Writing the groups
+	// Writing the groups ... split off into own function?
 	l.writeLibraryFile(GroupsFileExtension, ProgressWritingGroupsFile, func(groupsWriter *bufio.Writer) {
 		// Write out the entries and their fields
 		for entry := range l.EntryTypes {

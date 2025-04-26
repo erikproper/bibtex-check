@@ -9,9 +9,8 @@ import (
 )
 
 var (
-	AllowLegacy bool
-	Library     TBibTeXLibrary
-	Reporting   TInteraction
+	Library   TBibTeXLibrary
+	Reporting TInteraction
 )
 
 const (
@@ -88,7 +87,6 @@ func main() {
 	writeAliases := false
 	writeMappings := false
 	writeBibFile := false
-	AllowLegacy = false
 
 	switch {
 	case len(os.Args) == 1:
@@ -129,14 +127,12 @@ func main() {
 			writeBibFile = true
 			writeAliases = false
 			writeMappings = true
-			AllowLegacy = true
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
 
 			OldLibrary := TBibTeXLibrary{}
 			OldLibrary.Progress("Reading legacy library")
 			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder, BaseName)
-			OldLibrary.legacyMode = true
 			OldLibrary.ReadAliasesFiles()
 			OldLibrary.ReadFieldMappingsFile()
 

@@ -51,7 +51,6 @@ type (
 		illegalFields                    TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
 		currentKey                       string                    // The key of the entry we are currently working on.
 		foundDoubles                     bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		legacyMode                       bool                      // If set, we may switch off certain checks as we know we are importing from a legacy BibTeX file.
 		EntryFieldAliasToTarget          TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
 		EntryFieldTargetToAliases        TStringStringStringSetMap // DO WE NEED THE INVERSES??
 		GenericFieldAliasToTarget        TStringStringMap          // A field specific mapping from challenged value to winner values
@@ -64,7 +63,6 @@ type (
 		NoNameAliasesFileWriting         bool
 		NoNonDoublesFileWriting          bool
 		NoFieldMappingsFileWriting       bool
-		migrationMode                    bool
 		IgnoreIllegalFields              bool
 		TBibTeXTeX
 		TInteraction  // Error reporting channel
@@ -85,7 +83,6 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 
 	l.TBibTeXTeX.library = l
 
-	l.migrationMode = false
 	l.FilesRoot = filesRoot
 	l.BaseName = baseName
 
@@ -103,11 +100,6 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.KeyIsTemporary = TStringSetNew()
 	l.NameAliasToName = TStringMap{}
 	l.PreferredKeyAliases = TStringMap{}
-
-	if AllowLegacy {
-		// Do we really need this one? And .. it should then be KeyToAliasKey
-		l.KeyToAliases = TStringSetMap{}
-	}
 
 	l.EntryFieldTargetToAliases = TStringStringStringSetMap{}
 	l.GenericFieldTargetToAliases = TStringStringSetMap{}
@@ -127,10 +119,6 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.NoNameAliasesFileWriting = false
 	l.NoFieldMappingsFileWriting = false
 	l.IgnoreIllegalFields = false
-
-	if AllowLegacy {
-		l.legacyMode = false
-	}
 }
 
 /*
@@ -170,7 +158,7 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 	if check {
 		if currentTarget, aliasIsAlreadyAliased := l.EntryFieldAliasToTarget[entry][field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
-				l.Warning(WarningAmbiguousAlias, alias, currentTarget, target)
+				l.Warning("line 162: "+WarningAmbiguousAlias, alias, currentTarget, target)
 				l.NoEntryFieldAliasesFileWriting = true
 
 				return
@@ -215,7 +203,7 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 	if check {
 		if currentTarget, aliasIsAlreadyAliased := l.GenericFieldAliasToTarget[field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
-				l.Warning(WarningAmbiguousAlias, alias, currentTarget, target)
+				l.Warning("line: 206"+WarningAmbiguousAlias, alias, currentTarget, target)
 				l.NoGenericFieldAliasesFileWriting = true
 
 				return
@@ -277,7 +265,7 @@ func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
 
 // Move the alias preference to another key
 func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
-	if l.PreferredKeyAliases[currentKey] == alias && AllowLegacy {
+	if l.PreferredKeyAliases[currentKey] == alias {
 		delete(l.PreferredKeyAliases, currentKey)
 		l.PreferredKeyAliases[key] = alias
 	}
@@ -299,7 +287,7 @@ func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, 
 	if check {
 		if currentOriginal, aliasIsAlreadyAliased := (*aliasMap)[alias]; aliasIsAlreadyAliased {
 			if currentOriginal != original {
-				l.Warning(WarningAmbiguousAlias, alias, currentOriginal, original)
+				l.Warning("Line 290:"+WarningAmbiguousAlias, alias, currentOriginal, original)
 
 				return
 			}
@@ -462,7 +450,9 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 			delete(l.KeyToAliases, alias)
 		}
 
-		l.AddAlias(alias, key, &l.KeyAliasToKey, &l.KeyToAliases, !AllowLegacy) // Post legacy ... is the true/false needed at all??
+		l.AddAlias(alias, key, &l.KeyAliasToKey, &l.KeyToAliases, true)
+		// Post legacy ... is the true/false needed at all??
+		// Definitely! Needed for mergers of entries, to allow for fresh aliases!!
 	}
 }
 
@@ -537,13 +527,7 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 
 		result := ""
 		// Add the type and key
-		if !l.migrationMode {
-			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
-		} else if realKey, isAlias := Library.KeyAliasToKey[key]; isAlias {
-			result = linePrefix + "@" + l.EntryTypes[key] + "{" + realKey + ",\n"
-		} else {
-			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
-		}
+		result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
 
 		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
 		for _, field := range BibTeXAllowedEntryFields[l.EntryTypes[key]].Set().ElementsSorted() {
@@ -578,15 +562,8 @@ func (l *TBibTeXLibrary) EntryJRString(key string, prefixes ...string) string {
 			linePrefix += prefix
 		}
 
-		result := ""
 		// Add the type and key
-		if !l.migrationMode {
-			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
-		} else if realKey, isAlias := Library.KeyAliasToKey[key]; isAlias {
-			result = linePrefix + "@" + l.EntryTypes[key] + "{" + realKey + ",\n"
-		} else {
-			result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
-		}
+		result := linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
 
 		/// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
 		for _, field := range BibTeXAllowedEntryFields[l.EntryTypes[key]].Set().ElementsSorted() {
@@ -708,7 +685,7 @@ func (l *TBibTeXLibrary) StartRecordingToLibrary() bool {
 // Finish recording to the library
 func (l *TBibTeXLibrary) FinishRecordingToLibrary() bool {
 	// If we did encounter illegal fields we need to issue a warning.
-	if !l.legacyMode && !l.IgnoreIllegalFields && l.illegalFields.Size() > 0 {
+	if !l.IgnoreIllegalFields && l.illegalFields.Size() > 0 {
 		l.Warning(WarningUnknownFields, l.illegalFields.String())
 	}
 
@@ -731,20 +708,8 @@ var uniqueID int
 
 // Start to record a library entry
 func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
-	if l.legacyMode && !l.migrationMode {
-		// Post legacy question: Do we want to use currentKey or can this be kept on the parser side??
-		l.currentKey = fmt.Sprintf("%dAAAAA", uniqueID) + key
-		uniqueID++
-	} else if l.migrationMode {
-		if mappedKey, isAlias := Library.KeyAliasToKey[key]; isAlias {
-			l.currentKey = mappedKey
-		} else {
-			l.currentKey = key
-		}
-	} else {
-		// Set the current key. But can't we keep that current key "inside" the parser?
-		l.currentKey = key
-	}
+	// Set the current key. But can't we keep that current key "inside" the parser?
+	l.currentKey = key
 
 	if !BibTeXAllowedEntries.Contains(entryType) {
 		l.Warning(WarningUnknownEntryType, l.currentKey, entryType)
@@ -755,10 +720,8 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 	if l.EntryExists(l.currentKey) {
 		// When the entry already exists, we need to report that we found doubles, as well as possibly resolve the entry type.
 
-		if !l.migrationMode {
-			l.Warning(WarningEntryAlreadyExists, l.currentKey)
-			l.foundDoubles = true
-		}
+		l.Warning(WarningEntryAlreadyExists, l.currentKey)
+		l.foundDoubles = true
 
 		// Resolve the double typing issue
 		// Post legacy migration, we still need to do this, but then we will always have: key == l.currentKey
@@ -824,7 +787,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 
 	// Check if no illegal fields were used
 	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
-	if !l.legacyMode && !l.InteractionIsOff() {
+	if !l.InteractionIsOff() {
 		key := l.currentKey
 		for field, value := range l.EntryFields[key] {
 			// Check if the field is allowed for this type.

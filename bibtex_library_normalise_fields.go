@@ -127,10 +127,7 @@ func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 		}
 	}
 
-	// If we get here, we have a bad ISSN on our hand.
-	if !l.legacyMode {
-		l.Warning(WarningBadISSN, rawISSN, l.currentKey)
-	}
+	l.Warning(WarningBadISSN, rawISSN, l.currentKey)
 
 	return strings.TrimSpace(rawISSN)
 }
@@ -156,10 +153,7 @@ func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 		return trimmedISBN
 	}
 
-	// If we get here, we have a bad ISBN on our hand.
-	if !l.legacyMode {
-		l.Warning(WarningBadISBN, rawISBN, l.currentKey)
-	}
+	l.Warning(WarningBadISBN, rawISBN, l.currentKey)
 
 	return strings.TrimSpace(rawISBN)
 }
@@ -174,9 +168,7 @@ func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
 	}
 
 	// If we get here, we have a bad year on our hand.
-	if !l.legacyMode {
-		l.Warning(WarningBadDate, rawDate, l.currentKey)
-	}
+	l.Warning(WarningBadDate, rawDate, l.currentKey)
 
 	return strings.TrimSpace(rawDate)
 }
@@ -190,9 +182,7 @@ func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
 	}
 
 	// If we get here, we have a bad year on our hand.
-	if !l.legacyMode {
-		l.Warning(WarningBadYear, rawYear, l.currentKey)
-	}
+	l.Warning(WarningBadYear, rawYear, l.currentKey)
 
 	return strings.TrimSpace(rawYear)
 }
