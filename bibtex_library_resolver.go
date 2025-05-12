@@ -50,7 +50,7 @@ func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
 // Rethink this name ... "Field", since it may also work on the type ...
 func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRAW, currentRAW string) string {
 	current := l.DeAliasFieldValue(field, currentRAW)
-	challenge := l.DeAliasFieldValue(field, challengeRAW)
+	challenge := l.DeAliasFieldValue(field, l.NormaliseFieldValue(field, challengeRAW))
 
 	// OK. The key, field, and challenge are needed here. But, current is likely to be derivable from l with key and field.
 	// But ... needs to be checked once done with the legacy migration.
