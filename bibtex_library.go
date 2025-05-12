@@ -263,7 +263,7 @@ func (l *TBibTeXLibrary) AddImpliedKeyAliases() {
 
 		dblp := l.EntryFieldValueity(key, "")
 		if dblp != "" {
-			l.AddImpliedKeyAlias(key, "DBLP:" + dblp)
+			l.AddImpliedKeyAlias(key, "DBLP:"+dblp)
 		}
 	}
 }
@@ -368,11 +368,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 
 			delete(l.EntryFields, source)
 
-			silenced := l.InteractionIsOff()
-			l.SetInteractionOff()
 			l.CheckEntry(target)
-			l.SetInteraction(silenced)
-
 		}
 
 		return target
@@ -627,8 +623,6 @@ func (l *TBibTeXLibrary) NewKey() string {
 
 	// We're not allowed to move into the future.
 	if ForwardKeyTime.After(time.Now()) {
-		l.Warning("Still thinking it would be key: %s", KeyFromTime(ForwardKeyTime))
-		l.Warning("Seeing if this works fron %s to: ", KeyFromTime(BackwardKeyTime), KeyFromTime(BackwardKeyTime.Add(-time.Second)))
 		// If we can't move forward, then look for a free key in the past
 		for key = KeyFromTime(BackwardKeyTime); l.IsKnownKey(key); {
 			// Move backward in time
@@ -722,12 +716,10 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	// Note: The parser for BibTeX streams is responsible for the mapping of field name aliases, such as editors to editor, etc.
 	// Here we only need to take care of the normalisation and processing of field values.
 	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
-
-	newValue := l.ProcessEntryFieldValue(l.currentKey, field, value)
 	currentValue := l.EntryFieldValueity(l.currentKey, field)
 
 	// Assign the new value, while, if needed, resolve it with the current value
-	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, l.currentKey, field, newValue, currentValue)
+	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, l.currentKey, field, value, currentValue)
 
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {
@@ -803,6 +795,8 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(keyDBLP, key string) bool {
 	if key != "" && keyDBLP != "" {
 		DBLPBibFile := l.FilesRoot + "DBLPScraper/bib/" + keyDBLP + "/bib"
 		if FileExists(DBLPBibFile) {
+			l.Progress("Syncing entry %s with the DBLP version %s", key, keyDBLP)
+
 			l.IgnoreIllegalFields = true
 			if l.ParseBibFile(DBLPBibFile) {
 				l.IgnoreIllegalFields = false
@@ -818,6 +812,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(keyDBLP, key string) bool {
 	return false
 }
 
+// / Really need both!?
 func (l *TBibTeXLibrary) MaybeAddDBLPEntry(keyDBLP string) string {
 	key := l.NewKey()
 	if l.MaybeMergeDBLPEntry(keyDBLP, key) {
@@ -825,6 +820,14 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(keyDBLP string) string {
 	}
 
 	return ""
+}
+
+func (l *TBibTeXLibrary) MaybeSyncDBLPEntry(key string) {
+	keyDBLP := l.EntryFieldValueity(key, "dblp")
+
+	if keyDBLP != "" {
+		l.MaybeMergeDBLPEntry(keyDBLP, key)
+	}
 }
 
 func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(keyDBLP, crossref string) string {
@@ -840,14 +843,6 @@ func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(keyDBLP, crossref string) string
 	}
 
 	return ""
-}
-
-func (l *TBibTeXLibrary) MaybeSyncDBLPEntry(key string) {
-	keyDBLP := l.EntryFieldValueity(key, "dblp")
-
-	l.Progress("Syncing entry %s with the DBLP version %s", key, keyDBLP)
-
-	l.MaybeMergeDBLPEntry(keyDBLP, key)
 }
 
 func init() {

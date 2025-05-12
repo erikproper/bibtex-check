@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	Library  TBibTeXLibrary
+	Library   TBibTeXLibrary
 	Reporting TInteraction
 )
 
@@ -265,7 +265,6 @@ func main() {
 
 			for key := range Library.EntryFields {
 				FIXThatShouldBeChecks(key)
-				Library.CheckEntry(key)
 			}
 			Library.WriteNonDoublesFile()
 
@@ -281,8 +280,20 @@ func main() {
 
 			for key := range Library.EntryFields {
 				if Library.EntryFieldValueity(key, "dblp") != "" {
-					FIXThatShouldBeChecks(key)
-					Library.CheckEntry(key)
+					if Library.EntryFields[key][EntryTypeField] == "book" ||
+						Library.EntryFields[key][EntryTypeField] == "incollection" ||
+						Library.EntryFields[key][EntryTypeField] == "misc" ||
+						Library.EntryFields[key][EntryTypeField] == "inbook" ||
+						Library.EntryFields[key][EntryTypeField] == "booklet" ||
+						Library.EntryFields[key][EntryTypeField] == "manual" ||
+						Library.EntryFields[key][EntryTypeField] == "mastersthesis" ||
+						Library.EntryFields[key][EntryTypeField] == "phdthesis" ||
+						Library.EntryFields[key][EntryTypeField] == "techreport" ||
+						Library.EntryFields[key][EntryTypeField] == "proceedings" ||
+						Library.EntryFields[key][EntryTypeField] == "inproceedings" ||
+						Library.EntryFields[key][EntryTypeField] == "article" {
+						FIXThatShouldBeChecks(key)
+					}
 				}
 			}
 			Library.WriteNonDoublesFile()
@@ -306,7 +317,6 @@ func main() {
 
 			for _, key := range keyStrings[1:] {
 				FIXThatShouldBeChecks(key)
-				Library.CheckEntry(key)
 			}
 
 			Library.WriteNonDoublesFile()
@@ -403,6 +413,7 @@ func main() {
 	}
 
 	if writeBibFile {
+		Library.CheckEntries()
 		Library.WriteBibTeXFile()
 		Library.WriteCache()
 	}

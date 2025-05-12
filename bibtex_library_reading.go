@@ -109,6 +109,9 @@ func (l *TBibTeXLibrary) ReadFieldsCache() {
 		}
 
 		l.SetEntryFieldValue(elements[0], elements[1], elements[2])
+		if elements[1] == "title" {
+			l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(elements[2]), elements[0])
+		}
 	})
 }
 
