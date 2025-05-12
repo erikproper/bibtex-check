@@ -16,7 +16,7 @@ import (
 	"bufio"
 	"os"
 	"strings"
-	//"fmt"
+	// "fmt"
 )
 
 // Read bib files
@@ -71,6 +71,61 @@ func (l *TBibTeXLibrary) MaybeGetDBLPCrossref(DBLPKey string) string {
 // Generic function to read library related files
 func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading func(string)) bool {
 	return l.readFile(l.FilesRoot+l.BaseName+fileExtension, message, reading)
+}
+
+func (l *TBibTeXLibrary) ValidCache() bool {
+	FileBase := l.FilesRoot + l.BaseName
+
+	FieldsCacheFile := FileBase + FieldsCacheExtension
+	CommentsCacheFile := FileBase + CommentsCacheExtension
+
+	// Maybe do this via a set?
+	if FileExists(FieldsCacheFile) && FileExists(CommentsCacheFile) {
+		CacheModTime := ModTime(FieldsCacheFile)
+
+		// Maybe do this via a set?
+		return CacheModTime > ModTime(FileBase+BibFileExtension) &&
+			CacheModTime > ModTime(FileBase+KeyAliasesFileExtension) &&
+			CacheModTime > ModTime(FileBase+PreferredKeyAliasesFileExtension) &&
+			CacheModTime > ModTime(FileBase+EntryFieldAliasesFileExtension) &&
+			CacheModTime > ModTime(FileBase+GenericFieldAliasesFileExtension) &&
+			CacheModTime > ModTime(FileBase+FieldMappingsFileExtension) &&
+			CacheModTime > ModTime(FileBase+NonDoublesFileExtension)
+	} else {
+		return false
+	}
+}
+
+func (l *TBibTeXLibrary) ReadCache() {
+	l.ReadFieldsCache()
+	l.ReadCommentsCache()
+}
+
+func (l *TBibTeXLibrary) ReadFieldsCache() {
+	l.readLibraryFile(FieldsCacheExtension, ProgressReadingFieldsCache, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 3 {
+			l.Warning("SOME WARNING %s", line)
+			return
+		}
+
+		l.SetEntryFieldValue(elements[0], elements[1], elements[2])
+	})
+}
+
+func (l *TBibTeXLibrary) ReadCommentsCache() {
+	l.readLibraryFile(CommentsCacheExtension, ProgressReadingCommentsCache, func(line string) {
+		if line == CacheCommentsSeparator {
+			l.Comments = append(l.Comments, "")
+		} else {
+			index := len(l.Comments) - 1
+			if l.Comments[index] == "" {
+				l.Comments[index] = line
+			} else {
+				l.Comments[index] += "\n" + line
+			}
+		}
+	})
 }
 
 func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
@@ -157,6 +212,26 @@ func (l *TBibTeXLibrary) ReadKeyAliasesFile() {
 	})
 }
 
+func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
+	key, exists := l.KeyAliasToKey[alias]
+
+	// Of course, a preferred alias must be an alias.
+	if !exists {
+		l.Warning(WarningPreferredAliasNotExist, alias)
+
+		return
+	}
+
+	if !IsValidPreferredKeyAlias(alias) {
+		l.Warning(WarningInvalidPreferredKeyAlias, alias, key)
+
+		return
+	}
+
+	l.EntryFields.SetValueForStringPairMap(key, PreferredKeyField, alias)
+	l.AddImpliedKeyAlias(key, alias)
+}
+
 func (l *TBibTeXLibrary) ReadPreferredKeyAliasesFile() {
 	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
 }
@@ -187,13 +262,4 @@ func (l *TBibTeXLibrary) ReadNameAliasesFile() {
 		// Why pass on &l.NameAliasToName, &l.NameToAliases???
 		l.AddAliasForName(ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]), &l.NameAliasToName, &l.NameToAliases)
 	})
-}
-
-// Read aliases files
-func (l *TBibTeXLibrary) ReadAliasesFiles() {
-	l.ReadKeyAliasesFile()
-	l.ReadPreferredKeyAliasesFile()
-	l.ReadNameAliasesFile()
-	l.ReadGenericFieldAliasesFile()
-	l.ReadEntryFieldAliasesFile()
 }

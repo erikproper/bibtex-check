@@ -142,6 +142,7 @@ func (b *TBibTeXStream) SkipToNextEntry(from string) bool {
 // Therefore, we will use ReportParsingError with the skippingEntry condition
 func (b *TBibTeXStream) ReportParsingError(message string, context ...any) bool {
 	// If we needed to report an error, then do not write the BibFile after an update
+	// POST MIGRO update
 	b.library.NoBibFileWriting = true
 
 	if !b.skippingEntry {

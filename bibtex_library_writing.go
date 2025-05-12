@@ -14,7 +14,7 @@ package main
 
 import (
 	"bufio"
-	"strings"
+	//"strings"
 	//"fmt"
 	"os"
 )
@@ -49,15 +49,15 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 	if !l.NoBibFileWriting {
 		l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
 			// Write out the entries and their fields, but do so in a crossref friendly order. So first the non-bookish, and then the bookish ones
-			for entry := range l.EntryTypes {
-				if !BibTeXBookish.Contains(l.EntryTypes[entry]) {
+			for entry := range l.EntryFields {
+				if !BibTeXBookish.Contains(l.EntryType(entry)) {
 					bibWriter.WriteString(l.EntryString(entry))
 					bibWriter.WriteString("\n")
 				}
 			}
 
-			for entry := range l.EntryTypes {
-				if BibTeXBookish.Contains(l.EntryTypes[entry]) {
+			for entry := range l.EntryFields {
+				if BibTeXBookish.Contains(l.EntryType(entry)) {
 					bibWriter.WriteString(l.EntryString(entry))
 					bibWriter.WriteString("\n")
 				}
@@ -70,20 +70,36 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 			}
 		})
 	}
+}
 
-	// Writing the groups ... split off into own function?
-	l.writeLibraryFile(GroupsFileExtension, ProgressWritingGroupsFile, func(groupsWriter *bufio.Writer) {
-		// Write out the entries and their fields
-		for entry := range l.EntryTypes {
-			groups := l.EntryFieldValueity(entry, "groups")
-			if groups != "" {
-				groupMap := strings.Split(groups, ",")
-				for group := range groupMap {
-					groupsWriter.WriteString(entry + "	" + strings.TrimSpace(groupMap[group]) + "\n")
+func (l *TBibTeXLibrary) WriteCache() {
+	l.WriteFieldsCache()
+	l.WriteCommentsCache()
+}
+
+func (l *TBibTeXLibrary) WriteFieldsCache() {
+	if !l.NoBibFileWriting {
+		l.writeLibraryFile(FieldsCacheExtension, ProgressWritingFieldsCache, func(fieldsWriter *bufio.Writer) {
+			for entry := range l.EntryFields {
+				for field := range l.EntryFields[entry] {
+					if value := l.EntryFields[entry][field]; value != "" {
+						fieldsWriter.WriteString(entry + "	" + field + "	" + l.EntryFieldValueity(entry, field) + "\n")
+					}
 				}
 			}
-		}
-	})
+		})
+	}
+}
+
+func (l *TBibTeXLibrary) WriteCommentsCache() {
+	if !l.NoBibFileWriting {
+		l.writeLibraryFile(CommentsCacheExtension, ProgressWritingCommentsCache, func(commentsWriter *bufio.Writer) {
+			for entry := range l.Comments {
+				commentsWriter.WriteString(CacheCommentsSeparator + "\n")
+				commentsWriter.WriteString(l.Comments[entry] + "\n")
+			}
+		})
+	}
 }
 
 // Write the challenges and winners for field values, of this library, to a file
@@ -137,19 +153,6 @@ func (l *TBibTeXLibrary) WriteGenericFieldAliasesFile() {
 	}
 }
 
-// Write the preferred key aliases from this library, to a bufio.bWriter buffer
-func (l *TBibTeXLibrary) WritePreferredKeyAliasesFile() {
-	if !l.NoPreferredKeyAliasesFileWriting {
-		l.writeLibraryFile(PreferredKeyAliasesFileExtension, ProgressWritingPreferredKeyAliasesFile, func(aliasWriter *bufio.Writer) {
-			for key, alias := range Library.PreferredKeyAliases {
-				if key != alias {
-					aliasWriter.WriteString(alias + "\n")
-				}
-			}
-		})
-	}
-}
-
 // Write entry key alias/original pairs to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) WriteNameAliasesFile() {
 	if !l.NoNameAliasesFileWriting {
@@ -178,7 +181,6 @@ func (l *TBibTeXLibrary) WriteKeyAliasesFile() {
 
 func (l *TBibTeXLibrary) WriteAliasesFiles() {
 	l.WriteKeyAliasesFile()
-	l.WritePreferredKeyAliasesFile()
 	l.WriteNameAliasesFile()
 	l.WriteGenericFieldAliasesFile()
 	l.WriteEntryFieldAliasesFile()

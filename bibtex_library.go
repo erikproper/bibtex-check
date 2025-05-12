@@ -40,12 +40,10 @@ type (
 		FileMD5Index                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
 		NonDoubles                       TStringSetMap             //
-		EntryTypes                       TStringMap                // Per entry key, the type of the enty.
 		KeyAliasToKey                    TStringMap                // Mapping from key aliases to the actual entry key.
 		FieldMappings                    TStringStringStringMap    // field/value to field/value mapping
 		KeyToAliases                     TStringSetMap             // The inverted version of KeyAliasToKey NEEEEEEEDED??????
 		KeyIsTemporary                   TStringSet                // Keys that are generated for temporary reasons
-		PreferredKeyAliases              TStringMap                // Per entry key, the preferred alias
 		NameAliasToName                  TStringMap                // Mapping from name aliases to the actual name.
 		NameToAliases                    TStringSetMap             // The inverted version of NameAliasToName
 		illegalFields                    TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
@@ -55,11 +53,10 @@ type (
 		EntryFieldTargetToAliases        TStringStringStringSetMap // DO WE NEED THE INVERSES??
 		GenericFieldAliasToTarget        TStringStringMap          // A field specific mapping from challenged value to winner values
 		GenericFieldTargetToAliases      TStringStringSetMap       //
-		NoBibFileWriting                 bool                      // If set, we should not write out a Bib file for this library as entries might have been lost.
+		NoBibFileWriting                 bool                      // If set, we should not write out a Bib file (and cache file) for this library as entries might have been lost.
 		NoEntryFieldAliasesFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
 		NoGenericFieldAliasesFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
 		NoKeyAliasesFileWriting          bool
-		NoPreferredKeyAliasesFileWriting bool
 		NoNameAliasesFileWriting         bool
 		NoNonDoublesFileWriting          bool
 		NoFieldMappingsFileWriting       bool
@@ -95,11 +92,9 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.DOIIndex = TStringSetMap{}
 	l.FileMD5Index = TStringSetMap{}
 	l.NonDoubles = TStringSetMap{}
-	l.EntryTypes = TStringMap{}
 	l.KeyAliasToKey = TStringMap{}
 	l.KeyIsTemporary = TStringSetNew()
 	l.NameAliasToName = TStringMap{}
-	l.PreferredKeyAliases = TStringMap{}
 
 	l.EntryFieldTargetToAliases = TStringStringStringSetMap{}
 	l.GenericFieldTargetToAliases = TStringStringSetMap{}
@@ -115,7 +110,6 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.NoEntryFieldAliasesFileWriting = false
 	l.NoGenericFieldAliasesFileWriting = false
 	l.NoKeyAliasesFileWriting = false
-	l.NoPreferredKeyAliasesFileWriting = false
 	l.NoNameAliasesFileWriting = false
 	l.NoFieldMappingsFileWriting = false
 	l.IgnoreIllegalFields = false
@@ -131,6 +125,11 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 // (Safely) set the value for a field of a given entry.
 func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
 	l.EntryFields.SetValueForStringPairMap(entry, field, value)
+}
+
+// (Safely) set the entry type
+func (l *TBibTeXLibrary) SetEntryType(entry, value string) {
+	l.EntryFields.SetValueForStringPairMap(entry, EntryTypeField, value)
 }
 
 // Add a comment to the current library.
@@ -241,37 +240,35 @@ func (l *TBibTeXLibrary) ReassignEntryFieldAliases(source, target string) {
 	}
 }
 
-// Add a preferred alias
-func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
-	///  SAVE!? Clean!
-	key, exists := l.KeyAliasToKey[alias]
-
-	// Of course, a preferred alias must be an alias.
-	if !exists {
-		l.Warning(WarningPreferredAliasNotExist, alias)
-
-		return
-	}
-
-	if !IsValidPreferredKeyAlias(alias) {
-		l.Warning(WarningInvalidPreferredKeyAlias, alias, key)
-
-		return
-	}
-
-	///  SAVE WAY!!
-	l.PreferredKeyAliases[key] = alias
-}
-
-// Move the alias preference to another key
-func (l *TBibTeXLibrary) moveKeyAliasPreference(alias, currentKey, key string) {
-	if l.PreferredKeyAliases[currentKey] == alias {
-		delete(l.PreferredKeyAliases, currentKey)
-		l.PreferredKeyAliases[key] = alias
+// Add an implied alias ... order of key/alias ... seems not consistent.
+func (l *TBibTeXLibrary) AddImpliedKeyAlias(key, alias string) {
+	knownKey, keyExists := l.KeyAliasToKey[alias]
+	if keyExists && knownKey != key {
+		l.Warning("Ambiguous alias assignment of %s to %s, while we already have %s", alias, key, knownKey)
+	} else {
+		l.AddKeyAlias(alias, key)
 	}
 }
 
-// Add a new alias
+func (l *TBibTeXLibrary) AddImpliedKeyAliases() {
+	for key := range l.EntryFields {
+		preferredAlias := l.EntryFieldValueity(key, PreferredKeyField)
+		if preferredAlias != "" {
+			l.AddImpliedKeyAlias(key, preferredAlias)
+
+			if !IsValidPreferredKeyAlias(preferredAlias) {
+				l.Warning(WarningInvalidPreferredKeyAlias, preferredAlias, key)
+			}
+		}
+
+		dblp := l.EntryFieldValueity(key, "")
+		if dblp != "" {
+			l.AddImpliedKeyAlias(key, "DBLP:" + dblp)
+		}
+	}
+}
+
+// Add a new alias (not just for Keys!!)
 func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap, check bool) {
 	// Neither alias, nor target should be empty
 	if alias == "" || original == "" {
@@ -350,17 +347,17 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 		if source != target && l.EntryExists(source) { // }&& l.EntryExists(target) {
 			l.Progress("Merging %s to %s", source, target)
 
-			sourceType := l.EntryTypes[source]
-			targetType := l.EntryTypes[target]
-			targetType = Library.MaybeResolveFieldValue(target, source, EntryTypeField, sourceType, targetType)
-			Library.EntryTypes[target] = targetType
+			sourceType := l.EntryType(source)
+			targetType := l.EntryType(target)
+			targetType = l.MaybeResolveFieldValue(target, source, EntryTypeField, sourceType, targetType)
+			l.SetEntryType(target, targetType)
 
 			// Can be like a constant ...
 			regularFields := TStringSet{}
 			regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
 			for regularField := range regularFields.Elements() {
-				// Do we need Library.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
-				Library.EntryFields.SetValueForStringPairMap(target, regularField, Library.MaybeResolveFieldValue(target, source, regularField, Library.EntryFields[source][regularField], Library.EntryFields[target][regularField]))
+				// Do we need l.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
+				l.EntryFields.SetValueForStringPairMap(target, regularField, l.MaybeResolveFieldValue(target, source, regularField, l.EntryFields[source][regularField], l.EntryFields[target][regularField]))
 			}
 
 			if !l.KeyIsTemporary.Contains(source) {
@@ -369,10 +366,13 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			}
 			l.ReassignEntryFieldAliases(source, target)
 
-			delete(l.EntryTypes, source)
 			delete(l.EntryFields, source)
 
+			silenced := l.InteractionIsOff()
+			l.SetInteractionOff()
 			l.CheckEntry(target)
+			l.SetInteraction(silenced)
+
 		}
 
 		return target
@@ -385,9 +385,14 @@ func EvidencedUnequal(a, b string) bool {
 	return a != "" && b != "" && a != b
 }
 
+func (l *TBibTeXLibrary) EvidencedUnequalEntryFields(source, target, field string) bool {
+	return EvidencedUnequal(l.EntryFieldValueity(source, field), l.EntryFieldValueity(target, field))
+}
+
 func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string) bool {
-	return /**/ EvidencedUnequal(l.EntryFieldValueity(source, "dblp"), l.EntryFieldValueity(target, "dblp")) ||
-		/*   */ EvidencedUnequal(l.EntryFieldValueity(source, "doi"), l.EntryFieldValueity(target, "doi"))
+	return l.EvidencedUnequalEntryFields(source, target, "dblp") ||
+		l.EvidencedUnequalEntryFields(source, target, "doi") ||
+		l.EvidencedUnequalEntryFields(source, target, "crossref")
 }
 
 func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
@@ -414,6 +419,7 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 			l.WriteAliasesFiles()
 			l.WriteMappingsFiles()
 			l.WriteBibTeXFile()
+			l.WriteCache()
 		} else {
 			l.AddNonDoubles(source, target)
 			l.WriteNonDoublesFile()
@@ -444,7 +450,6 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 		if _, aliasIsUsedAsKeyForSomeAlias := l.KeyToAliases[alias]; aliasIsUsedAsKeyForSomeAlias {
 			for oldAlias := range l.KeyToAliases[alias].Set().Elements() {
 				l.AddAlias(oldAlias, key, &l.KeyAliasToKey, &l.KeyToAliases, false)
-				l.moveKeyAliasPreference(oldAlias, alias, key)
 			}
 
 			delete(l.KeyToAliases, alias)
@@ -471,9 +476,17 @@ func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
 	return l.EntryFields.GetValueityFromStringPairMap(entry, field)
 }
 
+func (l *TBibTeXLibrary) EntryType(entry string) string {
+	return l.EntryFieldValueity(entry, EntryTypeField)
+}
+
+func (l *TBibTeXLibrary) PreferredKey(entry string) string {
+	return l.EntryFieldValueity(entry, PreferredKeyField)
+}
+
 // Returns the size of this library.
 func (l *TBibTeXLibrary) LibrarySize() int {
-	return len(l.EntryTypes)
+	return len(l.EntryFields)
 }
 
 // Reports the size of this library.
@@ -486,7 +499,7 @@ func (l *TBibTeXLibrary) ReportLibrarySize() {
 func (l *TBibTeXLibrary) DeAliasEntryKeyWithType(key string) (string, string, bool) {
 	deAliasedKey := l.DeAliasEntryKey(key)
 
-	if entryType, isKey := l.EntryTypes[deAliasedKey]; isKey {
+	if entryType := l.EntryType(deAliasedKey); entryType != "" {
 		return deAliasedKey, entryType, true
 	}
 
@@ -527,12 +540,14 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 
 		result := ""
 		// Add the type and key
-		result = linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
+		result = linePrefix + "@" + l.EntryType(key) + "{" + key + ",\n"
 
 		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
-		for _, field := range BibTeXAllowedEntryFields[l.EntryTypes[key]].Set().ElementsSorted() {
-			if value := l.EntryFieldValueity(key, field); value != "" {
-				result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
+		for _, field := range BibTeXAllowedEntryFields[l.EntryType(key)].Set().ElementsSorted() {
+			if field != EntryTypeField { // Fix this with AllowedEntryFields with/without it
+				if value := l.EntryFieldValueity(key, field); value != "" {
+					result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
+				}
 			}
 		}
 
@@ -552,37 +567,6 @@ func CleanJRDate(s string) string {
 	return strings.Replace(trimJRDate.ReplaceAllString(s, ""), " ", "T", -1)
 }
 
-func (l *TBibTeXLibrary) EntryJRString(key string, prefixes ...string) string {
-	_, knownEntry := l.EntryFields[key]
-
-	if knownEntry {
-		// Combine all prefixes into one
-		linePrefix := ""
-		for _, prefix := range prefixes {
-			linePrefix += prefix
-		}
-
-		// Add the type and key
-		result := linePrefix + "@" + l.EntryTypes[key] + "{" + key + ",\n"
-
-		/// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
-		for _, field := range BibTeXAllowedEntryFields[l.EntryTypes[key]].Set().ElementsSorted() {
-			if value := l.EntryFieldValueity(key, field); value != "" {
-				result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
-			}
-		}
-
-		// Close the entry statement
-		result += linePrefix + "}\n"
-
-		return result
-	} else {
-		// When the specified entry does not exist, all we can do is return the empty string
-		return ""
-	}
-
-}
-
 /*
  *
  * Checking functions
@@ -590,11 +574,7 @@ func (l *TBibTeXLibrary) EntryJRString(key string, prefixes ...string) string {
  */
 
 func (l *TBibTeXLibrary) EntryExists(entry string) bool {
-	return l.EntryTypes.IsMappedString(entry)
-}
-
-func (l *TBibTeXLibrary) PreferredKeyAliasExists(alias string) bool {
-	return l.PreferredKeyAliases.IsMappedString(alias)
+	return l.EntryType(entry) != ""
 }
 
 func (l *TBibTeXLibrary) AliasExists(alias string) bool {
@@ -713,6 +693,8 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 
 	if !BibTeXAllowedEntries.Contains(entryType) {
 		l.Warning(WarningUnknownEntryType, l.currentKey, entryType)
+		/////// MAYBE UPDATE THIS
+		l.NoBibFileWriting = true
 		l.NoBibFileWriting = true
 	}
 
@@ -725,10 +707,10 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 
 		// Resolve the double typing issue
 		// Post legacy migration, we still need to do this, but then we will always have: key == l.currentKey
-		l.EntryTypes[l.currentKey] = l.ResolveFieldValue(l.currentKey, key, EntryTypeField, entryType, l.EntryTypes[l.currentKey])
+		l.SetEntryType(l.currentKey, l.ResolveFieldValue(l.currentKey, key, EntryTypeField, entryType, l.EntryType(l.currentKey)))
 	} else {
 		l.EntryFields[l.currentKey] = TStringMap{}
-		l.EntryTypes[l.currentKey] = entryType
+		l.SetEntryType(l.currentKey, entryType)
 	}
 
 	return true
@@ -793,7 +775,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry() bool {
 			// Check if the field is allowed for this type.
 			// If not, we need to ask if it can be deleted.
 			if !l.EntryAllowsForField(key, field) {
-				if l.IgnoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryTypes[key]) {
+				if l.IgnoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryType(key)) {
 					delete(l.EntryFields[key], field)
 				} else {
 					l.Warning("Stopping programme. Please fix this manually.")
@@ -818,7 +800,7 @@ func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
 }
 
 func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(keyDBLP, key string) bool {
-	if key != "" {
+	if key != "" && keyDBLP != "" {
 		DBLPBibFile := l.FilesRoot + "DBLPScraper/bib/" + keyDBLP + "/bib"
 		if FileExists(DBLPBibFile) {
 			l.IgnoreIllegalFields = true

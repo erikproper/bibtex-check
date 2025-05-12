@@ -16,18 +16,18 @@ package main
 
 var (
 	BibTeXAllowedEntryFields map[string]TStringSet // Per entry type, the allowed field
-	BibTeXImportFields       TStringSet            // Set of fields we would consider importing
-	BibTeXAllowedFields      TStringSet            // Aggregation of all allowed fields
-	BibTeXMustInheritFields  TStringSet            //
-	BibTeXMayInheritFields   TStringSet            //
-	BibTeXInheritableFields  TStringSet            //
-	BibTeXAllowedEntries     TStringSet            // Aggregation of the allowed entry types
-	BibTeXBookish            TStringSet            // All book-alike entry types
-	BibTeXCrossreffer        TStringSet            //
-	BibTeXFieldMap           TStringMap            // Mapping of field names, to enable aliases and automatic corrections
-	BibTeXEntryMap           TStringMap            // Mapping of entry names, to enable automatic corrections
-	BibTeXDefaultStrings     TStringMap            // The default string definitions that will be used when opening a BibTeX file
-	BibTeXCrossrefType       TStringMap            // Entry type mapping for crossrefs
+	//BibTeXImportFields       TStringSet            // Set of fields we would consider importing
+	BibTeXAllowedFields     TStringSet // Aggregation of all allowed fields
+	BibTeXMustInheritFields TStringSet //
+	BibTeXMayInheritFields  TStringSet //
+	BibTeXInheritableFields TStringSet //
+	BibTeXAllowedEntries    TStringSet // Aggregation of the allowed entry types
+	BibTeXBookish           TStringSet // All book-alike entry types
+	BibTeXCrossreffer       TStringSet //
+	BibTeXFieldMap          TStringMap // Mapping of field names, to enable aliases and automatic corrections
+	BibTeXEntryMap          TStringMap // Mapping of entry names, to enable automatic corrections
+	BibTeXDefaultStrings    TStringMap // The default string definitions that will be used when opening a BibTeX file
+	BibTeXCrossrefType      TStringMap // Entry type mapping for crossrefs
 )
 
 const (
@@ -36,20 +36,30 @@ const (
 	KeyPrefix   = "EP" // (*)
 	FilesFolder = "Files/"
 
-	BibFileExtension                 = ".bib"
-	GroupsFileExtension              = ".groups"
-	KeyAliasesFileExtension          = ".keys"
+	CacheCommentsSeparator = "@@@@@@@@"
+
+	FieldsCacheExtension   = ".cache_fields"
+	CommentsCacheExtension = ".cache_comments"
+
+	BibFileExtension = ".bib"
+
 	PreferredKeyAliasesFileExtension = ".preferred"
-	NameAliasesFileExtension         = ".names"
-	EntryFieldAliasesFileExtension   = ".entry_aliases"
-	GenericFieldAliasesFileExtension = ".generic_aliases"
-	FieldMappingsFileExtension       = ".mappings"
-	NonDoublesFileExtension          = ".non_double"
+
+	NameAliasesFileExtension         = ".filter_name_aliases"
+	EntryFieldAliasesFileExtension   = ".filter_entry_field_aliases"
+	GenericFieldAliasesFileExtension = ".filter_generic_field_aliases"
+	FieldMappingsFileExtension       = ".filter_field_mappings"
+
+	NonDoublesFileExtension = ".non_double"
+	KeyAliasesFileExtension = ".key_aliases"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field
 // To avoid confusion with normal fields, use "illegal" field names
-const EntryTypeField = "$entry-type$"
+const (
+	EntryTypeField    = "entrytype"
+	PreferredKeyField = "preferredkey"
+)
 
 // Add the allowed fields for an entry, while updating the aggregations of allowed entries and fields.
 func AddAllowedEntryFields(entry string, fields ...string) {
@@ -104,7 +114,7 @@ func init() {
 	// Use SAFE options?
 	BibTeXAllowedEntries.Initialise()
 	BibTeXAllowedFields.Initialise()
-	BibTeXImportFields.Initialise()
+	//BibTeXImportFields.Initialise()
 	BibTeXBookish.Initialise()
 	BibTeXCrossreffer.Initialise()
 	BibTeXMustInheritFields.Initialise()
@@ -151,11 +161,15 @@ func init() {
 		"url", "urldate", "urloriginal")
 
 	// Needed for what?? Legacy? Import??
-	BibTeXImportFields.Unite(BibTeXAllowedFields)
+	//BibTeXImportFields.Unite(BibTeXAllowedFields)
 
 	// Jabref
 	AddAllowedFields(
 		"creationdate", "modificationdate", "groups", "file", "owner")
+
+	AddAllowedFields(
+		PreferredKeyField, EntryTypeField)
+	// Own fields
 
 	AddAllowedFields(
 		"repositum")

@@ -75,7 +75,6 @@ func NormaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 	return trimmedDOI
 }
 
-// Normalize URL values
 func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 	var trimmedURL string
 
@@ -87,13 +86,40 @@ func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 	trimmedURL = strings.ReplaceAll(trimmedURL, "$}", "")
 	// Same with "%5C" which is an encoded \_
 	trimmedURL = strings.ReplaceAll(trimmedURL, "%5C", "_")
-	// In config file?
+	// In config file!!!!!
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://ceur-ws.org/", "https://ceur-ws.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://doi.org/", "https://doi.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://dx.doi.org/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://dx.doi.org/", "https://doi.org/")
+
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://hdl.handle.net/", "https://doi.org/")
 	trimmedURL = strings.ReplaceAll(trimmedURL, "https://hdl.handle.net/", "https://doi.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://onlinelibrary.wiley.com/doi/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://onlinelibrary.wiley.com/doi/", "https://doi.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://press.endocrine.org/doi/abs/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://press.endocrine.org/doi/abs/", "https://doi.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://www.atsjournals.org/doi/abs/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://www.atsjournals.org/doi/abs/", "https://doi.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://www.computer.org/portal/web/csdl/doi/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://www.computer.org/portal/web/csdl/doi/", "https://doi.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://www.mitpressjournals.org/doi/abs/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://www.mitpressjournals.org/doi/abs/", "https://doi.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://www.mitpressjournals.org/doi/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://www.tandfonline.com/doi/abs/", "https://doi.org/")
+
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://www.tandfonline.com/doi/abs/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://www.mitpressjournals.org/doi/", "https://doi.org/")
+
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://doi.ieeecomputersociety.org/", "https://doi.org/")
 	trimmedURL = strings.ReplaceAll(trimmedURL, "https://doi.ieeecomputersociety.org/", "https://doi.org/")
-	trimmedURL = strings.ReplaceAll(trimmedURL, "http://doi.org/", "https://doi.org/")
 
 	return trimmedURL
 }

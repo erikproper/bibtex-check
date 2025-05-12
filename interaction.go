@@ -99,7 +99,7 @@ func (r *TInteraction) WarningYesNoQuestion(question, warning string, context ..
 	options := TStringSetNew()
 	options.Add("y", "n")
 
-	answer := Library.WarningQuestion(question, options, warning, context...)
+	answer := r.WarningQuestion(question, options, warning, context...)
 
 	return answer == "y"
 }

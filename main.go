@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bufio"
+	//	"bufio"
 	"fmt"
 	"os"
-	"regexp"
+	//	"regexp"
 	"strings"
 )
 
 var (
-	Library   TBibTeXLibrary
+	Library  TBibTeXLibrary
 	Reporting TInteraction
 )
 
@@ -22,59 +22,100 @@ const (
 
 // Put this one in a SEPARATE FILE
 // Update bib mapping file
-func (l *TBibTeXLibrary) UpdateBibMap(file string) {
-	bibMap := TStringMap{}
+//func (l *TBibTeXLibrary) UpdateBibMap(file string) {
+//	bibMap := TStringMap{}
+//
+//	l.readFile(file, "Reading mapping file %s", func(line string) {
+//		elements := strings.Split(line, " ")
+//		if len(elements) < 2 {
+//			l.Warning("File line too short: %s", line)
+//			return
+//		}
+//
+//		candidateKey := elements[1]
+//		if lookupKey, isAlias := l.KeyAliasToKey[candidateKey]; isAlias {
+//			bibMap[elements[0]] = lookupKey
+//		} else {
+//			bibMap[elements[0]] = candidateKey
+//		}
+//	})
+//
+//	l.writeFile(file, "Writing mapping file %s", func(bibWriter *bufio.Writer) {
+//		for alias, key := range bibMap {
+//			bibWriter.WriteString(alias + " " + key + "\n")
+//		}
+//	})
+//}
 
-	l.readFile(file, "Reading mapping file %s", func(line string) {
-		elements := strings.Split(line, " ")
-		if len(elements) < 2 {
-			l.Warning("File line too short: %s", line)
-			return
-		}
+///// Add these to library.go ??
 
-		candidateKey := elements[1]
-		if lookupKey, isAlias := l.KeyAliasToKey[candidateKey]; isAlias {
-			bibMap[elements[0]] = lookupKey
-		} else {
-			bibMap[elements[0]] = candidateKey
-		}
-	})
-
-	l.writeFile(file, "Writing mapping file %s", func(bibWriter *bufio.Writer) {
-		for alias, key := range bibMap {
-			bibWriter.WriteString(alias + " " + key + "\n")
-		}
-	})
-}
-
-func InitialiseMainLibrary() bool {
+func OpenLibraryToUpdate() bool {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
-	Library.ReadAliasesFiles()
+	Library.ReadKeyAliasesFile()
+
+	Library.ReadNameAliasesFile()
+	Library.ReadGenericFieldAliasesFile()
+	Library.ReadEntryFieldAliasesFile()
 	Library.ReadFieldMappingsFile()
 	Library.CheckAliases()
 
-	return true
+	result := false
+	if Library.ValidCache() {
+		Library.ReadCache()
+		result = true
+	} else {
+		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... BaseName on initialise !?
+		if result {
+			Library.WriteCache()
+		}
+	}
+
+	Library.ReadPreferredKeyAliasesFile() /// TEMP
+
+	Library.ReportLibrarySize()
+	Library.AddImpliedKeyAliases()
+
+	Library.CheckKeyAliasesConsistency()
+
+	return result
 }
 
-func OpenMainBibFile() bool {
+func OpenLibraryToReport() bool {
+	Library = TBibTeXLibrary{}
+	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
-	if Library.ReadBib(BibFile) {
-		Library.ReportLibrarySize()
-		Library.CheckKeyAliasesConsistency()
-
-		//Library.CreateTitleIndex()
-
-		return true
+	result := false
+	if Library.ValidCache() {
+		Library.ReadKeyAliasesFile()
+		Library.ReadPreferredKeyAliasesFile()
+		Library.ReadCache()
+		result = true
 	} else {
-		return false
+		Library.ReadKeyAliasesFile()
+		Library.ReadNameAliasesFile()
+		Library.ReadGenericFieldAliasesFile()
+		Library.ReadEntryFieldAliasesFile()
+		Library.ReadFieldMappingsFile()
+		Library.ReadPreferredKeyAliasesFile()
+
+		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... BaseName on initialise !?
+		if result {
+			Library.WriteCache()
+		}
 	}
+
+	Library.AddImpliedKeyAliases()
+	Library.ReportLibrarySize()
+
+	return result
 }
 
 func FIXThatShouldBeChecks(key string) {
 	Library.CheckNeedToMergeForEqualTitles(key)
 	Library.CheckNeedToSplitBookishEntry(key)
+
 	Library.CheckDBLP(key)
 }
 
@@ -90,14 +131,12 @@ func main() {
 
 	switch {
 	case len(os.Args) == 1:
-		if InitialiseMainLibrary() && OpenMainBibFile() {
+		if OpenLibraryToUpdate() {
 			writeBibFile = true
 			writeAliases = true
 			writeMappings = true
 
 			Library.CheckEntries()
-
-			// This reading should be done on-demand
 			Library.ReadNonDoublesFile()
 			Library.CheckFiles()
 			Library.WriteNonDoublesFile()
@@ -105,8 +144,8 @@ func main() {
 
 	case len(os.Args) == 2 && os.Args[1] == "-pdfs":
 		Reporting.SetInteractionOff()
-		if InitialiseMainLibrary() && OpenMainBibFile() {
-			for key := range Library.EntryTypes {
+		if OpenLibraryToReport() {
+			for key := range Library.EntryFields {
 				filePath := Library.FilesRoot + FilesFolder + key + ".pdf"
 				if !FileExists(filePath) {
 					URL := Library.EntryFieldValueity(key, "url")
@@ -122,127 +161,128 @@ func main() {
 			}
 		}
 
-	case len(os.Args) == 2 && os.Args[1] == "-legacy": // Keep for -import / -sync
-		if InitialiseMainLibrary() && OpenMainBibFile() {
-			writeBibFile = true
-			writeAliases = false
-			writeMappings = true
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
+		//	case len(os.Args) == 2 && os.Args[1] == "-legacy": // Keep for -import / -sync
+		//		if InitialiseMainLibrary() && OpenMainBibFile() {
+		//			writeBibFile = true
+		//			writeAliases = false
+		//			writeMappings = true
+		//			Library.CheckEntries()
+		//			Library.ReadNonDoublesFile()
+		//
+		//			OldLibrary := TBibTeXLibrary{}
+		//			OldLibrary.Progress("Reading legacy library")
+		//			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder, BaseName)
+		//			OldLibrary.ReadAliasesFiles()
+		//			OldLibrary.ReadFieldMappingsFile()
+		//
+		//			BibTeXParser := TBibTeXStream{}
+		//			BibTeXParser.Initialise(Reporting, &OldLibrary)
+		//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old.bib")
+		//
+		//			OldLibrary.ReportLibrarySize()
+		//
+		//			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
+		//			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA
+		//			for oldEntry, oldType := range OldLibrary.EntryFields {
+		//				cleanOldEntry := stripUniquePrefix.ReplaceAllString(oldEntry, "")
+		//
+		//				newKey, newType, isEntry := Library.DeAliasEntryKeyWithType(cleanOldEntry)
+		//
+		//				if Library.EntryFieldValueity(newKey, "dblp") != "" {
+		//					if isEntry && Library.EntryFieldValueity(newKey, "dblp") != "" {
+		//						// We don't have a set type function??
+		//						Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, oldEntry, EntryTypeField, oldType, newType)
+		//
+		//						crossrefKey := Library.EntryFieldValueity(newKey, "crossref")
+		//
+		//						// EntryFields function???
+		//						for oldField, oldValue := range OldLibrary.EntryFields[oldEntry] {
+		//							// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
+		//							if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
+		//								if crossrefKey != "" && BibTeXMustInheritFields.Contains(oldField) {
+		//									target := Library.MaybeResolveFieldValue(crossrefKey, oldEntry, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
+		//
+		//									if oldField == "booktitle" {
+		//										if Library.EntryFields[crossrefKey]["title"] == Library.EntryFields[crossrefKey]["booktitle"] {
+		//											Library.EntryFields[crossrefKey]["title"] = target
+		//										}
+		//									}
+		//
+		//									Library.EntryFields[crossrefKey][oldField] = target
+		//								} else {
+		//									Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldEntry, oldField, oldValue, Library.EntryFields[newKey][oldField])
+		//								}
+		//							}
+		//						}
+		//					} else {
+		//						fmt.Println("Old entry is not mapped:", cleanOldEntry)
+		//
+		//						newKey := Library.NewKey()
+		//
+		//						Library.EntryTypes[newKey] = OldLibrary.EntryTypes[oldEntry]
+		//						Library.EntryFields[newKey] = OldLibrary.EntryFields[oldEntry]
+		//
+		//						Library.AddKeyAlias(cleanOldEntry, newKey)
+		//					}
+		//
+		//					FIXThatShouldBeChecks(newKey)
+		//
+		//					Library.WriteNonDoublesFile()
+		//					Library.WriteAliasesFiles()
+		//					Library.WriteMappingsFiles()
+		//					Library.WriteBibTeXFile()
+		//				}
+		//			}
+		//		}
 
-			OldLibrary := TBibTeXLibrary{}
-			OldLibrary.Progress("Reading legacy library")
-			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder, BaseName)
-			OldLibrary.ReadAliasesFiles()
-			OldLibrary.ReadFieldMappingsFile()
-
-			BibTeXParser := TBibTeXStream{}
-			BibTeXParser.Initialise(Reporting, &OldLibrary)
-			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old.bib")
-
-			OldLibrary.ReportLibrarySize()
-
-			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
-			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA
-			for oldEntry, oldType := range OldLibrary.EntryTypes {
-				cleanOldEntry := stripUniquePrefix.ReplaceAllString(oldEntry, "")
-
-				newKey, newType, isEntry := Library.DeAliasEntryKeyWithType(cleanOldEntry)
-
-				if Library.EntryFieldValueity(newKey, "dblp") != "" {
-					if isEntry && Library.EntryFieldValueity(newKey, "dblp") != "" {
-						// We don't have a set type function??
-						Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, oldEntry, EntryTypeField, oldType, newType)
-
-						crossrefKey := Library.EntryFieldValueity(newKey, "crossref")
-
-						// EntryFields function???
-						for oldField, oldValue := range OldLibrary.EntryFields[oldEntry] {
-							// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
-							if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
-								if crossrefKey != "" && BibTeXMustInheritFields.Contains(oldField) {
-									target := Library.MaybeResolveFieldValue(crossrefKey, oldEntry, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
-
-									if oldField == "booktitle" {
-										if Library.EntryFields[crossrefKey]["title"] == Library.EntryFields[crossrefKey]["booktitle"] {
-											Library.EntryFields[crossrefKey]["title"] = target
-										}
-									}
-
-									Library.EntryFields[crossrefKey][oldField] = target
-								} else {
-									Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldEntry, oldField, oldValue, Library.EntryFields[newKey][oldField])
-								}
-							}
-						}
-					} else {
-						fmt.Println("Old entry is not mapped:", cleanOldEntry)
-
-						newKey := Library.NewKey()
-
-						Library.EntryTypes[newKey] = OldLibrary.EntryTypes[oldEntry]
-						Library.EntryFields[newKey] = OldLibrary.EntryFields[oldEntry]
-
-						Library.AddKeyAlias(cleanOldEntry, newKey)
-					}
-
-					FIXThatShouldBeChecks(newKey)
-
-					Library.WriteNonDoublesFile()
-					Library.WriteAliasesFiles()
-					Library.WriteMappingsFiles()
-					Library.WriteBibTeXFile()
-				}
-			}
-		}
-
-	case len(os.Args) == 3 && os.Args[1] == "-update_map":
-		InitialiseMainLibrary()
-		Library.UpdateBibMap(os.Args[2])
+		//	case len(os.Args) == 3 && os.Args[1] == "-update_map":
+		//		InitialiseMainLibrary()
+		//		Library.UpdateBibMap(os.Args[2])
 
 	case len(os.Args) == 3 && os.Args[1] == "-alias":
 		Reporting.SetInteractionOff()
-		InitialiseMainLibrary()
 
-		// Function call.
-		alias, ok := Library.PreferredKeyAliases[Library.DeAliasEntryKey(CleanKey(os.Args[2]))]
-		if ok {
-			fmt.Println(alias)
+		if OpenLibraryToReport() {
+			alias := Library.PreferredKey(Library.DeAliasEntryKey(CleanKey(os.Args[2])))
+			if alias != "" {
+				fmt.Println(alias)
+			}
 		}
 
 	case len(os.Args) > 2 && os.Args[1] == "-entry":
 		Reporting.SetInteractionOff()
 
-		if InitialiseMainLibrary() && OpenMainBibFile() {
+		if OpenLibraryToReport() {
 			fmt.Println(Library.EntryString(Library.DeAliasEntryKey(CleanKey(os.Args[2]))))
 		}
 
 	case len(os.Args) == 3 && os.Args[1] == "-key":
 		Reporting.SetInteractionOff()
 
-		if InitialiseMainLibrary() && OpenMainBibFile() {
+		if OpenLibraryToReport() {
 			fmt.Println(Library.DeAliasEntryKey(CleanKey(os.Args[2])))
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-fixall":
-		if InitialiseMainLibrary() && OpenMainBibFile() {
+		if OpenLibraryToUpdate() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
 
-			for key := range Library.EntryTypes {
+			for key := range Library.EntryFields {
 				if Library.EntryFieldValueity(key, "dblp") != "" {
-					if Library.EntryTypes[key] == "book" ||
-						Library.EntryTypes[key] == "incollection" ||
-						Library.EntryTypes[key] == "misc" ||
-						Library.EntryTypes[key] == "inbook" ||
-						Library.EntryTypes[key] == "booklet" ||
-						Library.EntryTypes[key] == "manual" ||
-						Library.EntryTypes[key] == "mastersthesis" ||
-						Library.EntryTypes[key] == "phdthesis" ||
-						Library.EntryTypes[key] == "techreport" ||
-						Library.EntryTypes[key] == "proceedings" ||
-						Library.EntryTypes[key] == "inproceedings" ||
-						Library.EntryTypes[key] == "article" {
+					// Temporary!!
+					if Library.EntryType(key) == "book" ||
+						Library.EntryType(key) == "incollection" ||
+						Library.EntryType(key) == "misc" ||
+						Library.EntryType(key) == "inbook" ||
+						Library.EntryType(key) == "booklet" ||
+						Library.EntryType(key) == "manual" ||
+						Library.EntryType(key) == "mastersthesis" ||
+						Library.EntryType(key) == "phdthesis" ||
+						Library.EntryType(key) == "techreport" ||
+						Library.EntryType(key) == "proceedings" ||
+//						Library.EntryType(key) == "inproceedings" ||
+						Library.EntryType(key) == "article" {
 						FIXThatShouldBeChecks(key)
 					}
 				}
@@ -262,7 +302,7 @@ func main() {
 		}
 		keyStrings := strings.Split(keysString, ",")
 
-		if InitialiseMainLibrary() && OpenMainBibFile() {
+		if OpenLibraryToUpdate() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
 
@@ -278,7 +318,7 @@ func main() {
 		}
 
 	case len(os.Args) == 3 && os.Args[1] == "-dblp_add":
-		if InitialiseMainLibrary() && OpenMainBibFile() {
+		if OpenLibraryToUpdate() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
 
@@ -304,7 +344,7 @@ func main() {
 		}
 		keyStrings := strings.Split(keysString, ",")
 
-		if InitialiseMainLibrary() && OpenMainBibFile() {
+		if OpenLibraryToUpdate() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
 
@@ -327,7 +367,7 @@ func main() {
 		}
 
 	case len(os.Args) > 3 && os.Args[1] == "-map":
-		if InitialiseMainLibrary() && OpenMainBibFile() {
+		if OpenLibraryToUpdate() {
 			Library.CheckEntries()
 
 			writeBibFile = true
@@ -344,31 +384,10 @@ func main() {
 			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 				fmt.Println("Mapping", alias, "to", key)
 				Library.AddKeyAlias(alias, key)
-				Library.CheckPreferredKeyAliasesConsistency(key)
 			}
 
 			Library.CheckEntries()
 			FIXThatShouldBeChecks(key)
-		}
-
-	case len(os.Args) > 2 && os.Args[1] == "-preferred":
-		alias := CleanKey(os.Args[2])
-
-		if IsValidPreferredKeyAlias(alias) {
-			writeAliases = true
-
-			InitialiseMainLibrary()
-
-			if len(os.Args) == 4 {
-				key := CleanKey(os.Args[3])
-				Library.AddKeyAlias(alias, key)
-			}
-
-			Library.AddPreferredKeyAlias(alias)
-			Library.NoEntryFieldAliasesFileWriting = true //// Temporary hack
-			Library.WriteAliasesFiles()
-		} else {
-			fmt.Println("Not a valid preferred alias.")
 		}
 
 	default:
@@ -386,5 +405,6 @@ func main() {
 
 	if writeBibFile {
 		Library.WriteBibTeXFile()
+		Library.WriteCache()
 	}
 }

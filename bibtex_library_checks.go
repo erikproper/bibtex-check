@@ -69,7 +69,7 @@ func IsValidDate(date string) bool {
  *
  */
 func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
-	return BibTeXAllowedEntryFields[l.EntryTypes[entry]].Set().Contains(field)
+	return BibTeXAllowedEntryFields[l.EntryType(entry)].Set().Contains(field)
 }
 
 /*
@@ -152,10 +152,15 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckURLPresence(key string) {
-	if foundURL := l.EntryFieldValueity(key, "url"); foundURL == "" {
-		if foundDOI := l.EntryFieldValueity(key, "doi"); foundDOI != "" {
-			l.EntryFields[key]["url"] = "https://doi.org/" + foundDOI
+func (l *TBibTeXLibrary) CheckURLRedundance(key string) {
+	if foundURL := l.EntryFieldValueity(key, "url"); foundURL != "" {
+		if strings.ToLower(foundURL) == strings.ToLower("https://doi.org/"+l.EntryFieldValueity(key, "doi")) {
+			// CONSTANTS!!!
+			// CONSTANTS!!!
+			l.Warning("Can empty url for " + key + " -- which is " + foundURL)
+
+			// Call??
+			l.EntryFields[key]["url"] = ""
 		}
 	}
 }
@@ -211,30 +216,11 @@ func (l *TBibTeXLibrary) CheckURLDateNeed(key string) {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckPreferredKeyAliasesConsistency(key string) {
-	if !l.PreferredKeyAliasExists(key) {
-		///// CLEANER
-		for alias := range l.KeyToAliases[key].Set().Elements() {
-			if IsValidPreferredKeyAlias(alias) {
-				// If we have no defined preferred alias, then we can use this one if it would be a valid preferred alias
-				l.AddPreferredKeyAlias(alias)
-			} else {
-				// If we have no defined preferred alias, and the current alias is not valid, we can still try to lower the case and see if this works.
-				loweredAlias := strings.ToLower(alias)
-
-				// We do have to make sure the new alias is not already in use, and if it is then a valid alias.
-				if !l.AliasExists(loweredAlias) && IsValidPreferredKeyAlias(loweredAlias) {
-					l.AddKeyAlias(loweredAlias, key)
-					l.AddPreferredKeyAlias(loweredAlias)
-				}
-			}
-		}
-	}
-}
-
 func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	// SAFE??
-	if BibTeXBookish.Contains(l.EntryTypes[key]) {
+	entryType := l.EntryType(key)
+
+	if BibTeXBookish.Contains(entryType) {
 		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
 		l.UpdateEntryFieldAlias(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
@@ -244,14 +230,14 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 		strings.Contains(l.EntryFields[key]["booktitle"], "workshop") || strings.Contains(l.EntryFields[key]["booktitle"], "Workshop") ||
 		strings.Contains(l.EntryFields[key]["booktitle"], "conference") || strings.Contains(l.EntryFields[key]["booktitle"], "Conference") {
 		if l.EntryFields[key]["title"] == l.EntryFields[key]["booktitle"] {
-			if l.EntryTypes[key] != "proceedings" {
-				fmt.Println("Expected an proceedings", key)
-				l.EntryTypes[key] = "proceedings"
+			if entryType != "proceedings" {
+				fmt.Println("Expected a proceedings", key)
+				l.SetEntryType(key, "proceedings")
 			}
 		} else {
-			if l.EntryTypes[key] != "inproceedings" {
+			if entryType != "inproceedings" {
 				fmt.Println("Expected an inproceedings", key)
-				l.EntryTypes[key] = "inproceedings"
+				l.SetEntryType(key, "inproceedings")
 			}
 		}
 	}
@@ -404,7 +390,7 @@ func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefKey, key, field s
 }
 
 func (l *TBibTeXLibrary) CheckCrossref(key string) {
-	entryType := l.EntryTypes[key]
+	entryType := l.EntryType(key)
 	crossrefetyRAW := l.EntryFieldValueity(key, "crossref")
 
 	crossrefety := l.DeAliasEntryKey(crossrefetyRAW)
@@ -414,7 +400,7 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 
 	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
 		if crossrefety != "" {
-			if CrossrefType, CrossrefExists := l.EntryTypes[crossrefety]; CrossrefExists {
+			if CrossrefType := l.EntryType(crossrefety); CrossrefType != "" {
 				if allowedCrossrefType == CrossrefType {
 					for field := range BibTeXInheritableFields.Elements() {
 						l.CheckCrossrefInheritableField(crossrefety, key, field)
@@ -451,10 +437,10 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 	key := l.DeAliasEntryKey(keyRAW) // Dealias, while we are likely to do this immediately after a merge (for now)
 	// After merging all doubles, we can do this as part of the consistency check and CheckCrossref in particular, and then don't need to dealias.
 
-	if BibTeXCrossreffer.Contains(l.EntryTypes[key]) {
+	if BibTeXCrossreffer.Contains(l.EntryType(key)) {
 		crossrefKey := l.EntryFieldValueity(l.DeAliasEntryKey(key), "crossref")
 		if crossrefKey == "" {
-			entryType := Library.EntryTypes[key]
+			entryType := l.EntryType(key)
 
 			bookTitle := l.EntryFieldValueity(l.DeAliasEntryKey(key), "booktitle")
 			if bookTitle == "" {
@@ -468,7 +454,7 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 				l.EntryFields[crossrefKey] = TStringMap{}
 				l.EntryFields[crossrefKey]["title"] = bookTitle
 				l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), crossrefKey)
-				l.EntryTypes[crossrefKey] = crossrefType
+				l.SetEntryType(crossrefKey, crossrefType)
 
 				l.EntryFields[key]["crossref"] = crossrefKey
 			}
@@ -483,14 +469,14 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 	title := l.EntryFieldValueity(l.DeAliasEntryKey(key), "title")
 	if title != "" {
 		// Should be via a function!
-		Keys := Library.TitleIndex[TeXStringIndexer(title)]
+		Keys := l.TitleIndex[TeXStringIndexer(title)]
 		if Keys.Size() > 1 {
 			sortedKeys := Keys.ElementsSorted()
 			for _, a := range sortedKeys {
-				if a == Library.DeAliasEntryKey(a) {
+				if a == l.DeAliasEntryKey(a) {
 					for _, b := range sortedKeys {
-						if b == Library.DeAliasEntryKey(b) {
-							Library.MaybeMergeEntries(Library.DeAliasEntryKey(a), Library.DeAliasEntryKey(b))
+						if b == l.DeAliasEntryKey(b) {
+							l.MaybeMergeEntries(l.DeAliasEntryKey(a), l.DeAliasEntryKey(b))
 						}
 					}
 				}
@@ -504,7 +490,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 
 	l.MaybeSyncDBLPEntry(key)
 
-	entryType := l.EntryTypes[key] /// function?
+	entryType := l.EntryType(key)
 	entryDBLP := l.EntryFieldValueity(key, "dblp")
 
 	if BibTeXCrossreffer.Contains(entryType) {
@@ -557,7 +543,6 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 
 func (l *TBibTeXLibrary) CheckEntry(key string) {
 	if l.EntryExists(key) {
-		l.CheckPreferredKeyAliasesConsistency(key)
 		l.CheckDOIPresence(key)
 		l.CheckEPrint(key)
 		l.CheckCrossref(key)
@@ -568,7 +553,7 @@ func (l *TBibTeXLibrary) CheckEntry(key string) {
 			l.CheckISBNFromDOI(key)
 			l.CheckLanguageID(key)
 			l.CheckTitlePresence(key)
-			l.CheckURLPresence(key)
+			l.CheckURLRedundance(key)
 			l.CheckURLDateNeed(key)
 			l.CheckFileReference(key)
 		}
@@ -578,7 +563,7 @@ func (l *TBibTeXLibrary) CheckEntry(key string) {
 func (l *TBibTeXLibrary) CheckEntries() {
 	l.Progress(ProgressCheckingConsistencyOfEntries)
 
-	for key := range l.EntryTypes {
+	for key := range l.EntryFields {
 		l.CheckEntry(key)
 	}
 }
@@ -586,7 +571,7 @@ func (l *TBibTeXLibrary) CheckEntries() {
 func (l *TBibTeXLibrary) CheckFiles() {
 	// CONSTANT!!!!
 	l.Progress("Checking for superfluous and duplicate files.")
-	filePath := Library.FilesRoot + FilesFolder
+	filePath := l.FilesRoot + FilesFolder
 
 	files, err := os.ReadDir(filePath)
 	if err != nil {
@@ -605,7 +590,7 @@ func (l *TBibTeXLibrary) CheckFiles() {
 		}
 	}
 
-	for _, Keys := range Library.FileMD5Index {
+	for _, Keys := range l.FileMD5Index {
 		if Keys.Size() > 1 {
 			l.Warning("File, with same content, is used by multiple different files: %s", Keys.String())
 			l.MaybeMergeEntrySet(Keys)

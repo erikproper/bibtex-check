@@ -47,6 +47,7 @@ func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
 // Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
 //
 // SPLIT like the normalisers ...
+// Rethink this name ... "Field", since it may also work on the type ...
 func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRAW, currentRAW string) string {
 	current := l.DeAliasFieldValue(field, currentRAW)
 	challenge := l.DeAliasFieldValue(field, challengeRAW)

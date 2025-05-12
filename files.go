@@ -90,6 +90,16 @@ func BackupFile(sourceFile string) bool {
 	return true
 }
 
+func ModTime(file string) int64 {
+	fileInfo, err := os.Stat(file)
+
+	if os.IsNotExist(err) {
+		return 0
+	} else {
+		return fileInfo.ModTime().UnixMicro()
+	}
+}
+
 // Check if the given file exists or not.
 func FileExists(fileName string) bool {
 	if fileName == "" {
