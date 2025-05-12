@@ -265,22 +265,23 @@ func main() {
 			Library.ReadNonDoublesFile()
 
 			for key := range Library.EntryFields {
+				FIXThatShouldBeChecks(key)
+			}
+			Library.WriteNonDoublesFile()
+
+			writeBibFile = true
+			writeAliases = true
+			writeMappings = true
+		}
+
+	case len(os.Args) == 2 && os.Args[1] == "-fixdblp":
+		if OpenLibraryToUpdate() {
+			Library.CheckEntries()
+			Library.ReadNonDoublesFile()
+
+			for key := range Library.EntryFields {
 				if Library.EntryFieldValueity(key, "dblp") != "" {
-					// Temporary!!
-					if Library.EntryType(key) == "book" ||
-						Library.EntryType(key) == "incollection" ||
-						Library.EntryType(key) == "misc" ||
-						Library.EntryType(key) == "inbook" ||
-						Library.EntryType(key) == "booklet" ||
-						Library.EntryType(key) == "manual" ||
-						Library.EntryType(key) == "mastersthesis" ||
-						Library.EntryType(key) == "phdthesis" ||
-						Library.EntryType(key) == "techreport" ||
-						Library.EntryType(key) == "proceedings" ||
-						Library.EntryType(key) == "inproceedings" ||
-						Library.EntryType(key) == "article" {
-						FIXThatShouldBeChecks(key)
-					}
+					FIXThatShouldBeChecks(key)
 				}
 			}
 			Library.WriteNonDoublesFile()
