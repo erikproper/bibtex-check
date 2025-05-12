@@ -111,7 +111,6 @@ func OpenLibraryToReport() bool {
 func FIXThatShouldBeChecks(key string) {
 	Library.CheckNeedToMergeForEqualTitles(key)
 	Library.CheckNeedToSplitBookishEntry(key)
-
 	Library.CheckDBLP(key)
 }
 
@@ -266,6 +265,7 @@ func main() {
 
 			for key := range Library.EntryFields {
 				FIXThatShouldBeChecks(key)
+				Library.CheckEntry(key)
 			}
 			Library.WriteNonDoublesFile()
 
@@ -282,6 +282,7 @@ func main() {
 			for key := range Library.EntryFields {
 				if Library.EntryFieldValueity(key, "dblp") != "" {
 					FIXThatShouldBeChecks(key)
+					Library.CheckEntry(key)
 				}
 			}
 			Library.WriteNonDoublesFile()
@@ -305,6 +306,7 @@ func main() {
 
 			for _, key := range keyStrings[1:] {
 				FIXThatShouldBeChecks(key)
+				Library.CheckEntry(key)
 			}
 
 			Library.WriteNonDoublesFile()
