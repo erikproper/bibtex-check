@@ -72,8 +72,6 @@ func OpenLibraryToUpdate() bool {
 		}
 	}
 
-	Library.ReadPreferredKeyAliasesFile() /// TEMP
-
 	Library.ReportLibrarySize()
 	Library.AddImpliedKeyAliases()
 
@@ -89,7 +87,6 @@ func OpenLibraryToReport() bool {
 	result := false
 	if Library.ValidCache() {
 		Library.ReadKeyAliasesFile()
-		Library.ReadPreferredKeyAliasesFile()
 		Library.ReadCache()
 		result = true
 	} else {
@@ -98,7 +95,6 @@ func OpenLibraryToReport() bool {
 		Library.ReadGenericFieldAliasesFile()
 		Library.ReadEntryFieldAliasesFile()
 		Library.ReadFieldMappingsFile()
-		Library.ReadPreferredKeyAliasesFile()
 
 		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... BaseName on initialise !?
 		if result {
@@ -281,7 +277,7 @@ func main() {
 						Library.EntryType(key) == "phdthesis" ||
 						Library.EntryType(key) == "techreport" ||
 						Library.EntryType(key) == "proceedings" ||
-//						Library.EntryType(key) == "inproceedings" ||
+						Library.EntryType(key) == "inproceedings" ||
 						Library.EntryType(key) == "article" {
 						FIXThatShouldBeChecks(key)
 					}

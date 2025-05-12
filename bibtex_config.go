@@ -43,8 +43,6 @@ const (
 
 	BibFileExtension = ".bib"
 
-	PreferredKeyAliasesFileExtension = ".preferred"
-
 	NameAliasesFileExtension         = ".filter_name_aliases"
 	EntryFieldAliasesFileExtension   = ".filter_entry_field_aliases"
 	GenericFieldAliasesFileExtension = ".filter_generic_field_aliases"

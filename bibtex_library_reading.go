@@ -86,7 +86,6 @@ func (l *TBibTeXLibrary) ValidCache() bool {
 		// Maybe do this via a set?
 		return CacheModTime > ModTime(FileBase+BibFileExtension) &&
 			CacheModTime > ModTime(FileBase+KeyAliasesFileExtension) &&
-			CacheModTime > ModTime(FileBase+PreferredKeyAliasesFileExtension) &&
 			CacheModTime > ModTime(FileBase+EntryFieldAliasesFileExtension) &&
 			CacheModTime > ModTime(FileBase+GenericFieldAliasesFileExtension) &&
 			CacheModTime > ModTime(FileBase+FieldMappingsFileExtension) &&
@@ -210,30 +209,6 @@ func (l *TBibTeXLibrary) ReadKeyAliasesFile() {
 
 		l.AddKeyAlias(elements[1], elements[0])
 	})
-}
-
-func (l *TBibTeXLibrary) AddPreferredKeyAlias(alias string) {
-	key, exists := l.KeyAliasToKey[alias]
-
-	// Of course, a preferred alias must be an alias.
-	if !exists {
-		l.Warning(WarningPreferredAliasNotExist, alias)
-
-		return
-	}
-
-	if !IsValidPreferredKeyAlias(alias) {
-		l.Warning(WarningInvalidPreferredKeyAlias, alias, key)
-
-		return
-	}
-
-	l.EntryFields.SetValueForStringPairMap(key, PreferredKeyField, alias)
-	l.AddImpliedKeyAlias(key, alias)
-}
-
-func (l *TBibTeXLibrary) ReadPreferredKeyAliasesFile() {
-	l.readLibraryFile(PreferredKeyAliasesFileExtension, ProgressReadingPreferredKeyAliasesFile, l.AddPreferredKeyAlias)
 }
 
 func (l *TBibTeXLibrary) ReadNonDoublesFile() {
