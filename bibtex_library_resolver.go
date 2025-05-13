@@ -113,7 +113,6 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRA
 		// And update the recorded challenges
 		// Note: this is an *update* as we may need to update this as a new target for other challenges as well.
 
-		l.Warning("Resolving for " + key + " field " + field)
 		options := TStringSetNew()
 		options.Add("Y", "y", "n", "N")
 		warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
