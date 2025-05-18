@@ -85,6 +85,7 @@ func (l *TBibTeXLibrary) ValidCache() bool {
 
 		// Maybe do this via a set?
 		return CacheModTime > ModTime(FileBase+BibFileExtension) &&
+			CacheModTime > ModTime(FileBase+NameAliasesFileExtension) &&
 			CacheModTime > ModTime(FileBase+KeyAliasesFileExtension) &&
 			CacheModTime > ModTime(FileBase+EntryFieldAliasesFileExtension) &&
 			CacheModTime > ModTime(FileBase+GenericFieldAliasesFileExtension) &&
@@ -108,10 +109,7 @@ func (l *TBibTeXLibrary) ReadFieldsCache() {
 			return
 		}
 
-		l.SetEntryFieldValue(elements[0], elements[1], elements[2])
-		if elements[1] == "title" {
-			l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(elements[2]), elements[0])
-		}
+		l.SetEntryFieldValue(elements[0], elements[1], l.ProcessCacheEntryFieldValue(elements[0], elements[1], elements[2]))
 	})
 }
 

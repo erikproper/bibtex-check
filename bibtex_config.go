@@ -38,8 +38,9 @@ const (
 
 	CacheCommentsSeparator = "@@@@@@@@"
 
-	FieldsCacheExtension   = ".cache_fields"
-	CommentsCacheExtension = ".cache_comments"
+	FieldsCacheExtension     = ".cache_fields"
+	CommentsCacheExtension   = ".cache_comments"
+	KeyAliasesCacheExtension = ".cache_key_aliases"
 
 	BibFileExtension = ".bib"
 

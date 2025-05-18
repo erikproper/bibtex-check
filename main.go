@@ -85,12 +85,11 @@ func OpenLibraryToReport() bool {
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
 	result := false
+	Library.ReadKeyAliasesFile()
 	if Library.ValidCache() {
-		Library.ReadKeyAliasesFile()
 		Library.ReadCache()
 		result = true
 	} else {
-		Library.ReadKeyAliasesFile()
 		Library.ReadNameAliasesFile()
 		Library.ReadGenericFieldAliasesFile()
 		Library.ReadEntryFieldAliasesFile()

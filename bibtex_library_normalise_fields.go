@@ -15,7 +15,7 @@ package main
 import (
 	"regexp"
 	"strings"
-	//"fmt"
+	// "fmt"
 )
 
 /////// Do we really need the library as parameter?
@@ -81,11 +81,12 @@ func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 	// Remove leading/trailing spaces
 	trimmedURL = strings.TrimSpace(rawURL)
 	// Some publishers of BibTeX files use a "{$\_$}" in the URL. We prefer not to.
+	// Same with "%5C" which is an encoded \_
+	trimmedURL = strings.ReplaceAll(trimmedURL, "%5C", "_")
 	trimmedURL = strings.ReplaceAll(trimmedURL, "\\_", "_")
 	trimmedURL = strings.ReplaceAll(trimmedURL, "{$", "")
 	trimmedURL = strings.ReplaceAll(trimmedURL, "$}", "")
-	// Same with "%5C" which is an encoded \_
-	trimmedURL = strings.ReplaceAll(trimmedURL, "%5C", "_")
+
 	// In config file!!!!!
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://ceur-ws.org/", "https://ceur-ws.org/")
 

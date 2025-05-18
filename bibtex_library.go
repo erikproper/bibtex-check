@@ -716,10 +716,12 @@ func (l *TBibTeXLibrary) AssignField(field, value string) bool {
 	// Note: The parser for BibTeX streams is responsible for the mapping of field name aliases, such as editors to editor, etc.
 	// Here we only need to take care of the normalisation and processing of field values.
 	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
+
+	newValue := l.ProcessPlainEntryFieldValue(l.currentKey, field, value)
 	currentValue := l.EntryFieldValueity(l.currentKey, field)
 
 	// Assign the new value, while, if needed, resolve it with the current value
-	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, l.currentKey, field, value, currentValue)
+	l.EntryFields[l.currentKey][field] = l.MaybeResolveFieldValue(l.currentKey, l.currentKey, field, newValue, currentValue)
 
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {

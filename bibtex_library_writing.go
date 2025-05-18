@@ -171,7 +171,10 @@ func (l *TBibTeXLibrary) WriteKeyAliasesFile() {
 	if !l.NoKeyAliasesFileWriting {
 		l.writeLibraryFile(KeyAliasesFileExtension, ProgressWritingKeyAliasesFile, func(aliasWriter *bufio.Writer) {
 			for alias, original := range l.KeyAliasToKey {
-				if alias != original {
+				if alias != original &&
+					// Simplify in terms of being a clean inverse of the implied adding.
+					alias != l.EntryFieldValueity(original, PreferredKeyField) &&
+					alias != "DBLP:"+l.EntryFieldValueity(original, "dblp") {
 					aliasWriter.WriteString(original + "\t" + alias + "\n")
 				}
 			}
