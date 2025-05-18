@@ -34,7 +34,6 @@ const (
 	WarningSkippingToNextEntry = "Skipping to next entry"
 
 	// Warnings regarding the correctness of libraries
-	WarningDBLPMismatch                     = "Found %s as dblp alias, while we already have %s for entry %s."
 	WarningEntryAlreadyExists               = "Entry '%s' already exists."
 	WarningUnknownFields                    = "Unknown field(s) used: %s."
 	WarningEmptyTitle                       = "Empty title field for %s."

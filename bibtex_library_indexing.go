@@ -69,8 +69,8 @@ func TeXStringIndexer(input string) string {
 	return cleaned
 }
 
-func (l *TBibTeXLibrary) IndexEntryFieldValue(entry, field, value string) string {
-	indexedValue := l.DeAliasEntryFieldValue(entry, field, l.NormaliseFieldValue(field, value))
+func (l *TBibTeXLibrary) IndexEntryFieldValue(key, field, value string) string {
+	indexedValue := l.DeAliasEntryFieldValue(key, field, l.NormaliseFieldValue(field, key, value))
 
 	valueIndexer, hasIndexer := fieldIndexers[field]
 	if hasIndexer {

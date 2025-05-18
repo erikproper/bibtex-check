@@ -27,13 +27,7 @@ import (
  *
  */
 
-// Checks if a given alias fits the desired format of [a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
-// Examples: gordijn2002e3value, overbeek2010matchmaking, ...
-func IsValidPreferredKeyAlias(alias string) bool {
-	var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
-
-	return validPreferredKeyAlias.MatchString(alias)
-}
+// NEEDED, or can the be distributed into a Check??
 
 // Checks if a given ISSN fits the desired format
 func IsValidISSN(ISSN string) bool {
@@ -125,22 +119,6 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 	for alias, key := range l.KeyAliasToKey {
 		// WORK!!
 		// Once we're not in legacy mode anymore, then we need to enforce l.EntryExists(key)
-		if l.EntryExists(key) {
-			// Each "DBLP:" pre-fixed alias should be consistent with the dblp field of the referenced key.
-			if strings.Index(alias, "DBLP:") == 0 {
-				dblpAlias := alias[5:]
-				dblpValue := l.EntryFieldValueity(key, "dblp")
-				if dblpAlias != dblpValue {
-					if dblpValue == "" {
-						// If we have a dblp alias, and we have no dblp key, we can safely add this as the dblp value for this key.
-						l.SetEntryFieldValue(key, "dblp", dblpAlias)
-					} else {
-						l.Warning(WarningDBLPMismatch, dblpAlias, dblpValue, key)
-					}
-				}
-			}
-		}
-
 		if !l.EntryExists(key) {
 			l.Warning("Target %s of alias %s does not exist", key, alias)
 		}
@@ -181,6 +159,16 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 	}
 
 	return false
+}
+
+// Checks if a given alias fits the desired format of 	[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
+// Examples: gordijn2002e3value, overbeek2010matchmaking, ...
+func (l *TBibTeXLibrary) CheckPreferredKey(key string) bool {
+	var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
+
+	alias := l.EntryFieldValueity(key, PreferredKeyField)
+
+	return alias == "" || validPreferredKeyAlias.MatchString(alias)
 }
 
 func (l *TBibTeXLibrary) CheckTitlePresence(key string) {
@@ -546,6 +534,7 @@ func (l *TBibTeXLibrary) CheckEntry(key string) {
 		l.CheckDOIPresence(key)
 		l.CheckEPrint(key)
 		l.CheckCrossref(key)
+		l.CheckPreferredKey(key)
 		l.CheckBookishTitles(key)
 
 		// CheckCrossref can lead to a merger of entries for now ...

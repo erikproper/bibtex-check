@@ -166,7 +166,7 @@ func ApplyLaTeXMap(s string) string {
 	return result
 }
 
-func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
+func NormaliseNamesString(l *TBibTeXLibrary, keys, names string) string {
 	name := ""
 	token := ""
 	andety := ""
@@ -205,7 +205,7 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 	return result
 }
 
-func NormaliseTitleString(l *TBibTeXLibrary, title string) string {
+func NormaliseTitleString(l *TBibTeXLibrary, key, title string) string {
 	l.TBibTeXTeX.TextString(ApplyLaTeXMap(title))
 	l.TBibTeXTeX.inWord = false
 	l.TBibTeXTeX.TeXSpacety()

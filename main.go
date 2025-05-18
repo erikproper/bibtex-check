@@ -73,8 +73,6 @@ func OpenLibraryToUpdate() bool {
 	}
 
 	Library.ReportLibrarySize()
-	Library.AddImpliedKeyAliases()
-
 	Library.CheckKeyAliasesConsistency()
 
 	return result
@@ -101,7 +99,6 @@ func OpenLibraryToReport() bool {
 		}
 	}
 
-	Library.AddImpliedKeyAliases()
 	Library.ReportLibrarySize()
 
 	return result

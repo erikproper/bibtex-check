@@ -58,6 +58,7 @@ const (
 const (
 	EntryTypeField    = "entrytype"
 	PreferredKeyField = "preferredkey"
+	DBLPField         = "dblp"
 )
 
 // Add the allowed fields for an entry, while updating the aggregations of allowed entries and fields.
@@ -155,7 +156,7 @@ func init() {
 
 	AddAllowedFields(
 		"month", "year", "note", "doi", "key", "author", "title",
-		"dblp", "researchgate",
+		DBLPField, "researchgate",
 		"eprinttype", "eprint", "langid",
 		"url", "urldate", "urloriginal")
 

@@ -15,45 +15,42 @@ package main
 //import "fmt"
 
 // Definition of the map for field processors
-type TFieldProcessors = map[string]func(*TBibTeXLibrary, string)
+type TFieldProcessors = map[string]func(*TBibTeXLibrary, string, string)
 
 var plainFieldProcessors,
-	cacheFieldProcessors TFieldProcessors
+	cachedFieldProcessors TFieldProcessors
 
-func processDBLPValue(l *TBibTeXLibrary, value string) {
-	l.AddKeyAlias("DBLP:"+value, l.currentKey)
+func processDBLPValue(l *TBibTeXLibrary, key, value string) {
+	l.AddKeyAlias(KeyForDBLP(value), key)
 }
 
-func processPreferredKeyValue(l *TBibTeXLibrary, value string) {
-	l.AddKeyAlias(value, l.currentKey)
+func processPreferredKeyValue(l *TBibTeXLibrary, key, value string) {
+	l.AddKeyAlias(value, key)
 }
 
-func processTitleValue(l *TBibTeXLibrary, value string) {
-	l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(value), l.currentKey)
+func processTitleValue(l *TBibTeXLibrary, key, value string) {
+	l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(value), key)
 }
 
 // The general function call to process field values.
 // It always, first, conducts a normalisation of the field value.
-// If a field specific process function exists, then it is applied on the normalise value.
+// If a field specific process function exists, then it is applied on the normalised value.
 // Otherwise, we simply return the normalised value.
-func (l *TBibTeXLibrary) ProcessPlainEntryFieldValue(entry, field, value string) string {
-	normalisedValue := l.DeAliasEntryFieldValue(entry, field, l.NormaliseFieldValue(field, value))
+func (l *TBibTeXLibrary) ProcessEntryFieldValue(key, field, value string) string {
+	normalisedValue := l.DeAliasEntryFieldValue(key, field, l.NormaliseFieldValue(field, key, value))
 
 	valueProcessor, hasProcessor := plainFieldProcessors[field]
 	if hasProcessor {
-		valueProcessor(l, normalisedValue)
+		valueProcessor(l, key, normalisedValue)
 	}
 
 	return normalisedValue
 }
 
-func (l *TBibTeXLibrary) ProcessCacheEntryFieldValue(entry, field, value string) string {
-	// This needs serious fixing!
-	l.currentKey = entry
-	
-	valueProcessor, hasProcessor := cacheFieldProcessors[field]
+func (l *TBibTeXLibrary) ProcessCachedEntryFieldValue(key, field, value string) string {
+	valueProcessor, hasProcessor := cachedFieldProcessors[field]
 	if hasProcessor {
-		valueProcessor(l, value)
+		valueProcessor(l, key, value)
 	}
 
 	return value
@@ -65,8 +62,8 @@ func init() {
 	plainFieldProcessors["dblp"] = processDBLPValue
 	plainFieldProcessors["preferredkey"] = processPreferredKeyValue
 	plainFieldProcessors["title"] = processTitleValue
-	
-	cacheFieldProcessors = TFieldProcessors{}
-	cacheFieldProcessors["dblp"] = processDBLPValue
-	cacheFieldProcessors["preferredkey"] = processPreferredKeyValue
+
+	cachedFieldProcessors = TFieldProcessors{}
+	cachedFieldProcessors["dblp"] = processDBLPValue
+	cachedFieldProcessors["preferredkey"] = processPreferredKeyValue
 }

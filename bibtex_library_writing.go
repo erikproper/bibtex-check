@@ -174,7 +174,7 @@ func (l *TBibTeXLibrary) WriteKeyAliasesFile() {
 				if alias != original &&
 					// Simplify in terms of being a clean inverse of the implied adding.
 					alias != l.EntryFieldValueity(original, PreferredKeyField) &&
-					alias != "DBLP:"+l.EntryFieldValueity(original, "dblp") {
+					alias != KeyForDBLP(l.EntryFieldValueity(original, "dblp")) {
 					aliasWriter.WriteString(original + "\t" + alias + "\n")
 				}
 			}

@@ -109,7 +109,11 @@ func (l *TBibTeXLibrary) ReadFieldsCache() {
 			return
 		}
 
-		l.SetEntryFieldValue(elements[0], elements[1], l.ProcessCacheEntryFieldValue(elements[0], elements[1], elements[2]))
+		key := elements[0]
+		field := elements[1]
+		value := elements[2]
+
+		l.SetEntryFieldValue(key, field, l.ProcessCachedEntryFieldValue(key, field, value))
 	})
 }
 
@@ -147,10 +151,10 @@ func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
 	})
 }
 
-func (l *TBibTeXLibrary) normalisedAliasTargetPair(field, winner, challenger string) (string, string) {
+func (l *TBibTeXLibrary) normalisedAliasTargetPair(key, field, winner, challenger string) (string, string) {
 	normalisedWinner := ""
 	if winner != "" {
-		normalisedWinner = l.NormaliseFieldValue(field, winner)
+		normalisedWinner = l.NormaliseFieldValue(field, key, winner)
 	}
 
 	// We do normalise the challengers, but want to ignore error messages.
@@ -159,7 +163,7 @@ func (l *TBibTeXLibrary) normalisedAliasTargetPair(field, winner, challenger str
 	if challenger != "" {
 		silenced := l.InteractionIsOff()
 		l.SetInteractionOff()
-		normalisedChallenger = l.NormaliseFieldValue(field, challenger)
+		normalisedChallenger = l.NormaliseFieldValue(field, key, challenger)
 		l.SetInteraction(silenced)
 	}
 
@@ -178,12 +182,12 @@ func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
 
 		key := elements[0]
 		field := elements[1]
-		winner, challenger := l.normalisedAliasTargetPair(field, elements[2], elements[3])
+		winner, challenger := l.normalisedAliasTargetPair(key, field, elements[2], elements[3])
 		l.AddEntryFieldAlias(key, field, l.DeAliasFieldValue(field, challenger), l.DeAliasFieldValue(field, winner), true)
 	})
 }
 
-// Read field challenge file
+// Read generic field challenge file
 func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
 	l.readLibraryFile(GenericFieldAliasesFileExtension, ProgressReadingGenericFieldAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
@@ -194,7 +198,7 @@ func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
 		}
 
 		field := elements[0]
-		winner, challenger := l.normalisedAliasTargetPair(field, elements[1], elements[2])
+		winner, challenger := l.normalisedAliasTargetPair("", field, elements[1], elements[2])
 		l.AddGenericFieldAlias(field, challenger, winner, true)
 	})
 }

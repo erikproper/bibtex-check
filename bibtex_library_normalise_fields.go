@@ -21,7 +21,7 @@ import (
 /////// Do we really need the library as parameter?
 
 // Definition of the map for field Normalisers
-type TFieldNormalisers = map[string]func(*TBibTeXLibrary, string) string
+type TFieldNormalisers = map[string]func(*TBibTeXLibrary, string, string) string
 
 var fieldNormalisers TFieldNormalisers
 
@@ -40,7 +40,7 @@ func NormalisePersonNameValue(l *TBibTeXLibrary, name string) string {
 }
 
 // Normalize number values
-func NormaliseNumberValue(l *TBibTeXLibrary, rawNumber string) string {
+func NormaliseNumberValue(l *TBibTeXLibrary, key, rawNumber string) string {
 	var (
 		numberRange = regexp.MustCompile(`^[0-9]+-+[0-9]+$`)
 		minuses     = regexp.MustCompile(`-+`)
@@ -57,7 +57,7 @@ func NormaliseNumberValue(l *TBibTeXLibrary, rawNumber string) string {
 }
 
 // Normalize DOI values
-func NormaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
+func NormaliseDOIValue(l *TBibTeXLibrary, key, rawDOI string) string {
 	var (
 		trimDOIStart = regexp.MustCompile(`^(doi:|http(s|)://[a-z,.]*/)`)
 		trimmedDOI   string
@@ -75,7 +75,7 @@ func NormaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 	return trimmedDOI
 }
 
-func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
+func NormaliseURLValue(l *TBibTeXLibrary, key, rawURL string) string {
 	var trimmedURL string
 
 	// Remove leading/trailing spaces
@@ -126,7 +126,7 @@ func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 }
 
 // Normalize DOI values to the format 1234-5678
-func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
+func NormaliseISSNValue(l *TBibTeXLibrary, key, rawISSN string) string {
 	var (
 		trimISSNStart = regexp.MustCompile(`^ *ISSN[:]? *`)
 		trimmedISSN   string
@@ -154,13 +154,13 @@ func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 		}
 	}
 
-	l.Warning(WarningBadISSN, rawISSN, l.currentKey)
+	l.Warning(WarningBadISSN, rawISSN, key)
 
 	return strings.TrimSpace(rawISSN)
 }
 
 // Normalize DOI values to an ISBN10 or ISBN13 format.
-func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
+func NormaliseISBNValue(l *TBibTeXLibrary, key, rawISBN string) string {
 	var (
 		trimmedISBN   string
 		trimISBNStart = regexp.MustCompile(`^ *(ISBN|isbn)[-]?(10|13|)[:]? *`)
@@ -180,13 +180,13 @@ func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 		return trimmedISBN
 	}
 
-	l.Warning(WarningBadISBN, rawISBN, l.currentKey)
+	l.Warning(WarningBadISBN, rawISBN, key)
 
 	return strings.TrimSpace(rawISBN)
 }
 
 // //// The key should be provided when normalising ... or not?
-func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
+func NormaliseDateValue(l *TBibTeXLibrary, key, rawDate string) string {
 	// Remove leading/trailing spaces
 	trimmedDate := strings.TrimSpace(rawDate)
 
@@ -195,12 +195,12 @@ func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
 	}
 
 	// If we get here, we have a bad year on our hand.
-	l.Warning(WarningBadDate, rawDate, l.currentKey)
+	l.Warning(WarningBadDate, rawDate, key)
 
 	return strings.TrimSpace(rawDate)
 }
 
-func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
+func NormaliseYearValue(l *TBibTeXLibrary, key, rawYear string) string {
 	// Remove leading/trailing spaces
 	trimmedYear := strings.TrimSpace(rawYear)
 
@@ -209,12 +209,12 @@ func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
 	}
 
 	// If we get here, we have a bad year on our hand.
-	l.Warning(WarningBadYear, rawYear, l.currentKey)
+	l.Warning(WarningBadYear, rawYear, key)
 
 	return strings.TrimSpace(rawYear)
 }
 
-func NormaliseGroupsValue(l *TBibTeXLibrary, groups string) string {
+func NormaliseGroupsValue(l *TBibTeXLibrary, key, groups string) string {
 	groupSet := TStringSetNew()
 
 	// Generic Setify(string, delimiter) function??
@@ -226,7 +226,7 @@ func NormaliseGroupsValue(l *TBibTeXLibrary, groups string) string {
 	return groupSet.Stringify()
 }
 
-func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
+func NormalisePagesValue(l *TBibTeXLibrary, key, pages string) string {
 	var trimDashes = regexp.MustCompile(`-+`)
 
 	trimedPageRanges := ""
@@ -301,11 +301,13 @@ func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
 // The general function call to Normalise field values.
 // If a field specific Normalisation function exists, then it is applied.
 // Otherwise, we only remove leading/trailing spaces.
-func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
+
+// FLIP ORDER of key and field
+func (l *TBibTeXLibrary) NormaliseFieldValue(field, key, value string) string {
 	valueNormaliser, hasNormaliser := fieldNormalisers[field]
 
 	if hasNormaliser {
-		return valueNormaliser(l, value)
+		return valueNormaliser(l, key, value)
 	} else {
 		return strings.TrimSpace(value)
 	}

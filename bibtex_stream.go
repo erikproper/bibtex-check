@@ -37,20 +37,20 @@ const (
 
 type (
 	// As we need to cater for the fact that values for fields in BibTeX entries need to be assigned differently depending on the fact if it concerns an @string entry, or an actual publication, we will use a function as parameter to take care of the correct assignment.
-	TFieldAssigner func(string, string) bool
+	TFieldAssigner func(string, string, string) bool
 
 	// The actual TBibTeXStream type
 	TBibTeXStream struct {
-		TCharacterStream                     // The underlying stream of characters.
-		library              *TBibTeXLibrary // The BibTeX Library this parser will contribute to.
-		currentFieldName     string          // The name of the field assignment that is currently being parsed.
-		currentFieldValue    string          // The value of the field assignment that is currently being parsed.
-		currentEntryTypeName string          // The type of the entry we're currently parsing.
-		skippingEntry        bool            // Set to true if we need to be skipping things to the next entry.
-		stringMap            TStringMap      // The mapping of the defined strings.
-		succeeded            bool            // Set to false if we had a serious problem in parsing the stream.
+		TCharacterStream                  // The underlying stream of characters.
+		library           *TBibTeXLibrary // The BibTeX Library this parser will contribute to.
+		skippingEntry     bool            // Set to true if we need to be skipping things to the next entry.
+		stringMap         TStringMap      // The mapping of the defined strings.
+		succeeded         bool            // Set to false if we had a serious problem in parsing the stream.
 	}
 )
+
+// NOTE: can't we keep the currentXXX inside the parsing structure?
+// NOTE: or actually ... include currentKey as well, solving the dummy parameter for string assignments ...
 
 var (
 	// Translation from runes to TeX strings
@@ -77,14 +77,14 @@ func (b *TBibTeXStream) Initialise(reporting TInteraction, library *TBibTeXLibra
 	b.TCharacterStream.Initialise(reporting)
 	b.SetRuneMap(BibTeXRuneMap)
 	b.stringMap = BibTeXDefaultStrings
-	b.currentEntryTypeName = ""
 	b.skippingEntry = false
 	b.library = library
 	b.succeeded = true
 }
 
+// HELLO. Can we do this cleaner? The dummy for the key??
 // Assignment of a string definition.
-func (b *TBibTeXStream) AssignString(str, value string) bool {
+func (b *TBibTeXStream) AssignString(dummy, str, value string) bool {
 	b.stringMap[str] = value
 
 	return true
@@ -302,13 +302,13 @@ func (b *TBibTeXStream) FieldName(nameMap TStringMap, name *string) bool {
 }
 
 // EntryTypes
-func (b *TBibTeXStream) EntryType() bool {
-	return b.BibTeXName(BibTeXEntryTypeStarters, BibTeXEntryTypeCharacters, BibTeXEntryMap, &b.currentEntryTypeName)
+func (b *TBibTeXStream) EntryType(entryType *string) bool {
+	return b.BibTeXName(BibTeXEntryTypeStarters, BibTeXEntryTypeCharacters, BibTeXEntryMap, entryType)
 }
 
 // Forced EntryTypes
-func (b *TBibTeXStream) ForcedEntryType() bool {
-	return b.EntryType() ||
+func (b *TBibTeXStream) ForcedEntryType(entryType *string) bool {
+	return b.EntryType(entryType) ||
 		b.ReportParsingError(ErrorMissingEntryType) ||
 		b.SkipToNextEntry(EntryTypeClass)
 }
@@ -377,31 +377,31 @@ func (b *TBibTeXStream) ForcedFieldValue(value *string) bool {
 }
 
 // Forced FieldDefinitionBody
-func (b *TBibTeXStream) ForcedFieldDefinitionBody(fieldName string, nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
+func (b *TBibTeXStream) ForcedFieldDefinitionBody(key, fieldName string, nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
 	fieldValue := ""
 
 	return b.ForcedThisTokenWasCharacter(AssignmentCharacter) &&
 		/**/ b.ForcedFieldValue(&fieldValue) &&
 		/*  */ b.FieldValueAdditionety(&fieldValue) &&
-		/*    */ fieldAssigner(fieldName, fieldValue)
+		/*    */ fieldAssigner(key, fieldName, fieldValue)
 }
 
 // The FieldDefinition.
 // We do allow for empty field definitions, when the BibTeXFile e.g. contains ", ," in the middel, or ", }" at the end.
-func (b *TBibTeXStream) FieldDefinitionety(nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
+func (b *TBibTeXStream) FieldDefinitionety(key string, nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
 	fieldName := ""
 
 	return b.FieldName(nameMap, &fieldName) &&
-		/**/ b.ForcedFieldDefinitionBody(fieldName, nameMap, fieldAssigner) ||
+		/**/ b.ForcedFieldDefinitionBody(key, fieldName, nameMap, fieldAssigner) ||
 		true
 }
 
 // A sequence of FieldDefinitions, separated by a ","
-func (b *TBibTeXStream) FieldDefinitionsety(nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
-	b.FieldDefinitionety(nameMap, fieldAssigner)
+func (b *TBibTeXStream) FieldDefinitionsety(key string, nameMap TStringMap, fieldAssigner TFieldAssigner) bool {
+	b.FieldDefinitionety(key, nameMap, fieldAssigner)
 
 	for b.ThisTokenWasCharacter(CommaCharacter) {
-		b.FieldDefinitionety(nameMap, fieldAssigner)
+		b.FieldDefinitionety(key, nameMap, fieldAssigner)
 	}
 
 	return true
@@ -409,8 +409,8 @@ func (b *TBibTeXStream) FieldDefinitionsety(nameMap TStringMap, fieldAssigner TF
 
 // EntryDefinitionBodies.
 // Depending on the EntryType, we need to allow for four variations.
-func (b *TBibTeXStream) EntryDefinitionBody() bool {
-	switch b.currentEntryTypeName {
+func (b *TBibTeXStream) EntryDefinitionBody(entryType string) bool {
+	switch entryType {
 
 	// LaTeX preambles.
 	// For the moment, we actually completely ignore these.
@@ -428,33 +428,34 @@ func (b *TBibTeXStream) EntryDefinitionBody() bool {
 
 	// String definitions.
 	case StringEntryType:
-		return b.FieldDefinitionsety(BibTeXEmptyNameMap, b.AssignString)
+		key := ""
+		return b.FieldDefinitionsety(key, BibTeXEmptyNameMap, b.AssignString)
 
 	// Regular entries.
 	default:
 		key := ""
 		return b.Key(&key) &&
-			/**/ b.library.StartRecordingLibraryEntry(key, b.currentEntryTypeName) &&
-			/*  */ b.FieldDefinitionsety(BibTeXFieldMap, b.library.AssignField) &&
-			/*    */ b.library.FinishRecordingLibraryEntry()
+			/**/ b.library.StartRecordingLibraryEntry(key, entryType) &&
+			/*  */ b.FieldDefinitionsety(key, BibTeXFieldMap, b.library.AssignField) &&
+			/*    */ b.library.FinishRecordingLibraryEntry(key)
 	}
 }
 
 // ForcedEntryDefinitionBody
-func (b *TBibTeXStream) ForcedEntryDefinitionBody() bool {
-	return b.EntryDefinitionBody() ||
+func (b *TBibTeXStream) ForcedEntryDefinitionBody(entryType string) bool {
+	return b.EntryDefinitionBody(entryType) ||
 		b.ReportParsingError(ErrorMissingEntryBody) ||
 		b.SkipToNextEntry(EntryBodyClass)
 }
 
 // The actual Entries
 func (b *TBibTeXStream) Entry() bool {
-	b.currentEntryTypeName = ""
+	entryType := ""
 
 	return b.ThisTokenWasCharacter(EntryStartCharacter) &&
-		/**/ b.ForcedEntryType() &&
+		/**/ b.ForcedEntryType(&entryType) &&
 		/*  */ b.ForcedThisTokenWasCharacter(BeginGroupCharacter) &&
-		/*    */ b.ForcedEntryDefinitionBody() &&
+		/*    */ b.ForcedEntryDefinitionBody(entryType) &&
 		/*      */ b.ForcedThisTokenWasCharacter(EndGroupCharacter)
 }
 
