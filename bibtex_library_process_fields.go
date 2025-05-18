@@ -58,6 +58,9 @@ func (l *TBibTeXLibrary) ProcessCachedEntryFieldValue(key, field, value string) 
 
 func init() {
 	// Define the processing functions.
+
+	// NOTE ... if thet are the same ... why not use the same ....
+
 	plainFieldProcessors = TFieldProcessors{}
 	plainFieldProcessors["dblp"] = processDBLPValue
 	plainFieldProcessors["preferredkey"] = processPreferredKeyValue
@@ -66,4 +69,5 @@ func init() {
 	cachedFieldProcessors = TFieldProcessors{}
 	cachedFieldProcessors["dblp"] = processDBLPValue
 	cachedFieldProcessors["preferredkey"] = processPreferredKeyValue
+	cachedFieldProcessors["title"] = processTitleValue
 }
