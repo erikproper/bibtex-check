@@ -130,16 +130,21 @@ func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckURLRedundance(key string) {
-	if foundURL := l.EntryFieldValueity(key, "url"); foundURL != "" {
-		if strings.ToLower(foundURL) == strings.ToLower("https://doi.org/"+l.EntryFieldValueity(key, "doi")) {
-			// CONSTANTS!!!
-			// CONSTANTS!!!
-			l.Warning("Can empty url for " + key + " -- which is " + foundURL)
+func (l *TBibTeXLibrary) IsRedundantURL(url, key string) bool {
+	foundURL := strings.ToLower(url)
 
-			// Call??
-			l.EntryFields[key]["url"] = ""
-		}
+	return foundURL == strings.ToLower("https://doi.org/"+l.EntryFieldValueity(key, "doi"))
+}
+
+func (l *TBibTeXLibrary) CheckURLRedundance(key string) {
+	url := l.EntryFieldValueity(key, "url")
+
+	if l.IsRedundantURL(url, key) {
+		// CONSTANTS!!!
+		l.Warning("Can empty url for " + key + " -- which is " + url)
+
+		// Call??
+		l.EntryFields[key]["url"] = ""
 	}
 }
 

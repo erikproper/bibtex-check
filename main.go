@@ -288,6 +288,7 @@ func main() {
 						Library.EntryFields[key][EntryTypeField] == "proceedings" ||
 						Library.EntryFields[key][EntryTypeField] == "inproceedings" ||
 						Library.EntryFields[key][EntryTypeField] == "article" {
+						Library.CheckDBLP(key)
 						FIXThatShouldBeChecks(key)
 					}
 				}
@@ -332,6 +333,7 @@ func main() {
 			writeMappings = true
 
 			if Library.LookupDBLPKey(os.Args[2]) == "" {
+				// Leads to a double READ ... NOT NEEDED. MaybeAdd does it and the DBLPCHeck again ...
 				Added := Library.MaybeAddDBLPEntry(os.Args[2])
 				if Added != "" {
 					FIXThatShouldBeChecks(Added)

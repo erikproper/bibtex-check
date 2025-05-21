@@ -41,11 +41,11 @@ type (
 
 	// The actual TBibTeXStream type
 	TBibTeXStream struct {
-		TCharacterStream                  // The underlying stream of characters.
-		library           *TBibTeXLibrary // The BibTeX Library this parser will contribute to.
-		skippingEntry     bool            // Set to true if we need to be skipping things to the next entry.
-		stringMap         TStringMap      // The mapping of the defined strings.
-		succeeded         bool            // Set to false if we had a serious problem in parsing the stream.
+		TCharacterStream                 // The underlying stream of characters.
+		library          *TBibTeXLibrary // The BibTeX Library this parser will contribute to.
+		skippingEntry    bool            // Set to true if we need to be skipping things to the next entry.
+		stringMap        TStringMap      // The mapping of the defined strings.
+		succeeded        bool            // Set to false if we had a serious problem in parsing the stream.
 	}
 )
 

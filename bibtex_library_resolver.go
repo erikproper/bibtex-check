@@ -85,6 +85,11 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRA
 		}
 	}
 
+	// CHECK the Maybe variation. Need to do this smarter.
+	if field == "url" && l.IsRedundantURL(challenge, key) {
+		return ""
+	}
+
 	if field == "groups" {
 		return current + ", " + challenge
 	}
@@ -152,6 +157,10 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRA
 
 // If the current value is empty, then we can assign the alias.
 func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challenge, current string) string {
+	if field == "url" && l.IsRedundantURL(challenge, key) {
+		return ""
+	}
+
 	if current == "" {
 		return challenge
 	} else if challenge == "" {
