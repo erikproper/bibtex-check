@@ -394,7 +394,7 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
 		if crossrefety != "" {
 			if CrossrefType := l.EntryType(crossrefety); CrossrefType != "" {
-				if allowedCrossrefType == CrossrefType {
+				if allowedCrossrefType == CrossrefType || CrossrefType == "incollection" { // MAKE THIS CLEANER
 					for field := range BibTeXInheritableFields.Elements() {
 						l.CheckCrossrefInheritableField(crossrefety, key, field)
 					}
