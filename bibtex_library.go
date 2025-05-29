@@ -40,6 +40,7 @@ type (
 		FileMD5Index                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
 		NonDoubles                       TStringSetMap             //
+		KeyHintToKey                     TStringMap                // Mapping from key hints to the actual entry key.
 		KeyAliasToKey                    TStringMap                // Mapping from key aliases to the actual entry key.
 		FieldMappings                    TStringStringStringMap    // field/value to field/value mapping
 		KeyToAliases                     TStringSetMap             // The inverted version of KeyAliasToKey NEEEEEEEDED??????
@@ -56,6 +57,7 @@ type (
 		NoEntryFieldAliasesFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
 		NoGenericFieldAliasesFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
 		NoKeyAliasesFileWriting          bool
+		NoKeyHintsFileWriting            bool
 		NoNameAliasesFileWriting         bool
 		NoNonDoublesFileWriting          bool
 		NoFieldMappingsFileWriting       bool
@@ -108,6 +110,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.NoEntryFieldAliasesFileWriting = false
 	l.NoGenericFieldAliasesFileWriting = false
 	l.NoKeyAliasesFileWriting = false
+	l.NoKeyHintsFileWriting = false
 	l.NoNameAliasesFileWriting = false
 	l.NoFieldMappingsFileWriting = false
 	l.IgnoreIllegalFields = false
@@ -435,6 +438,14 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 		// Post legacy ... is the true/false needed at all??
 		// Definitely! Needed for mergers of entries, to allow for fresh aliases!!
 	}
+}
+
+// Add a new key hint
+func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
+	if hint != key && hint != "" && key != "" {
+		l.KeyHintToKey.SetValueForStringMap(hint, key)
+	}
+	//// Maybe add some warnings?!?
 }
 
 func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, targetValue string) {

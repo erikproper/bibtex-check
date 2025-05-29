@@ -34,14 +34,15 @@ const (
 	WarningSkippingToNextEntry = "Skipping to next entry"
 
 	// Warnings regarding the correctness of libraries
-	WarningEntryAlreadyExists               = "Entry '%s' already exists."
-	WarningUnknownFields                    = "Unknown field(s) used: %s."
-	WarningEmptyTitle                       = "Empty title field for %s."
-	WarningAmbiguousAlias                   = "Ambiguous alias: for %s we have %s and %s."
-	WarningPreferredAliasNotExist           = "Can't select a non existing alias %s as preferred alias."
-	WarningAliasIsKey                       = "Alias %s is already known to be a key."
-	WarningAliasTargetKeyIsAlias            = "Alias %s has a target key %s, which is actually an alias for %s."
-	WarningAliasIsName                      = "Alias %s is already known to be a name."
+	WarningEntryAlreadyExists     = "Entry '%s' already exists."
+	WarningUnknownFields          = "Unknown field(s) used: %s."
+	WarningEmptyTitle             = "Empty title field for %s."
+	WarningAmbiguousAlias         = "Ambiguous alias: for %s we have %s and %s."
+	WarningPreferredAliasNotExist = "Can't select a non existing alias %s as preferred alias."
+	WarningAliasIsKey             = "Alias %s is already known to be a key."
+	WarningAliasTargetKeyIsAlias  = "Alias %s has a target key %s, which is actually an alias for %s."
+	WarningAliasIsName            = "Alias %s is already known to be a name."
+	//// All till needed??
 	WarningAliasTargetNameIsAlias           = "Alias %s has a target name %s, which is actually an alias for %s."
 	WarningAliasIsJournal                   = "Alias %s is already known to be a journal."
 	WarningAliasTargetJournalIsAlias        = "Alias %s has a target journal %s, which is actually an alias for %s."
@@ -68,7 +69,9 @@ const (
 	WarningEntryFieldAliasesLineTooShort   = "Line in entry field aliases file is too short: %s"
 	WarningGenericFieldAliasesLineTooShort = "Line in generic field aliases file is too short: %s"
 	WarningNameAliasesLineTooShort         = "Line in name aliases file is too short: %s"
-	WarningAliasesLineTooShort             = "Line in aliases file is too short: %s"
+	WarningKeyAliasesLineTooShort          = "Line in key aliases file is too short: %s"
+	WarningKeyHintsLineTooShort            = "Line in key hints file is too short: %s"
+	WarningNonDoublesLineTooShort          = "Line in non doubles file is too short: %s"
 
 	// Progress reports for reading/writing files"Line in aliases file is too short: %s"
 	ProgressWritingBibFile                 = "Writing bib file %s"
@@ -80,10 +83,10 @@ const (
 	ProgressWritingGenericFieldAliasesFile = "Writing generic field aliases file %s"
 	ProgressWritingEntryFieldAliasesFile   = "Writing entry field aliases file %s"
 	ProgressWritingPreferredKeyAliasesFile = "Writing preferred key aliases file %s"
-	ProgressWritingAddressesFile           = "Writing addresses file %s"
 	ProgressWritingNameAliasesFile         = "Writing name aliases file %s"
 	ProgressWritingFieldMappingsFile       = "Writing field mappings file %s"
 	ProgressWritingKeyAliasesFile          = "Reading key aliases file %s"
+	ProgressWritingKeyHintsFile            = "Reading key hints file %s"
 
 	ProgressReadingBibFile = "Reading bib file %s"
 
@@ -95,9 +98,9 @@ const (
 	ProgressReadingNonDoublesFile          = "Reading non_doubles file %s"
 	ProgressReadingGenericFieldAliasesFile = "Reading generic field aliases file %s" // Really all these variations?
 	ProgressReadingEntryFieldAliasesFile   = "Reading entry field aliases file %s"
-	ProgressReadingAddressesFile           = "Reading organisational addresses file %s"
 	ProgressReadingPreferredKeyAliasesFile = "Reading preferred key aliases file %s"
 	ProgressReadingKeyAliasesFile          = "Reading key aliases file %s"
+	ProgressReadingKeyHintsFile            = "Reading key hints file %s"
 	ProgressReadingNameAliasesFile         = "Reading name aliases file %s"
 	ProgressReadingFieldMappingsFile       = "Reading field mappings file %s"
 

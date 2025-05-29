@@ -171,6 +171,8 @@ func (l *TBibTeXLibrary) WriteKeyAliasesFile() {
 	if !l.NoKeyAliasesFileWriting {
 		l.writeLibraryFile(KeyAliasesFileExtension, ProgressWritingKeyAliasesFile, func(aliasWriter *bufio.Writer) {
 			for alias, original := range l.KeyAliasToKey {
+				original = l.DeAliasEntryKey(original)
+				
 				if alias != original &&
 					// Simplify in terms of being a clean inverse of the implied adding.
 					alias != l.EntryFieldValueity(original, PreferredKeyField) &&
@@ -182,8 +184,24 @@ func (l *TBibTeXLibrary) WriteKeyAliasesFile() {
 	}
 }
 
+// Write entry key alias/original pairs to a bufio.bWriter buffer
+func (l *TBibTeXLibrary) WriteKeyHintsFile() {
+	if !l.NoKeyHintsFileWriting {
+		l.writeLibraryFile(KeyHintsFileExtension, ProgressWritingKeyHintsFile, func(aliasWriter *bufio.Writer) {
+			for alias, original := range l.KeyHintToKey {
+				original = l.DeAliasEntryKey(original)
+
+				if alias != original {
+					aliasWriter.WriteString(original + "\t" + alias + "\n")
+				}
+			}
+		})
+	}
+}
+
 func (l *TBibTeXLibrary) WriteAliasesFiles() {
 	l.WriteKeyAliasesFile()
+	l.WriteKeyHintsFile()
 	l.WriteNameAliasesFile()
 	l.WriteGenericFieldAliasesFile()
 	l.WriteEntryFieldAliasesFile()

@@ -20,6 +20,7 @@ const (
 	MainLibrary  = "main"
 )
 
+
 // Put this one in a SEPARATE FILE
 // Update bib mapping file
 //func (l *TBibTeXLibrary) UpdateBibMap(file string) {
@@ -54,6 +55,7 @@ func OpenLibraryToUpdate() bool {
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
 	Library.ReadKeyAliasesFile()
+	Library.ReadKeyHintsFile()
 
 	Library.ReadNameAliasesFile()
 	Library.ReadGenericFieldAliasesFile()

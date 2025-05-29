@@ -207,7 +207,7 @@ func (l *TBibTeXLibrary) ReadKeyAliasesFile() {
 	l.readLibraryFile(KeyAliasesFileExtension, ProgressReadingKeyAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 2 {
-			l.Warning(WarningAliasesLineTooShort, line)
+			l.Warning(WarningKeyAliasesLineTooShort, line)
 			l.NoKeyAliasesFileWriting = true
 			return
 		}
@@ -216,11 +216,24 @@ func (l *TBibTeXLibrary) ReadKeyAliasesFile() {
 	})
 }
 
+func (l *TBibTeXLibrary) ReadKeyHintsFile() {
+	l.readLibraryFile(KeyHintsFileExtension, ProgressReadingKeyHintsFile, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
+			l.Warning(WarningKeyHintsLineTooShort, line)
+			l.NoKeyHintsFileWriting = true
+			return
+		}
+
+		l.AddKeyHint(elements[1], elements[0])
+	})
+}
+
 func (l *TBibTeXLibrary) ReadNonDoublesFile() {
 	l.readLibraryFile(NonDoublesFileExtension, ProgressReadingNonDoublesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 2 {
-			l.Warning(WarningAliasesLineTooShort, line)
+			l.Warning(WarningNonDoublesLineTooShort, line)
 			l.NoNonDoublesFileWriting = true
 			return
 		}
@@ -234,7 +247,7 @@ func (l *TBibTeXLibrary) ReadNameAliasesFile() {
 	l.readLibraryFile(NameAliasesFileExtension, ProgressReadingNameAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 2 {
-			l.Warning(WarningAliasesLineTooShort, line)
+			l.Warning(WarningNameAliasesLineTooShort, line)
 			l.NoNameAliasesFileWriting = true
 			return
 		}

@@ -51,6 +51,7 @@ const (
 
 	NonDoublesFileExtension = ".non_double"
 	KeyAliasesFileExtension = ".key_aliases"
+	KeyHintsFileExtension   = ".key_hints"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field
