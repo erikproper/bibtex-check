@@ -20,7 +20,6 @@ const (
 	MainLibrary  = "main"
 )
 
-
 // Put this one in a SEPARATE FILE
 // Update bib mapping file
 //func (l *TBibTeXLibrary) UpdateBibMap(file string) {

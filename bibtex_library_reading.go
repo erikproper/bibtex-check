@@ -212,7 +212,11 @@ func (l *TBibTeXLibrary) ReadKeyAliasesFile() {
 			return
 		}
 
-		l.AddKeyAlias(elements[1], elements[0])
+		key := elements[0]
+		alias := elements[1]
+		if IsValidKey(alias) {
+			l.AddKeyAlias(alias, key)
+		}
 	})
 }
 

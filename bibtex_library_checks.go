@@ -29,6 +29,12 @@ import (
 
 // NEEDED, or can the be distributed into a Check??
 
+func IsValidKey(key string) bool {
+	var validKey = regexp.MustCompile(`^` + KeyPrefix + `-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]$`)
+
+	return validKey.MatchString(key)
+}
+
 // Checks if a given ISSN fits the desired format
 func IsValidISSN(ISSN string) bool {
 	var validISSN = regexp.MustCompile(`^[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9,X]$`)
@@ -89,10 +95,11 @@ func (l *TBibTeXLibrary) checkAliasesMapping(aliasMap TStringMap, inverseMap TSt
 	}
 }
 
+// CLEANING needed
 func (l *TBibTeXLibrary) CheckAliases() {
 	l.Progress(ProgressCheckingKeyAliasesMapping)
 
-	l.checkAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+	//	l.checkAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
 
 	l.Progress(ProgressCheckingFieldAliasesMapping)
 	for field, aliasMapping := range l.GenericFieldAliasToTarget {

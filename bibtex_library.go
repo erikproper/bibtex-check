@@ -43,7 +43,6 @@ type (
 		KeyHintToKey                     TStringMap                // Mapping from key hints to the actual entry key.
 		KeyAliasToKey                    TStringMap                // Mapping from key aliases to the actual entry key.
 		FieldMappings                    TStringStringStringMap    // field/value to field/value mapping
-		KeyToAliases                     TStringSetMap             // The inverted version of KeyAliasToKey NEEEEEEEDED??????
 		KeyIsTemporary                   TStringSet                // Keys that are generated for temporary reasons
 		NameAliasToName                  TStringMap                // Mapping from name aliases to the actual name.
 		NameToAliases                    TStringSetMap             // The inverted version of NameAliasToName
@@ -242,16 +241,18 @@ func (l *TBibTeXLibrary) ReassignEntryFieldAliases(source, target string) {
 }
 
 // Add an implied alias ... order of key/alias ... seems not consistent.
-func (l *TBibTeXLibrary) AddImpliedKeyAlias(key, alias string) {
-	knownKey, keyExists := l.KeyAliasToKey[alias]
-	if keyExists && knownKey != key {
-		l.Warning("Ambiguous alias assignment of %s to %s, while we already have %s", alias, key, knownKey)
-	} else {
-		l.AddKeyAlias(alias, key)
-	}
-}
+//func (l *TBibTeXLibrary) AddImpliedKeyAlias(key, alias string) {
+//	knownKey, keyExists := l.KeyAliasToKey[alias]
+//	if keyExists && knownKey != key {
+//		l.Warning("Ambiguous alias assignment of %s to %s, while we already have %s", alias, key, knownKey)
+//	} else {
+//		l.AddKeyAlias(alias, key)
+//	}
+//}
 
 // Add a new alias (not just for Keys!!)
+// Is the check still needed???
+// General cleanup needed.
 func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap, check bool) {
 	// Neither alias, nor target should be empty
 	if alias == "" || original == "" {
@@ -423,29 +424,38 @@ func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
 	}
 }
 
+func (l *TBibTeXLibrary) AddAliasForKey(aliasMap *TStringMap, alias, key, warning string) bool {
+	key = l.DeAliasEntryKey(key)
+
+	if alias == key {
+		return true
+	} else {
+		if currentKey, aliasIsUsedAsKeyForSomeAlias := (*aliasMap)[alias]; aliasIsUsedAsKeyForSomeAlias {
+			currentKey = l.DeAliasEntryKey(currentKey)
+
+			if currentKey == key {
+				return true
+			} else {
+				l.Warning(warning, alias, currentKey, key)
+
+				return false
+			}
+		} else {
+			(*aliasMap).SetValueForStringMap(alias, key)
+
+			return true
+		}
+	}
+}
+
 // Add a new key alias ... AddAliasForKey would be the more consistent name
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
-	if alias != key {
-		if _, aliasIsUsedAsKeyForSomeAlias := l.KeyToAliases[alias]; aliasIsUsedAsKeyForSomeAlias {
-			for oldAlias := range l.KeyToAliases[alias].Set().Elements() {
-				l.AddAlias(oldAlias, key, &l.KeyAliasToKey, &l.KeyToAliases, false)
-			}
-
-			delete(l.KeyToAliases, alias)
-		}
-
-		l.AddAlias(alias, key, &l.KeyAliasToKey, &l.KeyToAliases, true)
-		// Post legacy ... is the true/false needed at all??
-		// Definitely! Needed for mergers of entries, to allow for fresh aliases!!
-	}
+	l.NoKeyAliasesFileWriting = l.NoKeyAliasesFileWriting || !l.AddAliasForKey(&l.KeyAliasToKey, alias, key, WarningAmbiguousKeyAlias)
 }
 
 // Add a new key hint
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
-	if hint != key && hint != "" && key != "" {
-		l.KeyHintToKey.SetValueForStringMap(hint, key)
-	}
-	//// Maybe add some warnings?!?
+	l.NoKeyHintsFileWriting = l.NoKeyHintsFileWriting || !l.AddAliasForKey(&l.KeyHintToKey, hint, key, WarningAmbiguousKeyHint)
 }
 
 func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, targetValue string) {
@@ -494,14 +504,27 @@ func (l *TBibTeXLibrary) DeAliasEntryKeyWithType(key string) (string, string, bo
 }
 
 // Lookup the entry key for a given key/alias
-func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
-	lookupKey, isAlias := l.KeyAliasToKey[key]
+func (l *TBibTeXLibrary) EntryKeyAliasTraverser(originalKey, currentKey string, visited TStringSet) string {
+	lookupKey, isAlias := l.KeyAliasToKey[currentKey]
 
-	if isAlias {
-		return lookupKey
+	if isAlias && currentKey != lookupKey {
+		if visited.Contains(lookupKey) {
+			l.Warning("Cycle in key alias assignments %s.", lookupKey)
+
+			return lookupKey
+		}
+
+		visited.Add(currentKey)
+		return l.EntryKeyAliasTraverser(originalKey, lookupKey, visited)
 	}
 
-	return key
+	return currentKey
+}
+
+func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
+	visited := TStringSetNew()
+
+	return l.EntryKeyAliasTraverser(key, key, visited)
 }
 
 func (l *TBibTeXLibrary) LookupDBLPKey(DBLPkey string) string {
@@ -672,7 +695,6 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 	if !BibTeXAllowedEntries.Contains(entryType) {
 		l.Warning(WarningUnknownEntryType, key, entryType)
 		/////// MAYBE UPDATE THIS
-		l.NoBibFileWriting = true
 		l.NoBibFileWriting = true
 	}
 

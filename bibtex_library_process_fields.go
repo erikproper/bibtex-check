@@ -22,10 +22,12 @@ var plainFieldProcessors,
 
 func processDBLPValue(l *TBibTeXLibrary, key, value string) {
 	l.AddKeyAlias(KeyForDBLP(value), key)
+	l.AddKeyHint(KeyForDBLP(value), key)
 }
 
 func processPreferredKeyValue(l *TBibTeXLibrary, key, value string) {
 	l.AddKeyAlias(value, key)
+	l.AddKeyHint(value, key)
 }
 
 func processTitleValue(l *TBibTeXLibrary, key, value string) {

@@ -109,9 +109,11 @@ func (l *TBibTeXLibrary) WriteEntryFieldAliasesFile() {
 			for key, fieldChallenges := range l.EntryFieldAliasToTarget {
 				if l.EntryExists(key) {
 					for field, challenges := range fieldChallenges {
-						for challenger, winner := range challenges {
-							if l.DeAliasFieldValue(field, challenger) != l.DeAliasEntryFieldValue(key, field, winner) {
-								challengeWriter.WriteString(key + "\t" + field + "\t" + l.DeAliasEntryFieldValue(key, field, winner) + "\t" + challenger + "\n")
+						if field != PreferredKeyField {
+							for challenger, winner := range challenges {
+								if l.DeAliasFieldValue(field, challenger) != l.DeAliasEntryFieldValue(key, field, winner) {
+									challengeWriter.WriteString(key + "\t" + field + "\t" + l.DeAliasEntryFieldValue(key, field, winner) + "\t" + challenger + "\n")
+								}
 							}
 						}
 					}
@@ -143,9 +145,11 @@ func (l *TBibTeXLibrary) WriteGenericFieldAliasesFile() {
 	if !l.NoGenericFieldAliasesFileWriting {
 		l.writeLibraryFile(GenericFieldAliasesFileExtension, ProgressWritingGenericFieldAliasesFile, func(challengeWriter *bufio.Writer) {
 			for field, challenges := range l.GenericFieldAliasToTarget {
-				for challenger, winner := range challenges {
-					if challenger != winner {
-						challengeWriter.WriteString(field + "\t" + l.DeAliasFieldValue(field, winner) + "\t" + challenger + "\n")
+				if field != PreferredKeyField {
+					for challenger, winner := range challenges {
+						if challenger != winner {
+							challengeWriter.WriteString(field + "\t" + l.DeAliasFieldValue(field, winner) + "\t" + challenger + "\n")
+						}
 					}
 				}
 			}
@@ -166,36 +170,34 @@ func (l *TBibTeXLibrary) WriteNameAliasesFile() {
 	}
 }
 
+func (l *TBibTeXLibrary) WriteKeyMapFile(fileExtension, progressMessage string, keyMap *TStringMap) {
+	l.writeLibraryFile(fileExtension, progressMessage, func(aliasWriter *bufio.Writer) {
+		for alias, original := range *keyMap {
+			original = l.DeAliasEntryKey(original)
+			_, isEntry := l.EntryFields[original]
+
+			if alias != original &&
+				isEntry &&
+				// Simplify in terms of being a clean inverse of the implied adding.
+				alias != l.EntryFieldValueity(original, PreferredKeyField) &&
+				alias != KeyForDBLP(l.EntryFieldValueity(original, "dblp")) {
+				aliasWriter.WriteString(original + "\t" + alias + "\n")
+			}
+		}
+	})
+}
+
 // Write entry key alias/original pairs to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) WriteKeyAliasesFile() {
 	if !l.NoKeyAliasesFileWriting {
-		l.writeLibraryFile(KeyAliasesFileExtension, ProgressWritingKeyAliasesFile, func(aliasWriter *bufio.Writer) {
-			for alias, original := range l.KeyAliasToKey {
-				original = l.DeAliasEntryKey(original)
-				
-				if alias != original &&
-					// Simplify in terms of being a clean inverse of the implied adding.
-					alias != l.EntryFieldValueity(original, PreferredKeyField) &&
-					alias != KeyForDBLP(l.EntryFieldValueity(original, "dblp")) {
-					aliasWriter.WriteString(original + "\t" + alias + "\n")
-				}
-			}
-		})
+		l.WriteKeyMapFile(KeyAliasesFileExtension, ProgressWritingKeyAliasesFile, &l.KeyAliasToKey)
 	}
 }
 
 // Write entry key alias/original pairs to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) WriteKeyHintsFile() {
 	if !l.NoKeyHintsFileWriting {
-		l.writeLibraryFile(KeyHintsFileExtension, ProgressWritingKeyHintsFile, func(aliasWriter *bufio.Writer) {
-			for alias, original := range l.KeyHintToKey {
-				original = l.DeAliasEntryKey(original)
-
-				if alias != original {
-					aliasWriter.WriteString(original + "\t" + alias + "\n")
-				}
-			}
-		})
+		l.WriteKeyMapFile(KeyHintsFileExtension, ProgressWritingKeyHintsFile, &l.KeyHintToKey)
 	}
 }
 
