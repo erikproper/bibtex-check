@@ -53,14 +53,14 @@ func OpenLibraryToUpdate() bool {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
-	Library.ReadKeyAliasesFile()
+	Library.ReadKeyOldiesFile()
 	Library.ReadKeyHintsFile()
 
-	Library.ReadNameAliasesFile()
+	Library.ReadNameMappingsFile()
 	Library.ReadGenericFieldAliasesFile()
 	Library.ReadEntryFieldAliasesFile()
 	Library.ReadFieldMappingsFile()
-	Library.CheckAliases()
+	Library.CheckFieldMappings()
 
 	result := false
 	if Library.ValidCache() {
@@ -74,7 +74,7 @@ func OpenLibraryToUpdate() bool {
 	}
 
 	Library.ReportLibrarySize()
-	Library.CheckKeyAliasesConsistency()
+	Library.CheckKeyOldiesConsistency()
 
 	return result
 }
@@ -84,12 +84,12 @@ func OpenLibraryToReport() bool {
 	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
 
 	result := false
-	Library.ReadKeyAliasesFile()
+	Library.ReadKeyOldiesFile()
 	if Library.ValidCache() {
 		Library.ReadCache()
 		result = true
 	} else {
-		Library.ReadNameAliasesFile()
+		Library.ReadNameMappingsFile()
 		Library.ReadGenericFieldAliasesFile()
 		Library.ReadEntryFieldAliasesFile()
 		Library.ReadFieldMappingsFile()

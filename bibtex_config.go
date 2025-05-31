@@ -38,28 +38,27 @@ const (
 
 	CacheCommentsSeparator = "@@@@@@@@"
 
-	FieldsCacheExtension     = ".cache_fields"
-	CommentsCacheExtension   = ".cache_comments"
-	KeyAliasesCacheExtension = ".cache_key_aliases"
+	FieldsCacheExtension   = ".cache_fields"
+	CommentsCacheExtension = ".cache_comments"
 
 	BibFileExtension = ".bib"
 
-	NameAliasesFileExtension         = ".filter_name_aliases"
-	EntryFieldAliasesFileExtension   = ".filter_entry_field_aliases"
-	GenericFieldAliasesFileExtension = ".filter_generic_field_aliases"
-	FieldMappingsFileExtension       = ".filter_field_mappings"
+	NameMappingsFileExtension         = ".filter_name_mappings"
+	EntryFieldMappingsFileExtension   = ".filter_entry_field_mappings"
+	GenericFieldMappingsFileExtension = ".filter_generic_field_mappings"
+	FieldMappingsFileExtension        = ".filter_field_mappings"
 
 	NonDoublesFileExtension = ".non_double"
-	KeyAliasesFileExtension = ".key_aliases"
+	KeyOldiesFileExtension  = ".key_oldies"
 	KeyHintsFileExtension   = ".key_hints"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field
 // To avoid confusion with normal fields, use "illegal" field names
 const (
-	EntryTypeField    = "entrytype"
-	PreferredKeyField = "preferredkey"
-	DBLPField         = "dblp"
+	EntryTypeField      = "entrytype"
+	PreferredAliasField = "preferredalias"
+	DBLPField           = "dblp"
 )
 
 // Add the allowed fields for an entry, while updating the aggregations of allowed entries and fields.
@@ -82,16 +81,6 @@ func AddAllowedFields(fields ...string) {
 	for entry := range BibTeXAllowedEntries.Elements() {
 		AddAllowedEntryFields(entry, fields...)
 	}
-}
-
-// Add an alias/correction for the provided entry
-func AddEntryAlias(entry, alias string) {
-	BibTeXEntryMap[entry] = alias
-}
-
-// Add an alias/correction for the provided field
-func FieldAlias(field, alias string) {
-	BibTeXFieldMap[field] = alias
 }
 
 func init() {
@@ -169,7 +158,7 @@ func init() {
 		"creationdate", "modificationdate", "groups", "file", "owner")
 
 	AddAllowedFields(
-		PreferredKeyField, EntryTypeField)
+		PreferredAliasField, EntryTypeField)
 	// Own fields
 
 	AddAllowedFields(

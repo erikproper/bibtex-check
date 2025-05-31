@@ -40,24 +40,24 @@ type (
 		FileMD5Index                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
 		NonDoubles                       TStringSetMap             //
-		KeyHintToKey                     TStringMap                // Mapping from key hints to the actual entry key.
-		KeyAliasToKey                    TStringMap                // Mapping from key aliases to the actual entry key.
+		HintToKey                        TStringMap                // Mapping from key hints to the actual entry key.
+		KeyToKey                         TStringMap                // Mapping from key aliases to the actual entry key.
 		FieldMappings                    TStringStringStringMap    // field/value to field/value mapping
 		KeyIsTemporary                   TStringSet                // Keys that are generated for temporary reasons
 		NameAliasToName                  TStringMap                // Mapping from name aliases to the actual name.
 		NameToAliases                    TStringSetMap             // The inverted version of NameAliasToName
 		illegalFields                    TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
 		foundDoubles                     bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		EntryFieldAliasToTarget          TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
-		EntryFieldTargetToAliases        TStringStringStringSetMap // DO WE NEED THE INVERSES??
-		GenericFieldAliasToTarget        TStringStringMap          // A field specific mapping from challenged value to winner values
-		GenericFieldTargetToAliases      TStringStringSetMap       //
+		EntryFieldSourceToTarget         TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
+		EntryFieldTargetToSource         TStringStringStringSetMap // DO WE NEED THE INVERSES??
+		GenericFieldSourceToTarget       TStringStringMap          // A field specific mapping from challenged value to winner values
+		GenericFieldTargetToSource       TStringStringSetMap       //
 		NoBibFileWriting                 bool                      // If set, we should not write out a Bib file (and cache file) for this library as entries might have been lost.
 		NoEntryFieldAliasesFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
 		NoGenericFieldAliasesFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
-		NoKeyAliasesFileWriting          bool
+		NoKeyOldiesFileWriting           bool
 		NoKeyHintsFileWriting            bool
-		NoNameAliasesFileWriting         bool
+		NoNameMappingsFileWriting        bool
 		NoNonDoublesFileWriting          bool
 		NoFieldMappingsFileWriting       bool
 		IgnoreIllegalFields              bool
@@ -92,25 +92,25 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.DOIIndex = TStringSetMap{}
 	l.FileMD5Index = TStringSetMap{}
 	l.NonDoubles = TStringSetMap{}
-	l.KeyAliasToKey = TStringMap{}
+	l.KeyToKey = TStringMap{}
 	l.KeyIsTemporary = TStringSetNew()
 	l.NameAliasToName = TStringMap{}
 
-	l.EntryFieldTargetToAliases = TStringStringStringSetMap{}
-	l.GenericFieldTargetToAliases = TStringStringSetMap{}
+	l.EntryFieldTargetToSource = TStringStringStringSetMap{}
+	l.GenericFieldTargetToSource = TStringStringSetMap{}
 
 	l.foundDoubles = false
-	l.EntryFieldAliasToTarget = TStringStringStringMap{}
-	l.EntryFieldTargetToAliases = TStringStringStringSetMap{}
-	l.GenericFieldAliasToTarget = TStringStringMap{}
-	l.GenericFieldTargetToAliases = TStringStringSetMap{}
+	l.EntryFieldSourceToTarget = TStringStringStringMap{}
+	l.EntryFieldTargetToSource = TStringStringStringSetMap{}
+	l.GenericFieldSourceToTarget = TStringStringMap{}
+	l.GenericFieldTargetToSource = TStringStringSetMap{}
 
 	l.NoBibFileWriting = false
 	l.NoEntryFieldAliasesFileWriting = false
 	l.NoGenericFieldAliasesFileWriting = false
-	l.NoKeyAliasesFileWriting = false
+	l.NoKeyOldiesFileWriting = false
 	l.NoKeyHintsFileWriting = false
-	l.NoNameAliasesFileWriting = false
+	l.NoNameMappingsFileWriting = false
 	l.NoFieldMappingsFileWriting = false
 	l.IgnoreIllegalFields = false
 }
@@ -149,13 +149,13 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 		return
 	}
 
-	if l.GenericFieldAliasToTarget[field][alias] == target {
+	if l.GenericFieldSourceToTarget[field][alias] == target {
 		return
 	}
 
 	// Check for ambiguity of aliases
 	if check {
-		if currentTarget, aliasIsAlreadyAliased := l.EntryFieldAliasToTarget[entry][field][alias]; aliasIsAlreadyAliased {
+		if currentTarget, aliasIsAlreadyAliased := l.EntryFieldSourceToTarget[entry][field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
 				l.Warning("line 162: "+WarningAmbiguousAlias, alias, currentTarget, target)
 				l.NoEntryFieldAliasesFileWriting = true
@@ -166,10 +166,10 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 	}
 
 	// Set the actual mapping
-	l.EntryFieldAliasToTarget.SetValueForStringTripleMap(entry, field, alias, target)
+	l.EntryFieldSourceToTarget.SetValueForStringTripleMap(entry, field, alias, target)
 
 	// And inverse mapping
-	l.EntryFieldTargetToAliases.AddValueToStringTrippleSetMap(entry, field, target, alias)
+	l.EntryFieldTargetToSource.AddValueToStringTrippleSetMap(entry, field, target, alias)
 }
 
 // Update the registration of a target over an alias for a given entry and its field.
@@ -177,7 +177,7 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 func (l *TBibTeXLibrary) UpdateGenericFieldAlias(field, alias, target string) {
 	l.AddGenericFieldAlias(field, alias, target, true)
 
-	for otherAlias, otherTarget := range l.GenericFieldAliasToTarget[field] {
+	for otherAlias, otherTarget := range l.GenericFieldSourceToTarget[field] {
 		if otherTarget == alias {
 			l.AddGenericFieldAlias(field, otherAlias, target, false)
 		}
@@ -194,13 +194,13 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 		return
 	}
 
-	if l.GenericFieldAliasToTarget[field][alias] == target {
+	if l.GenericFieldSourceToTarget[field][alias] == target {
 		return
 	}
 
 	// Check for ambiguity of aliases
 	if check {
-		if currentTarget, aliasIsAlreadyAliased := l.GenericFieldAliasToTarget[field][alias]; aliasIsAlreadyAliased {
+		if currentTarget, aliasIsAlreadyAliased := l.GenericFieldSourceToTarget[field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
 				l.Warning("line: 206"+WarningAmbiguousAlias, alias, currentTarget, target)
 				l.NoGenericFieldAliasesFileWriting = true
@@ -211,10 +211,10 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 	}
 
 	// Set the actual mapping
-	l.GenericFieldAliasToTarget.SetValueForStringPairMap(field, alias, target)
+	l.GenericFieldSourceToTarget.SetValueForStringPairMap(field, alias, target)
 
 	// And inverse mapping
-	l.GenericFieldTargetToAliases.AddValueToStringPairSetMap(field, target, alias)
+	l.GenericFieldTargetToSource.AddValueToStringPairSetMap(field, target, alias)
 
 }
 
@@ -223,7 +223,7 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target string) {
 	l.AddEntryFieldAlias(entry, field, alias, target, true)
 
-	for otherAlias, otherTarget := range l.EntryFieldAliasToTarget[entry][field] {
+	for otherAlias, otherTarget := range l.EntryFieldSourceToTarget[entry][field] {
 		if otherTarget == alias {
 			l.AddEntryFieldAlias(entry, field, otherAlias, target, false)
 		}
@@ -231,7 +231,7 @@ func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target strin
 }
 
 func (l *TBibTeXLibrary) ReassignEntryFieldAliases(source, target string) {
-	for field, AliasAssignments := range l.EntryFieldAliasToTarget[source] {
+	for field, AliasAssignments := range l.EntryFieldSourceToTarget[source] {
 		for alias, winner := range AliasAssignments {
 			if dealiasedWinner := l.DeAliasEntryFieldValue(target, field, winner); dealiasedWinner != "" {
 				l.AddEntryFieldAlias(target, field, alias, dealiasedWinner, false)
@@ -242,7 +242,7 @@ func (l *TBibTeXLibrary) ReassignEntryFieldAliases(source, target string) {
 
 // Add an implied alias ... order of key/alias ... seems not consistent.
 //func (l *TBibTeXLibrary) AddImpliedKeyAlias(key, alias string) {
-//	knownKey, keyExists := l.KeyAliasToKey[alias]
+//	knownKey, keyExists := l.KeyToKey[alias]
 //	if keyExists && knownKey != key {
 //		l.Warning("Ambiguous alias assignment of %s to %s, while we already have %s", alias, key, knownKey)
 //	} else {
@@ -424,7 +424,7 @@ func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
 	}
 }
 
-func (l *TBibTeXLibrary) AddAliasForKey(aliasMap *TStringMap, alias, key, warning string) bool {
+func (l *TBibTeXLibrary) addAliasForKey(aliasMap *TStringMap, alias, key, warning string) bool {
 	key = l.DeAliasEntryKey(key)
 
 	if alias == key {
@@ -448,14 +448,14 @@ func (l *TBibTeXLibrary) AddAliasForKey(aliasMap *TStringMap, alias, key, warnin
 	}
 }
 
-// Add a new key alias ... AddAliasForKey would be the more consistent name
+// Add a new key alias ... addAliasForKey would be the more consistent name
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
-	l.NoKeyAliasesFileWriting = l.NoKeyAliasesFileWriting || !l.AddAliasForKey(&l.KeyAliasToKey, alias, key, WarningAmbiguousKeyAlias)
+	l.NoKeyOldiesFileWriting = l.NoKeyOldiesFileWriting || !l.addAliasForKey(&l.KeyToKey, alias, key, WarningAmbiguousKeyOldie)
 }
 
 // Add a new key hint
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
-	l.NoKeyHintsFileWriting = l.NoKeyHintsFileWriting || !l.AddAliasForKey(&l.KeyHintToKey, hint, key, WarningAmbiguousKeyHint)
+	l.NoKeyHintsFileWriting = l.NoKeyHintsFileWriting || !l.addAliasForKey(&l.HintToKey, hint, key, WarningAmbiguousKeyHint)
 }
 
 func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, targetValue string) {
@@ -478,7 +478,7 @@ func (l *TBibTeXLibrary) EntryType(entry string) string {
 }
 
 func (l *TBibTeXLibrary) PreferredKey(entry string) string {
-	return l.EntryFieldValueity(entry, PreferredKeyField)
+	return l.EntryFieldValueity(entry, PreferredAliasField)
 }
 
 // Returns the size of this library.
@@ -505,7 +505,7 @@ func (l *TBibTeXLibrary) DeAliasEntryKeyWithType(key string) (string, string, bo
 
 // Lookup the entry key for a given key/alias
 func (l *TBibTeXLibrary) EntryKeyAliasTraverser(originalKey, currentKey string, visited TStringSet) string {
-	lookupKey, isAlias := l.KeyAliasToKey[currentKey]
+	lookupKey, isAlias := l.KeyToKey[currentKey]
 
 	if isAlias && currentKey != lookupKey {
 		if visited.Contains(lookupKey) {
@@ -528,7 +528,7 @@ func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
 }
 
 func (l *TBibTeXLibrary) LookupDBLPKey(DBLPkey string) string {
-	lookupKey, isAlias := l.KeyAliasToKey[KeyForDBLP(DBLPkey)]
+	lookupKey, isAlias := l.KeyToKey[KeyForDBLP(DBLPkey)]
 
 	if isAlias {
 		return lookupKey
@@ -588,12 +588,12 @@ func (l *TBibTeXLibrary) EntryExists(entry string) bool {
 }
 
 func (l *TBibTeXLibrary) AliasExists(alias string) bool {
-	return l.KeyAliasToKey.IsMappedString(alias)
+	return l.KeyToKey.IsMappedString(alias)
 }
 
 // Checks if the provided winner is, indeed, the winner of the challenge by the challenger for the provided field of the provided entry.
 func (l *TBibTeXLibrary) EntryFieldAliasHasTarget(entry, field, challenger, winner string) bool {
-	return l.EntryFieldAliasToTarget.GetValueityFromStringTripleMap(entry, field, challenger) == winner
+	return l.EntryFieldSourceToTarget.GetValueityFromStringTripleMap(entry, field, challenger) == winner
 }
 
 /*
@@ -626,7 +626,7 @@ func KeyFromTime(KeyTime time.Time) string {
 // ////// Place me somehwere
 func (l *TBibTeXLibrary) IsKnownKey(key string) bool {
 	_, KnownOriginalKey := l.EntryFields[key]
-	_, KnownAliasKey := l.KeyAliasToKey[key]
+	_, KnownAliasKey := l.KeyToKey[key]
 
 	return KnownOriginalKey || KnownAliasKey
 }

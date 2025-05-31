@@ -18,11 +18,11 @@ func (l *TBibTeXLibrary) DeAliasEntryFieldValue(entry, field, value string) stri
 		return l.DeAliasEntryKey(value)
 	}
 
-	if unAliased, hasAlias := l.GenericFieldAliasToTarget[field][value]; hasAlias {
+	if unAliased, hasAlias := l.GenericFieldSourceToTarget[field][value]; hasAlias {
 		return unAliased
 	}
 
-	if unAliased, hasAlias := l.EntryFieldAliasToTarget[entry][field][value]; hasAlias {
+	if unAliased, hasAlias := l.EntryFieldSourceToTarget[entry][field][value]; hasAlias {
 		return unAliased
 	}
 
@@ -35,7 +35,7 @@ func (l *TBibTeXLibrary) DeAliasFieldValue(field, value string) string {
 		return l.DeAliasEntryKey(value)
 	}
 
-	if unAliased, hasAlias := l.GenericFieldAliasToTarget[field][value]; hasAlias {
+	if unAliased, hasAlias := l.GenericFieldSourceToTarget[field][value]; hasAlias {
 		return unAliased
 	}
 

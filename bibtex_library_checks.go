@@ -27,7 +27,11 @@ import (
  *
  */
 
-// NEEDED, or can the be distributed into a Check??
+func (l *TBibTeXLibrary) IsRedundantURL(url, key string) bool {
+	foundURL := strings.ToLower(url)
+
+	return foundURL == strings.ToLower("https://doi.org/"+l.EntryFieldValueity(key, "doi"))
+}
 
 func IsValidKey(key string) bool {
 	var validKey = regexp.MustCompile(`^` + KeyPrefix + `-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]$`)
@@ -78,37 +82,28 @@ func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
  *
  */
 
-// ALways same error message ....
-func (l *TBibTeXLibrary) checkAliasesMapping(aliasMap TStringMap, inverseMap TStringSetMap, warningUsedAsAlias, warningTargetIsAlias string) {
-	// Note: when we find an issue, we will not immediately stop as we want to list all issues.
-	for alias, target := range aliasMap {
-		if aliasedTarget, targetIsUsedAsAlias := aliasMap[target]; targetIsUsedAsAlias {
-			// We cannot alias aliases
-			fmt.Println("Pong")
-			l.Warning(warningTargetIsAlias, alias, target, aliasedTarget)
+func (l *TBibTeXLibrary) checkValueMapping(valueMap TStringMap, inverseMap TStringSetMap, keyety string) {
+	for source, target := range valueMap {
+		if _, targetAlreadyUsedAsSource := valueMap[target]; targetAlreadyUsedAsSource {
+			l.Warning(WarningTargetAlreadyUsedAsSource+keyety, target)
 		}
 
-		if _, aliasIsUsedAsTargetForAlias := inverseMap[alias]; aliasIsUsedAsTargetForAlias {
-			// Aliases should not be keys themselves.
-			l.Warning(warningUsedAsAlias, alias)
+		if _, sourceAlreadyUsedAsTarget := inverseMap[source]; sourceAlreadyUsedAsTarget {
+			l.Warning(WarningSourceAlreadyUsedAsTarget, source)
 		}
 	}
 }
 
-// CLEANING needed
-func (l *TBibTeXLibrary) CheckAliases() {
-	l.Progress(ProgressCheckingKeyAliasesMapping)
+func (l *TBibTeXLibrary) CheckFieldMappings() {
+	l.Progress(ProgressCheckingFieldMappings)
 
-	//	l.checkAliasesMapping(l.KeyAliasToKey, l.KeyToAliases, WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
-
-	l.Progress(ProgressCheckingFieldAliasesMapping)
-	for field, aliasMapping := range l.GenericFieldAliasToTarget {
-		l.checkAliasesMapping(aliasMapping, l.GenericFieldTargetToAliases[field], WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+	for field, valueMapping := range l.GenericFieldSourceToTarget {
+		l.checkValueMapping(valueMapping, l.GenericFieldTargetToSource[field], ".")
 	}
 
-	for key, fieldAliasMapping := range l.EntryFieldAliasToTarget {
-		for field, aliasMapping := range fieldAliasMapping {
-			l.checkAliasesMapping(aliasMapping, l.EntryFieldTargetToAliases[key][field], WarningAliasIsKey, WarningAliasTargetKeyIsAlias)
+	for key, fieldValueMapping := range l.EntryFieldSourceToTarget {
+		for field, valueMapping := range fieldValueMapping {
+			l.checkValueMapping(valueMapping, l.EntryFieldTargetToSource[key][field], WarningMappingForKey+key+".")
 		}
 	}
 }
@@ -119,28 +114,19 @@ func (l *TBibTeXLibrary) CheckAliases() {
  *
  */
 
-// Check all key aliases of the library
-func (l *TBibTeXLibrary) CheckKeyAliasesConsistency() {
-	l.Progress(ProgressCheckingConsistencyOfKeyAliases)
+// Check all oldies
+func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
+	l.Progress(ProgressCheckingConsistencyOfKeyOldies)
 
-	for alias, key := range l.KeyAliasToKey {
-		// WORK!!
-		// Once we're not in legacy mode anymore, then we need to enforce l.EntryExists(key)
+	for oldie, key := range l.KeyToKey {
 		if !l.EntryExists(key) {
-			l.Warning("Target %s of alias %s does not exist", key, alias)
+			l.Warning(WarningTargetOfOldieNotExists, key, oldie)
 		}
 
-		if _, aliasIsActuallyKeyToEntry := l.EntryFields[alias]; aliasIsActuallyKeyToEntry {
-			// Aliases cannot be keys themselves.
-			l.Warning(WarningAliasIsKey, alias)
+		if _, oldieIsActuallyKeyToEntry := l.EntryFields[oldie]; oldieIsActuallyKeyToEntry {
+			l.Warning(WarningOldieIsKey, oldie)
 		}
 	}
-}
-
-func (l *TBibTeXLibrary) IsRedundantURL(url, key string) bool {
-	foundURL := strings.ToLower(url)
-
-	return foundURL == strings.ToLower("https://doi.org/"+l.EntryFieldValueity(key, "doi"))
 }
 
 func (l *TBibTeXLibrary) CheckURLRedundance(key string) {
@@ -173,12 +159,12 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 	return false
 }
 
-// Checks if a given alias fits the desired format of 	[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
+// Checks if a given preferred alias fits the desired format of 	[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
 // Examples: gordijn2002e3value, overbeek2010matchmaking, ...
 func (l *TBibTeXLibrary) CheckPreferredKey(key string) bool {
 	var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
 
-	alias := l.EntryFieldValueity(key, PreferredKeyField)
+	alias := l.EntryFieldValueity(key, PreferredAliasField)
 
 	return alias == "" || validPreferredKeyAlias.MatchString(alias)
 }
@@ -370,13 +356,13 @@ func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefKey, key, field s
 				}
 			}
 
-			for otherChallenger := range l.EntryFieldAliasToTarget[key][field] {
+			for otherChallenger := range l.EntryFieldSourceToTarget[key][field] {
 				l.AddEntryFieldAlias(crossrefKey, field, otherChallenger, target, false)
 			}
 
 			if target != "" {
 				delete(l.EntryFields[key], field)
-				delete(l.EntryFieldAliasToTarget[key], field)
+				delete(l.EntryFieldSourceToTarget[key], field)
 			}
 		}
 	} else if BibTeXMayInheritFields.Contains(field) {
@@ -485,6 +471,12 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 	}
 }
 
+func (l *TBibTeXLibrary) CheckKeyValidity(key string) {
+	if !IsValidKey(key) {
+		l.Warning(WarningInvalidKey, key)
+	}
+}
+
 func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	key := l.DeAliasEntryKey(keyRAW) // Needed??
 
@@ -543,6 +535,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 
 func (l *TBibTeXLibrary) CheckEntry(key string) {
 	if l.EntryExists(key) {
+		l.CheckKeyValidity(key)
 		l.CheckDOIPresence(key)
 		l.CheckEPrint(key)
 		l.CheckCrossref(key)

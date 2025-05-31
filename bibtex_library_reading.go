@@ -85,10 +85,10 @@ func (l *TBibTeXLibrary) ValidCache() bool {
 
 		// Maybe do this via a set?
 		return CacheModTime > ModTime(FileBase+BibFileExtension) &&
-			CacheModTime > ModTime(FileBase+NameAliasesFileExtension) &&
-			CacheModTime > ModTime(FileBase+KeyAliasesFileExtension) &&
-			CacheModTime > ModTime(FileBase+EntryFieldAliasesFileExtension) &&
-			CacheModTime > ModTime(FileBase+GenericFieldAliasesFileExtension) &&
+			CacheModTime > ModTime(FileBase+NameMappingsFileExtension) &&
+			CacheModTime > ModTime(FileBase+KeyOldiesFileExtension) &&
+			CacheModTime > ModTime(FileBase+EntryFieldMappingsFileExtension) &&
+			CacheModTime > ModTime(FileBase+GenericFieldMappingsFileExtension) &&
 			CacheModTime > ModTime(FileBase+FieldMappingsFileExtension) &&
 			CacheModTime > ModTime(FileBase+NonDoublesFileExtension)
 	} else {
@@ -172,10 +172,10 @@ func (l *TBibTeXLibrary) normalisedAliasTargetPair(key, field, winner, challenge
 
 // Read key field challenge file
 func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
-	l.readLibraryFile(EntryFieldAliasesFileExtension, ProgressReadingEntryFieldAliasesFile, func(line string) {
+	l.readLibraryFile(EntryFieldMappingsFileExtension, ProgressReadingEntryFieldAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 4 {
-			l.Warning(WarningEntryFieldAliasesLineTooShort, line)
+			l.Warning(WarningEntryFieldMappingsLineTooShort, line)
 			l.NoEntryFieldAliasesFileWriting = true
 			return
 		}
@@ -189,10 +189,10 @@ func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
 
 // Read generic field challenge file
 func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
-	l.readLibraryFile(GenericFieldAliasesFileExtension, ProgressReadingGenericFieldAliasesFile, func(line string) {
+	l.readLibraryFile(GenericFieldMappingsFileExtension, ProgressReadingGenericFieldAliasesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 3 {
-			l.Warning(WarningGenericFieldAliasesLineTooShort, line)
+			l.Warning(WarningGenericFieldMappingsLineTooShort, line)
 			l.NoGenericFieldAliasesFileWriting = true
 			return
 		}
@@ -203,20 +203,16 @@ func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
 	})
 }
 
-func (l *TBibTeXLibrary) ReadKeyAliasesFile() {
-	l.readLibraryFile(KeyAliasesFileExtension, ProgressReadingKeyAliasesFile, func(line string) {
+func (l *TBibTeXLibrary) ReadKeyOldiesFile() {
+	l.readLibraryFile(KeyOldiesFileExtension, ProgressReadingKeyOldiesFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 2 {
 			l.Warning(WarningKeyAliasesLineTooShort, line)
-			l.NoKeyAliasesFileWriting = true
+			l.NoKeyOldiesFileWriting = true
 			return
 		}
 
-		key := elements[0]
-		alias := elements[1]
-		if IsValidKey(alias) {
-			l.AddKeyAlias(alias, key)
-		}
+		l.AddKeyAlias(elements[1], elements[0])
 	})
 }
 
@@ -247,12 +243,12 @@ func (l *TBibTeXLibrary) ReadNonDoublesFile() {
 	})
 }
 
-func (l *TBibTeXLibrary) ReadNameAliasesFile() {
-	l.readLibraryFile(NameAliasesFileExtension, ProgressReadingNameAliasesFile, func(line string) {
+func (l *TBibTeXLibrary) ReadNameMappingsFile() {
+	l.readLibraryFile(NameMappingsFileExtension, ProgressReadingNameMappingsFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 2 {
-			l.Warning(WarningNameAliasesLineTooShort, line)
-			l.NoNameAliasesFileWriting = true
+			l.Warning(WarningNameMappingsLineTooShort, line)
+			l.NoNameMappingsFileWriting = true
 			return
 		}
 

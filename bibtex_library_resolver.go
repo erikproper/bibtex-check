@@ -126,41 +126,41 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRA
 		answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
 
 		if answer == "y" {
-			if field != PreferredKeyField {
+			if field != PreferredAliasField {
 				l.UpdateEntryFieldAlias(key, field, challenge, current)
 				l.WriteAliasesFiles()
 			} else {
-				delete(l.KeyAliasToKey, challenge)
+				delete(l.KeyToKey, challenge)
 			}
 
 			return current
 
 		} else if answer == "n" {
-			if field != PreferredKeyField {
+			if field != PreferredAliasField {
 				l.UpdateEntryFieldAlias(key, field, current, challenge)
 				l.WriteAliasesFiles()
 			} else {
-				delete(l.KeyAliasToKey, current)
+				delete(l.KeyToKey, current)
 			}
 
 			return challenge
 
 		} else if answer == "Y" {
-			if field != PreferredKeyField {
+			if field != PreferredAliasField {
 				l.UpdateGenericFieldAlias(field, challenge, current)
 				l.WriteAliasesFiles()
 			} else {
-				delete(l.KeyAliasToKey, challenge)
+				delete(l.KeyToKey, challenge)
 			}
 
 			return current
 
 		} else if answer == "N" {
-			if field != PreferredKeyField {
+			if field != PreferredAliasField {
 				l.UpdateGenericFieldAlias(field, current, challenge)
 				l.WriteAliasesFiles()
 			} else {
-				delete(l.KeyAliasToKey, current)
+				delete(l.KeyToKey, current)
 			}
 
 			return challenge
