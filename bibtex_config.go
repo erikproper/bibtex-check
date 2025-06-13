@@ -48,7 +48,7 @@ const (
 	GenericFieldMappingsFileExtension = ".filter_generic_field_mappings"
 	FieldMappingsFileExtension        = ".filter_field_mappings"
 
-	NonDoublesFileExtension = ".non_double"
+	NonDoublesFileExtension = ".key_non_double"
 	KeyOldiesFileExtension  = ".key_oldies"
 	KeyHintsFileExtension   = ".key_hints"
 )
@@ -59,6 +59,7 @@ const (
 	EntryTypeField      = "entrytype"
 	PreferredAliasField = "preferredalias"
 	DBLPField           = "dblp"
+	TitleField          = "title"
 )
 
 // Add the allowed fields for an entry, while updating the aggregations of allowed entries and fields.
@@ -145,7 +146,7 @@ func init() {
 	// (*) The above ones are the official ones. It makes sense to allow a config file to add to these.
 
 	AddAllowedFields(
-		"month", "year", "note", "doi", "key", "author", "title",
+		"month", "year", "note", "doi", "key", "author", TitleField,
 		DBLPField, "researchgate",
 		"eprinttype", "eprint", "langid",
 		"url", "urldate", "urloriginal")
@@ -155,7 +156,7 @@ func init() {
 
 	// Jabref
 	AddAllowedFields(
-		"creationdate", "modificationdate", "groups", "file", "owner")
+		"creationdate", "modificationdate", "groups", "file")
 
 	AddAllowedFields(
 		PreferredAliasField, EntryTypeField)
@@ -193,6 +194,8 @@ func init() {
 
 	BibTeXFieldMap = TStringMap{}
 	// (*) The ones below should all be moved to a config file.
+	BibTeXFieldMap["organisation"] = "organization"
+	BibTeXFieldMap["group"] = "groups"
 	BibTeXFieldMap["issue"] = "number"
 	BibTeXFieldMap["editors"] = "editor"
 	BibTeXFieldMap["authors"] = "author"

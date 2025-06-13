@@ -180,8 +180,8 @@ func main() {
 		//
 		//				newKey, newType, isEntry := Library.DeAliasEntryKeyWithType(cleanOldEntry)
 		//
-		//				if Library.EntryFieldValueity(newKey, "dblp") != "" {
-		//					if isEntry && Library.EntryFieldValueity(newKey, "dblp") != "" {
+		//				if Library.EntryFieldValueity(newKey, DBLPField) != "" {
+		//					if isEntry && Library.EntryFieldValueity(newKey, DBLPField) != "" {
 		//						// We don't have a set type function??
 		//						Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, oldEntry, EntryTypeField, oldType, newType)
 		//
@@ -195,8 +195,8 @@ func main() {
 		//									target := Library.MaybeResolveFieldValue(crossrefKey, oldEntry, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
 		//
 		//									if oldField == "booktitle" {
-		//										if Library.EntryFields[crossrefKey]["title"] == Library.EntryFields[crossrefKey]["booktitle"] {
-		//											Library.EntryFields[crossrefKey]["title"] = target
+		//										if Library.EntryFields[crossrefKey][TitleField] == Library.EntryFields[crossrefKey]["booktitle"] {
+		//											Library.EntryFields[crossrefKey][TitleField] = target
 		//										}
 		//									}
 		//
@@ -276,7 +276,7 @@ func main() {
 			Library.ReadNonDoublesFile()
 
 			for key := range Library.EntryFields {
-				if Library.EntryFieldValueity(key, "dblp") != "" {
+				if Library.EntryFieldValueity(key, DBLPField) != "" {
 					if Library.EntryFields[key][EntryTypeField] == "book" ||
 						Library.EntryFields[key][EntryTypeField] == "incollection" ||
 						Library.EntryFields[key][EntryTypeField] == "misc" ||

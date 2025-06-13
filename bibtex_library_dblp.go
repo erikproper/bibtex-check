@@ -27,7 +27,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 				l.IgnoreIllegalFields = false
 
 				l.MergeEntries(KeyForDBLP(DBLPKey), key)
-				l.EntryFields[key]["dblp"] = DBLPKey
+				l.EntryFields[key][DBLPField] = DBLPKey
 
 				return true
 			}
@@ -49,7 +49,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 }
 
 func (l *TBibTeXLibrary) MaybeSyncDBLPEntry(key string) {
-	DBLPKey := l.EntryFieldValueity(key, "dblp")
+	DBLPKey := l.EntryFieldValueity(key, DBLPField)
 
 	if DBLPKey != "" {
 		l.MaybeMergeDBLPEntry(DBLPKey, key)

@@ -199,7 +199,7 @@ func (l *TBibTeXLibrary) WriteKeyHintsFile() {
 				if isEntry &&
 					source != target &&
 					source != l.EntryFieldValueity(target, PreferredAliasField) &&
-					source != KeyForDBLP(l.EntryFieldValueity(target, "dblp")) {
+					source != KeyForDBLP(l.EntryFieldValueity(target, DBLPField)) {
 					sourceWriter.WriteString(target + "\t" + source + "\n")
 				}
 			}

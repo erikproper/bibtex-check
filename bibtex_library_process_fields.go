@@ -17,8 +17,7 @@ package main
 // Definition of the map for field processors
 type TFieldProcessors = map[string]func(*TBibTeXLibrary, string, string)
 
-var plainFieldProcessors,
-	cachedFieldProcessors TFieldProcessors
+var fieldProcessors TFieldProcessors
 
 func processDBLPValue(l *TBibTeXLibrary, key, value string) {
 	l.AddKeyAlias(KeyForDBLP(value), key)
@@ -41,7 +40,7 @@ func processTitleValue(l *TBibTeXLibrary, key, value string) {
 func (l *TBibTeXLibrary) ProcessEntryFieldValue(key, field, value string) string {
 	normalisedValue := l.DeAliasEntryFieldValue(key, field, l.NormaliseFieldValue(field, key, value))
 
-	valueProcessor, hasProcessor := plainFieldProcessors[field]
+	valueProcessor, hasProcessor := fieldProcessors[field]
 	if hasProcessor {
 		valueProcessor(l, key, normalisedValue)
 	}
@@ -49,8 +48,11 @@ func (l *TBibTeXLibrary) ProcessEntryFieldValue(key, field, value string) string
 	return normalisedValue
 }
 
+// The general function call to process field values when reading from the cache.
+// This should not need any normalisation of the field valie.
+
 func (l *TBibTeXLibrary) ProcessCachedEntryFieldValue(key, field, value string) string {
-	valueProcessor, hasProcessor := cachedFieldProcessors[field]
+	valueProcessor, hasProcessor := fieldProcessors[field]
 	if hasProcessor {
 		valueProcessor(l, key, value)
 	}
@@ -60,16 +62,8 @@ func (l *TBibTeXLibrary) ProcessCachedEntryFieldValue(key, field, value string) 
 
 func init() {
 	// Define the processing functions.
-
-	// NOTE ... if thet are the same ... why not use the same ....
-
-	plainFieldProcessors = TFieldProcessors{}
-	plainFieldProcessors["dblp"] = processDBLPValue
-	plainFieldProcessors["preferredkey"] = processPreferredKeyValue
-	plainFieldProcessors["title"] = processTitleValue
-
-	cachedFieldProcessors = TFieldProcessors{}
-	cachedFieldProcessors["dblp"] = processDBLPValue
-	cachedFieldProcessors["preferredkey"] = processPreferredKeyValue
-	cachedFieldProcessors["title"] = processTitleValue
+	fieldProcessors = TFieldProcessors{}
+	fieldProcessors[DBLPField] = processDBLPValue
+	fieldProcessors[PreferredAliasField] = processPreferredKeyValue
+	fieldProcessors[TitleField] = processTitleValue
 }

@@ -170,7 +170,7 @@ func (l *TBibTeXLibrary) CheckPreferredKey(key string) bool {
 }
 
 func (l *TBibTeXLibrary) CheckTitlePresence(key string) {
-	if l.EntryFieldValueity(key, "title") == "" {
+	if l.EntryFieldValueity(key, TitleField) == "" {
 		l.Warning(WarningEmptyTitle, key)
 	}
 }
@@ -191,7 +191,7 @@ func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 func (l *TBibTeXLibrary) CheckURLDateNeed(key string) {
 	if l.EntryFieldValueity(key, "urldate") != "" {
 		if l.EntryFieldValueity(key, "url") == "" ||
-			l.EntryFieldValueity(key, "dblp") != "" ||
+			l.EntryFieldValueity(key, DBLPField) != "" ||
 			l.EntryFieldValueity(key, "doi") != "" ||
 			l.EntryFieldValueity(key, "isbn") != "" ||
 			l.EntryFieldValueity(key, "issn") != "" {
@@ -207,26 +207,26 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 	entryType := l.EntryType(key)
 
 	if BibTeXBookish.Contains(entryType) {
-		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, key, "booktitle", l.EntryFieldValueity(key, "title"), l.EntryFieldValueity(key, "booktitle"))
-		l.UpdateEntryFieldAlias(key, "title", l.EntryFields[key]["title"], l.EntryFields[key]["booktitle"])
-		l.EntryFields[key]["title"] = l.EntryFields[key]["booktitle"]
+		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, key, "booktitle", l.EntryFieldValueity(key, TitleField), l.EntryFieldValueity(key, "booktitle"))
+		l.UpdateEntryFieldAlias(key, TitleField, l.EntryFields[key][TitleField], l.EntryFields[key]["booktitle"])
+		l.EntryFields[key][TitleField] = l.EntryFields[key]["booktitle"]
 	}
-	if strings.Contains(l.EntryFields[key]["booktitle"], "proc.") || strings.Contains(l.EntryFields[key]["booktitle"], "Proc.") ||
-		strings.Contains(l.EntryFields[key]["booktitle"], "proceedings") || strings.Contains(l.EntryFields[key]["booktitle"], "Proceedings") ||
-		strings.Contains(l.EntryFields[key]["booktitle"], "workshop") || strings.Contains(l.EntryFields[key]["booktitle"], "Workshop") ||
-		strings.Contains(l.EntryFields[key]["booktitle"], "conference") || strings.Contains(l.EntryFields[key]["booktitle"], "Conference") {
-		if l.EntryFields[key]["title"] == l.EntryFields[key]["booktitle"] {
-			if entryType != "proceedings" {
-				fmt.Println("Expected a proceedings", key)
-				l.SetEntryType(key, "proceedings")
-			}
-		} else {
-			if entryType != "inproceedings" {
-				fmt.Println("Expected an inproceedings", key)
-				l.SetEntryType(key, "inproceedings")
-			}
-		}
-	}
+//	if strings.Contains(l.EntryFields[key]["booktitle"], "proc.") || strings.Contains(l.EntryFields[key]["booktitle"], "Proc.") ||
+//		strings.Contains(l.EntryFields[key]["booktitle"], "proceedings") || strings.Contains(l.EntryFields[key]["booktitle"], "Proceedings") ||
+//		strings.Contains(l.EntryFields[key]["booktitle"], "workshop") || strings.Contains(l.EntryFields[key]["booktitle"], "Workshop") ||
+//		strings.Contains(l.EntryFields[key]["booktitle"], "conference") || strings.Contains(l.EntryFields[key]["booktitle"], "Conference") {
+//		if l.EntryFields[key][TitleField] == l.EntryFields[key]["booktitle"] {
+//			if entryType != "proceedings" {
+//				fmt.Println("Expected a proceedings", key)
+//				l.SetEntryType(key, "proceedings")
+//			}
+//		} else {
+//			if entryType != "inproceedings" {
+//				fmt.Println("Expected an inproceedings", key)
+//				l.SetEntryType(key, "inproceedings")
+//			}
+//		}
+//	}
 }
 
 // Harmonize with tryGetDOIFromURL ???
@@ -344,14 +344,14 @@ func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefKey, key, field s
 			l.EntryFields[crossrefKey][field] = target
 
 			if field == "booktitle" {
-				currentTitle := l.EntryFieldValueity(crossrefKey, "title")
+				currentTitle := l.EntryFieldValueity(crossrefKey, TitleField)
 				newTitle := l.MaybeResolveFieldValue(crossrefKey, key, field, target, currentTitle)
 
 				if currentTitle != newTitle {
 					l.TitleIndex.DeleteValueFromStringSetMap(TeXStringIndexer(currentTitle), crossrefKey)
 
 					/// Refactor this into a function. We need this more often.
-					l.EntryFields[crossrefKey]["title"] = newTitle
+					l.EntryFields[crossrefKey][TitleField] = newTitle
 					l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(newTitle), crossrefKey)
 				}
 			}
@@ -438,7 +438,7 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 
 				// refactor this with func (l *TBibTeXLibrary) AssignField(field, value string) and StartRecordingEntry
 				l.EntryFields[crossrefKey] = TStringMap{}
-				l.EntryFields[crossrefKey]["title"] = bookTitle
+				l.EntryFields[crossrefKey][TitleField] = bookTitle
 				l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), crossrefKey)
 				l.SetEntryType(crossrefKey, crossrefType)
 
@@ -452,7 +452,7 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 
 func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 	// Why not do l.DeAliasEntryKey(key) always as part of l.EntryFieldValueity ???
-	title := l.EntryFieldValueity(l.DeAliasEntryKey(key), "title")
+	title := l.EntryFieldValueity(l.DeAliasEntryKey(key), TitleField)
 	if title != "" {
 		// Should be via a function!
 		Keys := l.TitleIndex[TeXStringIndexer(title)]
@@ -483,11 +483,11 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	l.MaybeSyncDBLPEntry(key)
 
 	entryType := l.EntryType(key)
-	entryDBLP := l.EntryFieldValueity(key, "dblp")
+	entryDBLP := l.EntryFieldValueity(key, DBLPField)
 
 	if BibTeXCrossreffer.Contains(entryType) {
 		crossrefKey := l.EntryFieldValueity(key, "crossref")
-		crossrefDBLP := l.EntryFieldValueity(crossrefKey, "dblp")
+		crossrefDBLP := l.EntryFieldValueity(crossrefKey, DBLPField)
 
 		parentDBLP := l.MaybeGetDBLPCrossref(entryDBLP)
 		parentKey := l.LookupDBLPKey(parentDBLP)
@@ -499,7 +499,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		}
 
 		if crossrefDBLP == "" && parentDBLP != "" {
-			l.EntryFields[crossrefKey]["dblp"] = parentDBLP
+			l.EntryFields[crossrefKey][DBLPField] = parentDBLP
 			crossrefDBLP = parentDBLP
 		}
 
@@ -511,9 +511,10 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossrefKey, key, entryDBLP)
 		}
 
-		if entryDBLP == "" && crossrefDBLP != "" {
-			l.Warning("Child entry %s does not have a dblp key, while the parent %s does have dblp key %s", key, crossrefKey, crossrefDBLP)
-		}
+		// Is allowed ..
+		//if entryDBLP == "" && crossrefDBLP != "" {
+		//	l.Warning("Child entry %s does not have a dblp key, while the parent %s does have dblp key %s", key, crossrefKey, crossrefDBLP)
+		//}
 	}
 
 	// Add parent to child check for bookish

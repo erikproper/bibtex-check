@@ -370,7 +370,7 @@ func (l *TBibTeXLibrary) EvidencedUnequalEntryFields(source, target, field strin
 }
 
 func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string) bool {
-	return l.EvidencedUnequalEntryFields(source, target, "dblp") ||
+	return l.EvidencedUnequalEntryFields(source, target, DBLPField) ||
 		l.EvidencedUnequalEntryFields(source, target, "doi") ||
 		l.EvidencedUnequalEntryFields(source, target, "crossref")
 }
@@ -759,7 +759,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 	//		l.DOIIndex.AddValueToStringSetMap(DOI, key)
 	//	}
 
-	if title := l.EntryFieldValueity(key, "title"); title != "" {
+	if title := l.EntryFieldValueity(key, TitleField); title != "" {
 		l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(title), key)
 	}
 

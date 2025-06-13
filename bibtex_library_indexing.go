@@ -85,6 +85,6 @@ func init() {
 	fieldIndexers = TFieldIndexers{}
 
 	fieldIndexers["booktitle"] = TeXStringIndexer
-	fieldIndexers["title"] = TeXStringIndexer
+	fieldIndexers[TitleField] = TeXStringIndexer
 	fieldIndexers["isbn"] = ISBNIndexer
 }
