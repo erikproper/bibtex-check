@@ -211,22 +211,23 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 		l.UpdateEntryFieldAlias(key, TitleField, l.EntryFields[key][TitleField], l.EntryFields[key]["booktitle"])
 		l.EntryFields[key][TitleField] = l.EntryFields[key]["booktitle"]
 	}
-//	if strings.Contains(l.EntryFields[key]["booktitle"], "proc.") || strings.Contains(l.EntryFields[key]["booktitle"], "Proc.") ||
-//		strings.Contains(l.EntryFields[key]["booktitle"], "proceedings") || strings.Contains(l.EntryFields[key]["booktitle"], "Proceedings") ||
-//		strings.Contains(l.EntryFields[key]["booktitle"], "workshop") || strings.Contains(l.EntryFields[key]["booktitle"], "Workshop") ||
-//		strings.Contains(l.EntryFields[key]["booktitle"], "conference") || strings.Contains(l.EntryFields[key]["booktitle"], "Conference") {
-//		if l.EntryFields[key][TitleField] == l.EntryFields[key]["booktitle"] {
-//			if entryType != "proceedings" {
-//				fmt.Println("Expected a proceedings", key)
-//				l.SetEntryType(key, "proceedings")
-//			}
-//		} else {
-//			if entryType != "inproceedings" {
-//				fmt.Println("Expected an inproceedings", key)
-//				l.SetEntryType(key, "inproceedings")
-//			}
-//		}
-//	}
+	// if strings.Contains(l.EntryFields[key]["booktitle"], "proc.") || strings.Contains(l.EntryFields[key]["booktitle"], "Proc.") ||
+	//
+	//		strings.Contains(l.EntryFields[key]["booktitle"], "proceedings") || strings.Contains(l.EntryFields[key]["booktitle"], "Proceedings") ||
+	//		strings.Contains(l.EntryFields[key]["booktitle"], "workshop") || strings.Contains(l.EntryFields[key]["booktitle"], "Workshop") ||
+	//		strings.Contains(l.EntryFields[key]["booktitle"], "conference") || strings.Contains(l.EntryFields[key]["booktitle"], "Conference") {
+	//		if l.EntryFields[key][TitleField] == l.EntryFields[key]["booktitle"] {
+	//			if entryType != "proceedings" {
+	//				fmt.Println("Expected a proceedings", key)
+	//				l.SetEntryType(key, "proceedings")
+	//			}
+	//		} else {
+	//			if entryType != "inproceedings" {
+	//				fmt.Println("Expected an inproceedings", key)
+	//				l.SetEntryType(key, "inproceedings")
+	//			}
+	//		}
+	//	}
 }
 
 // Harmonize with tryGetDOIFromURL ???

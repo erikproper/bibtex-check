@@ -61,11 +61,11 @@ func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection 
 	token := ""
 	spacety := ""
 	tokenNeedsProtection := false
-	sequenceNextIsFirstTokenOfSubTitle := false
+	sequenceNextIsFirstNameOfSubTitle := false
 
 	for !t.ThisCharacterIs('}') &&
 		/**/ t.CollectTeXSpacety(&spacety) &&
-		/*  */ t.CollectTeXToken(&token, isOfferedProtection, &tokenNeedsProtection, &sequenceNextIsFirstTokenOfSubTitle) {
+		/*  */ t.CollectTeXToken(&token, isOfferedProtection, &tokenNeedsProtection, &sequenceNextIsFirstNameOfSubTitle) {
 		if token != "" {
 			if tokenNeedsProtection {
 				*tokens += spacety + "{" + token + "}"
@@ -82,7 +82,7 @@ func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection 
 }
 
 // //// SIMPLIFY???
-func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool, needsProtection, nextIsFirstTokenOfSubTitle *bool) bool {
+func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool, needsProtection, nextIsFirstNameOfSubTitle *bool) bool {
 	if t.EndOfStream() {
 		return false
 	} else {
@@ -100,7 +100,7 @@ func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool,
 			return true
 
 		case t.CollectCharacterThatIsIn(UppercaseLetters, s):
-			if !*needsProtection && !isOfferedProtection && (t.inWord || *nextIsFirstTokenOfSubTitle) {
+			if !*needsProtection && !isOfferedProtection && (t.inWord || *nextIsFirstNameOfSubTitle) {
 				*needsProtection = true
 			}
 			t.inWord = true
@@ -129,7 +129,7 @@ func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool,
 	}
 }
 
-func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, needsProtection, nextIsFirstTokenOfSubTitle *bool) bool {
+func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, needsProtection, nextIsFirstNameOfSubTitle *bool) bool {
 	t.inWord = false
 	*needsProtection = false
 
@@ -140,14 +140,14 @@ func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, ne
 			t.inWord = false
 
 			if t.CollectCharacterThatWasIn(TeXSubTitlers, token) {
-				*nextIsFirstTokenOfSubTitle = t.ThisCharacterIsIn(TeXSpaces)
+				*nextIsFirstNameOfSubTitle = t.ThisCharacterIsIn(TeXSpaces)
 			} else {
 				t.CollectCharacterThatWasIn(TeXSingletons, token)
 			}
 
 		} else {
-			for !t.ThisCharacterIsIn(TeXSingletons) && !t.EndOfStream() && t.CollectTeXTokenElement(token, isOfferedProtection, needsProtection, nextIsFirstTokenOfSubTitle) {
-				*nextIsFirstTokenOfSubTitle = false
+			for !t.ThisCharacterIsIn(TeXSingletons) && !t.EndOfStream() && t.CollectTeXTokenElement(token, isOfferedProtection, needsProtection, nextIsFirstNameOfSubTitle) {
+				*nextIsFirstNameOfSubTitle = false
 			}
 		}
 
@@ -166,32 +166,56 @@ func ApplyLaTeXMap(s string) string {
 	return result
 }
 
+// Here??
+func (l *TBibTeXLibrary) maybeAddSimpleName(parts int, firstName, lastName string) {
+	if parts == 2 {
+		name := firstName + " " + lastName
+		newName := lastName + ", " + firstName
+
+		if _, isMapped := l.NameAliasToName[name]; !isMapped {
+			l.AddAliasForName(name, newName, &l.NameAliasToName, &l.NameToAliases)
+
+		}
+	}
+}
+
 func NormaliseNamesString(l *TBibTeXLibrary, keys, names string) string {
 	name := ""
 	token := ""
+	namePartsCount := 0
+	previousFirstName := ""
+	previousLastName := ""
 	andety := ""
 	spacety := ""
 	result := ""
 
 	needsProtection := false
-	nextIsFirstTokenOfSubTitle := false
+	nextIsFirstNameOfSubTitle := false
 
 	l.TBibTeXTeX.TextString(ApplyLaTeXMap(names))
 	l.TBibTeXTeX.TeXSpacety()
 
-	for l.CollectTeXSpacety(&spacety) && l.CollectTeXToken(&token, false, &needsProtection, &nextIsFirstTokenOfSubTitle) {
+	for l.CollectTeXSpacety(&spacety) && l.CollectTeXToken(&token, false, &needsProtection, &nextIsFirstNameOfSubTitle) {
 		if token != "" {
 			if strings.ToLower(token) == "and" {
 				if name != "" {
+					l.maybeAddSimpleName(namePartsCount, previousFirstName, previousLastName)
+
 					result += andety + NormalisePersonNameValue(l.TBibTeXTeX.library, name)
 					name = ""
 					token = ""
+					previousFirstName = ""
+					previousLastName = ""
+					namePartsCount = 0
 					andety = " and "
 
 					l.TeXSpacety()
 				}
 			} else {
 				name += spacety + token
+				namePartsCount++
+				previousFirstName = previousLastName
+				previousLastName = token
 				token = ""
 			}
 		}
@@ -199,6 +223,8 @@ func NormaliseNamesString(l *TBibTeXLibrary, keys, names string) string {
 	}
 
 	if name != "" {
+		l.maybeAddSimpleName(namePartsCount, previousFirstName, previousLastName)
+
 		result += andety + NormalisePersonNameValue(l.TBibTeXTeX.library, name)
 	}
 

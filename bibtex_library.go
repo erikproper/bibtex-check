@@ -296,6 +296,7 @@ func (l *TBibTeXLibrary) MaybeAddReorderedName(alias, name string, aliasMap *TSt
 }
 
 // Add a new name alias
+// Simplify??
 func (l *TBibTeXLibrary) AddAliasForName(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
 	l.MaybeAddReorderedName(name, name, aliasMap, inverseMap)
 	l.MaybeAddReorderedName(alias, name, aliasMap, inverseMap)

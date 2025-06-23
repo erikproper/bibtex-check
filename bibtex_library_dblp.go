@@ -65,6 +65,8 @@ func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(DBLPKey, crossref string) string
 
 		l.EntryFields[key]["crossref"] = crossref
 
+		l.CheckNeedToMergeForEqualTitles(key)
+
 		return key
 	}
 

@@ -35,6 +35,7 @@ func NormaliseAliassableFieldValue(fieldAliasToAlias TStringMap, value string) s
 }
 
 // Normalise the name of a person based on the aliases
+// Why not a normal library function: func l *TBibTeXLibrary ( ...
 func NormalisePersonNameValue(l *TBibTeXLibrary, name string) string {
 	return NormaliseAliassableFieldValue(l.NameAliasToName, strings.TrimSpace(name))
 }

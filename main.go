@@ -260,7 +260,10 @@ func main() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
 
+			count := 0
 			for key := range Library.EntryFields {
+				count++
+				fmt.Println("Entry count: ", count)
 				FIXThatShouldBeChecks(key)
 			}
 			Library.WriteNonDoublesFile()
@@ -275,6 +278,7 @@ func main() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
 
+			count := 0
 			for key := range Library.EntryFields {
 				if Library.EntryFieldValueity(key, DBLPField) != "" {
 					if Library.EntryFields[key][EntryTypeField] == "book" ||
@@ -289,6 +293,8 @@ func main() {
 						Library.EntryFields[key][EntryTypeField] == "proceedings" ||
 						Library.EntryFields[key][EntryTypeField] == "inproceedings" ||
 						Library.EntryFields[key][EntryTypeField] == "article" {
+						count++
+						fmt.Println("Entry count: ", count)
 						Library.CheckDBLP(key)
 						FIXThatShouldBeChecks(key)
 					}
