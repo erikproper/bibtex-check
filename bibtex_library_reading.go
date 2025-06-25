@@ -142,32 +142,13 @@ func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
 		}
 
 		sourceField := elements[0]
-		sourceValue := l.UpdateFieldValue(sourceField, elements[1])
+		sourceValue := l.DeAliasFieldValue(sourceField, elements[1])
 
 		targetField := elements[2]
-		targetValue := l.UpdateFieldValue(targetField, elements[3])
+		targetValue := l.DeAliasFieldValue(targetField, elements[3])
 
 		l.AddFieldMapping(sourceField, sourceValue, targetField, targetValue)
 	})
-}
-
-func (l *TBibTeXLibrary) normalisedAliasTargetPair(key, field, winner, challenger string) (string, string) {
-	normalisedWinner := ""
-	if winner != "" {
-		normalisedWinner = l.NormaliseFieldValue(field, key, winner)
-	}
-
-	// We do normalise the challengers, but want to ignore error messages.
-	// The challenged values may actually have errors ...
-	normalisedChallenger := ""
-	if challenger != "" {
-		silenced := l.InteractionIsOff()
-		l.SetInteractionOff()
-		normalisedChallenger = l.NormaliseFieldValue(field, key, challenger)
-		l.SetInteraction(silenced)
-	}
-
-	return normalisedWinner, normalisedChallenger
 }
 
 // Read key field challenge file
@@ -182,8 +163,9 @@ func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
 
 		key := elements[0]
 		field := elements[1]
-		winner, challenger := l.normalisedAliasTargetPair(key, field, elements[2], elements[3])
-		l.AddEntryFieldAlias(key, field, l.DeAliasFieldValue(field, challenger), l.DeAliasFieldValue(field, winner), true)
+		winner := l.DeAliasNormalisedEntryFieldValue(key, field, elements[2])
+		challenger := l.DeAliasNormalisedEntryFieldValue(key, field, elements[3])
+		l.AddEntryFieldAlias(key, field, challenger, winner, true)
 	})
 }
 
@@ -198,7 +180,9 @@ func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
 		}
 
 		field := elements[0]
-		winner, challenger := l.normalisedAliasTargetPair("", field, elements[1], elements[2])
+		winner := l.DeAliasNormalisedFieldValue(field, elements[1])
+		challenger := l.DeAliasNormalisedFieldValue(field, elements[2])
+
 		l.AddGenericFieldAlias(field, challenger, winner, true)
 	})
 }

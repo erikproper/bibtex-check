@@ -37,15 +37,15 @@ func processTitleValue(l *TBibTeXLibrary, key, value string) {
 // It always, first, conducts a normalisation of the field value.
 // If a field specific process function exists, then it is applied on the normalised value.
 // Otherwise, we simply return the normalised value.
-func (l *TBibTeXLibrary) ProcessEntryFieldValue(key, field, value string) string {
-	normalisedValue := l.DeAliasEntryFieldValue(key, field, l.NormaliseFieldValue(field, key, value))
+func (l *TBibTeXLibrary) ProcessEntryFieldValue(key, field, valueRAW string) string {
+	value := l.DeAliasNormalisedEntryFieldValue(key, field, valueRAW)
 
 	valueProcessor, hasProcessor := fieldProcessors[field]
 	if hasProcessor {
-		valueProcessor(l, key, normalisedValue)
+		valueProcessor(l, key, value)
 	}
 
-	return normalisedValue
+	return value
 }
 
 // The general function call to process field values when reading from the cache.

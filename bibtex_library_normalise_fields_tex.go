@@ -179,7 +179,7 @@ func (l *TBibTeXLibrary) maybeAddSimpleName(parts int, firstName, lastName strin
 	}
 }
 
-func NormaliseNamesString(l *TBibTeXLibrary, keys, names string) string {
+func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 	name := ""
 	token := ""
 	namePartsCount := 0
@@ -231,7 +231,7 @@ func NormaliseNamesString(l *TBibTeXLibrary, keys, names string) string {
 	return result
 }
 
-func NormaliseTitleString(l *TBibTeXLibrary, key, title string) string {
+func NormaliseTitleString(l *TBibTeXLibrary, title string) string {
 	l.TBibTeXTeX.TextString(ApplyLaTeXMap(title))
 	l.TBibTeXTeX.inWord = false
 	l.TBibTeXTeX.TeXSpacety()

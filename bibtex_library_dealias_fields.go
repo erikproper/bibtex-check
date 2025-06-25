@@ -12,8 +12,13 @@
 
 package main
 
-// The general function call to DeAlias entry specific field values.
-func (l *TBibTeXLibrary) DeAliasEntryFieldValue(entry, field, value string) string {
+// The general function call to DeAlias key specific field values.
+func (l *TBibTeXLibrary) DeAliasNormalisedEntryFieldValue(key, field, valueRAW string) string {
+	return l.DeAliasEntryFieldValue(key, field, l.NormaliseFieldValue(field, valueRAW))
+}
+
+// Rename. The previous should be called Normalised ...
+func (l *TBibTeXLibrary) DeAliasEntryFieldValue(key, field, value string) string {
 	if field == "crossref" {
 		return l.DeAliasEntryKey(value)
 	}
@@ -22,15 +27,20 @@ func (l *TBibTeXLibrary) DeAliasEntryFieldValue(entry, field, value string) stri
 		return unAliased
 	}
 
-	if unAliased, hasAlias := l.EntryFieldSourceToTarget[entry][field][value]; hasAlias {
+	if unAliased, hasAlias := l.EntryFieldSourceToTarget[key][field][value]; hasAlias {
 		return unAliased
 	}
 
 	return value
 }
 
+func (l *TBibTeXLibrary) DeAliasNormalisedFieldValue(field, valueRAW string) string {
+	return l.DeAliasFieldValue(field, l.NormaliseFieldValue(field, valueRAW))
+}
+
 // The general function call to DeAlias field values.
 func (l *TBibTeXLibrary) DeAliasFieldValue(field, value string) string {
+
 	if field == "crossref" {
 		return l.DeAliasEntryKey(value)
 	}

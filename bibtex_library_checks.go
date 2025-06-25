@@ -401,8 +401,6 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 				l.Warning("Target %s of crossref from %s does not exist.", crossrefety, key)
 			}
 		}
-	} else if crossrefety != "" {
-		l.Warning("Entry %s of type %s is not allowed to have a crossref", key, entryType)
 	}
 }
 
@@ -414,10 +412,44 @@ func (l *TBibTeXLibrary) CheckFileReference(key string) {
 	l.CheckFileReferences(key, key)
 }
 
-func (l *TBibTeXLibrary) CheckLanguageID(key string) {
-	if l.EntryFieldValueity(key, "langid") == "english" {
-		l.EntryFields[key]["langid"] = ""
+func (l *TBibTeXLibrary) CheckISSN(key string) {
+	issn := l.EntryFieldValueity(key, "issn")
+
+	if issn == "" || IsValidISSN(issn) {
+		return
 	}
+
+	l.Warning(WarningBadISSN, issn, key)
+}
+
+func (l *TBibTeXLibrary) CheckISBN(key string) {
+	isbn := l.EntryFieldValueity(key, "isbn")
+
+	if isbn == "" || IsValidISBN(isbn) {
+		return
+	}
+
+	l.Warning(WarningBadISBN, isbn, key)
+}
+
+func (l *TBibTeXLibrary) CheckYear(key string) {
+	year := l.EntryFieldValueity(key, "year")
+
+	if year == "" || IsValidYear(year) {
+		return
+	}
+
+	l.Warning(WarningBadYear, year, key)
+}
+
+func (l *TBibTeXLibrary) CheckURLDate(key string) {
+	date := l.EntryFieldValueity(key, "urldate")
+
+	if date == "" || IsValidDate(date) {
+		return
+	}
+
+	l.Warning(WarningBadDate, date, key)
 }
 
 func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
@@ -538,20 +570,25 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 func (l *TBibTeXLibrary) CheckEntry(key string) {
 	if l.EntryExists(key) {
 		l.CheckKeyValidity(key)
-		l.CheckDOIPresence(key)
-		l.CheckEPrint(key)
-		l.CheckCrossref(key)
-		l.CheckPreferredKey(key)
-		l.CheckBookishTitles(key)
 
 		// CheckCrossref can lead to a merger of entries for now ...
 		if l.EntryExists(key) {
+			l.CheckDOIPresence(key)
+			l.CheckEPrint(key)
+			l.CheckCrossref(key)
+			l.CheckPreferredKey(key)
+			l.CheckBookishTitles(key)
 			l.CheckISBNFromDOI(key)
-			l.CheckLanguageID(key)
 			l.CheckTitlePresence(key)
 			l.CheckURLRedundance(key)
 			l.CheckURLDateNeed(key)
 			l.CheckFileReference(key)
+
+			// Simple conformity checks
+			l.CheckISSN(key)
+			l.CheckISBN(key)
+			l.CheckYear(key)
+			l.CheckURLDate(key)
 		}
 	}
 }

@@ -35,6 +35,7 @@ const (
 	// (*) Should go into a config file.
 	KeyPrefix   = "EP" // (*)
 	FilesFolder = "Files/"
+	NoKey       = ""
 
 	CacheCommentsSeparator = "@@@@@@@@"
 
@@ -51,6 +52,8 @@ const (
 	NonDoublesFileExtension = ".key_non_double"
 	KeyOldiesFileExtension  = ".key_oldies"
 	KeyHintsFileExtension   = ".key_hints"
+
+	DefaultLanguage = "eng"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field

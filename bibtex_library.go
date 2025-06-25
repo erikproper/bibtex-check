@@ -233,7 +233,7 @@ func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target strin
 func (l *TBibTeXLibrary) ReassignEntryFieldAliases(source, target string) {
 	for field, AliasAssignments := range l.EntryFieldSourceToTarget[source] {
 		for alias, winner := range AliasAssignments {
-			if dealiasedWinner := l.DeAliasEntryFieldValue(target, field, winner); dealiasedWinner != "" {
+			if dealiasedWinner := l.DeAliasNormalisedEntryFieldValue(target, field, winner); dealiasedWinner != "" {
 				l.AddEntryFieldAlias(target, field, alias, dealiasedWinner, false)
 			}
 		}
@@ -352,6 +352,10 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			l.ReassignEntryFieldAliases(source, target)
 
 			delete(l.EntryFields, source)
+
+			l.CheckIfFieldsAreAllowed(target, func(key, field, value string) {
+				delete(l.EntryFields[key], field)
+			})
 
 			l.CheckEntry(target)
 		}
@@ -737,15 +741,20 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 	return true
 }
 
-// Update versus DeAlias versus Normalise ... yuck!!
-func (l *TBibTeXLibrary) UpdateFieldValue(field, value string) string {
-	return l.DeAliasFieldValue(field, l.NormaliseFieldValue(field, "", value))
-}
-
 func (l *TBibTeXLibrary) MaybeApplyFieldMappings(key string) {
 	for sourceField, sourceValue := range l.EntryFields[key] {
 		for targetField, targetValue := range l.FieldMappings[sourceField][sourceValue] {
 			l.SetEntryFieldValue(key, targetField, targetValue)
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) CheckIfFieldsAreAllowed(key string, violationHandler func(string, string, string)) {
+	for field, value := range l.EntryFields[key] {
+		// Check if the field is allowed for this type.
+		// If not, we need to run the violation handler
+		if !l.EntryAllowsForField(key, field) {
+			violationHandler(key, field, value)
 		}
 	}
 }
@@ -771,18 +780,14 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 	// Check if no illegal fields were used
 	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
 	if !l.InteractionIsOff() {
-		for field, value := range l.EntryFields[key] {
-			// Check if the field is allowed for this type.
-			// If not, we need to ask if it can be deleted.
-			if !l.EntryAllowsForField(key, field) {
+		l.CheckIfFieldsAreAllowed(key, func (key, field, value string) {
 				if l.IgnoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryType(key)) {
 					delete(l.EntryFields[key], field)
 				} else {
 					l.Warning("Stopping programme. Please fix this manually.")
 					os.Exit(0)
 				}
-			}
-		}
+		})
 	}
 
 	l.MaybeApplyFieldMappings(key)
