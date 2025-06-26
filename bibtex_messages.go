@@ -67,9 +67,8 @@ const (
 	// Progress reports for reading/writing files"Line in aliases file is too short: %s"
 	ProgressWritingBibFile                 = "Writing bib file %s"
 	ProgressWritingFieldsCache             = "Writing fields cache %s"
-	ProgressWritingTypesCache              = "Writing types cache %s"
+	ProgressWritingGroupsCache             = "Writing groups cache %s"
 	ProgressWritingCommentsCache           = "Writing comments cache %s"
-	ProgressWritingGroupsFile              = "Writing groups file %s"
 	ProgressWritingNonDoublesFile          = "Writing non_doubles file %s"
 	ProgressWritingGenericFieldAliasesFile = "Writing generic field aliases file %s"
 	ProgressWritingEntryFieldAliasesFile   = "Writing entry field aliases file %s"
@@ -81,12 +80,12 @@ const (
 	ProgressReadingBibFile = "Reading bib file %s"
 
 	ProgressReadingFieldsCache     = "Reading fields cache %s"
-	ProgressReadingTypesCache      = "Reading types cache %s"
 	ProgressReadingCommentsCache   = "Reading comments cache %s"
 	ProgressReadingKeyAliasesCache = "Reading key aliases cache %s"
 
 	ProgressReadingNonDoublesFile          = "Reading non_doubles file %s"
 	ProgressReadingGenericFieldAliasesFile = "Reading generic field aliases file %s" // Really all these variations?
+	ProgressReadingGroupsCache             = "Reading groups cache %s"
 	ProgressReadingEntryFieldAliasesFile   = "Reading entry field aliases file %s"
 	ProgressReadingKeyOldiesFile           = "Reading key oldies file %s"
 	ProgressReadingKeyHintsFile            = "Reading key hints file %s"

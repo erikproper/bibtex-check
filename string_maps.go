@@ -206,6 +206,17 @@ func (m *TStringSetMap) AddValueToStringSetMap(i, v string) {
 	(*m)[i].Set().Add(v)
 }
 
+func (m *TStringSetMap) GetValueSetFromStringSetMap(i string) *TStringSet {
+	if (*m) == nil {
+		var s *TStringSet
+		s.Initialise()
+		
+		return s 
+	} else {
+		return (*m)[i].Set()
+	}
+}
+
 // Safely remove an element from a string set map
 func (m *TStringSetMap) DeleteValueFromStringSetMap(i, v string) {
 	if (*m) == nil {

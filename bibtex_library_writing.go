@@ -74,7 +74,20 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 
 func (l *TBibTeXLibrary) WriteCache() {
 	l.WriteFieldsCache()
+	l.WriteGroupsCache()
 	l.WriteCommentsCache()
+}
+
+func (l *TBibTeXLibrary) WriteGroupsCache() {
+	if !l.NoBibFileWriting {
+		l.writeLibraryFile(GroupsCacheExtension, ProgressWritingGroupsCache, func(groupsWriter *bufio.Writer) {
+			for entry, groupSet := range l.EntryGroups {
+				for group := range groupSet.Elements() {
+							groupsWriter.WriteString(entry + "	" + group + "\n")
+				}
+			}
+		})
+	}
 }
 
 func (l *TBibTeXLibrary) WriteFieldsCache() {

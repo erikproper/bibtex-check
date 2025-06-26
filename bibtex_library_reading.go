@@ -117,6 +117,18 @@ func (l *TBibTeXLibrary) ReadFieldsCache() {
 	})
 }
 
+func (l *TBibTeXLibrary) ReadGroupsCache() {
+	l.readLibraryFile(GroupsCacheExtension, ProgressReadingGroupsCache, func(line string) {
+		elements := strings.Split(line, "\t")
+		if len(elements) < 2 {
+			l.Warning("SOME WARNING %s", line)
+			return
+		}
+
+		l.EntryGroups.AddValueToStringSetMap(elements[0], elements[1])
+	})
+}
+
 func (l *TBibTeXLibrary) ReadCommentsCache() {
 	l.readLibraryFile(CommentsCacheExtension, ProgressReadingCommentsCache, func(line string) {
 		if line == CacheCommentsSeparator {

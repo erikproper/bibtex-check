@@ -34,6 +34,7 @@ type (
 		BaseName                         string                    // BaseName of the library related files
 		Comments                         []string                  // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		EntryFields                      TStringStringMap          // Per entry key, the fields associated to the actual entries.
+		EntryGroups                      TStringSetMap
 		TitleIndex                       TStringSetMap             //
 		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                        TStringSetMap             //
@@ -86,6 +87,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.Comments = []string{}
 	l.FieldMappings = TStringStringStringMap{}
 	l.EntryFields = TStringStringMap{}
+	l.EntryGroups = TStringSetMap{}
 	l.TitleIndex = TStringSetMap{}
 	l.BookTitleIndex = TStringSetMap{}
 	l.ISBNIndex = TStringSetMap{}
@@ -478,6 +480,19 @@ func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
 	return l.EntryFields.GetValueityFromStringPairMap(entry, field)
 }
 
+func (l *TBibTeXLibrary) EntryGroupsString(entry string) string {
+	groupsString := ""
+	groupSeparator := ""
+	groupsSet := l.EntryGroups.GetValueSetFromStringSetMap(entry)
+
+	for group := range groupsSet.Elements() {
+		groupsString += groupSeparator + group
+		groupSeparator = ", "
+	}
+
+	return groupsString
+}
+
 func (l *TBibTeXLibrary) EntryType(entry string) string {
 	return l.EntryFieldValueity(entry, EntryTypeField)
 }
@@ -543,6 +558,10 @@ func (l *TBibTeXLibrary) LookupDBLPKey(DBLPkey string) string {
 }
 
 // Create a string (with newlines) with a BibTeX based representation of the provided key, while using an optional prefix for each line.
+func FormatBibTeXFieldAssignment(prefix, field, value string) string {
+	return prefix + "   " + field + " = {" + value + "},\n"
+}
+
 func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 	_, knownEntry := l.EntryFields[key]
 
@@ -557,11 +576,16 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 		// Add the type and key
 		result = linePrefix + "@" + l.EntryType(key) + "{" + key + ",\n"
 
+		groups := l.EntryGroupsString(key)
+		if groups != "" {
+			result += FormatBibTeXFieldAssignment(linePrefix, GroupsField, groups)
+		}
+		 
 		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
 		for _, field := range BibTeXAllowedEntryFields[l.EntryType(key)].Set().ElementsSorted() {
 			if field != EntryTypeField { // Fix this with AllowedEntryFields with/without it
 				if value := l.EntryFieldValueity(key, field); value != "" {
-					result += linePrefix + "   " + field + " = {" + l.DeAliasEntryFieldValue(key, field, value) + "},\n"
+					result += FormatBibTeXFieldAssignment(linePrefix, field, l.DeAliasEntryFieldValue(key, field, value))
 				}
 			}
 		}
@@ -721,17 +745,18 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 }
 
 // Assign a value to a field
-// Post legacy ... we may want to add a key as well, when the parser maintains the current key on that side.
 func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 	// Note: The parser for BibTeX streams is responsible for the mapping of field name aliases, such as editors to editor, etc.
 	// Here we only need to take care of the normalisation and processing of field values.
 	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
 
-	newValue := l.ProcessEntryFieldValue(key, field, value)
 	currentValue := l.EntryFieldValueity(key, field)
+	if currentValue != "" {
+		l.Warning("Entry %s already has a value for field %s of \"%s\"", key, field, currentValue)
+	}
 
-	// Assign the new value, while, if needed, resolve it with the current value
-	l.EntryFields[key][field] = l.MaybeResolveFieldValue(key, key, field, newValue, currentValue)
+	/// Use SAVER version
+	l.EntryFields[key][field] = l.ProcessEntryFieldValue(key, field, value)
 
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {

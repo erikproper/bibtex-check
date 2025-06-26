@@ -14,7 +14,7 @@ var (
 )
 
 const (
-	BaseName     = "ErikProper"
+	BaseName     = "ErikProper-Test"
 	BibTeXFolder = "/Users/erikproper/BibTeX/"
 	BibFile      = BaseName + ".bib"
 	MainLibrary  = "main"

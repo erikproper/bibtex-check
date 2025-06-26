@@ -40,6 +40,7 @@ const (
 	CacheCommentsSeparator = "@@@@@@@@"
 
 	FieldsCacheExtension   = ".cache_fields"
+	GroupsCacheExtension   = ".cache_groups"
 	CommentsCacheExtension = ".cache_comments"
 
 	BibFileExtension = ".bib"
@@ -63,6 +64,7 @@ const (
 	PreferredAliasField = "preferredalias"
 	DBLPField           = "dblp"
 	TitleField          = "title"
+	GroupsField         = "groups"
 )
 
 // Add the allowed fields for an entry, while updating the aggregations of allowed entries and fields.
