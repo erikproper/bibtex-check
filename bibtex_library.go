@@ -29,11 +29,11 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name                             string                    // Name of the library
-		FilesRoot                        string                    // Path to folder with library related files
-		BaseName                         string                    // BaseName of the library related files
-		Comments                         []string                  // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields                      TStringStringMap          // Per entry key, the fields associated to the actual entries.
+		name                             string           // Name of the library
+		FilesRoot                        string           // Path to folder with library related files
+		BaseName                         string           // BaseName of the library related files
+		Comments                         []string         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields                      TStringStringMap // Per entry key, the fields associated to the actual entries.
 		EntryGroups                      TStringSetMap
 		TitleIndex                       TStringSetMap             //
 		BookTitleIndex                   TStringSetMap             //
@@ -580,7 +580,7 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 		if groups != "" {
 			result += FormatBibTeXFieldAssignment(linePrefix, GroupsField, groups)
 		}
-		 
+
 		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
 		for _, field := range BibTeXAllowedEntryFields[l.EntryType(key)].Set().ElementsSorted() {
 			if field != EntryTypeField { // Fix this with AllowedEntryFields with/without it
@@ -805,13 +805,13 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 	// Check if no illegal fields were used
 	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
 	if !l.InteractionIsOff() {
-		l.CheckIfFieldsAreAllowed(key, func (key, field, value string) {
-				if l.IgnoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryType(key)) {
-					delete(l.EntryFields[key], field)
-				} else {
-					l.Warning("Stopping programme. Please fix this manually.")
-					os.Exit(0)
-				}
+		l.CheckIfFieldsAreAllowed(key, func(key, field, value string) {
+			if l.IgnoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryType(key)) {
+				delete(l.EntryFields[key], field)
+			} else {
+				l.Warning("Stopping programme. Please fix this manually.")
+				os.Exit(0)
+			}
 		})
 	}
 

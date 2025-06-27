@@ -83,7 +83,7 @@ func (l *TBibTeXLibrary) WriteGroupsCache() {
 		l.writeLibraryFile(GroupsCacheExtension, ProgressWritingGroupsCache, func(groupsWriter *bufio.Writer) {
 			for entry, groupSet := range l.EntryGroups {
 				for group := range groupSet.Elements() {
-							groupsWriter.WriteString(entry + "	" + group + "\n")
+					groupsWriter.WriteString(entry + "	" + group + "\n")
 				}
 			}
 		})

@@ -13,17 +13,18 @@
 package main
 
 import "strings"
+
 //import "fmt"
 
 // Definition of the map for field processors
-type TFieldProcessors = map[string]func(*TBibTeXLibrary, string, string)string
+type TFieldProcessors = map[string]func(*TBibTeXLibrary, string, string) string
 
 var fieldProcessors TFieldProcessors
 
 func processDBLPValue(l *TBibTeXLibrary, key, value string) string {
 	l.AddKeyAlias(KeyForDBLP(value), key)
 	l.AddKeyHint(KeyForDBLP(value), key)
-	
+
 	return value
 }
 
@@ -44,7 +45,7 @@ func processGroupsValue(l *TBibTeXLibrary, key, value string) string {
 	for _, group := range strings.Split(value, ",") {
 		l.EntryGroups.AddValueToStringSetMap(key, strings.TrimSpace(group))
 	}
-	
+
 	return ""
 }
 

@@ -98,6 +98,7 @@ func (l *TBibTeXLibrary) ValidCache() bool {
 
 func (l *TBibTeXLibrary) ReadCache() {
 	l.ReadFieldsCache()
+	l.ReadGroupsCache()
 	l.ReadCommentsCache()
 }
 

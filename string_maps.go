@@ -210,8 +210,8 @@ func (m *TStringSetMap) GetValueSetFromStringSetMap(i string) *TStringSet {
 	if (*m) == nil {
 		var s *TStringSet
 		s.Initialise()
-		
-		return s 
+
+		return s
 	} else {
 		return (*m)[i].Set()
 	}
