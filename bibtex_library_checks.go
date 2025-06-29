@@ -405,7 +405,7 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 }
 
 func (l *TBibTeXLibrary) CheckFileReferences(key, otherKey string) {
-	l.EntryFields[key]["file"] = l.ResolveFileReferences(key, otherKey)
+	l.EntryFields[key][LocalURLField] = l.ResolveFileReferences(key, otherKey)
 }
 
 func (l *TBibTeXLibrary) CheckFileReference(key string) {

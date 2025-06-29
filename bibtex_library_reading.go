@@ -114,7 +114,7 @@ func (l *TBibTeXLibrary) ReadFieldsCache() {
 		field := elements[1]
 		value := elements[2]
 
-		l.SetEntryFieldValue(key, field, l.ProcessCachedEntryFieldValue(key, field, value))
+		l.ProcessEntryFieldValue(key, field, value)
 	})
 }
 
@@ -126,7 +126,7 @@ func (l *TBibTeXLibrary) ReadGroupsCache() {
 			return
 		}
 
-		l.EntryGroups.AddValueToStringSetMap(elements[0], elements[1])
+		l.GroupEntries.AddValueToStringSetMap(elements[1], elements[0])
 	})
 }
 

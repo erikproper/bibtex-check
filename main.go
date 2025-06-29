@@ -245,7 +245,7 @@ func main() {
 		Reporting.SetInteractionOff()
 
 		if OpenLibraryToReport() {
-			fmt.Println(Library.EntryString(Library.DeAliasEntryKey(CleanKey(os.Args[2]))))
+			fmt.Println(Library.EntryString(Library.DeAliasEntryKey(CleanKey(os.Args[2])), ""))
 		}
 
 	case len(os.Args) == 3 && os.Args[1] == "-key":

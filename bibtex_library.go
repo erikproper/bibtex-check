@@ -34,7 +34,7 @@ type (
 		BaseName                         string           // BaseName of the library related files
 		Comments                         []string         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		EntryFields                      TStringStringMap // Per entry key, the fields associated to the actual entries.
-		EntryGroups                      TStringSetMap
+		GroupEntries                     TStringSetMap
 		TitleIndex                       TStringSetMap             //
 		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                        TStringSetMap             //
@@ -87,7 +87,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.Comments = []string{}
 	l.FieldMappings = TStringStringStringMap{}
 	l.EntryFields = TStringStringMap{}
-	l.EntryGroups = TStringSetMap{}
+	l.GroupEntries = TStringSetMap{}
 	l.TitleIndex = TStringSetMap{}
 	l.BookTitleIndex = TStringSetMap{}
 	l.ISBNIndex = TStringSetMap{}
@@ -135,8 +135,13 @@ func (l *TBibTeXLibrary) SetEntryType(entry, value string) {
 }
 
 // Add a comment to the current library.
-func (l *TBibTeXLibrary) AddComment(comment string) bool {
+func (l *TBibTeXLibrary) ProcessComment(comment string) bool {
+	// if ! l.BibDeskStaticGroupDefinition(comment) {
+	//   l.Comments = append(l.Comments, comment)
+	// } else {
+	// Should go, once we can write such group fields
 	l.Comments = append(l.Comments, comment)
+	// }
 
 	return true
 }
@@ -306,19 +311,9 @@ func (l *TBibTeXLibrary) AddAliasForName(alias, name string, aliasMap *TStringMa
 	l.AddAlias(alias, name, aliasMap, inverseMap, true)
 }
 
+// Really needed?
 func (l *TBibTeXLibrary) FileReferencety(key string) string {
-	var (
-		trimFileReferenceStart = regexp.MustCompile(`^[~:]*:`)
-		trimFileReferenceEnd   = regexp.MustCompile(`:[^:]*$`)
-	)
-
-	FileReference := l.EntryFieldValueity(key, "file")
-
-	// Remove leading/trailing stuff
-	FileReference = trimFileReferenceStart.ReplaceAllString(FileReference, "")
-	FileReference = trimFileReferenceEnd.ReplaceAllString(FileReference, "")
-
-	return FileReference
+	return l.EntryFieldValueity(key, LocalURLField)
 }
 
 // /// SPLIT??
@@ -390,8 +385,8 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 	if source != target && !l.NonDoubles[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
 		l.Warning("Found potential double entries")
 
-		sourceEntry := l.EntryString(source, "  ")
-		targetEntry := l.EntryString(target, "  ")
+		sourceEntry := l.EntryString(source, "", "  ")
+		targetEntry := l.EntryString(target, "", "  ")
 
 		if sourceEntry == "" {
 			l.Warning("Empty source entry: %s", source)
@@ -480,19 +475,6 @@ func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
 	return l.EntryFields.GetValueityFromStringPairMap(entry, field)
 }
 
-func (l *TBibTeXLibrary) EntryGroupsString(entry string) string {
-	groupsString := ""
-	groupSeparator := ""
-	groupsSet := l.EntryGroups.GetValueSetFromStringSetMap(entry)
-
-	for group := range groupsSet.Elements() {
-		groupsString += groupSeparator + group
-		groupSeparator = ", "
-	}
-
-	return groupsString
-}
-
 func (l *TBibTeXLibrary) EntryType(entry string) string {
 	return l.EntryFieldValueity(entry, EntryTypeField)
 }
@@ -562,7 +544,7 @@ func FormatBibTeXFieldAssignment(prefix, field, value string) string {
 	return prefix + "   " + field + " = {" + value + "},\n"
 }
 
-func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
+func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) string {
 	_, knownEntry := l.EntryFields[key]
 
 	if knownEntry {
@@ -576,7 +558,6 @@ func (l *TBibTeXLibrary) EntryString(key string, prefixes ...string) string {
 		// Add the type and key
 		result = linePrefix + "@" + l.EntryType(key) + "{" + key + ",\n"
 
-		groups := l.EntryGroupsString(key)
 		if groups != "" {
 			result += FormatBibTeXFieldAssignment(linePrefix, GroupsField, groups)
 		}
@@ -755,8 +736,7 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 		l.Warning("Entry %s already has a value for field %s of \"%s\"", key, field, currentValue)
 	}
 
-	/// Use SAVER version
-	l.EntryFields[key][field] = l.ProcessEntryFieldValue(key, field, value)
+	l.ProcessRawEntryFieldValue(key, field, value)
 
 	// If the field is not allowed, we need to report this
 	if !BibTeXAllowedFields.Contains(field) {

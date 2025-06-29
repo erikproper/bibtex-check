@@ -46,19 +46,33 @@ func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing
 // Notes:
 // - As we ignore preambles, these are not written.
 func (l *TBibTeXLibrary) WriteBibTeXFile() {
+	EntryGroups := TStringSetMap{}
+
 	if !l.NoBibFileWriting {
+		for group, keys := range l.GroupEntries {
+			for key := range keys.Elements() {
+				EntryGroups.AddValueToStringSetMap(key, group)
+			}
+		}
+
 		l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
 			// Write out the entries and their fields, but do so in a crossref friendly order. So first the non-bookish, and then the bookish ones
 			for entry := range l.EntryFields {
 				if !BibTeXBookish.Contains(l.EntryType(entry)) {
-					bibWriter.WriteString(l.EntryString(entry))
+					// Should be a function. We do this twice.
+					groups := EntryGroups.GetValueSetFromStringSetMap(entry).Stringify()
+
+					bibWriter.WriteString(l.EntryString(entry, groups))
 					bibWriter.WriteString("\n")
 				}
 			}
 
 			for entry := range l.EntryFields {
 				if BibTeXBookish.Contains(l.EntryType(entry)) {
-					bibWriter.WriteString(l.EntryString(entry))
+					// Should be a function. We do this twice.
+					groups := EntryGroups.GetValueSetFromStringSetMap(entry).Stringify()
+
+					bibWriter.WriteString(l.EntryString(entry, groups))
 					bibWriter.WriteString("\n")
 				}
 			}
@@ -66,6 +80,33 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 			// Write out the comments
 			for _, comment := range l.Comments {
 				bibWriter.WriteString("@" + CommentEntryType + "{" + comment + "}\n")
+				bibWriter.WriteString("\n")
+			}
+
+			// Write out the static groups
+			if len(l.GroupEntries) > 0 {
+				bibWriter.WriteString("@" + CommentEntryType + "{BibDesk Static Groups{")
+				bibWriter.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+				bibWriter.WriteString("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n")
+				bibWriter.WriteString("<plist version=\"1.0\">\n")
+				bibWriter.WriteString("<array>\n")
+				for group, keys := range l.GroupEntries {
+					bibWriter.WriteString("	<dict>\n")
+					bibWriter.WriteString("		<key>group name</key>\n")
+					bibWriter.WriteString("		<string>" + group + "</string>\n")
+					bibWriter.WriteString("		<key>keys</key>\n")
+					bibWriter.WriteString("		<string>")
+					comma := ""
+					for key := range keys.Elements() {
+						bibWriter.WriteString(comma + l.DeAliasEntryKey(key))
+						comma = ","
+					}
+					bibWriter.WriteString("</string>\n")
+					bibWriter.WriteString("	</dict>\n")
+				}
+				bibWriter.WriteString("</array>\n")
+				bibWriter.WriteString("</plist>\n")
+				bibWriter.WriteString("}}\n")
 				bibWriter.WriteString("\n")
 			}
 		})
@@ -81,8 +122,8 @@ func (l *TBibTeXLibrary) WriteCache() {
 func (l *TBibTeXLibrary) WriteGroupsCache() {
 	if !l.NoBibFileWriting {
 		l.writeLibraryFile(GroupsCacheExtension, ProgressWritingGroupsCache, func(groupsWriter *bufio.Writer) {
-			for entry, groupSet := range l.EntryGroups {
-				for group := range groupSet.Elements() {
+			for group, entrySet := range l.GroupEntries {
+				for entry := range entrySet.Elements() {
 					groupsWriter.WriteString(entry + "	" + group + "\n")
 				}
 			}

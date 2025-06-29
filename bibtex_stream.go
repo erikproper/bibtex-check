@@ -1,6 +1,6 @@
 /*
  *
- *  Module: bibtex_writing
+ *  Module: bibtex_stream
  *
  * This module is defines the TBibTeXStream type as a parser of BibTeX entries
  *
@@ -424,7 +424,7 @@ func (b *TBibTeXStream) EntryDefinitionBody(entryType string) bool {
 	case CommentEntryType:
 		comment := ""
 		return b.GroupedContentety(EndGroupCharacter, !TeXMode, &comment) &&
-			/**/ b.library.AddComment(comment)
+			/**/ (b.BibDeskStaticGroupDefinition(comment) || b.library.ProcessComment(comment))
 
 	// String definitions.
 	case StringEntryType:

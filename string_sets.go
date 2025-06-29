@@ -190,7 +190,7 @@ func (s *TStringSet) Contains(elements ...string) bool {
 	return true
 }
 
-//// RETHING STring and Stringify
+//// RETHINK STring and Stringify
 //// Could include a function to prepare the values, and then the ", and ", and" or "and" options
 //// So, set a "format" function as parameter in the TStringSet
 //// Same with overall wrapping with eg "{ ... }"

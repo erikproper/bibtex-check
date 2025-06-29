@@ -17,7 +17,6 @@ package main
 //import "fmt"
 
 func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
-
 	regularFileReference := FilesFolder + key + ".pdf"
 	otherFileReference := l.FileReferencety(otherKey)
 
@@ -36,7 +35,7 @@ func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
 	}
 
 	if FileExists(fqRegularFileReference) {
-		return ":" + regularFileReference + ":PDF"
+		return regularFileReference
 	} else {
 		return ""
 	}
@@ -90,11 +89,12 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return ""
 	}
 
+	// DELETE later
 	if field == "groups" {
 		return current + ", " + challenge
 	}
 
-	if field == "file" {
+	if field == LocalURLField {
 		return l.ResolveFileReferences(key, challengeKey)
 	}
 
@@ -121,7 +121,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		options := TStringSetNew()
 		options.Add("Y", "y", "n", "N")
 		warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
-		question := "Current entry:\n" + l.EntryString(key, "  ") + "Keep the value as is?"
+		question := "Current entry:\n" + l.EntryString(key, "", "  ") + "Keep the value as is?"
 		// Don't like this via "Warning" ... should be a separate class
 		answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
 
