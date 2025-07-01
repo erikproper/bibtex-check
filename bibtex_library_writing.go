@@ -98,7 +98,7 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 					bibWriter.WriteString("		<string>")
 					comma := ""
 					for key := range keys.Elements() {
-						bibWriter.WriteString(comma + l.DeAliasEntryKey(key))
+						bibWriter.WriteString(comma + l.MapEntryKey(key))
 						comma = ","
 					}
 					bibWriter.WriteString("</string>\n")
@@ -165,8 +165,8 @@ func (l *TBibTeXLibrary) WriteEntryFieldAliasesFile() {
 					for field, challenges := range fieldChallenges {
 						if field != PreferredAliasField {
 							for challenger, winner := range challenges {
-								if l.DeAliasFieldValue(field, challenger) != l.DeAliasEntryFieldValue(key, field, winner) {
-									challengeWriter.WriteString(key + "\t" + field + "\t" + l.DeAliasEntryFieldValue(key, field, winner) + "\t" + challenger + "\n")
+								if l.MapFieldValue(field, challenger) != l.MapEntryFieldValue(key, field, winner) {
+									challengeWriter.WriteString(key + "\t" + field + "\t" + l.MapEntryFieldValue(key, field, winner) + "\t" + challenger + "\n")
 								}
 							}
 						}
@@ -181,9 +181,9 @@ func (l *TBibTeXLibrary) WriteNonDoublesFile() {
 	if !l.NoNonDoublesFileWriting {
 		l.writeLibraryFile(NonDoublesFileExtension, ProgressWritingNonDoublesFile, func(challengeWriter *bufio.Writer) {
 			for key, set := range l.NonDoubles {
-				if key == l.DeAliasEntryKey(key) && l.EntryExists(key) {
+				if key == l.MapEntryKey(key) && l.EntryExists(key) {
 					for nonDouble := range set.Elements() {
-						if nonDouble != key && nonDouble == l.DeAliasEntryKey(nonDouble) && l.EntryExists(nonDouble) {
+						if nonDouble != key && nonDouble == l.MapEntryKey(nonDouble) && l.EntryExists(nonDouble) {
 							if !l.EvidenceForBeingDifferentEntries(key, nonDouble) {
 								challengeWriter.WriteString(key + "\t" + nonDouble + "\n")
 							}
@@ -202,7 +202,7 @@ func (l *TBibTeXLibrary) WriteGenericFieldAliasesFile() {
 				if field != PreferredAliasField {
 					for challenger, winner := range challenges {
 						if challenger != winner {
-							challengeWriter.WriteString(field + "\t" + l.DeAliasFieldValue(field, winner) + "\t" + challenger + "\n")
+							challengeWriter.WriteString(field + "\t" + l.MapFieldValue(field, winner) + "\t" + challenger + "\n")
 						}
 					}
 				}
@@ -229,7 +229,7 @@ func (l *TBibTeXLibrary) WriteKeyOldiesFile() {
 	if !l.NoKeyOldiesFileWriting {
 		l.writeLibraryFile(KeyOldiesFileExtension, ProgressWritingKeyOldiesFile, func(sourceWriter *bufio.Writer) {
 			for source, target := range l.KeyToKey {
-				target = l.DeAliasEntryKey(target)
+				target = l.MapEntryKey(target)
 				_, isEntry := l.EntryFields[target]
 
 				if isEntry &&
@@ -247,7 +247,7 @@ func (l *TBibTeXLibrary) WriteKeyHintsFile() {
 	if !l.NoKeyHintsFileWriting {
 		l.writeLibraryFile(KeyHintsFileExtension, ProgressWritingKeyHintsFile, func(sourceWriter *bufio.Writer) {
 			for source, target := range l.HintToKey {
-				target = l.DeAliasEntryKey(target)
+				target = l.MapEntryKey(target)
 				_, isEntry := l.EntryFields[target]
 
 				if isEntry &&

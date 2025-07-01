@@ -155,7 +155,7 @@ func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
 		}
 
 		sourceField := elements[0]
-		sourceValue := l.DeAliasFieldValue(sourceField, elements[1])
+		sourceValue := l.MapFieldValue(sourceField, elements[1])
 
 		targetField := elements[2]
 		targetValue := l.NormaliseFieldValue(targetField, elements[3])
@@ -176,8 +176,8 @@ func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
 
 		key := elements[0]
 		field := elements[1]
-		winner := l.DeAliasNormalisedFieldValue(field, elements[2])
-		challenger := l.DeAliasNormalisedFieldValue(field, elements[3])
+		winner := l.MapNormalisedFieldValue(field, elements[2])
+		challenger := l.MapNormalisedFieldValue(field, elements[3])
 		l.AddEntryFieldAlias(key, field, challenger, winner, true)
 	})
 }

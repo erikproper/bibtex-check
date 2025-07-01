@@ -102,7 +102,7 @@ func processFieldToIgnoreValue(l *TBibTeXLibrary, key, value string) (string, st
 // If a field specific process function exists, then it is applied on the normalised value.
 // Otherwise, we simply return the normalised value.
 func (l *TBibTeXLibrary) ProcessRawEntryFieldValue(key, field, value string) {
-	value = l.DeAliasNormalisedEntryFieldValue(key, field, value)
+	value = l.MapNormalisedEntryFieldValue(key, field, value)
 
 	l.ProcessEntryFieldValue(key, field, value)
 }

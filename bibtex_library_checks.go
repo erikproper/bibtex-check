@@ -380,9 +380,14 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	entryType := l.EntryType(key)
 	crossrefetyRAW := l.EntryFieldValueity(key, "crossref")
 
-	crossrefety := l.DeAliasEntryKey(crossrefetyRAW)
+	crossrefety := l.MapEntryKey(crossrefetyRAW)
 	if crossrefety == "" {
 		crossrefety = crossrefetyRAW
+	}
+	
+	if crossrefety == key {
+		l.Warning("Found self referencing crossref for %s. Cleaning this up.", key)
+		l.EntryFields[key]["crossref"] = ""
 	}
 
 	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
@@ -453,15 +458,15 @@ func (l *TBibTeXLibrary) CheckURLDate(key string) {
 }
 
 func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
-	key := l.DeAliasEntryKey(keyRAW) // Dealias, while we are likely to do this immediately after a merge (for now)
+	key := l.MapEntryKey(keyRAW) // Dealias, while we are likely to do this immediately after a merge (for now)
 	// After merging all doubles, we can do this as part of the consistency check and CheckCrossref in particular, and then don't need to dealias.
 
 	if BibTeXCrossreffer.Contains(l.EntryType(key)) {
-		crossrefKey := l.EntryFieldValueity(l.DeAliasEntryKey(key), "crossref")
+		crossrefKey := l.EntryFieldValueity(l.MapEntryKey(key), "crossref")
 		if crossrefKey == "" {
 			entryType := l.EntryType(key)
 
-			bookTitle := l.EntryFieldValueity(l.DeAliasEntryKey(key), "booktitle")
+			bookTitle := l.EntryFieldValueity(l.MapEntryKey(key), "booktitle")
 			if bookTitle == "" {
 				l.Warning("Empty booktitle for a bookish entry %s of type %s", key, entryType)
 			} else {
@@ -484,18 +489,18 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 }
 
 func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
-	// Why not do l.DeAliasEntryKey(key) always as part of l.EntryFieldValueity ???
-	title := l.EntryFieldValueity(l.DeAliasEntryKey(key), TitleField)
+	// Why not do l.MapEntryKey(key) always as part of l.EntryFieldValueity ???
+	title := l.EntryFieldValueity(l.MapEntryKey(key), TitleField)
 	if title != "" {
 		// Should be via a function!
 		Keys := l.TitleIndex[TeXStringIndexer(title)]
 		if Keys.Size() > 1 {
 			sortedKeys := Keys.ElementsSorted()
 			for _, a := range sortedKeys {
-				if a == l.DeAliasEntryKey(a) {
+				if a == l.MapEntryKey(a) {
 					for _, b := range sortedKeys {
-						if b == l.DeAliasEntryKey(b) {
-							l.MaybeMergeEntries(l.DeAliasEntryKey(a), l.DeAliasEntryKey(b))
+						if b == l.MapEntryKey(b) {
+							l.MaybeMergeEntries(l.MapEntryKey(a), l.MapEntryKey(b))
 						}
 					}
 				}
@@ -511,7 +516,7 @@ func (l *TBibTeXLibrary) CheckKeyValidity(key string) {
 }
 
 func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
-	key := l.DeAliasEntryKey(keyRAW) // Needed??
+	key := l.MapEntryKey(keyRAW) // Needed??
 
 	l.MaybeSyncDBLPEntry(key)
 
@@ -556,7 +561,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 			childKey := l.LookupDBLPKey(childDBLP)
 
 			if childKey != "" {
-				childCrossref := l.DeAliasEntryKey(l.EntryFieldValueity(childKey, "crossref"))
+				childCrossref := l.MapEntryKey(l.EntryFieldValueity(childKey, "crossref"))
 				if childCrossref == "" || childCrossref != key {
 					l.EntryFields[childKey]["crossref"] = key
 				}

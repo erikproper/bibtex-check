@@ -240,7 +240,7 @@ func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target strin
 func (l *TBibTeXLibrary) ReassignEntryFieldAliases(source, target string) {
 	for field, AliasAssignments := range l.EntryFieldSourceToTarget[source] {
 		for alias, winner := range AliasAssignments {
-			if dealiasedWinner := l.DeAliasNormalisedEntryFieldValue(target, field, winner); dealiasedWinner != "" {
+			if dealiasedWinner := l.MapNormalisedEntryFieldValue(target, field, winner); dealiasedWinner != "" {
 				l.AddEntryFieldAlias(target, field, alias, dealiasedWinner, false)
 			}
 		}
@@ -323,8 +323,8 @@ func (l *TBibTeXLibrary) FileReferencety(key string) string {
 func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 	if sourceRAW != "" && targetRAW != "" {
 		// Fix names
-		source := sourceRAW //l.DeAliasEntryKey(sourceRAW)
-		target := l.DeAliasEntryKey(targetRAW)
+		source := sourceRAW //l.MapEntryKey(sourceRAW)
+		target := l.MapEntryKey(targetRAW)
 
 		if source != target && l.EntryExists(source) { // }&& l.EntryExists(target) {
 			l.Progress("Merging %s to %s", source, target)
@@ -379,8 +379,8 @@ func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string)
 
 func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 	// Fix names
-	source := l.DeAliasEntryKey(sourceRAW)
-	target := l.DeAliasEntryKey(targetRAW)
+	source := l.MapEntryKey(sourceRAW)
+	target := l.MapEntryKey(targetRAW)
 
 	if source != target && !l.NonDoubles[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
 		l.Warning("Found potential double entries")
@@ -413,12 +413,12 @@ func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
 	if keys.Size() > 1 {
 		sortedkeys := keys.ElementsSorted()
 		for _, a := range sortedkeys {
-			aDeAlias := l.DeAliasEntryKey(a)
-			if a == aDeAlias {
+			aMap := l.MapEntryKey(a)
+			if a == aMap {
 				for _, b := range sortedkeys {
-					bDeAlias := l.DeAliasEntryKey(b)
-					if b == bDeAlias {
-						l.MaybeMergeEntries(aDeAlias, bDeAlias)
+					bMap := l.MapEntryKey(b)
+					if b == bMap {
+						l.MaybeMergeEntries(aMap, bMap)
 					}
 				}
 			}
@@ -427,13 +427,13 @@ func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
 }
 
 func (l *TBibTeXLibrary) addAliasForKey(aliasMap *TStringMap, alias, key, warning string) bool {
-	key = l.DeAliasEntryKey(key)
+	key = l.MapEntryKey(key)
 
 	if alias == key {
 		return true
 	} else {
 		if currentKey, aliasIsUsedAsKeyForSomeAlias := (*aliasMap)[alias]; aliasIsUsedAsKeyForSomeAlias {
-			currentKey = l.DeAliasEntryKey(currentKey)
+			currentKey = l.MapEntryKey(currentKey)
 
 			if currentKey == key {
 				return true
@@ -495,8 +495,8 @@ func (l *TBibTeXLibrary) ReportLibrarySize() {
 
 // ONLY needed for migration???
 // Lookup the entry key and type for a given key/alias
-func (l *TBibTeXLibrary) DeAliasEntryKeyWithType(key string) (string, string, bool) {
-	deAliasedKey := l.DeAliasEntryKey(key)
+func (l *TBibTeXLibrary) MapEntryKeyWithType(key string) (string, string, bool) {
+	deAliasedKey := l.MapEntryKey(key)
 
 	if entryType := l.EntryType(deAliasedKey); entryType != "" {
 		return deAliasedKey, entryType, true
@@ -523,7 +523,7 @@ func (l *TBibTeXLibrary) EntryKeyAliasTraverser(originalKey, currentKey string, 
 	return currentKey
 }
 
-func (l *TBibTeXLibrary) DeAliasEntryKey(key string) string {
+func (l *TBibTeXLibrary) MapEntryKey(key string) string {
 	visited := TStringSetNew()
 
 	return l.EntryKeyAliasTraverser(key, key, visited)
@@ -566,7 +566,7 @@ func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) str
 		for _, field := range BibTeXAllowedEntryFields[l.EntryType(key)].Set().ElementsSorted() {
 			if field != EntryTypeField { // Fix this with AllowedEntryFields with/without it
 				if value := l.EntryFieldValueity(key, field); value != "" {
-					result += FormatBibTeXFieldAssignment(linePrefix, field, l.DeAliasEntryFieldValue(key, field, value))
+					result += FormatBibTeXFieldAssignment(linePrefix, field, l.MapEntryFieldValue(key, field, value))
 				}
 			}
 		}

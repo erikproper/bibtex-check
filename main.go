@@ -178,7 +178,7 @@ func main() {
 		//			for oldEntry, oldType := range OldLibrary.EntryFields {
 		//				cleanOldEntry := stripUniquePrefix.ReplaceAllString(oldEntry, "")
 		//
-		//				newKey, newType, isEntry := Library.DeAliasEntryKeyWithType(cleanOldEntry)
+		//				newKey, newType, isEntry := Library.MapEntryKeyWithType(cleanOldEntry)
 		//
 		//				if Library.EntryFieldValueity(newKey, DBLPField) != "" {
 		//					if isEntry && Library.EntryFieldValueity(newKey, DBLPField) != "" {
@@ -235,7 +235,7 @@ func main() {
 		Reporting.SetInteractionOff()
 
 		if OpenLibraryToReport() {
-			alias := Library.PreferredKey(Library.DeAliasEntryKey(CleanKey(os.Args[2])))
+			alias := Library.PreferredKey(Library.MapEntryKey(CleanKey(os.Args[2])))
 			if alias != "" {
 				fmt.Println(alias)
 			}
@@ -245,14 +245,14 @@ func main() {
 		Reporting.SetInteractionOff()
 
 		if OpenLibraryToReport() {
-			fmt.Println(Library.EntryString(Library.DeAliasEntryKey(CleanKey(os.Args[2])), ""))
+			fmt.Println(Library.EntryString(Library.MapEntryKey(CleanKey(os.Args[2])), ""))
 		}
 
 	case len(os.Args) == 3 && os.Args[1] == "-key":
 		Reporting.SetInteractionOff()
 
 		if OpenLibraryToReport() {
-			fmt.Println(Library.DeAliasEntryKey(CleanKey(os.Args[2])))
+			fmt.Println(Library.MapEntryKey(CleanKey(os.Args[2])))
 		}
 
 	case len(os.Args) == 2 && os.Args[1] == "-fixall":
@@ -366,13 +366,13 @@ func main() {
 			writeAliases = true
 			writeMappings = true
 
-			key := Library.DeAliasEntryKey(keyStrings[len(keyStrings)-1])
+			key := Library.MapEntryKey(keyStrings[len(keyStrings)-1])
 			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 				Library.MergeEntries(alias, key)
 			}
 
 			for _, key := range keyStrings[1:] {
-				if Library.DeAliasEntryKey(key) == key {
+				if Library.MapEntryKey(key) == key {
 					FIXThatShouldBeChecks(key)
 				}
 			}
@@ -394,7 +394,7 @@ func main() {
 			}
 			keyStrings := strings.Split(keysString, ",")
 
-			key := Library.DeAliasEntryKey(keyStrings[len(keyStrings)-1])
+			key := Library.MapEntryKey(keyStrings[len(keyStrings)-1])
 			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
 				fmt.Println("Mapping", alias, "to", key)
 				Library.AddKeyAlias(alias, key)
