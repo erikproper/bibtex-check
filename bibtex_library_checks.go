@@ -134,7 +134,7 @@ func (l *TBibTeXLibrary) CheckURLRedundance(key string) {
 
 	if l.IsRedundantURL(url, key) {
 		// CONSTANTS!!!
-		l.Warning("Can empty url for " + key + " -- which is " + url)
+		l.Warning("Can empty url for " + key + ", which is " + url)
 
 		// Call??
 		l.EntryFields[key]["url"] = ""

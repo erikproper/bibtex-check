@@ -271,7 +271,7 @@ func (l *TBibTeXLibrary) WriteAliasesFiles() {
 
 func (l *TBibTeXLibrary) WriteMappingsFiles() {
 	if !l.NoFieldMappingsFileWriting {
-		l.writeLibraryFile(FieldMappingsFileExtension, ProgressWritingFieldMappingsFile, func(writer *bufio.Writer) {
+		l.writeLibraryFile(CrossFieldMappingsFileExtension, ProgressWritingFieldMappingsFile, func(writer *bufio.Writer) {
 			for sourceField, sourceFieldMappings := range l.FieldMappings {
 				for sourceValue, targetFieldMappings := range sourceFieldMappings {
 					for targetField, targetValue := range targetFieldMappings {

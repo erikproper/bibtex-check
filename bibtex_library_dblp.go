@@ -29,11 +29,10 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 				l.MergeEntries(KeyForDBLP(DBLPKey), key)
 				l.EntryFields[key][DBLPField] = DBLPKey
 
-				///// Other checks??
-				interactionStatus := l.InteractionIsOff()
-				l.SetInteractionOff()
-				l.CheckURLRedundance(key)
-				l.SetInteraction(interactionStatus)
+				//				interactionStatus := l.InteractionIsOff()
+				//				l.SetInteractionOff()
+				l.CheckEntry(key)
+				//				l.SetInteraction(interactionStatus)
 
 				return true
 			}

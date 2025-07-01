@@ -61,11 +61,11 @@ func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection 
 	token := ""
 	spacety := ""
 	tokenNeedsProtection := false
-	sequenceNextIsFirstNameOfSubTitle := false
+	sequenceNextIsTokenOfSubTitle := false
 
 	for !t.ThisCharacterIs('}') &&
 		/**/ t.CollectTeXSpacety(&spacety) &&
-		/*  */ t.CollectTeXToken(&token, isOfferedProtection, &tokenNeedsProtection, &sequenceNextIsFirstNameOfSubTitle) {
+		/*  */ t.CollectTeXToken(&token, isOfferedProtection, &tokenNeedsProtection, &sequenceNextIsTokenOfSubTitle) {
 		if token != "" {
 			if tokenNeedsProtection {
 				*tokens += spacety + "{" + token + "}"
@@ -82,7 +82,7 @@ func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection 
 }
 
 // //// SIMPLIFY???
-func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool, needsProtection, nextIsFirstNameOfSubTitle *bool) bool {
+func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool, needsProtection, nextIsTokenOfSubTitle *bool) bool {
 	if t.EndOfStream() {
 		return false
 	} else {
@@ -100,7 +100,7 @@ func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool,
 			return true
 
 		case t.CollectCharacterThatIsIn(UppercaseLetters, s):
-			if !*needsProtection && !isOfferedProtection && (t.inWord || *nextIsFirstNameOfSubTitle) {
+			if !*needsProtection && !isOfferedProtection && (t.inWord || *nextIsTokenOfSubTitle) {
 				*needsProtection = true
 			}
 			t.inWord = true
@@ -129,7 +129,7 @@ func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool,
 	}
 }
 
-func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, needsProtection, nextIsFirstNameOfSubTitle *bool) bool {
+func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, needsProtection, nextIsTokenOfSubTitle *bool) bool {
 	t.inWord = false
 	*needsProtection = false
 
@@ -140,14 +140,14 @@ func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, ne
 			t.inWord = false
 
 			if t.CollectCharacterThatWasIn(TeXSubTitlers, token) {
-				*nextIsFirstNameOfSubTitle = t.ThisCharacterIsIn(TeXSpaces)
+				*nextIsTokenOfSubTitle = t.ThisCharacterIsIn(TeXSpaces)
 			} else {
 				t.CollectCharacterThatWasIn(TeXSingletons, token)
 			}
 
 		} else {
-			for !t.ThisCharacterIsIn(TeXSingletons) && !t.EndOfStream() && t.CollectTeXTokenElement(token, isOfferedProtection, needsProtection, nextIsFirstNameOfSubTitle) {
-				*nextIsFirstNameOfSubTitle = false
+			for !t.ThisCharacterIsIn(TeXSingletons) && !t.EndOfStream() && t.CollectTeXTokenElement(token, isOfferedProtection, needsProtection, nextIsTokenOfSubTitle) {
+				*nextIsTokenOfSubTitle = false
 			}
 		}
 
@@ -156,7 +156,10 @@ func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, ne
 }
 
 func ApplyLaTeXMap(s string) string {
-	result := strings.ReplaceAll(strings.ReplaceAll(s, " - ", " -- "), "{-}", "-")
+	result := strings.ReplaceAll(s, "{-}", "-")
+	// Need to do this twice ... to deal with " - - - "
+	result = strings.ReplaceAll(result, " - ", " -- ")
+	result = strings.ReplaceAll(result, " - ", " -- ")
 
 	for source, target := range LaTeXMap {
 		result = strings.ReplaceAll(result, "{"+source+"}", target)
@@ -190,12 +193,12 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 	result := ""
 
 	needsProtection := false
-	nextIsFirstNameOfSubTitle := false
+	nextIsTokenOfSubTitle := false
 
 	l.TBibTeXTeX.TextString(ApplyLaTeXMap(names))
 	l.TBibTeXTeX.TeXSpacety()
 
-	for l.CollectTeXSpacety(&spacety) && l.CollectTeXToken(&token, false, &needsProtection, &nextIsFirstNameOfSubTitle) {
+	for l.CollectTeXSpacety(&spacety) && l.CollectTeXToken(&token, false, &needsProtection, &nextIsTokenOfSubTitle) {
 		if token != "" {
 			if strings.ToLower(token) == "and" {
 				if name != "" {

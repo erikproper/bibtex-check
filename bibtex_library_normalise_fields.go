@@ -91,6 +91,9 @@ func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 	// In config file!!!!!
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://ceur-ws.org/", "https://ceur-ws.org/")
 
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://arxiv.org/abs/", "https://doi.org/10.48550/arXiv.")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://arxiv.org/abs/", "https://doi.org/10.48550/arXiv.")
+
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://doi.org/", "https://doi.org/")
 
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://dx.doi.org/", "https://doi.org/")
@@ -126,7 +129,7 @@ func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 	return trimmedURL
 }
 
-// Normalize DOI values to the format 1234-5678
+// Normalize ISSN values to the format 1234-5678
 func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 	var (
 		trimISSNStart = regexp.MustCompile(`^ *ISSN[:]? *`)
@@ -158,7 +161,7 @@ func NormaliseISSNValue(l *TBibTeXLibrary, rawISSN string) string {
 	return strings.TrimSpace(rawISSN)
 }
 
-// Normalize DOI values to an ISBN10 or ISBN13 format.
+// Normalize ISBN values to an ISBN10 or ISBN13 format.
 func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	var (
 		trimmedISBN   string

@@ -48,7 +48,7 @@ const (
 	NameMappingsFileExtension         = ".filter_name_mappings"
 	EntryFieldMappingsFileExtension   = ".filter_entry_field_mappings"
 	GenericFieldMappingsFileExtension = ".filter_generic_field_mappings"
-	FieldMappingsFileExtension        = ".filter_field_mappings"
+	CrossFieldMappingsFileExtension   = ".filter_cross_field_mappings"
 
 	NonDoublesFileExtension = ".key_non_double"
 	KeyOldiesFileExtension  = ".key_oldies"

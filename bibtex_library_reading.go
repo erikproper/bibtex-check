@@ -89,7 +89,7 @@ func (l *TBibTeXLibrary) ValidCache() bool {
 			CacheModTime > ModTime(FileBase+KeyOldiesFileExtension) &&
 			CacheModTime > ModTime(FileBase+EntryFieldMappingsFileExtension) &&
 			CacheModTime > ModTime(FileBase+GenericFieldMappingsFileExtension) &&
-			CacheModTime > ModTime(FileBase+FieldMappingsFileExtension) &&
+			CacheModTime > ModTime(FileBase+CrossFieldMappingsFileExtension) &&
 			CacheModTime > ModTime(FileBase+NonDoublesFileExtension)
 	} else {
 		return false
@@ -146,7 +146,7 @@ func (l *TBibTeXLibrary) ReadCommentsCache() {
 }
 
 func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
-	l.readLibraryFile(FieldMappingsFileExtension, ProgressReadingFieldMappingsFile, func(line string) {
+	l.readLibraryFile(CrossFieldMappingsFileExtension, ProgressReadingFieldMappingsFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 4 {
 			l.Warning(WarningFieldMappingsTooShort, line)
@@ -158,7 +158,7 @@ func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
 		sourceValue := l.DeAliasFieldValue(sourceField, elements[1])
 
 		targetField := elements[2]
-		targetValue := l.DeAliasFieldValue(targetField, elements[3])
+		targetValue := l.NormaliseFieldValue(targetField, elements[3])
 
 		l.AddFieldMapping(sourceField, sourceValue, targetField, targetValue)
 	})
@@ -176,8 +176,8 @@ func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
 
 		key := elements[0]
 		field := elements[1]
-		winner := l.DeAliasNormalisedEntryFieldValue(key, field, elements[2])
-		challenger := elements[3]
+		winner := l.DeAliasNormalisedFieldValue(field, elements[2])
+		challenger := l.DeAliasNormalisedFieldValue(field, elements[3])
 		l.AddEntryFieldAlias(key, field, challenger, winner, true)
 	})
 }
@@ -193,8 +193,8 @@ func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
 		}
 
 		field := elements[0]
-		winner := l.DeAliasNormalisedFieldValue(field, elements[1])
-		challenger := elements[2]
+		winner := l.NormaliseFieldValue(field, elements[1])
+		challenger := l.NormaliseFieldValue(field, elements[2])
 		l.AddGenericFieldAlias(field, challenger, winner, true)
 	})
 }
