@@ -384,7 +384,7 @@ func (l *TBibTeXLibrary) CheckCrossref(key string) {
 	if crossrefety == "" {
 		crossrefety = crossrefetyRAW
 	}
-	
+
 	if crossrefety == key {
 		l.Warning("Found self referencing crossref for %s. Cleaning this up.", key)
 		l.EntryFields[key]["crossref"] = ""
@@ -481,6 +481,8 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 				l.SetEntryType(crossrefKey, crossrefType)
 
 				l.EntryFields[key]["crossref"] = crossrefKey
+
+				return crossrefKey
 			}
 		}
 	}

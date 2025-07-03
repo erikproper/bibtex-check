@@ -61,7 +61,7 @@ type (
 		NoNameMappingsFileWriting        bool
 		NoNonDoublesFileWriting          bool
 		NoFieldMappingsFileWriting       bool
-		IgnoreIllegalFields              bool
+		ignoreIllegalFields              bool
 		TBibTeXTeX
 		TInteraction  // Error reporting channel
 		TBibTeXStream // BibTeX parser
@@ -114,7 +114,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.NoKeyHintsFileWriting = false
 	l.NoNameMappingsFileWriting = false
 	l.NoFieldMappingsFileWriting = false
-	l.IgnoreIllegalFields = false
+	l.ignoreIllegalFields = false
 }
 
 /*
@@ -683,7 +683,7 @@ func (l *TBibTeXLibrary) StartRecordingToLibrary() bool {
 // Finish recording to the library
 func (l *TBibTeXLibrary) FinishRecordingToLibrary() bool {
 	// If we did encounter illegal fields we need to issue a warning.
-	if !l.IgnoreIllegalFields && l.illegalFields.Size() > 0 {
+	if !l.ignoreIllegalFields && l.illegalFields.Size() > 0 {
 		l.Warning(WarningUnknownFields, l.illegalFields.String())
 	}
 
@@ -786,7 +786,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
 	if !l.InteractionIsOff() {
 		l.CheckIfFieldsAreAllowed(key, func(key, field, value string) {
-			if l.IgnoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryType(key)) {
+			if l.ignoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryType(key)) {
 				delete(l.EntryFields[key], field)
 			} else {
 				l.Warning("Stopping programme. Please fix this manually.")

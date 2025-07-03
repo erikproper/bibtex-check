@@ -18,25 +18,19 @@ func KeyForDBLP(key string) string {
 
 func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 	if key != "" && DBLPKey != "" {
+		// Via string constant with %s
 		DBLPBibFile := l.FilesRoot + "DBLPScraper/bib/" + DBLPKey + "/bib"
+		
 		if FileExists(DBLPBibFile) {
 			l.Progress("Syncing entry %s with the DBLP version %s", key, DBLPKey)
 
-			l.IgnoreIllegalFields = true
-			if l.ParseBibFile(DBLPBibFile) {
-				l.IgnoreIllegalFields = false
-
+			if l.ParseRawBibFile(DBLPBibFile) {
 				l.MergeEntries(KeyForDBLP(DBLPKey), key)
 				l.EntryFields[key][DBLPField] = DBLPKey
-
-				//				interactionStatus := l.InteractionIsOff()
-				//				l.SetInteractionOff()
 				l.CheckEntry(key)
-				//				l.SetInteraction(interactionStatus)
 
 				return true
 			}
-			l.IgnoreIllegalFields = false
 		}
 	}
 
@@ -45,8 +39,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 
 // / Really need both!?
 func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
-	key := l.NewKey()
-	if l.MaybeMergeDBLPEntry(DBLPKey, key) {
+	if key := l.NewKey(); l.MaybeMergeDBLPEntry(DBLPKey, key) {
 		return key
 	}
 
@@ -54,19 +47,17 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 }
 
 func (l *TBibTeXLibrary) MaybeSyncDBLPEntry(key string) {
-	DBLPKey := l.EntryFieldValueity(key, DBLPField)
-
-	if DBLPKey != "" {
+	if DBLPKey := l.EntryFieldValueity(key, DBLPField); DBLPKey != "" {
 		l.MaybeMergeDBLPEntry(DBLPKey, key)
 	}
 }
 
 func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(DBLPKey, crossref string) string {
-	key := l.MaybeAddDBLPEntry(DBLPKey)
-	if key != "" && crossref != "" {
-		l.CheckNeedToSplitBookishEntry(key)
-
-		l.MergeEntries(l.EntryFieldValueity(key, "crossref"), crossref)
+	if key := l.MaybeAddDBLPEntry(DBLPKey); key != "" && crossref != "" {
+		splitCrossref := l.CheckNeedToSplitBookishEntry(key)
+		if splitCrossref != "" {
+			l.MergeEntries(splitCrossref, crossref)
+		}
 
 		l.EntryFields[key]["crossref"] = crossref
 

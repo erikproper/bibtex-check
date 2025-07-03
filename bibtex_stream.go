@@ -485,6 +485,14 @@ func (b *TBibTeXStream) ParseBibFile(fileName string) bool {
 		/**/ b.ParseBibTeXStream()
 }
 
+func (l *TBibTeXLibrary) ParseRawBibFile(file string) bool {
+	l.ignoreIllegalFields = true
+	/**/ result := l.ParseBibFile(file)
+	l.ignoreIllegalFields = false
+
+	return result
+}
+
 // Opening a string with BibTeX entries, and then parse it (and add it to the selected Library.)
 func (b *TBibTeXStream) ParseBibString(bibtex string) bool {
 	return b.TextString(bibtex) &&
