@@ -130,6 +130,11 @@ func init() {
 	fieldProcessors[PreferredAliasField] = processPreferredAliasValue
 	fieldProcessors[TitleField] = processTitleValue
 	fieldProcessors[GroupsField] = processGroupsValue
+	fieldProcessors[IgnoreField] = processFieldToIgnoreValue
+
+	///// NUANCE when doing syncs ...
+	fieldProcessors["abstract"] = processFieldToIgnoreValue
+	fieldProcessors["keywords"] = processFieldToIgnoreValue
 
 	// Jabref
 	fieldProcessors[JabrefFileField] = processJabrefFileValue

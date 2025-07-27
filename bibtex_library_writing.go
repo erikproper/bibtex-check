@@ -58,7 +58,9 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 		l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
 			// Write out the entries and their fields, but do so in a crossref friendly order. So first the non-bookish, and then the bookish ones
 			for entry := range l.EntryFields {
-				if !BibTeXBookish.Contains(l.EntryType(entry)) {
+				if l.EntryType(entry) == "" {
+					l.Warning("No entry type for %s. Skipping.", entry)
+				} else if !BibTeXBookish.Contains(l.EntryType(entry)) {
 					// Should be a function. We do this twice.
 					groups := EntryGroups.GetValueSetFromStringSetMap(entry).Stringify()
 
@@ -68,7 +70,9 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 			}
 
 			for entry := range l.EntryFields {
-				if BibTeXBookish.Contains(l.EntryType(entry)) {
+				if l.EntryType(entry) == "" {
+					l.Warning("No entry type for %s. Skipping.", entry)
+				} else if BibTeXBookish.Contains(l.EntryType(entry)) {
 					// Should be a function. We do this twice.
 					groups := EntryGroups.GetValueSetFromStringSetMap(entry).Stringify()
 
@@ -135,9 +139,13 @@ func (l *TBibTeXLibrary) WriteFieldsCache() {
 	if !l.NoBibFileWriting {
 		l.writeLibraryFile(FieldsCacheExtension, ProgressWritingFieldsCache, func(fieldsWriter *bufio.Writer) {
 			for entry := range l.EntryFields {
-				for field := range l.EntryFields[entry] {
-					if value := l.EntryFields[entry][field]; value != "" {
-						fieldsWriter.WriteString(entry + "	" + field + "	" + l.EntryFieldValueity(entry, field) + "\n")
+				if l.EntryType(entry) == "" {
+					l.Warning("No entry type for %s. Skipping.", entry)
+				} else {
+					for field := range l.EntryFields[entry] {
+						if value := l.EntryFields[entry][field]; value != "" {
+							fieldsWriter.WriteString(entry + "	" + field + "	" + l.EntryFieldValueity(entry, field) + "\n")
+						}
 					}
 				}
 			}

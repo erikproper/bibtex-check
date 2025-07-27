@@ -64,7 +64,11 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 			return current
 
 		} else {
-			if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?", "Different crossrefs (%s, %s) for entries (%s, %s) that you want to merge.", current, challenge, key, challengeKey) {
+		
+			sourceEntry := l.EntryString(current, "", "  ")
+			targetEntry := l.EntryString(challenge, "", "  ")
+
+			if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?", "Different crossrefs (%s, %s) for entries (%s, %s) that you want to merge.\nFirst entry:\n%s\nSecond entry:\n%s", current, challenge, key, challengeKey, sourceEntry, targetEntry) {
 				return l.MergeEntries(current, challenge)
 
 			} else {
@@ -118,8 +122,14 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		// And update the recorded challenges
 		// Note: this is an *update* as we may need to update this as a new target for other challenges as well.
 
+		// NEED A SET HERE!!
 		options := TStringSetNew()
-		options.Add("Y", "y", "n", "N")
+		if field == EntryTypeField || field == "year" || field == "pages" || 
+			field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {
+			options.Add("y", "n")
+		} else {
+			options.Add("Y", "y", "n", "N")
+		}
 		warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 		question := "Current entry:\n" + l.EntryString(key, "", "  ") + "Keep the value as is?"
 		// Don't like this via "Warning" ... should be a separate class

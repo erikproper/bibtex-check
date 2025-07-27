@@ -29,14 +29,14 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name                             string           // Name of the library
-		FilesRoot                        string           // Path to folder with library related files
-		BaseName                         string           // BaseName of the library related files
-		Comments                         []string         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields                      TStringStringMap // Per entry key, the fields associated to the actual entries.
-		GroupEntries                     TStringSetMap
-		TitleIndex                       TStringSetMap             //
-		BookTitleIndex                   TStringSetMap             //
+		name         string           // Name of the library
+		FilesRoot    string           // Path to folder with library related files
+		BaseName     string           // BaseName of the library related files
+		Comments     []string         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		EntryFields  TStringStringMap // Per entry key, the fields associated to the actual entries.
+		GroupEntries TStringSetMap
+		TitleIndex   TStringSetMap //
+		//		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                        TStringSetMap             //
 		FileMD5Index                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
@@ -89,7 +89,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.EntryFields = TStringStringMap{}
 	l.GroupEntries = TStringSetMap{}
 	l.TitleIndex = TStringSetMap{}
-	l.BookTitleIndex = TStringSetMap{}
+	//	l.BookTitleIndex = TStringSetMap{}
 	l.ISBNIndex = TStringSetMap{}
 	l.DOIIndex = TStringSetMap{}
 	l.FileMD5Index = TStringSetMap{}
@@ -354,6 +354,8 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 				delete(l.EntryFields[key], field)
 			})
 
+			l.TitleIndex.AddValueToStringSetMap(l.EntryFieldValueity(target, "title"), target)
+
 			l.CheckEntry(target)
 		}
 
@@ -373,8 +375,8 @@ func (l *TBibTeXLibrary) EvidencedUnequalEntryFields(source, target, field strin
 
 func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string) bool {
 	return l.EvidencedUnequalEntryFields(source, target, DBLPField) ||
-		l.EvidencedUnequalEntryFields(source, target, "doi") ||
-		l.EvidencedUnequalEntryFields(source, target, "crossref")
+		l.EvidencedUnequalEntryFields(source, target, "doi")
+	// || l.EvidencedUnequalEntryFields(source, target, "crossref")
 }
 
 func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
@@ -382,29 +384,34 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 	source := l.MapEntryKey(sourceRAW)
 	target := l.MapEntryKey(targetRAW)
 
-	if source != target && !l.NonDoubles[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
-		l.Warning("Found potential double entries")
+	_, source_exists := l.EntryFields[source]
+	_, target_exists := l.EntryFields[target]
 
-		sourceEntry := l.EntryString(source, "", "  ")
-		targetEntry := l.EntryString(target, "", "  ")
+	if source_exists && target_exists {
+		if source != target && !l.NonDoubles[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
+			l.Warning("Found potential double entries")
 
-		if sourceEntry == "" {
-			l.Warning("Empty source entry: %s", source)
-		}
+			sourceEntry := l.EntryString(source, "", "  ")
+			targetEntry := l.EntryString(target, "", "  ")
 
-		if targetEntry == "" {
-			l.Warning("Empty target entry: %s", target)
-		}
+			if sourceEntry == "" {
+				l.Warning("Empty source entry: %s", source)
+			}
 
-		if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
-			l.MergeEntries(source, target)
-			l.WriteAliasesFiles()
-			l.WriteMappingsFiles()
-			l.WriteBibTeXFile()
-			l.WriteCache()
-		} else {
-			l.AddNonDoubles(source, target)
-			l.WriteNonDoublesFile()
+			if targetEntry == "" {
+				l.Warning("Empty target entry: %s", target)
+			}
+
+			if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
+				l.MergeEntries(source, target)
+				l.WriteAliasesFiles()
+				l.WriteMappingsFiles()
+				l.WriteBibTeXFile()
+				l.WriteCache()
+			} else {
+				l.AddNonDoubles(source, target)
+				l.WriteNonDoublesFile()
+			}
 		}
 	}
 }
@@ -452,12 +459,12 @@ func (l *TBibTeXLibrary) addAliasForKey(aliasMap *TStringMap, alias, key, warnin
 
 // Add a new key alias ... addAliasForKey would be the more consistent name
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
-	l.NoKeyOldiesFileWriting = l.NoKeyOldiesFileWriting || !l.addAliasForKey(&l.KeyToKey, alias, key, WarningAmbiguousKeyOldie)
+	l.NoKeyOldiesFileWriting = !l.addAliasForKey(&l.KeyToKey, alias, key, WarningAmbiguousKeyOldie) || l.NoKeyOldiesFileWriting
 }
 
 // Add a new key hint
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
-	l.NoKeyHintsFileWriting = l.NoKeyHintsFileWriting || !l.addAliasForKey(&l.HintToKey, hint, key, WarningAmbiguousKeyHint)
+	l.NoKeyHintsFileWriting = !l.addAliasForKey(&l.HintToKey, hint, key, WarningAmbiguousKeyHint) || l.NoKeyHintsFileWriting
 }
 
 func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, targetValue string) {

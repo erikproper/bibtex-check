@@ -155,7 +155,7 @@ func init() {
 
 	AddAllowedFields(
 		"month", "year", "note", "doi", "key", "author", TitleField,
-		DBLPField, "researchgate",
+		DBLPField, "researchgate", "abstract", "ketwords",
 		"eprinttype", "eprint", "langid",
 		"url", "urldate", "urloriginal")
 
@@ -212,6 +212,7 @@ func init() {
 	BibTeXFieldMap = TStringMap{}
 	// (*) The ones below should all be moved to a config file.
 	BibTeXFieldMap["organisation"] = "organization"
+	BibTeXFieldMap["institute"] = "institution"
 	BibTeXFieldMap["group"] = "groups"
 	BibTeXFieldMap["issue"] = "number"
 	BibTeXFieldMap["editors"] = "editor"

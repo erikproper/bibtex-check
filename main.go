@@ -262,9 +262,23 @@ func main() {
 
 			count := 0
 			for key := range Library.EntryFields {
-				count++
-				fmt.Println("Entry count: ", count)
-				FIXThatShouldBeChecks(key)
+				if //
+					//Library.EntryFields[key][EntryTypeField] == "mastersthesis" ||
+					//Library.EntryFields[key][EntryTypeField] == "phdthesis" ||
+					//Library.EntryFields[key][EntryTypeField] == "inbook" ||
+					//Library.EntryFields[key][EntryTypeField] == "manual" ||
+					//Library.EntryFields[key][EntryTypeField] == "misc" ||
+					//Library.EntryFields[key][EntryTypeField] == "booklet" || 
+					Library.EntryFields[key][EntryTypeField] == "techreport" {
+//					Library.EntryFields[key][EntryTypeField] == "proceedings" {
+//					Library.EntryFields[key][EntryTypeField] == "incollection" {
+//					Library.EntryFields[key][EntryTypeField] == "book" {
+					//Library.EntryFields[key][EntryTypeField] == "article" ||
+//				Library.EntryFields[key][EntryTypeField] == "inproceedings" {
+					count++
+					fmt.Println("Entry count: ", count)
+					FIXThatShouldBeChecks(key)
+				}
 			}
 			Library.WriteNonDoublesFile()
 
@@ -281,23 +295,10 @@ func main() {
 			count := 0
 			for key := range Library.EntryFields {
 				if Library.EntryFieldValueity(key, DBLPField) != "" {
-					if Library.EntryFields[key][EntryTypeField] == "book" ||
-						Library.EntryFields[key][EntryTypeField] == "incollection" ||
-						Library.EntryFields[key][EntryTypeField] == "misc" ||
-						Library.EntryFields[key][EntryTypeField] == "inbook" ||
-						Library.EntryFields[key][EntryTypeField] == "booklet" ||
-						Library.EntryFields[key][EntryTypeField] == "manual" ||
-						Library.EntryFields[key][EntryTypeField] == "mastersthesis" ||
-						Library.EntryFields[key][EntryTypeField] == "phdthesis" ||
-						Library.EntryFields[key][EntryTypeField] == "techreport" ||
-						Library.EntryFields[key][EntryTypeField] == "proceedings" ||
-						Library.EntryFields[key][EntryTypeField] == "inproceedings" ||
-						Library.EntryFields[key][EntryTypeField] == "article" {
-						count++
-						fmt.Println("Entry count: ", count)
-						Library.CheckDBLP(key)
-						FIXThatShouldBeChecks(key)
-					}
+					count++
+					fmt.Println("Entry count: ", count)
+					Library.CheckDBLP(key)
+					FIXThatShouldBeChecks(key)
 				}
 			}
 			Library.WriteNonDoublesFile()
@@ -330,7 +331,7 @@ func main() {
 			writeMappings = true
 		}
 
-	case len(os.Args) == 3 && os.Args[1] == "-dblp_add":
+	case (len(os.Args) == 3 || len(os.Args) == 4) && os.Args[1] == "-dblp_add":
 		if OpenLibraryToUpdate() {
 			Library.CheckEntries()
 			Library.ReadNonDoublesFile()
@@ -341,9 +342,15 @@ func main() {
 
 			if Library.LookupDBLPKey(os.Args[2]) == "" {
 				// Leads to a double READ ... NOT NEEDED. MaybeAdd does it and the DBLPCHeck again ...
-				Added := Library.MaybeAddDBLPEntry(os.Args[2])
-				if Added != "" {
-					FIXThatShouldBeChecks(Added)
+				if len(os.Args) == 4 {
+					Library.SetEntryFieldValue(os.Args[3], "dblp", os.Args[2])
+					Library.CheckEntry(os.Args[3])
+					FIXThatShouldBeChecks(os.Args[3])
+				} else {
+					Added := Library.MaybeAddDBLPEntry(os.Args[2])
+					if Added != "" {
+						FIXThatShouldBeChecks(Added)
+					}
 				}
 			}
 

@@ -20,7 +20,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 	if key != "" && DBLPKey != "" {
 		// Via string constant with %s
 		DBLPBibFile := l.FilesRoot + "DBLPScraper/bib/" + DBLPKey + "/bib"
-		
+
 		if FileExists(DBLPBibFile) {
 			l.Progress("Syncing entry %s with the DBLP version %s", key, DBLPKey)
 
@@ -59,7 +59,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(DBLPKey, crossref string) string
 			l.MergeEntries(splitCrossref, crossref)
 		}
 
-		l.EntryFields[key]["crossref"] = crossref
+		l.SetEntryFieldValue(key, "crossref", crossref)
 
 		l.CheckNeedToMergeForEqualTitles(key)
 

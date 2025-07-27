@@ -61,6 +61,8 @@ func TeXStringIndexer(input string) string {
 	cleaned = strings.ReplaceAll(cleaned, "-", "")
 	cleaned = strings.ReplaceAll(cleaned, ":", "")
 	cleaned = strings.ReplaceAll(cleaned, ";", "")
+	cleaned = strings.ReplaceAll(cleaned, ",", "")
+	cleaned = strings.ReplaceAll(cleaned, ".", "")
 	cleaned = strings.ReplaceAll(cleaned, "/", "")
 	cleaned = strings.ReplaceAll(cleaned, " ", "")
 	cleaned = strings.ReplaceAll(cleaned, "\\", "")

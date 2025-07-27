@@ -15,7 +15,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -180,9 +179,7 @@ func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
 
 	if foundDOI == "" {
 		if l.tryGetDOIFromURL(key, "url", &foundDOI) {
-
-			// If we found a doi in the URL, then assign it
-			fmt.Println("Found DOI", foundDOI, "for", key)
+			l.Warning("Found DOI in URL %s for %s", foundDOI, key)
 			l.EntryFields[key]["doi"] = foundDOI
 		}
 	}
@@ -477,6 +474,7 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 				// refactor this with func (l *TBibTeXLibrary) AssignField(field, value string) and StartRecordingEntry
 				l.EntryFields[crossrefKey] = TStringMap{}
 				l.EntryFields[crossrefKey][TitleField] = bookTitle
+				l.EntryFields[crossrefKey]["booktitle"] = bookTitle
 				l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), crossrefKey)
 				l.SetEntryType(crossrefKey, crossrefType)
 
@@ -539,7 +537,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		}
 
 		if crossrefDBLP == "" && parentDBLP != "" {
-			l.EntryFields[crossrefKey][DBLPField] = parentDBLP
+			l.SetEntryFieldValue(crossrefKey, DBLPField, parentDBLP)
 			crossrefDBLP = parentDBLP
 		}
 
@@ -559,14 +557,12 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 
 	// Add parent to child check for bookish
 	if BibTeXBookish.Contains(entryType) {
+		l.Progress("Checking children of %s", entryDBLP)
 		l.ForEachChildOfDBLPKey(entryDBLP, func(childDBLP string) {
 			childKey := l.LookupDBLPKey(childDBLP)
 
 			if childKey != "" {
-				childCrossref := l.MapEntryKey(l.EntryFieldValueity(childKey, "crossref"))
-				if childCrossref == "" || childCrossref != key {
-					l.EntryFields[childKey]["crossref"] = key
-				}
+				l.SetEntryFieldValue(childKey, "crossref", key)
 			} else {
 				l.MaybeAddDBLPChildEntry(childDBLP, key)
 			}

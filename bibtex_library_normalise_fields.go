@@ -102,6 +102,9 @@ func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://hdl.handle.net/", "https://doi.org/")
 	trimmedURL = strings.ReplaceAll(trimmedURL, "https://hdl.handle.net/", "https://doi.org/")
 
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://scholarspace.manoa.hawaii.edu/handle/", "https://doi.org/")
+	trimmedURL = strings.ReplaceAll(trimmedURL, "https://scholarspace.manoa.hawaii.edu/handle/", "https://doi.org/")
+
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://onlinelibrary.wiley.com/doi/", "https://doi.org/")
 	trimmedURL = strings.ReplaceAll(trimmedURL, "https://onlinelibrary.wiley.com/doi/", "https://doi.org/")
 
