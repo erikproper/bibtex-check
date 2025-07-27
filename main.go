@@ -73,8 +73,10 @@ func OpenLibraryToUpdate() bool {
 		}
 	}
 
-	Library.ReportLibrarySize()
-	Library.CheckKeyOldiesConsistency()
+	if result {
+		Library.ReportLibrarySize()
+		Library.CheckKeyOldiesConsistency()
+	}
 
 	return result
 }
@@ -100,7 +102,9 @@ func OpenLibraryToReport() bool {
 		}
 	}
 
-	Library.ReportLibrarySize()
+	if result {
+		Library.ReportLibrarySize()
+	}
 
 	return result
 }
