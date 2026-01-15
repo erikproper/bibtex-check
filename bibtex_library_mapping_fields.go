@@ -19,7 +19,6 @@ func (l *TBibTeXLibrary) MapNormalisedEntryFieldValue(key, field, valueRAW strin
 	return l.MapEntryFieldValue(key, field, l.NormaliseFieldValue(field, valueRAW))
 }
 
-// Rename. The previous should be called Normalised ...
 func (l *TBibTeXLibrary) MapEntryFieldValue(key, field, value string) string {
 	if field == "crossref" {
 		return l.MapEntryKey(value)

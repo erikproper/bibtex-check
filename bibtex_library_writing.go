@@ -14,8 +14,6 @@ package main
 
 import (
 	"bufio"
-	//"strings"
-	//"fmt"
 	"os"
 )
 

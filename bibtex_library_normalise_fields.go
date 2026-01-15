@@ -94,6 +94,8 @@ func NormaliseURLValue(l *TBibTeXLibrary, rawURL string) string {
 	trimmedURL = strings.ReplaceAll(trimmedURL, "https://arxiv.org/abs/", "https://doi.org/10.48550/arXiv.")
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://arxiv.org/abs/", "https://doi.org/10.48550/arXiv.")
 
+	trimmedURL = strings.ReplaceAll(trimmedURL, "http://aisel.aisnet.org/", "https://aisel.aisnet.org/")
+
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://doi.org/", "https://doi.org/")
 
 	trimmedURL = strings.ReplaceAll(trimmedURL, "http://dx.doi.org/", "https://doi.org/")
@@ -258,38 +260,42 @@ func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
 			rangesList += comma + pageRange
 
 		case len(trimedPagesList) == 1:
-			// If we only have one page, we're done with this page reave
+			// If we only have one page, we're done with this range
 			rangesList += comma + trimedPagesList[0]
 
 		case len(trimedPagesList) == 2:
 			// So, we have a start and end page.
-			// Now we also need to cater for the fact that the start and end page may be prefixed by a section/paper number.
-			// Therefore, we split both page numbers based on the ":" between the section/paper number and the actual page.
-			firstPagePair := strings.Split(trimedPagesList[0], ":")
-			secondPagePair := strings.Split(trimedPagesList[1], ":")
+			if trimedPagesList[0] == trimedPagesList[1] {
+				// If the range covers only one page, we can clean this up to only include the actual page
+				rangesList += comma + trimedPagesList[0]
+			} else {
+				// Now we also need to cater for the fact that the start and end page may be prefixed by a section/paper number.
+				// Therefore, we split both page numbers based on the ":" between the section/paper number and the actual page.
+				firstPagePair := strings.Split(trimedPagesList[0], ":")
+				secondPagePair := strings.Split(trimedPagesList[1], ":")
 
-			if len(firstPagePair) <= 2 && len(secondPagePair) == 1 {
-				// If the second page number only contains one number, we can add these page number pars to the ranges
-				rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
-
-			} else if len(firstPagePair) == 2 && len(secondPagePair) == 2 {
-				// If both first and last page are prefixed, we need to check of the actually have the same prefix.
-				if firstPagePair[0] == secondPagePair[0] {
-					// If we have the same prefix, we can drop te second occurrence.
-					// So, we prefer e.g. 3:1--10 over 3:1--3:10
-					rangesList += comma + trimedPagesList[0] + "--" + secondPagePair[1]
-
-				} else {
-					// In the case we have different prefixes, we just include both.
-					// For example, 3:5--4:10
+				if len(firstPagePair) <= 2 && len(secondPagePair) == 1 {
+					// If the second page number only contains one number, we can add these page number pars to the ranges
 					rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
 
-				}
-			} else {
-				// Some other page specifications we don't recognise.
-				rangesList += comma + pageRange
-			}
+				} else if len(firstPagePair) == 2 && len(secondPagePair) == 2 {
+					// If both first and last page are prefixed, we need to check of the actually have the same prefix.
+					if firstPagePair[0] == secondPagePair[0] {
+						// If we have the same prefix, we can drop te second occurrence.
+						// So, we prefer e.g. 3:1--10 over 3:1--3:10
+						rangesList += comma + trimedPagesList[0] + "--" + secondPagePair[1]
 
+					} else {
+						// In the case we have different prefixes, we just include both.
+						// For example, 3:5--4:10
+						rangesList += comma + trimedPagesList[0] + "--" + trimedPagesList[1]
+
+					}
+				} else {
+					// Some other page specifications we don't recognise.
+					rangesList += comma + pageRange
+				}
+			}
 		default:
 			// Some other page specifications we don't recognise.
 			rangesList += comma + pageRange

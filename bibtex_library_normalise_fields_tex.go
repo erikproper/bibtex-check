@@ -160,6 +160,7 @@ func ApplyLaTeXMap(s string) string {
 	// Need to do this twice ... to deal with " - - - "
 	result = strings.ReplaceAll(result, " - ", " -- ")
 	result = strings.ReplaceAll(result, " - ", " -- ")
+	result = strings.ReplaceAll(result, " : ", ": ")
 
 	for source, target := range LaTeXMap {
 		result = strings.ReplaceAll(result, "{"+source+"}", target)
@@ -169,7 +170,7 @@ func ApplyLaTeXMap(s string) string {
 	return result
 }
 
-// Here??
+// Leave here??
 func (l *TBibTeXLibrary) maybeAddSimpleName(parts int, firstName, lastName string) {
 	if parts == 2 {
 		name := firstName + " " + lastName

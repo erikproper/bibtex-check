@@ -259,6 +259,32 @@ func main() {
 			fmt.Println(Library.MapEntryKey(CleanKey(os.Args[2])))
 		}
 
+	case len(os.Args) == 2 && os.Args[1] == "-fixagain":
+		if OpenLibraryToUpdate() {
+			Library.CheckEntries()
+			Library.ReadNonDoublesFile()
+
+			count := 0
+			for key := range Library.EntryFields {
+				if Library.EntryFields[key][EntryTypeField] == "mastersthesis" ||
+					Library.EntryFields[key][EntryTypeField] == "phdthesis" ||
+					Library.EntryFields[key][EntryTypeField] == "inbook" ||
+					Library.EntryFields[key][EntryTypeField] == "manual" ||
+					Library.EntryFields[key][EntryTypeField] == "misc" ||
+					Library.EntryFields[key][EntryTypeField] == "booklet" ||
+					Library.EntryFields[key][EntryTypeField] == "techreport" {
+					count++
+					fmt.Println("Entry count: ", count)
+					FIXThatShouldBeChecks(key)
+				}
+			}
+			Library.WriteNonDoublesFile()
+
+			writeBibFile = true
+			writeAliases = true
+			writeMappings = true
+		}
+
 	case len(os.Args) == 2 && os.Args[1] == "-fixall":
 		if OpenLibraryToUpdate() {
 			Library.CheckEntries()
@@ -267,18 +293,11 @@ func main() {
 			count := 0
 			for key := range Library.EntryFields {
 				if //
-					//Library.EntryFields[key][EntryTypeField] == "mastersthesis" ||
-					//Library.EntryFields[key][EntryTypeField] == "phdthesis" ||
-					//Library.EntryFields[key][EntryTypeField] == "inbook" ||
-					//Library.EntryFields[key][EntryTypeField] == "manual" ||
-					//Library.EntryFields[key][EntryTypeField] == "misc" ||
-					//Library.EntryFields[key][EntryTypeField] == "booklet" || 
-					Library.EntryFields[key][EntryTypeField] == "techreport" {
-//					Library.EntryFields[key][EntryTypeField] == "proceedings" {
-//					Library.EntryFields[key][EntryTypeField] == "incollection" {
-//					Library.EntryFields[key][EntryTypeField] == "book" {
-					//Library.EntryFields[key][EntryTypeField] == "article" ||
-//				Library.EntryFields[key][EntryTypeField] == "inproceedings" {
+				Library.EntryFields[key][EntryTypeField] == "article" {
+					//Library.EntryFields[key][EntryTypeField] == "incollection" {
+					//Library.EntryFields[key][EntryTypeField] == "inproceedings" {
+					//Library.EntryFields[key][EntryTypeField] == "book" {
+					//Library.EntryFields[key][EntryTypeField] == "proceedings" {
 					count++
 					fmt.Println("Entry count: ", count)
 					FIXThatShouldBeChecks(key)

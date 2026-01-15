@@ -64,7 +64,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 			return current
 
 		} else {
-		
+
 			sourceEntry := l.EntryString(current, "", "  ")
 			targetEntry := l.EntryString(challenge, "", "  ")
 
@@ -124,14 +124,16 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 
 		// NEED A SET HERE!!
 		options := TStringSetNew()
-		if field == EntryTypeField || field == "year" || field == "pages" || 
+		if field == EntryTypeField || field == "year" || field == "pages" ||
 			field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {
 			options.Add("y", "n")
 		} else {
 			options.Add("Y", "y", "n", "N")
 		}
 		warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
-		question := "Current entry:\n" + l.EntryString(key, "", "  ") + "Keep the value as is?"
+		question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
+		question += "Current entry:\n" + l.EntryString(key, "", "  ")
+		question += "Keep the value as is?"
 		// Don't like this via "Warning" ... should be a separate class
 		answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
 
