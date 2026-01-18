@@ -14,12 +14,14 @@
 package main
 
 import (
+	"bufio"
 	"crypto/md5"
 	"fmt"
-	"github.com/udhos/equalfile"
 	"io"
 	"os"
 	"time"
+
+	"github.com/udhos/equalfile"
 )
 
 func MD5ForFile(file string) string {
@@ -90,7 +92,7 @@ func BackupFile(sourceFile string) bool {
 	return true
 }
 
-func ModTime(file string) int64 {
+func fileModTime(file string) int64 {
 	fileInfo, err := os.Stat(file)
 
 	if os.IsNotExist(err) {
@@ -120,4 +122,19 @@ func FileRename(oldName, newName string) {
 
 func FileDelete(file string) {
 	os.Remove(file)
+}
+
+func processFile(fullFilePath string, process func(string)) bool {
+	file, err := os.Open(fullFilePath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		process(string(scanner.Text()))
+	}
+
+	return scanner.Err() == nil
 }

@@ -49,7 +49,7 @@ const (
 
 func OpenLibraryToUpdate() bool {
 	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
+	Library.Initialise(Reporting, MainLibrary, bibTeXFolder, bibTeXBaseName)
 
 	Library.ReadKeyOldiesFile()
 	Library.ReadKeyHintsFile()
@@ -65,7 +65,7 @@ func OpenLibraryToUpdate() bool {
 		Library.ReadCache()
 		result = true
 	} else {
-		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... BaseName on initialise !?
+		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... bibTeXBaseName on initialise !?
 		if result {
 			Library.WriteCache()
 		}
@@ -81,7 +81,7 @@ func OpenLibraryToUpdate() bool {
 
 func OpenLibraryToReport() bool {
 	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting, MainLibrary, BibTeXFolder, BaseName)
+	Library.Initialise(Reporting, MainLibrary, bibTeXFolder, bibTeXBaseName)
 
 	result := false
 	Library.ReadKeyOldiesFile()
@@ -94,7 +94,7 @@ func OpenLibraryToReport() bool {
 		Library.ReadEntryFieldAliasesFile()
 		Library.ReadFieldMappingsFile()
 
-		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... BaseName on initialise !?
+		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... bibTeXBaseName on initialise !?
 		if result {
 			Library.WriteCache()
 		}
@@ -122,13 +122,15 @@ func CleanKey(rawKey string) string {
 var BibFile string
 
 func main() {
-	BaseName = "ErikProper"
-	BibTeXFolder = "/Users/erikproper/BibTeX/"
+	bibTeXBaseName = "ErikProper"
+	bibTeXFolder = "/Users/erikproper/BibTeX/"
 
 	/// CLEANER
-	BibFile = BaseName + ".bib"
+	BibFile = bibTeXBaseName + ".bib"
 
 	Reporting = TInteraction{}
+
+	connectToDatabase()
 
 	writeAliases := false
 	writeMappings := false
@@ -176,13 +178,13 @@ func main() {
 		//
 		//			OldLibrary := TBibTeXLibrary{}
 		//			OldLibrary.Progress("Reading legacy library")
-		//			OldLibrary.Initialise(Reporting, "legacy", BibTeXFolder, BaseName)
+		//			OldLibrary.Initialise(Reporting, "legacy", bibTeXFolder, bibTeXBaseName)
 		//			OldLibrary.ReadAliasesFiles()
 		//			OldLibrary.ReadFieldMappingsFile()
 		//
 		//			BibTeXParser := TBibTeXStream{}
 		//			BibTeXParser.Initialise(Reporting, &OldLibrary)
-		//			BibTeXParser.ParseBibFile(BibTeXFolder + "Old/Old.bib")
+		//			BibTeXParser.ParseBibFile(bibTeXFolder + "Old/Old.bib")
 		//
 		//			OldLibrary.ReportLibrarySize()
 		//

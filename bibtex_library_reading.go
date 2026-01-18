@@ -13,8 +13,6 @@
 package main
 
 import (
-	"bufio"
-	"os"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -35,18 +33,7 @@ func (l *TBibTeXLibrary) readFile(fullFilePath, message string, reading func(str
 		l.Progress(message, fullFilePath)
 	}
 
-	file, err := os.Open(fullFilePath)
-	if err != nil {
-		return false
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		reading(string(scanner.Text()))
-	}
-
-	return scanner.Err() == nil
+	return processFile(fullFilePath, reading)
 }
 
 func (l *TBibTeXLibrary) readDBLPKeyFile(DBLPKey, fileName string, reading func(string)) bool {
@@ -82,16 +69,16 @@ func (l *TBibTeXLibrary) ValidCache() bool {
 
 	// Maybe do this via a set?
 	if FileExists(FieldsCacheFile) && FileExists(CommentsCacheFile) {
-		CacheModTime := ModTime(FieldsCacheFile)
+		CacheModTime := fileModTime(FieldsCacheFile)
 
 		// Maybe do this via a set?
-		return CacheModTime > ModTime(FileBase+BibFileExtension) &&
-			CacheModTime > ModTime(FileBase+NameMappingsFileExtension) &&
-			CacheModTime > ModTime(FileBase+KeyOldiesFileExtension) &&
-			CacheModTime > ModTime(FileBase+EntryFieldMappingsFileExtension) &&
-			CacheModTime > ModTime(FileBase+GenericFieldMappingsFileExtension) &&
-			CacheModTime > ModTime(FileBase+CrossFieldMappingsFileExtension) &&
-			CacheModTime > ModTime(FileBase+NonDoublesFileExtension)
+		return CacheModTime > fileModTime(FileBase+BibFileExtension) &&
+			CacheModTime > fileModTime(FileBase+nameMappingsFileExtension) &&
+			CacheModTime > fileModTime(FileBase+KeyOldiesFileExtension) &&
+			CacheModTime > fileModTime(FileBase+EntryFieldMappingsFileExtension) &&
+			CacheModTime > fileModTime(FileBase+GenericFieldMappingsFileExtension) &&
+			CacheModTime > fileModTime(FileBase+CrossFieldMappingsFileExtension) &&
+			CacheModTime > fileModTime(FileBase+NonDoublesFileExtension)
 	} else {
 		return false
 	}
@@ -241,23 +228,15 @@ func (l *TBibTeXLibrary) ReadNonDoublesFile() {
 }
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {
-	connectToDatabase(l.FilesRoot, l.BaseName)
+	maybeReadNameMappingsFile()
 
-	query := `INSERT INTO name_aliases (alias, name) VALUES (?, ?) ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
-
-	l.readLibraryFile(NameMappingsFileExtension, ProgressReadingNameMappingsFile, func(line string) {
+	l.readLibraryFile(nameMappingsFileExtension, ProgressReadingNameMappingsFile, func(line string) {
 		elements := strings.Split(line, "\t")
 		if len(elements) < 2 {
 			l.Warning(WarningNameMappingsLineTooShort, line)
 			l.NoNameMappingsFileWriting = true
 			return
 		}
-
-		_, err := db.Exec(query, ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]))
-		if err != nil {
-			l.Warning("WarningNameMappingsInsertFailed", err)
-		}
-
 		// Why pass on &l.NameAliasToName, &l.NameToAliases???
 		l.AddAliasForName(ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]), &l.NameAliasToName, &l.NameToAliases)
 	})

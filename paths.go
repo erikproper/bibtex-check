@@ -13,6 +13,6 @@
 package main
 
 var (
-	BibTeXFolder string
-	BaseName     string
+	bibTeXFolder   string
+	bibTeXBaseName string
 )

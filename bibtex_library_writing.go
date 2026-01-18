@@ -220,7 +220,7 @@ func (l *TBibTeXLibrary) WriteGenericFieldAliasesFile() {
 // Write entry key alias/original pairs to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) WriteNameMappingFile() {
 	if !l.NoNameMappingsFileWriting {
-		l.writeLibraryFile(NameMappingsFileExtension, ProgressWritingNameMappingsFile, func(aliasWriter *bufio.Writer) {
+		l.writeLibraryFile(nameMappingsFileExtension, ProgressWritingNameMappingsFile, func(aliasWriter *bufio.Writer) {
 			for alias, original := range l.NameAliasToName {
 				if alias != original {
 					aliasWriter.WriteString(original + "\t" + alias + "\n")

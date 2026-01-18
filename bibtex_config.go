@@ -45,7 +45,9 @@ const (
 
 	BibFileExtension = ".bib"
 
-	NameMappingsFileExtension         = ".filter_name_mappings"
+	nameMappingsFileExtension = ".filter_name_mappings"
+	sqliteFileExtension       = ".sqlite3"
+
 	EntryFieldMappingsFileExtension   = ".filter_entry_field_mappings"
 	GenericFieldMappingsFileExtension = ".filter_generic_field_mappings"
 	CrossFieldMappingsFileExtension   = ".filter_cross_field_mappings"

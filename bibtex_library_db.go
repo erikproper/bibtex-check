@@ -14,21 +14,21 @@ package main
 
 import (
 	"database/sql"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 // Start of connecting things to sqlite
-// Should, of course, in the end go into its own module/file
+// Should, of course, in the end go into its own module/Table
 //
-// Upon any "write" operation, we should copy the existing database file to a backup location.
+// Upon any "write" operation, we should copy the existing database Table to a backup location.
 // Only once, of course ...
 // After a write operation, we also need to set the "dirty flag" for the table.
-// The "reading" operations should only read from the file, when it is newer (or when the database is empty)
-// Writing a file only needs to be done when there are changes.
+// The "reading" operations should only read from the Table, when it is newer (or when the database is empty)
+// Writing a Table only needs to be done when there are changes.
 const (
 	sqliteDatabaseDriver = "sqlite3"
-	sqliteFileExtension  = ".sqlite3"
 )
 
 var (
@@ -44,71 +44,76 @@ func tryCreateTableIfNeeded(command string) {
 	}
 }
 
-func connectToDatabase(filesRoot, baseName string) {
-	DatabaseName := filesRoot + baseName + sqliteFileExtension
+func connectToDatabase() {
+	dbName := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
 
 	var err error
 
-	db, err = sql.Open(sqliteDatabaseDriver, DatabaseName)
+	db, err = sql.Open(sqliteDatabaseDriver, dbName)
 
 	if err != nil {
-		dbInteraction.Progress("Could not open sqlite database %s: %s", DatabaseName, err.Error())
+		dbInteraction.Progress("Could not open sqlite database %s: %s", dbName, err.Error())
 	}
 
-	ensureFileDatesTable()
-	ensureNameAliasesTable()
+	ensureTableDatesTableExists()
+	ensureNameMappingsTableExists()
 }
 
 /*
- * File dates table
+ * Table dates table
  */
 
-func ensureFileDatesTable() {
+func ensureTableDatesTableExists() {
 	create := `
-		  CREATE TABLE IF NOT EXISTS file_dates (
-		    file_name TEXT PRIMARY KEY,
-		    mod_date TEXT NOT NULL
+		  CREATE TABLE IF NOT EXISTS table_modification_times (
+		    table_name TEXT PRIMARY KEY,
+		    modification_time INT NOT NULL
 		  );
 		`
 
 	tryCreateTableIfNeeded(create)
 }
 
-func setFileDate(fileName, date string) {
+func setTableDate(tableName string, date int64) {
 	update := `
-		INSERT INTO file_dates (file_name, mod_date) 
+		INSERT INTO table_modification_times (table_name, modification_time) 
 		  VALUES (?, ?) 
-		  ON CONFLICT(file_name) 
-		    DO UPDATE SET mod_date = excluded.mod_date;
+		  ON CONFLICT(table_name) 
+		    DO UPDATE SET modification_time = excluded.modification_time;
 		`
 
-	_, err := db.Exec(update, fileName, date)
+	_, err := db.Exec(update, tableName, date)
 	if err != nil {
-		dbInteraction.Error("Adding file date failed %s:", err)
+		dbInteraction.Error("Adding table modification date failed %s:", err)
 	}
 }
 
-func getFileDate(fileName string) string {
-	query := `SELECT file_name, mod_date FROM file_dates WHERE file_name = ?`
+func tableModTime(tableName string) int64 {
+	query := `SELECT table_name, modification_time FROM table_modification_times WHERE table_name = ?`
 
-	row := db.QueryRow(query, fileName)
+	row := db.QueryRow(query, tableName)
 
-	var date string
-	err := row.Scan(&fileName, &date)
+	var date int64
+	err := row.Scan(&tableName, &date)
 	if err != nil {
-		date = ""
+		date = 0
 	}
 
 	return date
 }
 
 /*
- * Name aliases table
+ * Name mappings table
  */
 
-func ensureNameAliasesTable() {
+var (
+	nameMappingsTableIsUpdated = false
+	nameMappingsFileWriting    = true
+)
+
+func ensureNameMappingsTableExists() {
 	create := `
-		  CREATE TABLE IF NOT EXISTS name_aliases (
+		  CREATE TABLE IF NOT EXISTS name_mappings (
             alias TEXT PRIMARY KEY,  
             name TEXT NOT NULL
 		  );
@@ -117,10 +122,45 @@ func ensureNameAliasesTable() {
 	tryCreateTableIfNeeded(create)
 }
 
-//func (l *TBibTeXLibrary) ensureNameAliasesTable() {
-//	ModTime(FieldsCacheFile)
-//}
+func maybeReadNameMappingsFile() {
+	nameMappingsFileName := bibTeXFolder + bibTeXBaseName + nameMappingsFileExtension
 
-// func (l *TBibTeXLibrary) ensureNameAliasesTableIsUpToDate() {
-//}
-// Do an on-demand read when needed. So, when a lookup is needed, then check if an update check has been done
+	if fileModTime(nameMappingsFileName) > tableModTime("name_mappings") {
+		delete := `DROP TABLE IF EXISTS name_mappings;`
+		_, err := db.Exec(delete)
+		if err != nil {
+			dbInteraction.Warning("Could not drop name_mappings table: %s", err)
+		}
+
+		ensureNameMappingsTableExists()
+
+		dbInteraction.Progress("Reading name mappings file %s into database", nameMappingsFileName)
+
+		query := `INSERT INTO name_mappings (alias, name) VALUES (?, ?) ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
+
+		processFile(nameMappingsFileName, func(line string) {
+			elements := strings.Split(line, "\t")
+			if len(elements) < 2 {
+				dbInteraction.Warning(WarningNameMappingsLineTooShort, line)
+				nameMappingsFileWriting = false
+				return
+			}
+
+			_, err := db.Exec(query, ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]))
+			if err != nil {
+				dbInteraction.Warning("Name mapping insertion failed", err)
+			}
+
+			// Update the cache!
+		})
+
+	}
+
+	setTableDate("name_mappings", fileModTime(nameMappingsFileName))
+
+	nameMappingsTableIsUpdated = true
+}
+
+// Now read from the list, using, and updating the in memory version as needed
+
+// And then write back the name mappings file if needed, and allowed!
