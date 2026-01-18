@@ -228,7 +228,7 @@ func (l *TBibTeXLibrary) ReadNonDoublesFile() {
 }
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {
-	maybeReadNameMappingsFile()
+	//	maybeReadNameMappingsFile()
 
 	l.readLibraryFile(nameMappingsFileExtension, ProgressReadingNameMappingsFile, func(line string) {
 		elements := strings.Split(line, "\t")

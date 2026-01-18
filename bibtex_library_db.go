@@ -107,8 +107,9 @@ func tableModTime(tableName string) int64 {
  */
 
 var (
-	nameMappingsTableIsUpdated = false
-	nameMappingsFileWriting    = true
+	nameMappingsTableIsUpToDate    = false
+	nameMappingsFileWritingNeeded  = false
+	nameMappingsFileWritingAllowed = true
 )
 
 func ensureNameMappingsTableExists() {
@@ -126,6 +127,9 @@ func maybeReadNameMappingsFile() {
 	nameMappingsFileName := bibTeXFolder + bibTeXBaseName + nameMappingsFileExtension
 
 	if fileModTime(nameMappingsFileName) > tableModTime("name_mappings") {
+		dbInteraction.Progress("FMD %d", fileModTime(nameMappingsFileName))
+		dbInteraction.Progress("TMD %d", tableModTime("name_mappings"))
+
 		delete := `DROP TABLE IF EXISTS name_mappings;`
 		_, err := db.Exec(delete)
 		if err != nil {
@@ -134,7 +138,7 @@ func maybeReadNameMappingsFile() {
 
 		ensureNameMappingsTableExists()
 
-		dbInteraction.Progress("Reading name mappings file %s into database", nameMappingsFileName)
+		dbInteraction.Progress("Update database with name mappings file %s", nameMappingsFileName)
 
 		query := `INSERT INTO name_mappings (alias, name) VALUES (?, ?) ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
 
@@ -142,7 +146,7 @@ func maybeReadNameMappingsFile() {
 			elements := strings.Split(line, "\t")
 			if len(elements) < 2 {
 				dbInteraction.Warning(WarningNameMappingsLineTooShort, line)
-				nameMappingsFileWriting = false
+				nameMappingsFileWritingAllowed = false
 				return
 			}
 
@@ -151,16 +155,27 @@ func maybeReadNameMappingsFile() {
 				dbInteraction.Warning("Name mapping insertion failed", err)
 			}
 
-			// Update the cache!
+			// Update in memory version as well!!!!
 		})
 
 	}
 
 	setTableDate("name_mappings", fileModTime(nameMappingsFileName))
 
-	nameMappingsTableIsUpdated = true
+	dbInteraction.Progress("FMD %d", fileModTime(nameMappingsFileName))
+	dbInteraction.Progress("TMD %d", tableModTime("name_mappings"))
+
+	nameMappingsTableIsUpToDate = true
 }
 
 // Now read from the list, using, and updating the in memory version as needed
 
 // And then write back the name mappings file if needed, and allowed!
+// 	nameMappingsFileWritingNeeded && nameMappingsFileWritingAllowed
+// Then, also update the table modification time
+
+/*
+ *  Actual BiBTeX libraryy .....
+ */
+
+// If any of the filter files, and or the BiBTeX file is newer, then we need to force a re-read of the BibTeX File
