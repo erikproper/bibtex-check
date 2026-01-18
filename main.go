@@ -4,6 +4,7 @@ import (
 	//	"bufio"
 	"fmt"
 	"os"
+
 	//	"regexp"
 	"strings"
 )
@@ -14,10 +15,7 @@ var (
 )
 
 const (
-	BaseName     = "ErikProper"
-	BibTeXFolder = "/Users/erikproper/BibTeX/"
-	BibFile      = BaseName + ".bib"
-	MainLibrary  = "main"
+	MainLibrary = "main" /// Why needed???
 )
 
 // Put this one in a SEPARATE FILE
@@ -119,8 +117,19 @@ func CleanKey(rawKey string) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(rawKey, "\\cite{", ""), "cite{", ""), "}", ""))
 }
 
+// Should not be needed. Justs add the ".bib" ...
+
+var BibFile string
+
 func main() {
+	BaseName = "ErikProper"
+	BibTeXFolder = "/Users/erikproper/BibTeX/"
+
+	/// CLEANER
+	BibFile = BaseName + ".bib"
+
 	Reporting = TInteraction{}
+
 	writeAliases := false
 	writeMappings := false
 	writeBibFile := false

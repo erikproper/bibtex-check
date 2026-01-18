@@ -13,7 +13,6 @@
 package main
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"regexp"
@@ -63,8 +62,6 @@ type (
 		NoNonDoublesFileWriting          bool
 		NoFieldMappingsFileWriting       bool
 		ignoreIllegalFields              bool
-
-		db *sql.DB
 
 		TBibTeXTeX
 		TInteraction  // Error reporting channel

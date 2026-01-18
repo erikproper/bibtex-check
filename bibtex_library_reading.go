@@ -14,54 +14,11 @@ package main
 
 import (
 	"bufio"
-	"database/sql"
 	"os"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
-
-// Start of connecting things to SQLite
-// Should, of course, in the end go into its own module/file
-//
-// Upon any "write" operation, we should copy the existing database file to a backup location.
-// Only once, of course ...
-// After a write operation, we also need to set the "dirty flag" for the table.
-// The "reading" operations should only read from the file, when it is newer (or when the database is empty)
-// Writing a file only needs to be done when there are changes.
-const (
-	SQLiteDatabaseDriver = "sqlite3"
-	SQLiteFileExtension  = ".sqlite"
-)
-
-func (l *TBibTeXLibrary) connectToSQLite() {
-	DatabaseName := l.FilesRoot + l.BaseName + SQLiteFileExtension
-
-	var err error
-
-	l.db, err = sql.Open(SQLiteDatabaseDriver, DatabaseName)
-
-	if err != nil {
-		l.Progress("Could not open SQLite database %s: %s", DatabaseName, err.Error())
-	}
-
-	createSQL := `
-	 	  CREATE TABLE file_dates (
-		    file_name TEXT PRIMARY KEY,
-		    mod_date TEXT NOT NULL
-		  )  
-
-		  CREATE TABLE name_aliases (
-            alias TEXT PRIMARY KEY,  
-            name TEXT NOT NULL
-          );
-	   `
-
-	_, err = l.db.Exec(createSQL)
-	if err != nil {
-		l.Progress("Could not create table: %s", err.Error())
-	}
-}
 
 // Read bib files
 func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
@@ -284,9 +241,9 @@ func (l *TBibTeXLibrary) ReadNonDoublesFile() {
 }
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {
-	l.connectToSQLite()
+	connectToDatabase(l.FilesRoot, l.BaseName)
 
-	//	query := `INSERT INTO name_aliases (alias, name) VALUES (?, ?) ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
+	query := `INSERT INTO name_aliases (alias, name) VALUES (?, ?) ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
 
 	l.readLibraryFile(NameMappingsFileExtension, ProgressReadingNameMappingsFile, func(line string) {
 		elements := strings.Split(line, "\t")
@@ -296,10 +253,10 @@ func (l *TBibTeXLibrary) ReadNameMappingsFile() {
 			return
 		}
 
-		//		_, err := l.db.Exec(query, ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]))
-		//if err != nil {
-		//	l.Warning("WarningNameMappingsInsertFailed", err)
-		//}
+		_, err := db.Exec(query, ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]))
+		if err != nil {
+			l.Warning("WarningNameMappingsInsertFailed", err)
+		}
 
 		// Why pass on &l.NameAliasToName, &l.NameToAliases???
 		l.AddAliasForName(ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]), &l.NameAliasToName, &l.NameToAliases)
