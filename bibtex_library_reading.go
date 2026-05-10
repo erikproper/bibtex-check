@@ -20,11 +20,10 @@ import (
 
 // Read bib files
 func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
-	//	l.BibFilePath = filePath
 	FullFilePath := l.FilesRoot + l.BaseName + BibFileExtension
-
+	l.harvestNameAliases = true
+	defer func() { l.harvestNameAliases = false }()
 	return l.ParseBibFile(FullFilePath)
-	//l.FilesRoot + l.BibFilePath)
 }
 
 // Generic function to read library related files
@@ -73,12 +72,12 @@ func (l *TBibTeXLibrary) ValidCache() bool {
 
 		// Maybe do this via a set?
 		return CacheModTime > fileModTime(FileBase+BibFileExtension) &&
-			CacheModTime > fileModTime(FileBase+nameMappingsFileExtension) &&
-			CacheModTime > fileModTime(FileBase+KeyOldiesFileExtension) &&
-			CacheModTime > fileModTime(FileBase+EntryFieldMappingsFileExtension) &&
-			CacheModTime > fileModTime(FileBase+GenericFieldMappingsFileExtension) &&
-			CacheModTime > fileModTime(FileBase+CrossFieldMappingsFileExtension) &&
-			CacheModTime > fileModTime(FileBase+NonDoublesFileExtension)
+			CacheModTime > fileModTime(FileBase+NameMappingsFilePath) &&
+			CacheModTime > fileModTime(FileBase+KeyOldiesFilePath) &&
+			CacheModTime > fileModTime(FileBase+EntryFieldMappingsFilePath) &&
+			CacheModTime > fileModTime(FileBase+GenericFieldMappingsFilePath) &&
+			CacheModTime > fileModTime(FileBase+CrossFieldMappingsFilePath) &&
+			CacheModTime > fileModTime(FileBase+KeyNonDoublesFilePath)
 	} else {
 		return false
 	}
@@ -133,111 +132,62 @@ func (l *TBibTeXLibrary) ReadCommentsCache() {
 	})
 }
 
-func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
-	l.readLibraryFile(CrossFieldMappingsFileExtension, ProgressReadingFieldMappingsFile, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 4 {
-			l.Warning(WarningFieldMappingsTooShort, line)
-			l.NoFieldMappingsFileWriting = true
-			return
-		}
-
-		sourceField := elements[0]
-		sourceValue := l.MapFieldValue(sourceField, elements[1])
-
-		targetField := elements[2]
-		targetValue := l.NormaliseFieldValue(targetField, elements[3])
-
-		l.AddFieldMapping(sourceField, sourceValue, targetField, targetValue)
-	})
+func (l *TBibTeXLibrary) ReadCrossFieldMappingsFile() {
+	maybeReloadCrossFieldMappingsDb()
+	if !crossFieldMappingsFileWritingAllowed {
+		l.NoCrossFieldMappingsFileWriting = true
+	}
+	loadCrossFieldMappingsFromDb(l)
 }
 
 // Read key field challenge file
-func (l *TBibTeXLibrary) ReadEntryFieldAliasesFile() {
-	l.readLibraryFile(EntryFieldMappingsFileExtension, ProgressReadingEntryFieldAliasesFile, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 4 {
-			l.Warning(WarningEntryFieldMappingsLineTooShort, line)
-			l.NoEntryFieldAliasesFileWriting = true
-			return
-		}
-
-		key := elements[0]
-		field := elements[1]
-		winner := l.MapNormalisedFieldValue(field, elements[2])
-		challenger := l.MapNormalisedFieldValue(field, elements[3])
-		l.AddEntryFieldAlias(key, field, challenger, winner, true)
-	})
+func (l *TBibTeXLibrary) ReadEntryFieldMappingsFile() {
+	maybeReloadEntryFieldMappingsDb()
+	if !entryFieldMappingsFileWritingAllowed {
+		l.NoEntryFieldMappingsFileWriting = true
+	}
+	loadEntryFieldMappingsFromDb(l)
 }
 
 // Read generic field challenge file
-func (l *TBibTeXLibrary) ReadGenericFieldAliasesFile() {
-	l.readLibraryFile(GenericFieldMappingsFileExtension, ProgressReadingGenericFieldAliasesFile, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 3 {
-			l.Warning(WarningGenericFieldMappingsLineTooShort, line)
-			l.NoGenericFieldAliasesFileWriting = true
-			return
-		}
-
-		field := elements[0]
-		winner := l.NormaliseFieldValue(field, elements[1])
-		challenger := l.NormaliseFieldValue(field, elements[2])
-		l.AddGenericFieldAlias(field, challenger, winner, true)
-	})
+func (l *TBibTeXLibrary) ReadGenericFieldMappingsFile() {
+	maybeReloadGenericFieldMappingsDb()
+	if !genericFieldMappingsFileWritingAllowed {
+		l.NoGenericFieldMappingsFileWriting = true
+	}
+	loadGenericFieldMappingsFromDb(l)
 }
 
 func (l *TBibTeXLibrary) ReadKeyOldiesFile() {
-	l.readLibraryFile(KeyOldiesFileExtension, ProgressReadingKeyOldiesFile, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning(WarningKeyAliasesLineTooShort, line)
-			l.NoKeyOldiesFileWriting = true
-			return
-		}
-
-		l.AddKeyAlias(elements[1], elements[0])
-	})
+	maybeReloadKeyOldiesDb()
+	if !keyOldiesFileWritingAllowed {
+		l.NoKeyOldiesFileWriting = true
+	}
+	loadKeyOldiesFromDb(l)
 }
 
 func (l *TBibTeXLibrary) ReadKeyHintsFile() {
-	l.readLibraryFile(KeyHintsFileExtension, ProgressReadingKeyHintsFile, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning(WarningKeyHintsLineTooShort, line)
-			l.NoKeyHintsFileWriting = true
-			return
-		}
-
-		l.AddKeyHint(elements[1], elements[0])
-	})
+	maybeReloadKeyHintsDb()
+	if !keyHintsFileWritingAllowed {
+		l.NoKeyHintsFileWriting = true
+	}
+	loadKeyHintsFromDb(l)
 }
 
-func (l *TBibTeXLibrary) ReadNonDoublesFile() {
-	l.readLibraryFile(NonDoublesFileExtension, ProgressReadingNonDoublesFile, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning(WarningNonDoublesLineTooShort, line)
-			l.NoNonDoublesFileWriting = true
-			return
-		}
-
-		// Why pass on &l.NameAliasToName, &l.NameToAliases???
-		l.AddNonDoubles(elements[0], elements[1])
-	})
+func (l *TBibTeXLibrary) ReadKeyNonDoublesFile() {
+	maybeReloadKeyNonDoublesDb()
+	if !keyNonDoublesFileWritingAllowed {
+		l.NoKeyNonDoublesFileWriting = true
+	}
+	loadKeyNonDoublesFromDb(l)
+	l.keyNonDoublesModified = false
 }
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {
-	//	maybeReadNameMappingsFile()
-
-	l.readLibraryFile(nameMappingsFileExtension, ProgressReadingNameMappingsFile, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning(WarningNameMappingsLineTooShort, line)
-			l.NoNameMappingsFileWriting = true
-			return
-		}
-		// Why pass on &l.NameAliasToName, &l.NameToAliases???
-		l.AddAliasForName(ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0]), &l.NameAliasToName, &l.NameToAliases)
-	})
+	maybeReloadNameMappingsDb()
+	if !nameMappingsFileWritingAllowed {
+		l.NoNameMappingsFileWriting = true
+	}
+	loadNameMappingsFromDb(l)
+	l.nameMappingsModified = false
 }

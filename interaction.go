@@ -17,10 +17,53 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type TInteraction struct {
-	silenced bool
+	silenced         bool
+	questionWasAsked bool
+}
+
+// ResetQuestionFlag clears the per-entry question tracker before processing
+// each entry in a "for all" loop.
+func (r *TInteraction) ResetQuestionFlag() {
+	r.questionWasAsked = false
+}
+
+// QuestionWasAsked reports whether any WarningQuestion was issued since the
+// last ResetQuestionFlag call.
+func (r *TInteraction) QuestionWasAsked() bool {
+	return r.questionWasAsked
+}
+
+// AskForInput prints prompt and returns the trimmed line the user types.
+// The second return value is non-nil when stdin is closed (EOF or read error).
+// Does not set questionWasAsked (setup prompts, not entry-processing questions).
+func (r *TInteraction) AskForInput(prompt string) (string, error) {
+	fmt.Printf("INPUT:    %s: ", prompt)
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	return strings.TrimSpace(line), err
+}
+
+// AskContinueOrQuit asks the user whether to continue or quit after an entry
+// that required interaction. Returns true if the user chose to quit.
+// When interaction is silenced, always continues.
+func (r *TInteraction) AskContinueOrQuit() bool {
+	if r.silenced {
+		return false
+	}
+	fmt.Printf("QUESTION: Continue with next entry, or quit? (c/q): ")
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		answer, _ := reader.ReadString('\n')
+		answer = strings.TrimSpace(answer)
+		if answer == "c" || answer == "q" {
+			return answer == "q"
+		}
+		fmt.Printf("(c/q): ")
+	}
 }
 
 // Disable any output to standard out.
@@ -66,6 +109,7 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 // Reporting warnings that involve a choice on how to proceed.
 // The warning message should provide the formatting.
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
+	r.questionWasAsked = true
 	r.Warning(warning, context...)
 	optionSet := "("
 	separator := ""

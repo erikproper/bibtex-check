@@ -1,12 +1,13 @@
 package main
 
 import (
-	//	"bufio"
+	"flag"
 	"fmt"
 	"os"
-
-	//	"regexp"
+	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
 
 var (
@@ -14,97 +15,97 @@ var (
 	Reporting TInteraction
 )
 
-const (
-	MainLibrary = "main" /// Why needed???
+const AppVersion = "10.0"
+
+// Run-state flags set by command functions; consumed by the write tail in main.
+var (
+	writeAliases     bool
+	writeMappings    bool
+	writeBibFile     bool
+	skipBibDbRefresh bool
+	forceWrite       bool
 )
 
-// Put this one in a SEPARATE FILE
-// Update bib mapping file
-//func (l *TBibTeXLibrary) UpdateBibMap(file string) {
-//	bibMap := TStringMap{}
-//
-//	l.readFile(file, "Reading mapping file %s", func(line string) {
-//		elements := strings.Split(line, " ")
-//		if len(elements) < 2 {
-//			l.Warning("File line too short: %s", line)
-//			return
-//		}
-//
-//		candidateKey := elements[1]
-//		if lookupKey, isAlias := l.KeyAliasToKey[candidateKey]; isAlias {
-//			bibMap[elements[0]] = lookupKey
-//		} else {
-//			bibMap[elements[0]] = candidateKey
-//		}
-//	})
-//
-//	l.writeFile(file, "Writing mapping file %s", func(bibWriter *bufio.Writer) {
-//		for alias, key := range bibMap {
-//			bibWriter.WriteString(alias + " " + key + "\n")
-//		}
-//	})
-//}
-
-///// Add these to library.go ??
-
-func OpenLibraryToUpdate() bool {
-	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting, MainLibrary, bibTeXFolder, bibTeXBaseName)
-
-	Library.ReadKeyOldiesFile()
-	Library.ReadKeyHintsFile()
-
-	Library.ReadNameMappingsFile()
-	Library.ReadGenericFieldAliasesFile()
-	Library.ReadEntryFieldAliasesFile()
-	Library.ReadFieldMappingsFile()
-	Library.CheckFieldMappings()
-
-	result := false
-	if Library.ValidCache() {
-		Library.ReadCache()
-		result = true
+func reportCacheMode() {
+	if entryCache != nil {
+		Library.Progress(ProgressEntryCacheLoaded, len(entryCache))
 	} else {
-		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... bibTeXBaseName on initialise !?
-		if result {
-			Library.WriteCache()
-		}
+		Library.Progress(ProgressEntryPerQuery)
 	}
-
-	if result {
-		Library.ReportLibrarySize()
-		Library.CheckKeyOldiesConsistency()
-	}
-
-	return result
 }
 
-func OpenLibraryToReport() bool {
+func initialiseLibrary() {
 	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting, MainLibrary, bibTeXFolder, bibTeXBaseName)
+	Library.Initialise(Reporting, bibTeXFolder, bibTeXBaseName)
+}
 
-	result := false
+func loadMappingFiles() {
+	Library.ReadKeyHintsFile()
+	Library.ReadNameMappingsFile()
+	Library.ReadGenericFieldMappingsFile()
+	Library.ReadEntryFieldMappingsFile()
+	Library.ReadCrossFieldMappingsFile()
+	Library.CheckFieldMappings()
+	Library.CheckNameMappingConsistency()
+}
+
+func loadBibFromDb() {
+	loadGroupsFromDb(&Library)
+	loadCommentsFromDb(&Library)
+	buildKeyAliasesFromDb(&Library)
+	initEntryCache()
+	reportCacheMode()
+}
+
+func parseBibIntoDb() bool {
+	clearBibTables()
+	beginBibTransaction()
+	if !Library.ReadBib(BibFile) {
+		rollbackBibTransaction()
+		return false
+	}
+	saveBibGroupsToDb(&Library)
+	saveBibCommentsToDb(&Library)
+	commitBibTransaction()
+	initEntryCache()
+	reportCacheMode()
+	Library.WriteCache()
+	refreshBibDbTimestamp()
+	return true
+}
+
+func openLibraryToUpdate() bool {
+	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
-	if Library.ValidCache() {
-		Library.ReadCache()
-		result = true
-	} else {
-		Library.ReadNameMappingsFile()
-		Library.ReadGenericFieldAliasesFile()
-		Library.ReadEntryFieldAliasesFile()
-		Library.ReadFieldMappingsFile()
+	loadMappingFiles()
 
-		result = Library.ReadBib(BibFile) // Needed to pass this parameter ... bibTeXBaseName on initialise !?
-		if result {
-			Library.WriteCache()
+	if Library.ValidBibDb() {
+		buildTitleIndexFromDb(&Library)
+		loadBibFromDb()
+	} else if !parseBibIntoDb() {
+		return false
+	}
+
+	Library.ReportLibrarySize()
+	Library.CheckKeyOldiesConsistency()
+	return true
+}
+
+func openLibraryToReport() bool {
+	initialiseLibrary()
+	Library.ReadKeyOldiesFile()
+
+	if Library.ValidBibDb() {
+		loadBibFromDb()
+	} else {
+		loadMappingFiles()
+		if !parseBibIntoDb() {
+			return false
 		}
 	}
 
-	if result {
-		Library.ReportLibrarySize()
-	}
-
-	return result
+	Library.ReportLibrarySize()
+	return true
 }
 
 func FIXThatShouldBeChecks(key string) {
@@ -113,354 +114,431 @@ func FIXThatShouldBeChecks(key string) {
 	Library.CheckDBLP(key)
 }
 
-func CleanKey(rawKey string) string {
+func cleanKey(rawKey string) string {
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(rawKey, "\\cite{", ""), "cite{", ""), "}", ""))
 }
 
-// Should not be needed. Justs add the ".bib" ...
-
 var BibFile string
 
-func main() {
-	bibTeXBaseName = "ErikProper"
-	bibTeXFolder = "/Users/erikproper/BibTeX/"
+var instanceLockFile *os.File // held open for the lifetime of the process to maintain the flock
 
-	/// CLEANER
-	BibFile = bibTeXBaseName + ".bib"
+// acquireInstanceLock obtains an exclusive flock on <basename>.lock.
+// Exits immediately if another instance already holds the lock for the same base.
+// The OS releases the lock automatically when the process exits.
+func acquireInstanceLock() {
+	lockPath := bibTeXFolder + bibTeXBaseName + LockFileExtension
+
+	var err error
+	instanceLockFile, err = os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not open lock file %s: %s\n", lockPath, err)
+		os.Exit(1)
+	}
+
+	if err := syscall.Flock(int(instanceLockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintf(os.Stderr, "Another instance is already running for %s\n", bibTeXBaseName)
+		os.Exit(1)
+	}
+}
+
+// cleanKeys strips \cite{} wrappers from each arg and splits comma-joined cite
+// lists, returning the individual key strings.
+func cleanKeys(args []string) []string {
+	var result []string
+	for _, a := range args {
+		for _, k := range strings.Split(cleanKey(a), ",") {
+			if k != "" {
+				result = append(result, k)
+			}
+		}
+	}
+	return result
+}
+
+// --- Command functions ---
+
+func doDefaultRun() {
+	if openLibraryToUpdate() {
+		writeBibFile = true
+		Library.CheckEntries()
+		Library.ReadKeyNonDoublesFile()
+		Library.CheckFiles()
+		if bibEntriesModified || forceWrite {
+			writeAliases = true
+			writeMappings = true
+		}
+	}
+}
+
+func doGetPdfs() {
+	Reporting.SetInteractionOff()
+	if openLibraryToReport() {
+		forEachBibEntryKey(func(key string) bool {
+			filePath := Library.FilesRoot + FilesFolder + key + ".pdf"
+			if !FileExists(filePath) {
+				URL := Library.EntryFieldValueity(key, "url")
+				if URL != "" && URL[len(URL)-4:] == ".pdf" {
+					fmt.Println("get direct", filePath, "\""+URL+"\"")
+				}
+
+				DOI := Library.EntryFieldValueity(key, "doi")
+				if strings.HasPrefix(DOI, "10.1007/") {
+					fmt.Println("get springer", filePath, "\"https://link.springer.com/chapter/"+DOI+"#preview\"")
+				}
+			}
+			return true
+		})
+	}
+}
+
+func doEntryKey(args []string) {
+	Reporting.SetInteractionOff()
+	if openLibraryToReport() {
+		fmt.Println(Library.MapEntryKey(cleanKey(args[0])))
+	}
+}
+
+func doEntryKeyAlias(args []string) {
+	Reporting.SetInteractionOff()
+	if openLibraryToReport() {
+		alias := Library.PreferredKey(Library.MapEntryKey(cleanKey(args[0])))
+		if alias != "" {
+			fmt.Println(alias)
+		}
+	}
+}
+
+func doShowEntry(args []string) {
+	Reporting.SetInteractionOff()
+	if openLibraryToReport() {
+		fmt.Println(Library.EntryString(Library.MapEntryKey(cleanKey(args[0])), ""))
+	}
+}
+
+func doFixEntries(args []string) {
+	if openLibraryToUpdate() {
+		Library.CheckEntries()
+		Library.ReadKeyNonDoublesFile()
+		for _, key := range cleanKeys(args) {
+			FIXThatShouldBeChecks(key)
+		}
+		writeBibFile = true
+		writeAliases = true
+		writeMappings = true
+	}
+}
+
+func doFixAllEntries() {
+	if openLibraryToUpdate() {
+		Library.CheckEntries()
+		Library.ReadKeyNonDoublesFile()
+		count := 0
+		forEachBibEntryKey(func(key string) bool {
+			count++
+			fmt.Println("Entry count: ", count)
+			Reporting.ResetQuestionFlag()
+			FIXThatShouldBeChecks(key)
+			if Reporting.QuestionWasAsked() && Reporting.AskContinueOrQuit() {
+				return false
+			}
+			return true
+		})
+		writeBibFile = true
+		writeAliases = true
+		writeMappings = true
+	}
+}
+
+func doSyncAllDblpEntries() {
+	if openLibraryToUpdate() {
+		Library.CheckEntries()
+		Library.ReadKeyNonDoublesFile()
+		count := 0
+		forEachBibEntryKey(func(key string) bool {
+			if Library.EntryFieldValueity(key, DBLPField) != "" {
+				count++
+				fmt.Println("Entry count: ", count)
+				Reporting.ResetQuestionFlag()
+				Library.CheckDBLP(key)
+				if Reporting.QuestionWasAsked() && Reporting.AskContinueOrQuit() {
+					return false
+				}
+			}
+			return true
+		})
+		writeBibFile = true
+		writeAliases = true
+		writeMappings = true
+	}
+}
+
+func doNewKey() {
+	fmt.Println(KeyFromTime(time.Now()))
+}
+
+func doSyncDblpFor(args []string) {
+	if openLibraryToUpdate() {
+		Library.CheckEntries()
+		Library.ReadKeyNonDoublesFile()
+		for _, key := range cleanKeys(args) {
+			Library.CheckDBLP(key)
+		}
+		writeBibFile = true
+		writeAliases = true
+		writeMappings = true
+	}
+}
+
+func doAddDblpEntry(args []string) {
+	if openLibraryToUpdate() {
+		Library.CheckEntries()
+		Library.ReadKeyNonDoublesFile()
+		writeBibFile = true
+		writeAliases = true
+		writeMappings = true
+		for _, dblpKey := range args {
+			if Library.LookupDBLPKey(dblpKey) == "" {
+				if added := Library.MaybeAddDBLPEntry(dblpKey); added != "" {
+					FIXThatShouldBeChecks(added)
+				}
+			}
+		}
+	}
+}
+
+func doAddKeyMapping(args []string) {
+	if openLibraryToUpdate() {
+		Library.CheckEntries()
+		writeBibFile = true
+		writeAliases = true
+		writeMappings = true
+		target := Library.MapEntryKey(cleanKey(args[len(args)-1]))
+		for _, alias := range args[:len(args)-1] {
+			fmt.Println("Mapping", cleanKey(alias), "to", target)
+			Library.AddKeyAlias(cleanKey(alias), target)
+		}
+		Library.CheckEntries()
+		FIXThatShouldBeChecks(target)
+	}
+}
+
+func doMergeEntries(args []string) {
+	keys := cleanKeys(args)
+	if openLibraryToUpdate() {
+		Library.CheckEntries()
+		Library.ReadKeyNonDoublesFile()
+		writeBibFile = true
+		writeAliases = true
+		writeMappings = true
+		target := Library.MapEntryKey(keys[len(keys)-1])
+		for _, alias := range keys[:len(keys)-1] {
+			Library.MergeEntries(alias, target)
+		}
+		for _, key := range keys {
+			if Library.MapEntryKey(key) == key {
+				FIXThatShouldBeChecks(key)
+			}
+		}
+	}
+}
+
+func doAddNameMapping(args []string) {
+	Library = TBibTeXLibrary{}
+	Library.Initialise(Reporting, bibTeXFolder, bibTeXBaseName)
+	Library.ReadNameMappingsFile()
+	Library.AddNameMapping(args[0], args[1])
+	skipBibDbRefresh = true
+}
+
+func main() {
+	fmt.Fprintf(os.Stderr, "%s %s\n", filepath.Base(os.Args[0]), AppVersion)
+
+	baseFlag := flag.String("base", "", "path/basename of the library (required)")
+	flag.BoolVar(&forceWrite, "force_write", false, "force write even if unchanged")
+
+	var cmdVersion bool
+	flag.BoolVar(&cmdVersion, "version", false, "print version and exit")
+	flag.BoolVar(&cmdVersion, "v", false, "print version and exit")
+
+	var (
+		cmdGet                  bool
+		cmdGetPdfs              bool
+		cmdEntryKey             bool
+		cmdEntryKeyAlias        bool
+		cmdShowEntry            bool
+		cmdFixEntries           bool
+		cmdFixAllEntries        bool
+		cmdSyncAllDblpEntries   bool
+		cmdSyncDblpFor          bool
+		cmdAddDblpEntry         bool
+		cmdAddKeyMapping        bool
+		cmdMergeEntries         bool
+		cmdAddNameMapping       bool
+		cmdNewKey               bool
+	)
+
+	flag.BoolVar(&cmdGet, "get", false, "generate local .bib from bib.config + .map in CWD")
+	flag.BoolVar(&cmdGetPdfs, "get_pdfs", false, "print shell get-commands for missing PDFs")
+	flag.BoolVar(&cmdEntryKey, "entry_key", false, "resolve alias to canonical key")
+	flag.BoolVar(&cmdEntryKeyAlias, "entry_key_alias", false, "get preferred alias for a key")
+	flag.BoolVar(&cmdShowEntry, "show_entry", false, "print full entry content")
+	flag.BoolVar(&cmdFixEntries, "fix_entries", false, "fix/check specific entries")
+	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
+	flag.BoolVar(&cmdFixAllEntries, "fix_all_entries", false, "fix/check all entries")
+	flag.BoolVar(&cmdSyncAllDblpEntries, "sync_all_dblp_entries", false, "DBLP-sync all entries that have a DBLP key")
+	flag.BoolVar(&cmdSyncDblpFor, "sync_dblp_for", false, "DBLP-sync specific entries")
+	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "add one or more new entries from DBLP")
+	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
+	flag.BoolVar(&cmdAddKeyMapping, "add_key_mapping", false, "add key alias(es) to a canonical key")
+	flag.BoolVar(&cmdAddKeyMapping, "add_key_mappings", false, "alias for -add_key_mapping")
+	flag.BoolVar(&cmdMergeEntries, "merge_entries", false, "merge entries into target")
+	flag.BoolVar(&cmdAddNameMapping, "add_name_mapping", false, "add a name alias mapping")
+	flag.BoolVar(&cmdNewKey, "new_key", false, "print a fresh canonical key and exit")
+
+	flag.Parse()
+	args := flag.Args()
+
+	if cmdVersion {
+		os.Exit(0)
+	}
+
+	if *baseFlag == "" {
+		fmt.Fprintln(os.Stderr, "Usage: bibtex_check -base <path/basename> [-command] [args...]")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	if absBase, err := filepath.Abs(*baseFlag); err == nil {
+		*baseFlag = stripKnownBaseExtension(absBase)
+	}
+	bibTeXFolder = filepath.Dir(*baseFlag) + "/"
+	bibTeXBaseName = filepath.Base(*baseFlag)
+	BibFile = bibTeXBaseName + BibFileExtension
 
 	Reporting = TInteraction{}
 
+	loadBibTeXConfig(bibTeXFolder + bibTeXBaseName + ConfigFileExtension)
+
+	if cmdNewKey {
+		doNewKey()
+		os.Exit(0)
+	}
+
+	acquireInstanceLock()
 	connectToDatabase()
 
-	writeAliases := false
-	writeMappings := false
-	writeBibFile := false
-
 	switch {
-	case len(os.Args) == 1:
-		if OpenLibraryToUpdate() {
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
-
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
-			Library.CheckFiles()
-			Library.WriteNonDoublesFile()
-		}
-
-	case len(os.Args) == 2 && os.Args[1] == "-pdfs":
+	case cmdGet:
 		Reporting.SetInteractionOff()
-		if OpenLibraryToReport() {
-			for key := range Library.EntryFields {
-				filePath := Library.FilesRoot + FilesFolder + key + ".pdf"
-				if !FileExists(filePath) {
-					URL := Library.EntryFieldValueity(key, "url")
-					if URL != "" && URL[len(URL)-4:] == ".pdf" {
-						fmt.Println("get direct", filePath, "\""+URL+"\"")
-					}
-
-					DOI := Library.EntryFieldValueity(key, "doi")
-					if strings.HasPrefix(DOI, "10.1007/") {
-						fmt.Println("get springer", filePath, "\"https://link.springer.com/chapter/"+DOI+"#preview\"")
-					}
-				}
-			}
+		if openLibraryToReport() {
+			doGet()
 		}
 
-		//	case len(os.Args) == 2 && os.Args[1] == "-legacy": // Keep for -import / -sync
-		//		if InitialiseMainLibrary() && OpenMainBibFile() {
-		//			writeBibFile = true
-		//			writeAliases = false
-		//			writeMappings = true
-		//			Library.CheckEntries()
-		//			Library.ReadNonDoublesFile()
-		//
-		//			OldLibrary := TBibTeXLibrary{}
-		//			OldLibrary.Progress("Reading legacy library")
-		//			OldLibrary.Initialise(Reporting, "legacy", bibTeXFolder, bibTeXBaseName)
-		//			OldLibrary.ReadAliasesFiles()
-		//			OldLibrary.ReadFieldMappingsFile()
-		//
-		//			BibTeXParser := TBibTeXStream{}
-		//			BibTeXParser.Initialise(Reporting, &OldLibrary)
-		//			BibTeXParser.ParseBibFile(bibTeXFolder + "Old/Old.bib")
-		//
-		//			OldLibrary.ReportLibrarySize()
-		//
-		//			var stripUniquePrefix = regexp.MustCompile(`^[0-9]*AAAAA`)
-		//			// 20673AAAAAzhai2005extractingdata [0-9]*AAAAA
-		//			for oldEntry, oldType := range OldLibrary.EntryFields {
-		//				cleanOldEntry := stripUniquePrefix.ReplaceAllString(oldEntry, "")
-		//
-		//				newKey, newType, isEntry := Library.MapEntryKeyWithType(cleanOldEntry)
-		//
-		//				if Library.EntryFieldValueity(newKey, DBLPField) != "" {
-		//					if isEntry && Library.EntryFieldValueity(newKey, DBLPField) != "" {
-		//						// We don't have a set type function??
-		//						Library.EntryTypes[newKey] = Library.ResolveFieldValue(newKey, oldEntry, EntryTypeField, oldType, newType)
-		//
-		//						crossrefKey := Library.EntryFieldValueity(newKey, "crossref")
-		//
-		//						// EntryFields function???
-		//						for oldField, oldValue := range OldLibrary.EntryFields[oldEntry] {
-		//							// The next test should be a nice function IsAllowedEntryField(Library.EntryTypes[newKey], oldField)
-		//							if BibTeXAllowedEntryFields[Library.EntryTypes[newKey]].Set().Contains(oldField) && BibTeXImportFields.Contains(oldField) {
-		//								if crossrefKey != "" && BibTeXMustInheritFields.Contains(oldField) {
-		//									target := Library.MaybeResolveFieldValue(crossrefKey, oldEntry, oldField, oldValue, Library.EntryFieldValueity(crossrefKey, oldField))
-		//
-		//									if oldField == "booktitle" {
-		//										if Library.EntryFields[crossrefKey][TitleField] == Library.EntryFields[crossrefKey]["booktitle"] {
-		//											Library.EntryFields[crossrefKey][TitleField] = target
-		//										}
-		//									}
-		//
-		//									Library.EntryFields[crossrefKey][oldField] = target
-		//								} else {
-		//									Library.EntryFields[newKey][oldField] = Library.ResolveFieldValue(newKey, oldEntry, oldField, oldValue, Library.EntryFields[newKey][oldField])
-		//								}
-		//							}
-		//						}
-		//					} else {
-		//						fmt.Println("Old entry is not mapped:", cleanOldEntry)
-		//
-		//						newKey := Library.NewKey()
-		//
-		//						Library.EntryTypes[newKey] = OldLibrary.EntryTypes[oldEntry]
-		//						Library.EntryFields[newKey] = OldLibrary.EntryFields[oldEntry]
-		//
-		//						Library.AddKeyAlias(cleanOldEntry, newKey)
-		//					}
-		//
-		//					FIXThatShouldBeChecks(newKey)
-		//
-		//					Library.WriteNonDoublesFile()
-		//					Library.WriteAliasesFiles()
-		//					Library.WriteMappingsFiles()
-		//					Library.WriteBibTeXFile()
-		//				}
-		//			}
-		//		}
+	case cmdGetPdfs:
+		doGetPdfs()
 
-		//	case len(os.Args) == 3 && os.Args[1] == "-update_map":
-		//		InitialiseMainLibrary()
-		//		Library.UpdateBibMap(os.Args[2])
-
-	case len(os.Args) == 3 && os.Args[1] == "-alias":
-		Reporting.SetInteractionOff()
-
-		if OpenLibraryToReport() {
-			alias := Library.PreferredKey(Library.MapEntryKey(CleanKey(os.Args[2])))
-			if alias != "" {
-				fmt.Println(alias)
-			}
+	case cmdEntryKey:
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -entry_key <alias>")
+			os.Exit(1)
 		}
+		doEntryKey(args)
 
-	case len(os.Args) > 2 && os.Args[1] == "-entry":
-		Reporting.SetInteractionOff()
-
-		if OpenLibraryToReport() {
-			fmt.Println(Library.EntryString(Library.MapEntryKey(CleanKey(os.Args[2])), ""))
+	case cmdEntryKeyAlias:
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -entry_key_alias <key>")
+			os.Exit(1)
 		}
+		doEntryKeyAlias(args)
 
-	case len(os.Args) == 3 && os.Args[1] == "-key":
-		Reporting.SetInteractionOff()
-
-		if OpenLibraryToReport() {
-			fmt.Println(Library.MapEntryKey(CleanKey(os.Args[2])))
+	case cmdShowEntry:
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -show_entry <key>")
+			os.Exit(1)
 		}
+		doShowEntry(args)
 
-	case len(os.Args) == 2 && os.Args[1] == "-fixagain":
-		if OpenLibraryToUpdate() {
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
-
-			count := 0
-			for key := range Library.EntryFields {
-				if Library.EntryFields[key][EntryTypeField] == "mastersthesis" ||
-					Library.EntryFields[key][EntryTypeField] == "phdthesis" ||
-					Library.EntryFields[key][EntryTypeField] == "inbook" ||
-					Library.EntryFields[key][EntryTypeField] == "manual" ||
-					Library.EntryFields[key][EntryTypeField] == "misc" ||
-					Library.EntryFields[key][EntryTypeField] == "booklet" ||
-					Library.EntryFields[key][EntryTypeField] == "techreport" {
-					count++
-					fmt.Println("Entry count: ", count)
-					FIXThatShouldBeChecks(key)
-				}
-			}
-			Library.WriteNonDoublesFile()
-
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
+	case cmdFixEntries:
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -fix_entries <key>...")
+			os.Exit(1)
 		}
+		doFixEntries(args)
 
-	case len(os.Args) == 2 && os.Args[1] == "-fixall":
-		if OpenLibraryToUpdate() {
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
+	case cmdFixAllEntries:
+		doFixAllEntries()
 
-			count := 0
-			for key := range Library.EntryFields {
-				if //
-				Library.EntryFields[key][EntryTypeField] == "article" {
-					//Library.EntryFields[key][EntryTypeField] == "incollection" {
-					//Library.EntryFields[key][EntryTypeField] == "inproceedings" {
-					//Library.EntryFields[key][EntryTypeField] == "book" {
-					//Library.EntryFields[key][EntryTypeField] == "proceedings" {
-					count++
-					fmt.Println("Entry count: ", count)
-					FIXThatShouldBeChecks(key)
-				}
-			}
-			Library.WriteNonDoublesFile()
+	case cmdSyncAllDblpEntries:
+		doSyncAllDblpEntries()
 
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
+	case cmdSyncDblpFor:
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -sync_dblp_for <key>...")
+			os.Exit(1)
 		}
+		doSyncDblpFor(args)
 
-	case len(os.Args) == 2 && os.Args[1] == "-fixdblp":
-		if OpenLibraryToUpdate() {
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
-
-			count := 0
-			for key := range Library.EntryFields {
-				if Library.EntryFieldValueity(key, DBLPField) != "" {
-					count++
-					fmt.Println("Entry count: ", count)
-					Library.CheckDBLP(key)
-					FIXThatShouldBeChecks(key)
-				}
-			}
-			Library.WriteNonDoublesFile()
-
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
+	case cmdAddDblpEntry:
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -add_dblp_entry <dblp-key>...")
+			os.Exit(1)
 		}
+		doAddDblpEntry(args)
 
-	case len(os.Args) > 2 && os.Args[1] == "-fix":
-		keysString := ""
-
-		for _, keyString := range os.Args[2:] {
-			keysString += "," + CleanKey(keyString)
+	case cmdAddKeyMapping:
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -add_key_mapping <alias>... <canonical>")
+			os.Exit(1)
 		}
-		keyStrings := strings.Split(keysString, ",")
+		doAddKeyMapping(args)
 
-		if OpenLibraryToUpdate() {
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
-
-			for _, key := range keyStrings[1:] {
-				FIXThatShouldBeChecks(key)
-			}
-
-			Library.WriteNonDoublesFile()
-
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
+	case cmdMergeEntries:
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -merge_entries <key>... <target>")
+			os.Exit(1)
 		}
+		doMergeEntries(args)
 
-	case (len(os.Args) == 3 || len(os.Args) == 4) && os.Args[1] == "-dblp_add":
-		if OpenLibraryToUpdate() {
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
-
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
-
-			if Library.LookupDBLPKey(os.Args[2]) == "" {
-				// Leads to a double READ ... NOT NEEDED. MaybeAdd does it and the DBLPCHeck again ...
-				if len(os.Args) == 4 {
-					Library.SetEntryFieldValue(os.Args[3], "dblp", os.Args[2])
-					Library.CheckEntry(os.Args[3])
-					FIXThatShouldBeChecks(os.Args[3])
-				} else {
-					Added := Library.MaybeAddDBLPEntry(os.Args[2])
-					if Added != "" {
-						FIXThatShouldBeChecks(Added)
-					}
-				}
-			}
-
-			Library.WriteNonDoublesFile()
+	case cmdAddNameMapping:
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -add_name_mapping <canonical> <alias>")
+			os.Exit(1)
 		}
-
-	case len(os.Args) > 2 && os.Args[1] == "-merge":
-		keysString := ""
-
-		for _, keyString := range os.Args[2:] {
-			keysString += "," + CleanKey(keyString)
-		}
-		keyStrings := strings.Split(keysString, ",")
-
-		if OpenLibraryToUpdate() {
-			Library.CheckEntries()
-			Library.ReadNonDoublesFile()
-
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
-
-			key := Library.MapEntryKey(keyStrings[len(keyStrings)-1])
-			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
-				Library.MergeEntries(alias, key)
-			}
-
-			for _, key := range keyStrings[1:] {
-				if Library.MapEntryKey(key) == key {
-					FIXThatShouldBeChecks(key)
-				}
-			}
-
-			Library.WriteNonDoublesFile()
-		}
-
-	case len(os.Args) > 3 && os.Args[1] == "-map":
-		if OpenLibraryToUpdate() {
-			Library.CheckEntries()
-
-			writeBibFile = true
-			writeAliases = true
-			writeMappings = true
-			keysString := ""
-
-			for _, keyString := range os.Args[2:] {
-				keysString += "," + CleanKey(keyString)
-			}
-			keyStrings := strings.Split(keysString, ",")
-
-			key := Library.MapEntryKey(keyStrings[len(keyStrings)-1])
-			for _, alias := range keyStrings[1 : len(keyStrings)-1] {
-				fmt.Println("Mapping", alias, "to", key)
-				Library.AddKeyAlias(alias, key)
-			}
-
-			Library.CheckEntries()
-			FIXThatShouldBeChecks(key)
-		}
+		doAddNameMapping(args)
 
 	default:
-		fmt.Println("Parameters:", len(os.Args))
-		fmt.Println(os.Args)
+		if len(args) > 0 {
+			fmt.Fprintln(os.Stderr, "Unexpected arguments (did you forget a command flag?):", args)
+			os.Exit(1)
+		}
+		doDefaultRun()
 	}
 
+	wroteFiles := false
+
+	if Library.keyNonDoublesModified || forceWrite {
+		Library.WriteKeyNonDoublesFile()
+		wroteFiles = true
+	}
+	if Library.nameMappingsModified {
+		Library.WriteNameMappingFile()
+		wroteFiles = true
+	}
 	if writeAliases {
-		Library.WriteAliasesFiles()
+		Library.WriteAllMappingsFiles()
+		wroteFiles = true
 	}
-
 	if writeMappings {
-		Library.WriteMappingsFiles()
+		Library.WriteCrossFieldMappingsFile()
+		wroteFiles = true
 	}
-
-	if writeBibFile {
+	if writeBibFile && (bibEntriesModified || forceWrite) {
 		Library.CheckEntries()
 		Library.WriteBibTeXFile()
 		Library.WriteCache()
+		wroteFiles = true
+	}
+	if wroteFiles && !skipBibDbRefresh {
+		refreshBibDbTimestamp()
 	}
 }

@@ -12,7 +12,20 @@
 
 package main
 
+import "strings"
+
 var (
 	bibTeXFolder   string
 	bibTeXBaseName string
 )
+
+// stripKnownBaseExtension removes a trailing known library extension from path
+// so accidental tab-completion (e.g. "-base foo.bib") still works.
+func stripKnownBaseExtension(path string) string {
+	for _, ext := range []string{BibFileExtension, sqliteFileExtension, ConfigFileExtension, LockFileExtension} {
+		if strings.HasSuffix(path, ext) {
+			return path[:len(path)-len(ext)]
+		}
+	}
+	return path
+}

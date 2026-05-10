@@ -14,8 +14,8 @@ package main
 
 const (
 	// Progress reports
-	ProgressInitialiseLibrary = "Initialising %s library"
-	ProgressLibrarySize       = "Size of %s library is: %d"
+	ProgressInitialiseLibrary = "Initialising library"
+	ProgressLibrarySize       = "Library size: %d"
 
 	// Names of syntactic classes as used in error messages when parsing BibTeX files
 	CharacterClass  = "Character"
@@ -70,12 +70,13 @@ const (
 	ProgressWritingGroupsCache             = "Writing groups cache %s"
 	ProgressWritingCommentsCache           = "Writing comments cache %s"
 	ProgressWritingNonDoublesFile          = "Writing non_doubles file %s"
-	ProgressWritingGenericFieldAliasesFile = "Writing generic field aliases file %s"
-	ProgressWritingEntryFieldAliasesFile   = "Writing entry field aliases file %s"
+	ProgressWritingGenericFieldMappingsFile = "Writing generic field mappings file %s"
+	ProgressWritingEntryFieldMappingsFile   = "Writing entry field mappings file %s"
 	ProgressWritingNameMappingsFile        = "Writing name aliases file %s"
 	ProgressWritingFieldMappingsFile       = "Writing field mappings file %s"
 	ProgressWritingKeyOldiesFile           = "Writing key aliases file %s"
 	ProgressWritingKeyHintsFile            = "Writing key hints file %s"
+	ProgressWritingGetBib                  = "Writing get bib file %s"
 
 	ProgressReadingBibFile = "Reading bib file %s"
 
@@ -84,18 +85,22 @@ const (
 	ProgressReadingKeyAliasesCache = "Reading key aliases cache %s"
 
 	ProgressReadingNonDoublesFile          = "Reading non_doubles file %s"
-	ProgressReadingGenericFieldAliasesFile = "Reading generic field aliases file %s" // Really all these variations?
+	ProgressReadingGenericFieldMappingsFile = "Reading generic field mappings file %s"
 	ProgressReadingGroupsCache             = "Reading groups cache %s"
-	ProgressReadingEntryFieldAliasesFile   = "Reading entry field aliases file %s"
+	ProgressReadingEntryFieldMappingsFile   = "Reading entry field mappings file %s"
 	ProgressReadingKeyOldiesFile           = "Reading key oldies file %s"
 	ProgressReadingKeyHintsFile            = "Reading key hints file %s"
 	ProgressReadingNameMappingsFile        = "Reading name aliases file %s"
 	ProgressReadingFieldMappingsFile       = "Reading field mappings file %s"
 
-	ProgressCheckingFieldMappings   = "Checking field mappings."
+	ProgressEntryCacheLoaded = "Entry access: in-memory cache (%d entries)"
+	ProgressEntryPerQuery    = "Entry access: per-entry database reads"
+
+	ProgressCheckingFieldMappings = "Checking field mappings."
 	WarningMissingFile              = "File %s for key %s seems not to exist."
 	WarningInvalidPreferredKeyAlias = "Alias %s for %s does not comply to the rules for preferred aliases."
-	WarningBadISBN                  = "Found wrong ISBN \"%s\" for key %s."
+	WarningBadISBN                       = "Found wrong ISBN \"%s\" for key %s."
+	WarningISBNMismatchFromCrossrefDOI   = "Entry %s has crossref to %s with doi-derived isbn %s, but parent has isbn %s."
 	WarningBadISSN                  = "Found wrong ISSN \"%s\" for key %s."
 	WarningBadYear                  = "Found wrong year \"%s\" for key %s."
 	WarningBadDate                  = "Found wrong date \"%s\" for key %s."

@@ -111,13 +111,18 @@ func (l *TBibTeXLibrary) ProcessRawEntryFieldValue(key, field, value string) {
 // This should not need any normalisation of the field valie.
 
 func (l *TBibTeXLibrary) ProcessEntryFieldValue(key, field, value string) {
+	if l.capturedDBLPEntry != nil {
+		if value != "" {
+			l.capturedDBLPEntry.Fields[field] = value
+		}
+		return
+	}
 	valueProcessor, hasProcessor := fieldProcessors[field]
 	if hasProcessor {
 		field, value = valueProcessor(l, key, value)
 	}
-
 	if value != "" {
-		l.EntryFields.SetValueForStringPairMap(key, field, value)
+		upsertBibEntryField(key, field, value)
 	}
 }
 

@@ -6,7 +6,7 @@
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
- * Version of: 24.04.2024
+ * Version of: 03.05.2026
  *
  */
 
@@ -33,7 +33,7 @@ func (l *TBibTeXLibrary) IsRedundantURL(url, key string) bool {
 }
 
 func IsValidKey(key string) bool {
-	var validKey = regexp.MustCompile(`^` + KeyPrefix + `-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]$`)
+	var validKey = regexp.MustCompile(`^` + keyPrefix + `-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9]$`)
 
 	return validKey.MatchString(key)
 }
@@ -122,21 +122,20 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 			l.Warning(WarningTargetOfOldieNotExists, key, oldie)
 		}
 
-		if _, oldieIsActuallyKeyToEntry := l.EntryFields[oldie]; oldieIsActuallyKeyToEntry {
+		if bibEntryExists(oldie) {
 			l.Warning(WarningOldieIsKey, oldie)
 		}
 	}
 }
 
-func (l *TBibTeXLibrary) CheckURLRedundance(key string) {
-	url := l.EntryFieldValueity(key, "url")
+func (l *TBibTeXLibrary) CheckURLRedundance(entry *TBibTeXEntry) {
+	url := entry.FieldValue("url")
 
-	if l.IsRedundantURL(url, key) {
+	if l.IsRedundantURL(url, entry.Key) {
 		// CONSTANTS!!!
-		l.Warning("Can empty url for " + key + ", which is " + url)
+		l.Warning("Can empty url for " + entry.Key + ", which is " + url)
 
-		// Call??
-		l.EntryFields[key]["url"] = ""
+		l.setEntryField(entry, "url", "")
 	}
 }
 
@@ -160,53 +159,54 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 
 // Checks if a given preferred alias fits the desired format of 	[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
 // Examples: gordijn2002e3value, overbeek2010matchmaking, ...
-func (l *TBibTeXLibrary) CheckPreferredKey(key string) bool {
+func (l *TBibTeXLibrary) CheckPreferredKey(entry *TBibTeXEntry) bool {
 	var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
 
-	alias := l.EntryFieldValueity(key, PreferredAliasField)
+	alias := entry.FieldValue(PreferredAliasField)
 
 	return alias == "" || validPreferredKeyAlias.MatchString(alias)
 }
 
-func (l *TBibTeXLibrary) CheckTitlePresence(key string) {
-	if l.EntryFieldValueity(key, TitleField) == "" {
-		l.Warning(WarningEmptyTitle, key)
+func (l *TBibTeXLibrary) CheckTitlePresence(entry *TBibTeXEntry) {
+	if entry.FieldValue(TitleField) == "" {
+		l.Warning(WarningEmptyTitle, entry.Key)
 	}
 }
 
-func (l *TBibTeXLibrary) CheckDOIPresence(key string) {
-	foundDOI := l.EntryFieldValueity(key, "doi")
+func (l *TBibTeXLibrary) CheckDOIPresence(entry *TBibTeXEntry) {
+	foundDOI := entry.FieldValue("doi")
 
 	if foundDOI == "" {
-		if l.tryGetDOIFromURL(key, "url", &foundDOI) {
-			l.Warning("Found DOI in URL %s for %s", foundDOI, key)
-			l.EntryFields[key]["doi"] = foundDOI
+		if l.tryGetDOIFromURL(entry.Key, "url", &foundDOI) {
+			l.Warning("Found DOI in URL %s for %s", foundDOI, entry.Key)
+			l.setEntryField(entry, "doi", foundDOI)
 		}
 	}
 }
 
-func (l *TBibTeXLibrary) CheckURLDateNeed(key string) {
-	if l.EntryFieldValueity(key, "urldate") != "" {
-		if l.EntryFieldValueity(key, "url") == "" ||
-			l.EntryFieldValueity(key, DBLPField) != "" ||
-			l.EntryFieldValueity(key, "doi") != "" ||
-			l.EntryFieldValueity(key, "isbn") != "" ||
-			l.EntryFieldValueity(key, "issn") != "" {
+func (l *TBibTeXLibrary) CheckURLDateNeed(entry *TBibTeXEntry) {
+	if entry.FieldValue("urldate") != "" {
+		if entry.FieldValue("url") == "" ||
+			entry.FieldValue(DBLPField) != "" ||
+			entry.FieldValue("doi") != "" ||
+			entry.FieldValue("isbn") != "" ||
+			entry.FieldValue("issn") != "" {
 
 			// In these cases, we do not need an urldate
-			l.EntryFields[key]["urldate"] = ""
+			l.setEntryField(entry, "urldate", "")
 		}
 	}
 }
 
-func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
+func (l *TBibTeXLibrary) CheckBookishTitles(entry *TBibTeXEntry) {
 	// SAFE??
-	entryType := l.EntryType(key)
+	entryType := entry.EntryType()
 
 	if BibTeXBookish.Contains(entryType) {
-		l.EntryFields[key]["booktitle"] = l.MaybeResolveFieldValue(key, key, "booktitle", l.EntryFieldValueity(key, TitleField), l.EntryFieldValueity(key, "booktitle"))
-		l.UpdateEntryFieldAlias(key, TitleField, l.EntryFields[key][TitleField], l.EntryFields[key]["booktitle"])
-		l.EntryFields[key][TitleField] = l.EntryFields[key]["booktitle"]
+		newBookTitle := l.MaybeResolveFieldValue(entry.Key, entry.Key, "booktitle", entry.FieldValue(TitleField), entry.FieldValue("booktitle"))
+		l.setEntryField(entry, "booktitle", newBookTitle)
+		l.UpdateEntryFieldAlias(entry.Key, TitleField, entry.FieldValue(TitleField), entry.FieldValue("booktitle"))
+		l.setEntryField(entry, TitleField, entry.FieldValue("booktitle"))
 	}
 	// if strings.Contains(l.EntryFields[key]["booktitle"], "proc.") || strings.Contains(l.EntryFields[key]["booktitle"], "Proc.") ||
 	//
@@ -229,12 +229,12 @@ func (l *TBibTeXLibrary) CheckBookishTitles(key string) {
 
 // Harmonize with tryGetDOIFromURL ???
 // Config based ... needs a bit of work I guess ....
-func (l *TBibTeXLibrary) CheckEPrint(key string) {
-	EPrintTypeValueity := strings.ToLower(l.EntryFieldValueity(key, "eprinttype"))
-	EPrintValueity := l.EntryFieldValueity(key, "eprint")
+func (l *TBibTeXLibrary) CheckEPrint(entry *TBibTeXEntry) {
+	EPrintTypeValueity := strings.ToLower(entry.FieldValue("eprinttype"))
+	EPrintValueity := entry.FieldValue("eprint")
 
-	DOIValueity := l.EntryFieldValueity(key, "doi")
-	URLValueity := l.EntryFieldValueity(key, "url")
+	DOIValueity := entry.FieldValue("doi")
+	URLValueity := entry.FieldValue("url")
 
 	DOIValueLower := strings.ToLower(DOIValueity)
 	URLValueLower := strings.ToLower(URLValueity)
@@ -276,16 +276,16 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 		}
 
 		if EPrintValue == "" {
-			l.Warning("Not able to find eprint data for %s", key)
+			l.Warning("Not able to find eprint data for %s", entry.Key)
 		} else {
 			if DOIValueity == "" {
 				DOIValueity = "10.48550/arXiv." + EPrintValue
 			}
 		}
 
-		l.EntryFields[key]["eprinttype"] = EPrintTypeValue
-		l.EntryFields[key]["eprint"] = EPrintValue
-		l.EntryFields[key]["doi"] = DOIValueity
+		l.setEntryField(entry, "eprinttype", EPrintTypeValue)
+		l.setEntryField(entry, "eprint", EPrintValue)
+		l.setEntryField(entry, "doi", DOIValueity)
 
 	case OnJstor:
 		EPrintTypeValue := "jstor"
@@ -304,154 +304,198 @@ func (l *TBibTeXLibrary) CheckEPrint(key string) {
 						EPrintValue = strings.ReplaceAll(EPrintValue, "https://www.jstor.org/stable/", "")
 
 						if EPrintValue == "" {
-							l.Warning("Not able to find eprint data for %s", key)
+							l.Warning("Not able to find eprint data for %s", entry.Key)
 						}
 					}
 				}
 			}
 		}
 
-		l.EntryFields[key]["eprinttype"] = EPrintTypeValue
-		l.EntryFields[key]["eprint"] = EPrintValue
+		l.setEntryField(entry, "eprinttype", EPrintTypeValue)
+		l.setEntryField(entry, "eprint", EPrintValue)
 
 	default:
 		if (EPrintTypeValueity != "" && EPrintValueity == "") || (EPrintTypeValueity == "" && EPrintValueity != "") {
-			l.EntryFields[key]["eprinttype"] = ""
-			l.EntryFields[key]["eprint"] = ""
+			l.setEntryField(entry, "eprinttype", "")
+			l.setEntryField(entry, "eprint", "")
 		}
 	}
 }
 
-func (l *TBibTeXLibrary) CheckISBNFromDOI(key string) {
-	DOIValueity := l.EntryFieldValueity(key, "doi")
+func (l *TBibTeXLibrary) CheckISBNFromDOI(entry *TBibTeXEntry) {
+	DOIValueity := entry.FieldValue("doi")
+	if !strings.HasPrefix(DOIValueity, "10.1007/978-") {
+		return
+	}
 
-	if strings.HasPrefix(DOIValueity, "10.1007/978-") {
-		ISBNCandidate := strings.ReplaceAll(DOIValueity, "10.1007/", "")
-		if IsValidISBN(ISBNCandidate) {
-			l.UpdateEntryFieldAlias(key, "isbn", l.EntryFields[key]["isbn"], ISBNCandidate)
-			l.EntryFields[key]["isbn"] = ISBNCandidate
-		}
+	ISBNCandidate := strings.ReplaceAll(DOIValueity, "10.1007/", "")
+	if !IsValidISBN(ISBNCandidate) {
+		return
+	}
+
+	crossrefRAW := entry.FieldValue("crossref")
+	if crossrefRAW == "" {
+		l.UpdateEntryFieldAlias(entry.Key, "isbn", entry.FieldValue("isbn"), ISBNCandidate)
+		l.setEntryField(entry, "isbn", ISBNCandidate)
+		return
+	}
+
+	// The doi is a book-level Springer doi; isbn belongs on the parent, not this child.
+	crossrefKey := l.MapEntryKey(crossrefRAW)
+	if crossrefKey == "" {
+		crossrefKey = crossrefRAW
+	}
+	crossrefEntry := l.buildEntry(crossrefKey)
+	if !crossrefEntry.Exists() {
+		return
+	}
+	parentISBN := crossrefEntry.FieldValue("isbn")
+	switch {
+	case parentISBN == "":
+		l.UpdateEntryFieldAlias(crossrefKey, "isbn", "", ISBNCandidate)
+		l.setEntryField(crossrefEntry, "isbn", ISBNCandidate)
+		l.deleteEntryField(entry, "doi")
+	case parentISBN == ISBNCandidate:
+		// doi already accounted for on parent; child doi will be cleaned by CheckCrossrefDOI
+	default:
+		l.Warning(WarningISBNMismatchFromCrossrefDOI, entry.Key, crossrefKey, ISBNCandidate, parentISBN)
 	}
 }
 
-func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefKey, key, field string) {
+func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefEntry, entry *TBibTeXEntry, field string) {
 	if BibTeXMustInheritFields.Contains(field) {
-		if challenge, hasChallenge := l.EntryFields[key][field]; hasChallenge {
-			target := l.MaybeResolveFieldValue(crossrefKey, key, field, challenge, l.EntryFieldValueity(crossrefKey, field))
+		if challenge, hasChallenge := entry.Fields[field]; hasChallenge {
+			target := l.MaybeResolveFieldValue(crossrefEntry.Key, entry.Key, field, challenge, crossrefEntry.FieldValue(field))
 
-			l.EntryFields[crossrefKey][field] = target
+			l.setEntryField(crossrefEntry, field, target)
 
 			if field == "booktitle" {
-				currentTitle := l.EntryFieldValueity(crossrefKey, TitleField)
-				newTitle := l.MaybeResolveFieldValue(crossrefKey, key, field, target, currentTitle)
+				currentTitle := crossrefEntry.FieldValue(TitleField)
+				newTitle := l.MaybeResolveFieldValue(crossrefEntry.Key, entry.Key, field, target, currentTitle)
 
 				if currentTitle != newTitle {
-					l.TitleIndex.DeleteValueFromStringSetMap(TeXStringIndexer(currentTitle), crossrefKey)
+					l.TitleIndex.DeleteValueFromStringSetMap(TeXStringIndexer(currentTitle), crossrefEntry.Key)
 
 					/// Refactor this into a function. We need this more often.
-					l.EntryFields[crossrefKey][TitleField] = newTitle
-					l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(newTitle), crossrefKey)
+					l.setEntryField(crossrefEntry, TitleField, newTitle)
+					l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(newTitle), crossrefEntry.Key)
 				}
 			}
 
-			for otherChallenger := range l.EntryFieldSourceToTarget[key][field] {
-				l.AddEntryFieldAlias(crossrefKey, field, otherChallenger, target, false)
+			for otherChallenger := range l.EntryFieldSourceToTarget[entry.Key][field] {
+				l.AddEntryFieldAlias(crossrefEntry.Key, field, otherChallenger, target, false)
 			}
 
 			if target != "" {
-				delete(l.EntryFields[key], field)
-				delete(l.EntryFieldSourceToTarget[key], field)
+				l.deleteEntryField(entry, field)
+				delete(l.EntryFieldSourceToTarget[entry.Key], field)
 			}
 		}
 	} else if BibTeXMayInheritFields.Contains(field) {
-		if crossrefValue, hasCrossrefValue := l.EntryFields[crossrefKey][field]; hasCrossrefValue {
+		if crossrefValue, hasCrossrefValue := crossrefEntry.Fields[field]; hasCrossrefValue {
 			// No need to override the child value, when it is the same as the parent's value
-			if crossrefValue == l.EntryFields[key][field] {
-				l.EntryFields[key][field] = ""
+			if crossrefValue == entry.Fields[field] {
+				l.setEntryField(entry, field, "")
 			}
 		}
 	}
 }
 
-func (l *TBibTeXLibrary) CheckCrossref(key string) {
-	entryType := l.EntryType(key)
-	crossrefetyRAW := l.EntryFieldValueity(key, "crossref")
+// CheckCrossrefDOI drops the child's DOI when it is the parent's ISBN-based Springer DOI.
+// The may-inherit logic handles the case where the parent explicitly stores the same DOI;
+// this covers the case where the parent has an isbn but no doi field.
+func (l *TBibTeXLibrary) CheckCrossrefDOI(crossrefEntry, entry *TBibTeXEntry) {
+	childDOI := entry.FieldValue("doi")
+	if childDOI == "" {
+		return
+	}
+	parentISBN := crossrefEntry.FieldValue("isbn")
+	if parentISBN != "" && childDOI == "10.1007/"+parentISBN {
+		l.deleteEntryField(entry, "doi")
+	}
+}
+
+func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
+	entryType := entry.EntryType()
+	crossrefetyRAW := entry.FieldValue("crossref")
 
 	crossrefety := l.MapEntryKey(crossrefetyRAW)
 	if crossrefety == "" {
 		crossrefety = crossrefetyRAW
 	}
 
-	if crossrefety == key {
-		l.Warning("Found self referencing crossref for %s. Cleaning this up.", key)
-		l.EntryFields[key]["crossref"] = ""
+	if crossrefety == entry.Key {
+		l.Warning("Found self referencing crossref for %s. Cleaning this up.", entry.Key)
+		l.setEntryField(entry, "crossref", "")
 	}
 
 	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
 		if crossrefety != "" {
 			if CrossrefType := l.EntryType(crossrefety); CrossrefType != "" {
 				if allowedCrossrefType == CrossrefType || CrossrefType == "incollection" { // MAKE THIS CLEANER
+					crossrefEntry := l.buildEntry(crossrefety)
 					for field := range BibTeXInheritableFields.Elements() {
-						l.CheckCrossrefInheritableField(crossrefety, key, field)
+						l.CheckCrossrefInheritableField(crossrefEntry, entry, field)
 					}
 
-					l.CheckBookishTitles(CrossrefType)
+					l.CheckCrossrefDOI(crossrefEntry, entry)
+					l.CheckBookishTitles(crossrefEntry)
 				} else {
-					l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", entryType, key, CrossrefType, crossrefety)
+					l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", entryType, entry.Key, CrossrefType, crossrefety)
 				}
 			} else {
-				l.Warning("Target %s of crossref from %s does not exist.", crossrefety, key)
+				l.Warning("Target %s of crossref from %s does not exist.", crossrefety, entry.Key)
 			}
 		}
 	}
 }
 
 func (l *TBibTeXLibrary) CheckFileReferences(key, otherKey string) {
-	l.EntryFields[key][LocalURLField] = l.ResolveFileReferences(key, otherKey)
+	upsertBibEntryField(key, LocalURLField, l.ResolveFileReferences(key, otherKey))
 }
 
-func (l *TBibTeXLibrary) CheckFileReference(key string) {
-	l.CheckFileReferences(key, key)
+func (l *TBibTeXLibrary) CheckFileReference(entry *TBibTeXEntry) {
+	l.setEntryField(entry, LocalURLField, l.ResolveFileReferences(entry.Key, entry.Key))
 }
 
-func (l *TBibTeXLibrary) CheckISSN(key string) {
-	issn := l.EntryFieldValueity(key, "issn")
+func (l *TBibTeXLibrary) CheckISSN(entry *TBibTeXEntry) {
+	issn := entry.FieldValue("issn")
 
 	if issn == "" || IsValidISSN(issn) {
 		return
 	}
 
-	l.Warning(WarningBadISSN, issn, key)
+	l.Warning(WarningBadISSN, issn, entry.Key)
 }
 
-func (l *TBibTeXLibrary) CheckISBN(key string) {
-	isbn := l.EntryFieldValueity(key, "isbn")
+func (l *TBibTeXLibrary) CheckISBN(entry *TBibTeXEntry) {
+	isbn := entry.FieldValue("isbn")
 
 	if isbn == "" || IsValidISBN(isbn) {
 		return
 	}
 
-	l.Warning(WarningBadISBN, isbn, key)
+	l.Warning(WarningBadISBN, isbn, entry.Key)
 }
 
-func (l *TBibTeXLibrary) CheckYear(key string) {
-	year := l.EntryFieldValueity(key, "year")
+func (l *TBibTeXLibrary) CheckYear(entry *TBibTeXEntry) {
+	year := entry.FieldValue("year")
 
 	if year == "" || IsValidYear(year) {
 		return
 	}
 
-	l.Warning(WarningBadYear, year, key)
+	l.Warning(WarningBadYear, year, entry.Key)
 }
 
-func (l *TBibTeXLibrary) CheckURLDate(key string) {
-	date := l.EntryFieldValueity(key, "urldate")
+func (l *TBibTeXLibrary) CheckURLDate(entry *TBibTeXEntry) {
+	date := entry.FieldValue("urldate")
 
 	if date == "" || IsValidDate(date) {
 		return
 	}
 
-	l.Warning(WarningBadDate, date, key)
+	l.Warning(WarningBadDate, date, entry.Key)
 }
 
 func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
@@ -471,14 +515,12 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 				crossrefKey = l.NewKey()
 				l.KeyIsTemporary.Add(crossrefKey)
 
-				// refactor this with func (l *TBibTeXLibrary) AssignField(field, value string) and StartRecordingEntry
-				l.EntryFields[crossrefKey] = TStringMap{}
-				l.EntryFields[crossrefKey][TitleField] = bookTitle
-				l.EntryFields[crossrefKey]["booktitle"] = bookTitle
+				upsertBibEntryField(crossrefKey, TitleField, bookTitle)
+				upsertBibEntryField(crossrefKey, "booktitle", bookTitle)
 				l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), crossrefKey)
 				l.SetEntryType(crossrefKey, crossrefType)
 
-				l.EntryFields[key]["crossref"] = crossrefKey
+				l.SetEntryFieldValue(key, "crossref", crossrefKey)
 
 				return crossrefKey
 			}
@@ -509,9 +551,9 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckKeyValidity(key string) {
-	if !IsValidKey(key) {
-		l.Warning(WarningInvalidKey, key)
+func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {
+	if !IsValidKey(entry.Key) {
+		l.Warning(WarningInvalidKey, entry.Key)
 	}
 }
 
@@ -531,7 +573,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		parentKey := l.LookupDBLPKey(parentDBLP)
 
 		if parentKey != "" && crossrefKey != parentKey {
-			l.EntryFields[key]["crossref"] = parentKey
+			l.SetEntryFieldValue(key, "crossref", parentKey)
 			crossrefKey = parentKey
 			crossrefDBLP = parentDBLP
 		}
@@ -570,28 +612,28 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckEntry(key string) {
-	if l.EntryExists(key) {
-		l.CheckKeyValidity(key)
+func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
+	if entry.Exists() {
+		l.CheckKeyValidity(entry)
 
 		// CheckCrossref can lead to a merger of entries for now ...
-		if l.EntryExists(key) {
-			l.CheckDOIPresence(key)
-			l.CheckEPrint(key)
-			l.CheckCrossref(key)
-			l.CheckPreferredKey(key)
-			l.CheckBookishTitles(key)
-			l.CheckISBNFromDOI(key)
-			l.CheckTitlePresence(key)
-			l.CheckURLRedundance(key)
-			l.CheckURLDateNeed(key)
-			l.CheckFileReference(key)
+		if entry.Exists() && l.EntryExists(entry.Key) {
+			l.CheckDOIPresence(entry)
+			l.CheckEPrint(entry)
+			l.CheckCrossref(entry)
+			l.CheckPreferredKey(entry)
+			l.CheckBookishTitles(entry)
+			l.CheckISBNFromDOI(entry)
+			l.CheckTitlePresence(entry)
+			l.CheckURLRedundance(entry)
+			l.CheckURLDateNeed(entry)
+			l.CheckFileReference(entry)
 
 			// Simple conformity checks
-			l.CheckISSN(key)
-			l.CheckISBN(key)
-			l.CheckYear(key)
-			l.CheckURLDate(key)
+			l.CheckISSN(entry)
+			l.CheckISBN(entry)
+			l.CheckYear(entry)
+			l.CheckURLDate(entry)
 		}
 	}
 }
@@ -599,9 +641,10 @@ func (l *TBibTeXLibrary) CheckEntry(key string) {
 func (l *TBibTeXLibrary) CheckEntries() {
 	l.Progress(ProgressCheckingConsistencyOfEntries)
 
-	for key := range l.EntryFields {
-		l.CheckEntry(key)
-	}
+	forEachBibEntryKey(func(key string) bool {
+		l.CheckEntry(l.buildEntry(key))
+		return true
+	})
 }
 
 func (l *TBibTeXLibrary) CheckFiles() {

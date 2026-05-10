@@ -1,12 +1,14 @@
 /*
  *
- * Module: bibtex_library_dblp
+ * Module:    bibtex_check_dev
+ * Package:   Main
+ * Component: DBLPLibrary
  *
- * This module is concerned with dblp specific functions
+ * DBLP-specific operations for the BibTeX library.
  *
- * Creator: Henderik A. Proper (erikproper@fastmail.com)
+ * Creator: Henderik A. Proper (e.proper@acm.org), Luxembourg, in collaboration with Claude.ai
  *
- * Version of: 28.05.2024
+ * Version of: 05.05.2026
  *
  */
 
@@ -16,25 +18,46 @@ func KeyForDBLP(key string) string {
 	return "DBLP:" + key
 }
 
+// MaybeMergeDBLPEntry parses the DBLP bib file for DBLPKey into an in-memory entry
+// (never touching the DB during parse), then merges it into the existing entry for key
+// inside a single transaction. Returns true if the merge was performed.
 func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
-	if key != "" && DBLPKey != "" {
-		// Via string constant with %s
-		DBLPBibFile := l.FilesRoot + "DBLPScraper/bib/" + DBLPKey + "/bib"
-
-		if FileExists(DBLPBibFile) {
-			l.Progress("Syncing entry %s with the DBLP version %s", key, DBLPKey)
-
-			if l.ParseRawBibFile(DBLPBibFile) {
-				l.MergeEntries(KeyForDBLP(DBLPKey), key)
-				l.EntryFields[key][DBLPField] = DBLPKey
-				l.CheckEntry(key)
-
-				return true
-			}
-		}
+	if key == "" || DBLPKey == "" {
+		return false
 	}
 
-	return false
+	DBLPBibFile := l.FilesRoot + "DBLPScraper/bib/" + DBLPKey + "/bib"
+	if !FileExists(DBLPBibFile) {
+		return false
+	}
+
+	l.Progress("Syncing entry %s with the DBLP version %s", key, DBLPKey)
+
+	l.capturedDBLPEntry = &TBibTeXEntry{Key: KeyForDBLP(DBLPKey), Fields: map[string]string{}}
+	l.harvestNameAliases = true
+	l.ParseRawBibFile(DBLPBibFile)
+	l.harvestNameAliases = false
+	dblpEntry := l.capturedDBLPEntry
+	l.capturedDBLPEntry = nil
+
+	if !dblpEntry.Exists() {
+		return false
+	}
+
+	beginBibTransaction()
+	changed := l.MergeInMemoryDBLPEntry(dblpEntry, key)
+	if l.EntryFieldValueity(key, DBLPField) != DBLPKey {
+		changed = true
+		l.SetEntryFieldValue(key, DBLPField, DBLPKey)
+	}
+	commitBibTransaction()
+
+	if changed {
+		bibEntriesModified = true
+		l.CheckEntry(l.buildEntry(key))
+	}
+
+	return true
 }
 
 // / Really need both!?

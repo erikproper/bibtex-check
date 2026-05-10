@@ -170,15 +170,18 @@ func ApplyLaTeXMap(s string) string {
 	return result
 }
 
-// Leave here??
 func (l *TBibTeXLibrary) maybeAddSimpleName(parts int, firstName, lastName string) {
-	if parts == 2 {
+	if !l.harvestNameAliases {
+		return
+	}
+	if parts == 2 && !strings.Contains(firstName, ",") && !strings.Contains(lastName, ",") {
 		name := firstName + " " + lastName
-		newName := lastName + ", " + firstName
-
 		if _, isMapped := l.NameAliasToName[name]; !isMapped {
-			l.AddAliasForName(name, newName, &l.NameAliasToName, &l.NameToAliases)
-
+			canonical := lastName + ", " + firstName
+			l.AddAlias(name, canonical, &l.NameAliasToName, &l.NameToAliases, false)
+			l.FindAliases(canonical, name)
+			l.FindAliases(canonical, canonical)
+			l.nameMappingsModified = true
 		}
 	}
 }
@@ -205,7 +208,13 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 				if name != "" {
 					l.maybeAddSimpleName(namePartsCount, previousFirstName, previousLastName)
 
-					result += andety + NormalisePersonNameValue(l.TBibTeXTeX.library, name)
+					normalised := NormalisePersonNameValue(l.TBibTeXTeX.library, name)
+					if l.harvestNameAliases && strings.Contains(normalised, ", ") {
+						if l.FindAliases(normalised, normalised) {
+							l.nameMappingsModified = true
+						}
+					}
+					result += andety + normalised
 					name = ""
 					token = ""
 					previousFirstName = ""
@@ -229,7 +238,13 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 	if name != "" {
 		l.maybeAddSimpleName(namePartsCount, previousFirstName, previousLastName)
 
-		result += andety + NormalisePersonNameValue(l.TBibTeXTeX.library, name)
+		normalised := NormalisePersonNameValue(l.TBibTeXTeX.library, name)
+		if l.harvestNameAliases && strings.Contains(normalised, ", ") {
+			if l.FindAliases(normalised, normalised) {
+				l.nameMappingsModified = true
+			}
+		}
+		result += andety + normalised
 	}
 
 	return result

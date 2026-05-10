@@ -29,11 +29,9 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		name         string           // Name of the library
 		FilesRoot    string           // Path to folder with library related files
 		BaseName     string           // BaseName of the library related files
-		Comments     []string         // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
-		EntryFields  TStringStringMap // Per entry key, the fields associated to the actual entries.
+		Comments     []string      // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		GroupEntries TStringSetMap
 		TitleIndex   TStringSetMap //
 		//		BookTitleIndex                   TStringSetMap             //
@@ -54,13 +52,17 @@ type (
 		GenericFieldSourceToTarget       TStringStringMap          // A field specific mapping from challenged value to winner values
 		GenericFieldTargetToSource       TStringStringSetMap       //
 		NoBibFileWriting                 bool                      // If set, we should not write out a Bib file (and cache file) for this library as entries might have been lost.
-		NoEntryFieldAliasesFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
-		NoGenericFieldAliasesFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
+		NoEntryFieldMappingsFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
+		NoGenericFieldMappingsFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
 		NoKeyOldiesFileWriting           bool
 		NoKeyHintsFileWriting            bool
 		NoNameMappingsFileWriting        bool
-		NoNonDoublesFileWriting          bool
-		NoFieldMappingsFileWriting       bool
+		NoKeyNonDoublesFileWriting          bool
+		keyNonDoublesModified               bool
+		nameMappingsModified             bool
+		harvestNameAliases               bool
+		capturedDBLPEntry                *TBibTeXEntry
+		NoCrossFieldMappingsFileWriting       bool
 		ignoreIllegalFields              bool
 
 		TBibTeXTeX
@@ -70,10 +72,9 @@ type (
 )
 
 // Initialise a library
-func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, baseName string) {
+func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName string) {
 	l.TInteraction = reporting
-	l.name = name
-	l.Progress(ProgressInitialiseLibrary, l.name)
+	l.Progress(ProgressInitialiseLibrary)
 
 	l.TBibTeXStream = TBibTeXStream{}
 	l.TBibTeXStream.Initialise(reporting, l)
@@ -87,7 +88,6 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 
 	l.Comments = []string{}
 	l.FieldMappings = TStringStringStringMap{}
-	l.EntryFields = TStringStringMap{}
 	l.GroupEntries = TStringSetMap{}
 	l.TitleIndex = TStringSetMap{}
 	//	l.BookTitleIndex = TStringSetMap{}
@@ -109,12 +109,12 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
 	l.GenericFieldTargetToSource = TStringStringSetMap{}
 
 	l.NoBibFileWriting = false
-	l.NoEntryFieldAliasesFileWriting = false
-	l.NoGenericFieldAliasesFileWriting = false
+	l.NoEntryFieldMappingsFileWriting = false
+	l.NoGenericFieldMappingsFileWriting = false
 	l.NoKeyOldiesFileWriting = false
 	l.NoKeyHintsFileWriting = false
 	l.NoNameMappingsFileWriting = false
-	l.NoFieldMappingsFileWriting = false
+	l.NoCrossFieldMappingsFileWriting = false
 	l.ignoreIllegalFields = false
 }
 
@@ -125,14 +125,19 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, name, filesRoot, bas
  *
  */
 
-// (Safely) set the value for a field of a given entry.
+// SetEntryFieldValue writes a field value to the DB for the given entry.
 func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
-	l.EntryFields.SetValueForStringPairMap(entry, field, value)
+	upsertBibEntryField(entry, field, value)
 }
 
-// (Safely) set the entry type
+// SetEntryType writes the entry type to the DB, or to the captured DBLP entry when active.
 func (l *TBibTeXLibrary) SetEntryType(entry, value string) {
-	l.EntryFields.SetValueForStringPairMap(entry, EntryTypeField, value)
+	if l.capturedDBLPEntry != nil {
+		l.capturedDBLPEntry.Key = entry
+		l.capturedDBLPEntry.Fields[EntryTypeField] = value
+		return
+	}
+	upsertBibEntryField(entry, EntryTypeField, value)
 }
 
 // Add a comment to the current library.
@@ -166,7 +171,7 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 		if currentTarget, aliasIsAlreadyAliased := l.EntryFieldSourceToTarget[entry][field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
 				l.Warning("line 162: "+WarningAmbiguousAlias, alias, currentTarget, target)
-				l.NoEntryFieldAliasesFileWriting = true
+				l.NoEntryFieldMappingsFileWriting = true
 
 				return
 			}
@@ -211,7 +216,7 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 		if currentTarget, aliasIsAlreadyAliased := l.GenericFieldSourceToTarget[field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
 				l.Warning("line: 206"+WarningAmbiguousAlias, alias, currentTarget, target)
-				l.NoGenericFieldAliasesFileWriting = true
+				l.NoGenericFieldMappingsFileWriting = true
 
 				return
 			}
@@ -238,7 +243,7 @@ func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target strin
 	}
 }
 
-func (l *TBibTeXLibrary) ReassignEntryFieldAliases(source, target string) {
+func (l *TBibTeXLibrary) ReassignEntryFieldMappings(source, target string) {
 	for field, AliasAssignments := range l.EntryFieldSourceToTarget[source] {
 		for alias, winner := range AliasAssignments {
 			if dealiasedWinner := l.MapNormalisedEntryFieldValue(target, field, winner); dealiasedWinner != "" {
@@ -303,13 +308,140 @@ func (l *TBibTeXLibrary) MaybeAddReorderedName(alias, name string, aliasMap *TSt
 	}
 }
 
-// Add a new name alias
-// Simplify??
-func (l *TBibTeXLibrary) AddAliasForName(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
-	l.MaybeAddReorderedName(name, name, aliasMap, inverseMap)
-	l.MaybeAddReorderedName(alias, name, aliasMap, inverseMap)
+// compressedInitialsForm returns the form of name with spaces between consecutive
+// initials removed, e.g. "Doe, J. A. B." → "Doe, J.A.B.".
+// Returns "" when no compression is possible.
+var initialsSpacer = regexp.MustCompile(`\. ([A-Z]\.)`)
 
-	l.AddAlias(alias, name, aliasMap, inverseMap, true)
+func compressedInitialsForm(name string) string {
+	commaIdx := strings.Index(name, ", ")
+	if commaIdx < 0 {
+		return ""
+	}
+	surname := name[:commaIdx]
+	rest := name[commaIdx+2:]
+	compressed := initialsSpacer.ReplaceAllString(rest, ".$1")
+	if compressed == rest {
+		return ""
+	}
+	for {
+		next := initialsSpacer.ReplaceAllString(compressed, ".$1")
+		if next == compressed {
+			break
+		}
+		compressed = next
+	}
+	return surname + ", " + compressed
+}
+
+// invertedNameForm returns the "Firstname Lastname" form of a "Lastname, Firstname"
+// name, or "" if name has no comma (i.e. is already in non-inverted form).
+func invertedNameForm(name string) string {
+	parts := strings.Split(name, ",")
+	switch len(parts) {
+	case 2:
+		return strings.TrimSpace(parts[1] + " " + parts[0])
+	case 3:
+		return strings.TrimSpace(parts[2] + " " + parts[0] + strings.TrimRight(parts[1], " .") + ".")
+	}
+	return ""
+}
+
+// maybeAddFoundAlias adds alias → canonical silently if alias is not yet mapped.
+// Returns true when a new mapping was added, false when alias already existed
+// (regardless of whether the existing mapping agrees or conflicts).
+func (l *TBibTeXLibrary) maybeAddFoundAlias(canonical, alias string) bool {
+	if alias == "" || alias == canonical {
+		return false
+	}
+	if _, exists := l.NameAliasToName[alias]; exists {
+		return false
+	}
+	l.NameAliasToName[alias] = canonical
+	l.NameToAliases.AddValueToStringSetMap(canonical, alias)
+	return true
+}
+
+// FindAliases derives all non-ambiguous aliases reachable from currentAlias
+// (via name inversion and compressed-initials rules) and maps them to canonical.
+// It stops silently when it hits an alias that is already mapped.
+// Returns true if any new alias was added.
+func (l *TBibTeXLibrary) FindAliases(canonical, currentAlias string) bool {
+	added := false
+
+	if inverted := invertedNameForm(currentAlias); inverted != "" {
+		if l.maybeAddFoundAlias(canonical, inverted) {
+			added = true
+			l.FindAliases(canonical, inverted)
+		}
+	}
+
+	if compressed := compressedInitialsForm(currentAlias); compressed != "" {
+		if l.maybeAddFoundAlias(canonical, compressed) {
+			added = true
+			l.FindAliases(canonical, compressed)
+		}
+	}
+
+	return added
+}
+
+// AddNameMapping makes alias an alias of canonical, absorbing the alias's
+// existing canonical group (if any) into canonical.
+// If canonical is itself an alias of another name, the call is redirected to
+// that name's canonical so the mapping graph stays acyclic.
+func (l *TBibTeXLibrary) AddNameMapping(canonical, alias string) {
+	if existingCanonical, isMapped := l.NameAliasToName[canonical]; isMapped {
+		l.AddNameMapping(existingCanonical, alias)
+		return
+	}
+
+	// If alias is currently a canonical, absorb all its aliases into canonical.
+	if aliasSet, isCanonical := l.NameToAliases[alias]; isCanonical {
+		for a := range aliasSet.Elements() {
+			l.NameAliasToName[a] = canonical
+			l.NameToAliases.AddValueToStringSetMap(canonical, a)
+		}
+		delete(l.NameToAliases, alias)
+	}
+
+	l.AddAlias(alias, canonical, &l.NameAliasToName, &l.NameToAliases, false)
+	l.FindAliases(canonical, alias)
+	l.FindAliases(canonical, canonical)
+	l.nameMappingsModified = true
+}
+
+// CheckNameMappingConsistency silently flattens any (alias -> X -> canonical) chains
+// left by automatic alias derivation. These arise when FindAliases maps a derived
+// form to an intermediate alias instead of the ultimate canonical; the result is
+// correct but the chain needs one extra hop at lookup time. Flattening removes that
+// extra hop and ensures NameAliasToName is a single-level map.
+func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
+	type redirect struct{ alias, trueCanonical string }
+	var redirects []redirect
+
+	for alias, x := range l.NameAliasToName {
+		if _, xIsAlso := l.NameAliasToName[x]; xIsAlso {
+			// Follow chain to the ultimate canonical.
+			ultimate := x
+			for {
+				next, ok := l.NameAliasToName[ultimate]
+				if !ok {
+					break
+				}
+				ultimate = next
+			}
+			redirects = append(redirects, redirect{alias, ultimate})
+		}
+	}
+
+	for _, r := range redirects {
+		oldIntermediate := l.NameAliasToName[r.alias]
+		l.NameAliasToName[r.alias] = r.trueCanonical
+		l.NameToAliases.DeleteValueFromStringSetMap(oldIntermediate, r.alias)
+		l.NameToAliases.AddValueToStringSetMap(r.trueCanonical, r.alias)
+		l.nameMappingsModified = true
+	}
 }
 
 // Really needed?
@@ -327,43 +459,91 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 		source := sourceRAW //l.MapEntryKey(sourceRAW)
 		target := l.MapEntryKey(targetRAW)
 
-		if source != target && l.EntryExists(source) { // }&& l.EntryExists(target) {
+		if source != target && l.EntryExists(source) {
 			l.Progress("Merging %s to %s", source, target)
 
-			sourceType := l.EntryType(source)
-			targetType := l.EntryType(target)
-			targetType = l.MaybeResolveFieldValue(target, source, EntryTypeField, sourceType, targetType)
-			l.SetEntryType(target, targetType)
+			sourceEntry := loadEntryFromDb(source)
+			targetEntry := loadEntryFromDb(target)
 
-			// Can be like a constant ...
+			targetType := l.MaybeResolveFieldValue(target, source, EntryTypeField, sourceEntry.EntryType(), targetEntry.EntryType())
+			l.setEntryField(targetEntry, EntryTypeField, targetType)
+
 			regularFields := TStringSet{}
 			regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
 			for regularField := range regularFields.Elements() {
-				// Do we need l.EntryFields still as (implied) parameter for MaybeResolveFieldValue, once we're done with migrating/legacy??
-				l.EntryFields.SetValueForStringPairMap(target, regularField, l.MaybeResolveFieldValue(target, source, regularField, l.EntryFields[source][regularField], l.EntryFields[target][regularField]))
+				merged := l.MaybeResolveFieldValue(target, source, regularField, sourceEntry.FieldValue(regularField), targetEntry.FieldValue(regularField))
+				l.setEntryField(targetEntry, regularField, merged)
 			}
 
 			if !l.KeyIsTemporary.Contains(source) {
 				l.AddKeyAlias(source, target)
 				l.AddNonDoubles(source, target)
 			}
-			l.ReassignEntryFieldAliases(source, target)
+			l.ReassignEntryFieldMappings(source, target)
 
-			delete(l.EntryFields, source)
+			deleteBibEntry(source)
 
-			l.CheckIfFieldsAreAllowed(target, func(key, field, value string) {
-				delete(l.EntryFields[key], field)
+			l.CheckIfFieldsAreAllowed(targetEntry, func(key, field, value string) {
+				l.deleteEntryField(targetEntry, field)
 			})
 
-			l.TitleIndex.AddValueToStringSetMap(l.EntryFieldValueity(target, "title"), target)
+			l.TitleIndex.AddValueToStringSetMap(targetEntry.FieldValue(TitleField), target)
 
-			l.CheckEntry(target)
+			l.CheckEntry(l.buildEntry(target))
 		}
 
 		return target
 	}
 
 	return ""
+}
+
+// MergeInMemoryDBLPEntry merges an in-memory DBLP entry (never written to DB) into the
+// target entry identified by targetRAW. Unlike MergeEntries, the source is not deleted
+// from the DB and no key aliases or non-double records are created.
+// Opens the target entry for the merge so that only fields that actually changed are
+// written to the DB on close. Returns true if any field changed.
+// The caller is responsible for wrapping this in a transaction and calling CheckEntry
+// when the return value is true.
+func (l *TBibTeXLibrary) MergeInMemoryDBLPEntry(sourceEntry *TBibTeXEntry, targetRAW string) bool {
+	target := l.MapEntryKey(targetRAW)
+	if target == "" {
+		target = targetRAW
+	}
+
+	targetEntry := loadEntryFromDb(target)
+	openEntry(targetEntry)
+
+	targetType := l.MaybeResolveFieldValue(target, sourceEntry.Key, EntryTypeField, sourceEntry.EntryType(), targetEntry.EntryType())
+	l.setEntryField(targetEntry, EntryTypeField, targetType)
+
+	regularFields := TStringSet{}
+	regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
+	for regularField := range regularFields.Elements() {
+		merged := l.MaybeResolveFieldValue(target, sourceEntry.Key, regularField, sourceEntry.FieldValue(regularField), targetEntry.FieldValue(regularField))
+		l.setEntryField(targetEntry, regularField, merged)
+	}
+
+	l.CheckIfFieldsAreAllowed(targetEntry, func(key, field, value string) {
+		l.deleteEntryField(targetEntry, field)
+	})
+
+	// When the target has a crossref, push MustInherit fields (e.g. booktitle,
+	// publisher, year) up to the parent and strip them from the child, mirroring
+	// what the normal check flow does via CheckNeedToSplitBookishEntry.
+	crossrefChanged := false
+	if crossref := targetEntry.FieldValue("crossref"); crossref != "" {
+		crossrefEntry := loadEntryFromDb(crossref)
+		openEntry(crossrefEntry)
+		for field := range BibTeXInheritableFields.Elements() {
+			l.CheckCrossrefInheritableField(crossrefEntry, targetEntry, field)
+		}
+		crossrefChanged = closeEntry(crossrefEntry)
+	}
+
+	l.TitleIndex.AddValueToStringSetMap(targetEntry.FieldValue(TitleField), target)
+
+	return closeEntry(targetEntry) || crossrefChanged
 }
 
 func EvidencedUnequal(a, b string) bool {
@@ -385,10 +565,7 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 	source := l.MapEntryKey(sourceRAW)
 	target := l.MapEntryKey(targetRAW)
 
-	_, source_exists := l.EntryFields[source]
-	_, target_exists := l.EntryFields[target]
-
-	if source_exists && target_exists {
+	if l.EntryExists(source) && l.EntryExists(target) {
 		if source != target && !l.NonDoubles[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
 			l.Warning("Found potential double entries")
 
@@ -405,13 +582,13 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 
 			if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
 				l.MergeEntries(source, target)
-				l.WriteAliasesFiles()
-				l.WriteMappingsFiles()
+				l.WriteAllMappingsFiles()
+				l.WriteCrossFieldMappingsFile()
 				l.WriteBibTeXFile()
 				l.WriteCache()
 			} else {
 				l.AddNonDoubles(source, target)
-				l.WriteNonDoublesFile()
+				l.WriteKeyNonDoublesFile()
 			}
 		}
 	}
@@ -478,9 +655,18 @@ func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, 
  *
  */
 
-// Get the value of the field of a specific entry. Returns the empty string if it is not there.
+// EntryFieldValueity returns the stored value for the given entry field, or "" if absent.
 func (l *TBibTeXLibrary) EntryFieldValueity(entry, field string) string {
-	return l.EntryFields.GetValueityFromStringPairMap(entry, field)
+	if entryCache != nil {
+		if e, ok := entryCache[entry]; ok {
+			return e.Fields[field]
+		}
+		return ""
+	}
+	row := bibQueryRow(`SELECT value FROM bib_entries WHERE entry_key = ? AND field = ?`, entry, field)
+	var value string
+	row.Scan(&value)
+	return value
 }
 
 func (l *TBibTeXLibrary) EntryType(entry string) string {
@@ -491,14 +677,14 @@ func (l *TBibTeXLibrary) PreferredKey(entry string) string {
 	return l.EntryFieldValueity(entry, PreferredAliasField)
 }
 
-// Returns the size of this library.
+// LibrarySize returns the number of entries stored in the DB.
 func (l *TBibTeXLibrary) LibrarySize() int {
-	return len(l.EntryFields)
+	return countBibEntries()
 }
 
 // Reports the size of this library.
 func (l *TBibTeXLibrary) ReportLibrarySize() {
-	l.Progress(ProgressLibrarySize, l.name, l.LibrarySize())
+	l.Progress(ProgressLibrarySize, l.LibrarySize())
 }
 
 // ONLY needed for migration???
@@ -553,40 +739,32 @@ func FormatBibTeXFieldAssignment(prefix, field, value string) string {
 }
 
 func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) string {
-	_, knownEntry := l.EntryFields[key]
-
-	if knownEntry {
-		// Combine all prefixes into one
-		linePrefix := ""
-		for _, prefix := range prefixes {
-			linePrefix += prefix
-		}
-
-		result := ""
-		// Add the type and key
-		result = linePrefix + "@" + l.EntryType(key) + "{" + key + ",\n"
-
-		if groups != "" {
-			result += FormatBibTeXFieldAssignment(linePrefix, GroupsField, groups)
-		}
-
-		// Iterate over the fields and their values .... l.EntryTypes[key] via type := ??
-		for _, field := range BibTeXAllowedEntryFields[l.EntryType(key)].Set().ElementsSorted() {
-			if field != EntryTypeField { // Fix this with AllowedEntryFields with/without it
-				if value := l.EntryFieldValueity(key, field); value != "" {
-					result += FormatBibTeXFieldAssignment(linePrefix, field, l.MapEntryFieldValue(key, field, value))
-				}
-			}
-		}
-
-		// Close the entry statement
-		result += linePrefix + "}\n"
-
-		return result
-	} else {
-		// When the specified entry does not exist, all we can do is return the empty string
+	entry := loadEntryFromDb(key)
+	if !entry.Exists() {
 		return ""
 	}
+
+	linePrefix := ""
+	for _, prefix := range prefixes {
+		linePrefix += prefix
+	}
+
+	result := linePrefix + "@" + entry.EntryType() + "{" + key + ",\n"
+
+	if groups != "" {
+		result += FormatBibTeXFieldAssignment(linePrefix, GroupsField, groups)
+	}
+
+	for _, field := range BibTeXAllowedEntryFields[entry.EntryType()].Set().ElementsSorted() {
+		if field != EntryTypeField {
+			if value := entry.FieldValue(field); value != "" {
+				result += FormatBibTeXFieldAssignment(linePrefix, field, l.MapEntryFieldValue(key, field, value))
+			}
+		}
+	}
+
+	result += linePrefix + "}\n"
+	return result
 }
 
 func CleanJRDate(s string) string {
@@ -602,7 +780,45 @@ func CleanJRDate(s string) string {
  */
 
 func (l *TBibTeXLibrary) EntryExists(entry string) bool {
-	return l.EntryType(entry) != ""
+	return bibEntryExists(entry)
+}
+
+// buildEntry loads a TBibTeXEntry snapshot for key from the DB.
+func (l *TBibTeXLibrary) buildEntry(key string) *TBibTeXEntry {
+	return loadEntryFromDb(key)
+}
+
+// setEntryField writes a field value to the entry. When the entry is open
+// (openEntry was called), only entry.Fields is updated; the DB write is
+// deferred to closeEntry. Otherwise the value is written to the DB immediately
+// (and the cache when active).
+func (l *TBibTeXLibrary) setEntryField(entry *TBibTeXEntry, field, value string) {
+	if _, open := entrySnapshots[entry.Key]; open {
+		if value == "" {
+			delete(entry.Fields, field)
+		} else {
+			entry.Fields[field] = value
+		}
+		return
+	}
+	upsertBibEntryField(entry.Key, field, value)
+	if entryCache == nil {
+		entry.Fields[field] = value
+	}
+}
+
+// deleteEntryField removes a field from the entry. When the entry is open,
+// only entry.Fields is updated; the DB delete is deferred to closeEntry.
+// Otherwise the field is deleted from the DB immediately (and the cache).
+func (l *TBibTeXLibrary) deleteEntryField(entry *TBibTeXEntry, field string) {
+	if _, open := entrySnapshots[entry.Key]; open {
+		delete(entry.Fields, field)
+		return
+	}
+	deleteBibEntryField(entry.Key, field)
+	if entryCache == nil {
+		delete(entry.Fields, field)
+	}
 }
 
 func (l *TBibTeXLibrary) AliasExists(alias string) bool {
@@ -632,8 +848,8 @@ var (
 func KeyFromTime(KeyTime time.Time) string {
 	return fmt.Sprintf(
 		"%s-%04d-%02d-%02d-%02d-%02d-%02d",
-		KeyPrefix,
-		ForwardKeyTime.Year(),
+		keyPrefix,
+		KeyTime.Year(),
 		int(KeyTime.Month()),
 		KeyTime.Day(),
 		KeyTime.Hour(),
@@ -643,10 +859,8 @@ func KeyFromTime(KeyTime time.Time) string {
 
 // ////// Place me somehwere
 func (l *TBibTeXLibrary) IsKnownKey(key string) bool {
-	_, KnownOriginalKey := l.EntryFields[key]
 	_, KnownAliasKey := l.KeyToKey[key]
-
-	return KnownOriginalKey || KnownAliasKey
+	return bibEntryExists(key) || KnownAliasKey
 }
 
 // Generate a new key based on the ForwardKeyTime.
@@ -708,8 +922,14 @@ func (l *TBibTeXLibrary) FoundDoubles() bool {
 // So, we need to add a unique prefix while parsing these entries.
 var uniqueID int
 
-// Start to record a library entry
+// StartRecordingLibraryEntry begins recording a parsed BibTeX entry.
+// When capturedDBLPEntry is active the entry is captured in memory instead of the DB.
 func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
+	if l.capturedDBLPEntry != nil {
+		l.capturedDBLPEntry.Key = key
+		l.capturedDBLPEntry.Fields[EntryTypeField] = entryType
+		return true
+	}
 	if !BibTeXAllowedEntries.Contains(entryType) {
 		l.Warning(WarningUnknownEntryType, key, entryType)
 		/////// MAYBE UPDATE THIS
@@ -726,7 +946,6 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 		// Resolve the double entry issue
 		l.SetEntryType(key, l.ResolveFieldValue(key, key, EntryTypeField, entryType, l.EntryType(key)))
 	} else {
-		l.EntryFields[key] = TStringMap{}
 		l.SetEntryType(key, entryType)
 	}
 
@@ -754,48 +973,38 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 	return true
 }
 
-func (l *TBibTeXLibrary) MaybeApplyFieldMappings(key string) {
-	for sourceField, sourceValue := range l.EntryFields[key] {
+func (l *TBibTeXLibrary) MaybeApplyFieldMappings(entry *TBibTeXEntry) {
+	for sourceField, sourceValue := range entry.Fields {
 		for targetField, targetValue := range l.FieldMappings[sourceField][sourceValue] {
-			l.SetEntryFieldValue(key, targetField, targetValue)
+			l.setEntryField(entry, targetField, targetValue)
 		}
 	}
 }
 
-func (l *TBibTeXLibrary) CheckIfFieldsAreAllowed(key string, violationHandler func(string, string, string)) {
-	for field, value := range l.EntryFields[key] {
-		// Check if the field is allowed for this type.
-		// If not, we need to run the violation handler
-		if !l.EntryAllowsForField(key, field) {
-			violationHandler(key, field, value)
+func (l *TBibTeXLibrary) CheckIfFieldsAreAllowed(entry *TBibTeXEntry, violationHandler func(string, string, string)) {
+	for field, value := range entry.Fields {
+		if !l.EntryAllowsForField(entry.Key, field) {
+			violationHandler(entry.Key, field, value)
 		}
 	}
 }
 
-// Finish recording the current library entry
+// FinishRecordingLibraryEntry completes parsing of a BibTeX entry.
+// When capturedDBLPEntry is active the entry is already in memory; skip all DB-dependent steps.
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
-	//	if ISBN := l.EntryFieldValueity(key, "isbn"); ISBN != "" {
-	//		l.ISBNIndex.AddValueToStringSetMap(ISBN, key)
-	//	}
+	if l.capturedDBLPEntry != nil {
+		return true
+	}
+	entry := loadEntryFromDb(key)
 
-	//	if DOI := l.EntryFieldValueity(key, "doi"); DOI != "" {
-	//		l.DOIIndex.AddValueToStringSetMap(DOI, key)
-	//	}
-
-	if title := l.EntryFieldValueity(key, TitleField); title != "" {
+	if title := entry.FieldValue(TitleField); title != "" {
 		l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(title), key)
 	}
 
-	//	if bookTitle := l.EntryFieldValueity(key, "booktitle"); bookTitle != "" {
-	//		l.BookTitleIndex.AddValueToStringSetMap(TeXStringIndexer(bookTitle), key)
-	//	}
-
-	// Check if no illegal fields were used
-	// As this potentially requires interaction with the user, we only do this when we're not in silenced mode.
 	if !l.InteractionIsOff() {
-		l.CheckIfFieldsAreAllowed(key, func(key, field, value string) {
-			if l.ignoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, l.EntryType(key)) {
-				delete(l.EntryFields[key], field)
+		l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
+			if l.ignoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
+				l.deleteEntryField(entry, field)
 			} else {
 				l.Warning("Stopping programme. Please fix this manually.")
 				os.Exit(0)
@@ -803,18 +1012,24 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 		})
 	}
 
-	l.MaybeApplyFieldMappings(key)
+	l.MaybeApplyFieldMappings(entry)
 
 	return true
 }
 
 func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
+	existing := l.NonDoubles[a]
+	if existing.Contains(b) {
+		return
+	}
+
 	s := TStringSet{}
-	s.Initialise().Add(a, b).Unite(l.NonDoubles[a]).Unite(l.NonDoubles[b])
+	s.Initialise().Add(a, b).Unite(existing).Unite(l.NonDoubles[b])
 
 	for c := range s.Elements() {
 		l.NonDoubles[c] = s
 	}
+	l.keyNonDoublesModified = true
 }
 
 func init() {

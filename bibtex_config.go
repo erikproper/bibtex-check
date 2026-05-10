@@ -31,9 +31,6 @@ var (
 )
 
 const (
-	// The prefix used for the generated keys
-	// (*) Should go into a config file.
-	KeyPrefix   = "EP" // (*)
 	FilesFolder = "Files/"
 	NoKey       = ""
 
@@ -43,18 +40,20 @@ const (
 	GroupsCacheExtension   = ".cache_groups"
 	CommentsCacheExtension = ".cache_comments"
 
-	BibFileExtension = ".bib"
+	BibFileExtension    = ".bib"
+	sqliteFileExtension = ".sqlite3"
+	ConfigFileExtension = ".config"
+	LockFileExtension   = ".lock"
 
-	nameMappingsFileExtension = ".filter_name_mappings"
-	sqliteFileExtension       = ".sqlite3"
-
-	EntryFieldMappingsFileExtension   = ".filter_entry_field_mappings"
-	GenericFieldMappingsFileExtension = ".filter_generic_field_mappings"
-	CrossFieldMappingsFileExtension   = ".filter_cross_field_mappings"
-
-	NonDoublesFileExtension = ".key_non_double"
-	KeyOldiesFileExtension  = ".key_oldies"
-	KeyHintsFileExtension   = ".key_hints"
+	// Mapping/hint/oldie tables live in a <basename>.tables/ subfolder as CSV files.
+	NameMappingsFilePath          = ".tables/filter_name_mappings.csv"
+	EntryFieldMappingsFilePath    = ".tables/filter_entry_field_mappings.csv"
+	GenericFieldMappingsFilePath  = ".tables/filter_generic_field_mappings.csv"
+	CrossFieldMappingsFilePath    = ".tables/filter_cross_field_mappings.csv"
+	KeyNonDoublesFilePath            = ".tables/key_non_doubles.csv"
+	KeyOldiesFilePath             = ".tables/key_oldies.csv"
+	KeyHintsFilePath              = ".tables/key_hints.csv"
+	ShortenMappingsFilePath       = ".tables/shorten_mappings.csv"
 
 	DefaultLanguage = "eng"
 )
