@@ -12,12 +12,6 @@
 
 package main
 
-import (
-	"strings"
-
-	_ "github.com/mattn/go-sqlite3"
-)
-
 // Read bib files
 func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
 	FullFilePath := l.FilesRoot + l.BaseName + BibFileExtension
@@ -60,84 +54,13 @@ func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading 
 	return l.readFile(l.FilesRoot+l.BaseName+fileExtension, message, reading)
 }
 
-func (l *TBibTeXLibrary) ValidCache() bool {
-	FileBase := l.FilesRoot + l.BaseName
-
-	FieldsCacheFile := FileBase + FieldsCacheExtension
-	CommentsCacheFile := FileBase + CommentsCacheExtension
-
-	// Maybe do this via a set?
-	if FileExists(FieldsCacheFile) && FileExists(CommentsCacheFile) {
-		CacheModTime := fileModTime(FieldsCacheFile)
-
-		// Maybe do this via a set?
-		return CacheModTime > fileModTime(FileBase+BibFileExtension) &&
-			CacheModTime > fileModTime(FileBase+NameMappingsFilePath) &&
-			CacheModTime > fileModTime(FileBase+KeyOldiesFilePath) &&
-			CacheModTime > fileModTime(FileBase+EntryFieldMappingsFilePath) &&
-			CacheModTime > fileModTime(FileBase+GenericFieldMappingsFilePath) &&
-			CacheModTime > fileModTime(FileBase+CrossFieldMappingsFilePath) &&
-			CacheModTime > fileModTime(FileBase+KeyNonDoublesFilePath)
-	} else {
-		return false
-	}
-}
-
-func (l *TBibTeXLibrary) ReadCache() {
-	l.ReadFieldsCache()
-	l.ReadGroupsCache()
-	l.ReadCommentsCache()
-}
-
-func (l *TBibTeXLibrary) ReadFieldsCache() {
-	l.readLibraryFile(FieldsCacheExtension, ProgressReadingFieldsCache, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 3 {
-			l.Warning("SOME WARNING %s", line)
-			return
-		}
-
-		key := elements[0]
-		field := elements[1]
-		value := elements[2]
-
-		l.ProcessEntryFieldValue(key, field, value)
-	})
-}
-
-func (l *TBibTeXLibrary) ReadGroupsCache() {
-	l.readLibraryFile(GroupsCacheExtension, ProgressReadingGroupsCache, func(line string) {
-		elements := strings.Split(line, "\t")
-		if len(elements) < 2 {
-			l.Warning("SOME WARNING %s", line)
-			return
-		}
-
-		l.GroupEntries.AddValueToStringSetMap(elements[1], elements[0])
-	})
-}
-
-func (l *TBibTeXLibrary) ReadCommentsCache() {
-	l.readLibraryFile(CommentsCacheExtension, ProgressReadingCommentsCache, func(line string) {
-		if line == CacheCommentsSeparator {
-			l.Comments = append(l.Comments, "")
-		} else {
-			index := len(l.Comments) - 1
-			if l.Comments[index] == "" {
-				l.Comments[index] = line
-			} else {
-				l.Comments[index] += "\n" + line
-			}
-		}
-	})
-}
-
 func (l *TBibTeXLibrary) ReadCrossFieldMappingsFile() {
 	maybeReloadCrossFieldMappingsDb()
 	if !crossFieldMappingsFileWritingAllowed {
 		l.NoCrossFieldMappingsFileWriting = true
 	}
 	loadCrossFieldMappingsFromDb(l)
+	l.crossFieldMappingsModified = false
 }
 
 // Read key field challenge file
@@ -147,6 +70,7 @@ func (l *TBibTeXLibrary) ReadEntryFieldMappingsFile() {
 		l.NoEntryFieldMappingsFileWriting = true
 	}
 	loadEntryFieldMappingsFromDb(l)
+	l.entryFieldMappingsModified = false
 }
 
 // Read generic field challenge file
@@ -156,6 +80,7 @@ func (l *TBibTeXLibrary) ReadGenericFieldMappingsFile() {
 		l.NoGenericFieldMappingsFileWriting = true
 	}
 	loadGenericFieldMappingsFromDb(l)
+	l.genericFieldMappingsModified = false
 }
 
 func (l *TBibTeXLibrary) ReadKeyOldiesFile() {
@@ -164,6 +89,7 @@ func (l *TBibTeXLibrary) ReadKeyOldiesFile() {
 		l.NoKeyOldiesFileWriting = true
 	}
 	loadKeyOldiesFromDb(l)
+	l.keyOldiesModified = false
 }
 
 func (l *TBibTeXLibrary) ReadKeyHintsFile() {
@@ -172,6 +98,7 @@ func (l *TBibTeXLibrary) ReadKeyHintsFile() {
 		l.NoKeyHintsFileWriting = true
 	}
 	loadKeyHintsFromDb(l)
+	l.keyHintsModified = false
 }
 
 func (l *TBibTeXLibrary) ReadKeyNonDoublesFile() {
@@ -181,6 +108,20 @@ func (l *TBibTeXLibrary) ReadKeyNonDoublesFile() {
 	}
 	loadKeyNonDoublesFromDb(l)
 	l.keyNonDoublesModified = false
+}
+
+func (l *TBibTeXLibrary) ReadURLsIgnoreFile() {
+	maybeReloadURLsIgnoreDb()
+	loadURLsIgnoreFromDb(l)
+}
+
+func (l *TBibTeXLibrary) ReadPDFConfirmedOkFile() {
+	maybeReloadPDFConfirmedOkDb()
+	if !pdfConfirmedOkFileWritingAllowed {
+		l.NoPDFConfirmedOkFileWriting = true
+	}
+	loadPDFConfirmedOkFromDb(l)
+	l.pdfConfirmedOkModified = false
 }
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {

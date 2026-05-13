@@ -21,20 +21,29 @@ import (
 )
 
 type TInteraction struct {
-	silenced         bool
-	questionWasAsked bool
+	silenced          bool
+	questionWasAsked  bool
+	outputWasProduced bool
+	stepMode          bool
 }
 
-// ResetQuestionFlag clears the per-entry question tracker before processing
-// each entry in a "for all" loop.
+// ResetQuestionFlag clears the per-entry trackers before processing each entry
+// in a "for all" loop.
 func (r *TInteraction) ResetQuestionFlag() {
 	r.questionWasAsked = false
+	r.outputWasProduced = false
 }
 
 // QuestionWasAsked reports whether any WarningQuestion was issued since the
 // last ResetQuestionFlag call.
 func (r *TInteraction) QuestionWasAsked() bool {
 	return r.questionWasAsked
+}
+
+// OutputWasProduced reports whether any Progress/Warning/Error was emitted
+// since the last ResetQuestionFlag call.
+func (r *TInteraction) OutputWasProduced() bool {
+	return r.outputWasProduced
 }
 
 // AskForInput prints prompt and returns the trimmed line the user types.
@@ -45,6 +54,22 @@ func (r *TInteraction) AskForInput(prompt string) (string, error) {
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	return strings.TrimSpace(line), err
+}
+
+// SetStepMode enables or disables per-entry "press Enter" pauses in for-all loops.
+func (r *TInteraction) SetStepMode(on bool) {
+	r.stepMode = on
+}
+
+// PressEnterToContinue pauses and waits for the user to press Enter,
+// but only when step mode is on and something was actually printed for this entry.
+func (r *TInteraction) PressEnterToContinue() {
+	if r.silenced || !r.stepMode || !r.outputWasProduced {
+		return
+	}
+	fmt.Printf("--- Press Enter to continue ---")
+	reader := bufio.NewReader(os.Stdin)
+	reader.ReadString('\n')
 }
 
 // AskContinueOrQuit asks the user whether to continue or quit after an entry
@@ -90,6 +115,7 @@ func (r *TInteraction) SetInteraction(status bool) {
 // The error message should provide the formatting.
 func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 	if !r.silenced {
+		r.outputWasProduced = true
 		fmt.Printf("ERROR:    "+errorMessage+"\n", context...)
 	}
 
@@ -100,6 +126,7 @@ func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 // The warning message should provide the formatting.
 func (r *TInteraction) Warning(warning string, context ...any) bool {
 	if !r.silenced {
+		r.outputWasProduced = true
 		fmt.Printf("WARNING:  "+warning+"\n", context...)
 	}
 
@@ -152,6 +179,7 @@ func (r *TInteraction) WarningYesNoQuestion(question, warning string, context ..
 // The progress message should provide the formatting.
 func (r *TInteraction) Progress(progress string, context ...any) bool {
 	if !r.silenced {
+		r.outputWasProduced = true
 		fmt.Printf("PROGRESS: "+progress+"\n", context...)
 	}
 	return true

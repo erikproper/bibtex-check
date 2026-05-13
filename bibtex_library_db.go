@@ -19,8 +19,11 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
+	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,11 +35,15 @@ const (
 )
 
 var (
-	dbInteraction      TInteraction
-	db                 *sql.DB
-	entryCache         map[string]*TBibTeXEntry
-	entrySnapshots     map[string]map[string]string
-	bibEntriesModified bool
+	dbInteraction         TInteraction
+	db                    *sql.DB
+	entryCache            map[string]*TBibTeXEntry
+	entrySnapshots        map[string]map[string]string
+	bibEntriesModified    bool
+	c2TrackingActive      bool
+	c2EntryModified       bool
+	entryModTrackingActive bool
+	entryModified         bool
 )
 
 // --- entry cache ---
@@ -99,6 +106,8 @@ func connectToDatabase() {
 	ensureCrossFieldMappingsTableExists()
 	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
+	ensurePDFConfirmedOkTableExists()
+	ensureURLsIgnoreTableExists()
 	ensureBibTablesExist()
 }
 
@@ -107,9 +116,14 @@ func connectToDatabase() {
 func ensureTableDatesTableExists() {
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS table_modification_times (
-		  table_name        TEXT PRIMARY KEY,
-		  modification_time INT  NOT NULL
+		  table_name        TEXT    PRIMARY KEY,
+		  modification_time INT     NOT NULL DEFAULT 0,
+		  dirty             INT     NOT NULL DEFAULT 0,
+		  last_written_time INT     NOT NULL DEFAULT 0
 		);`)
+	// Migrate existing databases that have only the original single column.
+	db.Exec(`ALTER TABLE table_modification_times ADD COLUMN dirty INT NOT NULL DEFAULT 0`)
+	db.Exec(`ALTER TABLE table_modification_times ADD COLUMN last_written_time INT NOT NULL DEFAULT 0`)
 }
 
 func setTableDate(tableName string, date int64) {
@@ -134,6 +148,45 @@ func tableModTime(tableName string) int64 {
 		date = 0
 	}
 	return date
+}
+
+func setTableDirty(tableName string) {
+	_, err := db.Exec(`
+		INSERT INTO table_modification_times (table_name, modification_time, dirty)
+		  VALUES (?, 0, 1)
+		  ON CONFLICT(table_name) DO UPDATE SET dirty = 1;`,
+		tableName)
+	if err != nil {
+		dbInteraction.Error("Setting dirty bit for %s failed: %s", tableName, err)
+	}
+}
+
+func clearTableDirty(tableName string) {
+	if _, err := db.Exec(
+		`UPDATE table_modification_times SET dirty = 0 WHERE table_name = ?`, tableName); err != nil {
+		dbInteraction.Error("Clearing dirty bit for %s failed: %s", tableName, err)
+	}
+}
+
+func isTableDirty(tableName string) bool {
+	var dirty int
+	if err := db.QueryRow(
+		`SELECT dirty FROM table_modification_times WHERE table_name = ?`, tableName).Scan(&dirty); err != nil {
+		return false
+	}
+	return dirty != 0
+}
+
+func setTableLastWritten(tableName string) {
+	now := time.Now().UnixMicro()
+	_, err := db.Exec(`
+		INSERT INTO table_modification_times (table_name, modification_time, last_written_time)
+		  VALUES (?, 0, ?)
+		  ON CONFLICT(table_name) DO UPDATE SET last_written_time = excluded.last_written_time;`,
+		tableName, now)
+	if err != nil {
+		dbInteraction.Error("Setting last_written_time for %s failed: %s", tableName, err)
+	}
 }
 
 func tryCreateTableIfNeeded(command string) {
@@ -555,14 +608,13 @@ func maybeReloadCrossFieldMappingsDb() {
 	             ON CONFLICT(source_field, source_value, target_field)
 	               DO UPDATE SET target_value = excluded.target_value;`
 
-	processFile(fileName, func(line string) {
-		elements := strings.Split(line, csvDelimiter)
-		if len(elements) < 4 {
-			dbInteraction.Warning(WarningFieldMappingsTooShort, line)
+	processCSVFile(fileName, func(fields []string) {
+		if len(fields) < 4 {
+			dbInteraction.Warning(WarningFieldMappingsTooShort, strings.Join(fields, csvDelimiter))
 			crossFieldMappingsFileWritingAllowed = false
 			return
 		}
-		if _, err := db.Exec(upsert, elements[0], elements[1], elements[2], elements[3]); err != nil {
+		if _, err := db.Exec(upsert, fields[0], fields[1], fields[2], fields[3]); err != nil {
 			dbInteraction.Warning("Cross-field mapping insertion failed: %s", err)
 		}
 	})
@@ -655,14 +707,13 @@ func maybeReloadEntryFieldMappingsDb() {
 	             ON CONFLICT(entry_key, field, challenger)
 	               DO UPDATE SET winner = excluded.winner;`
 
-	processFile(fileName, func(line string) {
-		elements := strings.Split(line, csvDelimiter)
-		if len(elements) < 4 {
-			dbInteraction.Warning(WarningEntryFieldMappingsLineTooShort, line)
+	processCSVFile(fileName, func(fields []string) {
+		if len(fields) < 4 {
+			dbInteraction.Warning(WarningEntryFieldMappingsLineTooShort, strings.Join(fields, csvDelimiter))
 			entryFieldMappingsFileWritingAllowed = false
 			return
 		}
-		if _, err := db.Exec(upsert, elements[0], elements[1], elements[2], elements[3]); err != nil {
+		if _, err := db.Exec(upsert, fields[0], fields[1], fields[2], fields[3]); err != nil {
 			dbInteraction.Warning("Entry field alias insertion failed: %s", err)
 		}
 	})
@@ -761,14 +812,13 @@ func maybeReloadGenericFieldMappingsDb() {
 	             ON CONFLICT(field, challenger)
 	               DO UPDATE SET winner = excluded.winner;`
 
-	processFile(fileName, func(line string) {
-		elements := strings.Split(line, csvDelimiter)
-		if len(elements) < 3 {
-			dbInteraction.Warning(WarningGenericFieldMappingsLineTooShort, line)
+	processCSVFile(fileName, func(fields []string) {
+		if len(fields) < 3 {
+			dbInteraction.Warning(WarningGenericFieldMappingsLineTooShort, strings.Join(fields, csvDelimiter))
 			genericFieldMappingsFileWritingAllowed = false
 			return
 		}
-		if _, err := db.Exec(upsert, elements[0], elements[1], elements[2]); err != nil {
+		if _, err := db.Exec(upsert, fields[0], fields[1], fields[2]); err != nil {
 			dbInteraction.Warning("Generic field alias insertion failed: %s", err)
 		}
 	})
@@ -827,6 +877,133 @@ func saveGenericFieldMappingsToDb(l *TBibTeXLibrary) {
 		}
 	}
 	setTableDate("filter_generic_field_mappings", fileModTime(bibTeXFolder+bibTeXBaseName+GenericFieldMappingsFilePath))
+}
+
+// --- urls_ignore table ---
+// Lives at FilesRoot level (no BaseName prefix); migrates from legacy urls.ignore on first use.
+
+func ensureURLsIgnoreTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS urls_ignore (
+		  url TEXT PRIMARY KEY
+		);`)
+}
+
+func maybeReloadURLsIgnoreDb() {
+	csvFile := bibTeXFolder + URLsIgnoreFilePath
+	legacyFile := bibTeXFolder + URLsIgnoreLegacyFile
+
+	// Pick whichever source file exists and is newer than the DB.
+	sourceFile := csvFile
+	if !FileExists(csvFile) && FileExists(legacyFile) {
+		sourceFile = legacyFile
+	}
+	if fileModTime(sourceFile) <= tableModTime("urls_ignore") {
+		return
+	}
+
+	dbInteraction.Progress("Reloading URLs-ignore from %s", sourceFile)
+	if _, err := db.Exec(`DROP TABLE IF EXISTS urls_ignore;`); err != nil {
+		dbInteraction.Warning("Could not drop urls_ignore table: %s", err)
+	}
+	ensureURLsIgnoreTableExists()
+
+	insert := `INSERT INTO urls_ignore (url) VALUES (?) ON CONFLICT(url) DO NOTHING;`
+	processFile(sourceFile, func(line string) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return
+		}
+		if _, err := db.Exec(insert, line); err != nil {
+			dbInteraction.Warning("urls_ignore insert failed: %s", err)
+		}
+	})
+	setTableDate("urls_ignore", fileModTime(sourceFile))
+}
+
+func loadURLsIgnoreFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT url FROM urls_ignore`)
+	if err != nil {
+		dbInteraction.Warning("Could not query urls_ignore: %s", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var url string
+		if err := rows.Scan(&url); err != nil {
+			dbInteraction.Warning("Could not scan urls_ignore row: %s", err)
+			continue
+		}
+		l.URLsIgnore.Add(url)
+	}
+}
+
+// --- pdf_confirmed_ok table ---
+
+var pdfConfirmedOkFileWritingAllowed = true
+
+func ensurePDFConfirmedOkTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS pdf_confirmed_ok (
+		  entry_key      TEXT PRIMARY KEY,
+		  confirmed_date TEXT NOT NULL
+		);`)
+}
+
+func maybeReloadPDFConfirmedOkDb() {
+	fileName := bibTeXFolder + bibTeXBaseName + PDFConfirmedOkFilePath
+	if fileModTime(fileName) <= tableModTime("pdf_confirmed_ok") {
+		return
+	}
+	dbInteraction.Progress("Reloading PDF confirmed-OK from %s", fileName)
+	if _, err := db.Exec(`DROP TABLE IF EXISTS pdf_confirmed_ok;`); err != nil {
+		dbInteraction.Warning("Could not drop pdf_confirmed_ok table: %s", err)
+	}
+	ensurePDFConfirmedOkTableExists()
+	insert := `INSERT INTO pdf_confirmed_ok (entry_key, confirmed_date) VALUES (?, ?)
+	             ON CONFLICT(entry_key) DO NOTHING;`
+	processCSVFile(fileName, func(fields []string) {
+		if len(fields) < 2 {
+			pdfConfirmedOkFileWritingAllowed = false
+			return
+		}
+		if _, err := db.Exec(insert, fields[0], fields[1]); err != nil {
+			dbInteraction.Warning("pdf_confirmed_ok insert failed: %s", err)
+		}
+	})
+	setTableDate("pdf_confirmed_ok", fileModTime(fileName))
+}
+
+func loadPDFConfirmedOkFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT entry_key, confirmed_date FROM pdf_confirmed_ok`)
+	if err != nil {
+		dbInteraction.Warning("Could not query pdf_confirmed_ok: %s", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, date string
+		if err := rows.Scan(&key, &date); err != nil {
+			dbInteraction.Warning("Could not scan pdf_confirmed_ok row: %s", err)
+			continue
+		}
+		l.PDFConfirmedOk[key] = date
+	}
+}
+
+func savePDFConfirmedOkToDb(l *TBibTeXLibrary) {
+	if _, err := db.Exec(`DELETE FROM pdf_confirmed_ok;`); err != nil {
+		dbInteraction.Warning("Could not clear pdf_confirmed_ok: %s", err)
+	}
+	insert := `INSERT INTO pdf_confirmed_ok (entry_key, confirmed_date) VALUES (?, ?) ON CONFLICT DO NOTHING;`
+	for key, date := range l.PDFConfirmedOk {
+		if l.EntryExists(key) {
+			if _, err := db.Exec(insert, key, date); err != nil {
+				dbInteraction.Warning("pdf_confirmed_ok insert failed: %s", err)
+			}
+		}
+	}
+	setTableDate("pdf_confirmed_ok", fileModTime(bibTeXFolder+bibTeXBaseName+PDFConfirmedOkFilePath))
 }
 
 // --- bib_entries / bib_groups / bib_comments tables ---
@@ -996,6 +1173,218 @@ func clearBibTables() {
 	bibEntriesModified = false
 }
 
+// markBibEntryModified sets bibEntriesModified and signals active trackers.
+// Also marks the bib_entries SQLite table dirty so a crash-recovery write can
+// restore the bib file on the next startup before any command runs.
+func markBibEntryModified() {
+	bibEntriesModified = true
+	if c2TrackingActive {
+		c2EntryModified = true
+	}
+	if entryModTrackingActive {
+		entryModified = true
+	}
+	setTableDirty("bib_entries")
+}
+
+// startC2Tracking arms the per-call C2 modification detector.
+func startC2Tracking() {
+	c2TrackingActive = true
+	c2EntryModified = false
+}
+
+// stopC2Tracking disarms C2 tracking and returns whether any entry was modified.
+func stopC2Tracking() bool {
+	c2TrackingActive = false
+	return c2EntryModified
+}
+
+// startEntryTracking arms the per-entry modification detector (across all check classes).
+func startEntryTracking() {
+	entryModTrackingActive = true
+	entryModified = false
+}
+
+// stopEntryTracking disarms per-entry tracking and returns whether the entry was modified.
+func stopEntryTracking() bool {
+	entryModTrackingActive = false
+	return entryModified
+}
+
+// writeRepairCSV writes sorted lines to filePath, backing up the old file first.
+// Returns false if the file cannot be created.
+func writeRepairCSV(filePath string, lines []string) bool {
+	BackupFile(filePath)
+	f, err := os.Create(filePath)
+	if err != nil {
+		dbInteraction.Warning("Repair write failed for %s: %s", filePath, err)
+		return false
+	}
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	sort.Strings(lines)
+	for _, line := range lines {
+		w.WriteString(line + "\n")
+	}
+	w.Flush()
+	return true
+}
+
+// repairDirtyMappingTables writes any mapping table whose dirty bit is set from
+// the current SQLite state back to its CSV file. Called from initialiseLibrary
+// before any file reads so that loadMappingFiles picks up repaired files.
+// Returns which tables were written so the caller can apply cascade re-read rules.
+func repairDirtyMappingTables() (nameMappingsRepaired, entryFieldMappingsRepaired bool) {
+	base := bibTeXFolder + bibTeXBaseName
+
+	repair := func(tableName, filePath string) bool {
+		if !isTableDirty(tableName) {
+			return false
+		}
+		dbInteraction.Progress("Recovering %s from database after unclean shutdown", filePath)
+		return true
+	}
+
+	finishRepair := func(tableName, filePath string) {
+		setTableDate(tableName, fileModTime(filePath))
+		clearTableDirty(tableName)
+		setTableLastWritten(tableName)
+	}
+
+	// name_mappings: "name;alias" per non-self pair
+	if repair("name_mappings", base+NameMappingsFilePath) {
+		rows, err := db.Query(`SELECT name, alias FROM name_mappings WHERE name != alias`)
+		if err == nil {
+			var lines []string
+			for rows.Next() {
+				var name, alias string
+				if rows.Scan(&name, &alias) == nil {
+					lines = append(lines, name+csvDelimiter+alias)
+				}
+			}
+			rows.Close()
+			if writeRepairCSV(base+NameMappingsFilePath, lines) {
+				finishRepair("name_mappings", base+NameMappingsFilePath)
+				nameMappingsRepaired = true
+			}
+		}
+	}
+
+	// key_hints: "key;hint"
+	if repair("key_hints", base+KeyHintsFilePath) {
+		rows, err := db.Query(`SELECT key, hint FROM key_hints`)
+		if err == nil {
+			var lines []string
+			for rows.Next() {
+				var key, hint string
+				if rows.Scan(&key, &hint) == nil {
+					lines = append(lines, key+csvDelimiter+hint)
+				}
+			}
+			rows.Close()
+			if writeRepairCSV(base+KeyHintsFilePath, lines) {
+				finishRepair("key_hints", base+KeyHintsFilePath)
+			}
+		}
+	}
+
+	// key_oldies: "key;alias"
+	if repair("key_oldies", base+KeyOldiesFilePath) {
+		rows, err := db.Query(`SELECT key, alias FROM key_oldies`)
+		if err == nil {
+			var lines []string
+			for rows.Next() {
+				var key, alias string
+				if rows.Scan(&key, &alias) == nil {
+					lines = append(lines, key+csvDelimiter+alias)
+				}
+			}
+			rows.Close()
+			if writeRepairCSV(base+KeyOldiesFilePath, lines) {
+				finishRepair("key_oldies", base+KeyOldiesFilePath)
+			}
+		}
+	}
+
+	// key_non_doubles: "key1;key2"
+	if repair("key_non_doubles", base+KeyNonDoublesFilePath) {
+		rows, err := db.Query(`SELECT key1, key2 FROM key_non_doubles`)
+		if err == nil {
+			var lines []string
+			for rows.Next() {
+				var k1, k2 string
+				if rows.Scan(&k1, &k2) == nil {
+					lines = append(lines, k1+csvDelimiter+k2)
+				}
+			}
+			rows.Close()
+			if writeRepairCSV(base+KeyNonDoublesFilePath, lines) {
+				finishRepair("key_non_doubles", base+KeyNonDoublesFilePath)
+			}
+		}
+	}
+
+	// filter_cross_field_mappings: "source_field;source_value;target_field;target_value"
+	if repair("filter_cross_field_mappings", base+CrossFieldMappingsFilePath) {
+		rows, err := db.Query(
+			`SELECT source_field, source_value, target_field, target_value FROM filter_cross_field_mappings`)
+		if err == nil {
+			var lines []string
+			for rows.Next() {
+				var sf, sv, tf, tv string
+				if rows.Scan(&sf, &sv, &tf, &tv) == nil {
+					lines = append(lines, csvLine(sf, sv, tf, tv))
+				}
+			}
+			rows.Close()
+			if writeRepairCSV(base+CrossFieldMappingsFilePath, lines) {
+				finishRepair("filter_cross_field_mappings", base+CrossFieldMappingsFilePath)
+			}
+		}
+	}
+
+	// filter_entry_field_mappings: "entry_key;field;winner;challenger"
+	if repair("filter_entry_field_mappings", base+EntryFieldMappingsFilePath) {
+		rows, err := db.Query(
+			`SELECT entry_key, field, winner, challenger FROM filter_entry_field_mappings`)
+		if err == nil {
+			var lines []string
+			for rows.Next() {
+				var ek, field, winner, challenger string
+				if rows.Scan(&ek, &field, &winner, &challenger) == nil {
+					lines = append(lines, csvLine(ek, field, winner, challenger))
+				}
+			}
+			rows.Close()
+			if writeRepairCSV(base+EntryFieldMappingsFilePath, lines) {
+				finishRepair("filter_entry_field_mappings", base+EntryFieldMappingsFilePath)
+				entryFieldMappingsRepaired = true
+			}
+		}
+	}
+
+	// filter_generic_field_mappings: "field;winner;challenger"
+	if repair("filter_generic_field_mappings", base+GenericFieldMappingsFilePath) {
+		rows, err := db.Query(
+			`SELECT field, winner, challenger FROM filter_generic_field_mappings`)
+		if err == nil {
+			var lines []string
+			for rows.Next() {
+				var field, winner, challenger string
+				if rows.Scan(&field, &winner, &challenger) == nil {
+					lines = append(lines, csvLine(field, winner, challenger))
+				}
+			}
+			rows.Close()
+			if writeRepairCSV(base+GenericFieldMappingsFilePath, lines) {
+				finishRepair("filter_generic_field_mappings", base+GenericFieldMappingsFilePath)
+			}
+		}
+	}
+
+	return
+}
+
 // upsertBibEntryField inserts or replaces a single (entry_key, field, value) row.
 // An empty value deletes the row instead.
 // Outside a transaction it compares the old cache value and only marks
@@ -1020,7 +1409,7 @@ func upsertBibEntryField(key, field, value string) {
 			if e, ok := entryCache[key]; ok {
 				if _, exists := e.Fields[field]; exists {
 					if activeTx == nil {
-						bibEntriesModified = true
+						markBibEntryModified()
 					}
 					delete(e.Fields, field)
 				}
@@ -1029,20 +1418,20 @@ func upsertBibEntryField(key, field, value string) {
 			e, ok := entryCache[key]
 			if !ok {
 				if activeTx == nil {
-					bibEntriesModified = true
+					markBibEntryModified()
 				}
 				e = &TBibTeXEntry{Key: key, Fields: map[string]string{}}
 				entryCache[key] = e
 				e.Fields[field] = value
 			} else if e.Fields[field] != value {
 				if activeTx == nil {
-					bibEntriesModified = true
+					markBibEntryModified()
 				}
 				e.Fields[field] = value
 			}
 		}
 	} else if activeTx == nil {
-		bibEntriesModified = true
+		markBibEntryModified()
 	}
 }
 
@@ -1056,13 +1445,13 @@ func deleteBibEntryField(key, field string) {
 		if e, ok := entryCache[key]; ok {
 			if _, exists := e.Fields[field]; exists {
 				if activeTx == nil {
-					bibEntriesModified = true
+					markBibEntryModified()
 				}
 				delete(e.Fields, field)
 			}
 		}
 	} else if activeTx == nil {
-		bibEntriesModified = true
+		markBibEntryModified()
 	}
 }
 
@@ -1075,12 +1464,12 @@ func deleteBibEntry(key string) {
 	if entryCache != nil {
 		if _, ok := entryCache[key]; ok {
 			if activeTx == nil {
-				bibEntriesModified = true
+				markBibEntryModified()
 			}
 			delete(entryCache, key)
 		}
 	} else if activeTx == nil {
-		bibEntriesModified = true
+		markBibEntryModified()
 	}
 }
 
@@ -1177,6 +1566,91 @@ func forEachBibEntryKey(fn func(key string) bool) {
 	}
 }
 
+// TBibFieldMatch holds one result row from findBibEntriesByField.
+type TBibFieldMatch struct {
+	Key   string
+	Value string
+}
+
+// findBibEntriesByField returns all entries where the given field exists.
+// When valueFilter is non-empty only entries whose field value contains it as a
+// case-insensitive substring are returned. Results are sorted by entry key.
+func findBibEntriesByField(field, valueFilter string) []TBibFieldMatch {
+	var rows *sql.Rows
+	var err error
+	if valueFilter == "" {
+		rows, err = db.Query(
+			`SELECT entry_key, value FROM bib_entries WHERE field = ? ORDER BY entry_key`,
+			field)
+	} else {
+		rows, err = db.Query(
+			`SELECT entry_key, value FROM bib_entries WHERE field = ? AND LOWER(value) LIKE ? ORDER BY entry_key`,
+			field, "%"+strings.ToLower(valueFilter)+"%")
+	}
+	if err != nil {
+		dbInteraction.Warning("Could not query bib_entries: %s", err)
+		return nil
+	}
+	defer rows.Close()
+	var matches []TBibFieldMatch
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			dbInteraction.Warning("Could not scan bib_entries: %s", err)
+			continue
+		}
+		matches = append(matches, TBibFieldMatch{key, value})
+	}
+	return matches
+}
+
+// findBibEntriesByGroup returns bib_groups rows where the group_name contains
+// groupFilter as a case-insensitive substring. If groupFilter is empty all rows
+// are returned. Results are sorted by entry key.
+func findBibEntriesByGroup(groupFilter string) []TBibFieldMatch {
+	var rows *sql.Rows
+	var err error
+	if groupFilter == "" {
+		rows, err = db.Query(
+			`SELECT entry_key, group_name FROM bib_groups ORDER BY entry_key`)
+	} else {
+		rows, err = db.Query(
+			`SELECT entry_key, group_name FROM bib_groups WHERE LOWER(group_name) LIKE ? ORDER BY entry_key`,
+			"%"+strings.ToLower(groupFilter)+"%")
+	}
+	if err != nil {
+		dbInteraction.Warning("Could not query bib_groups: %s", err)
+		return nil
+	}
+	defer rows.Close()
+	var matches []TBibFieldMatch
+	for rows.Next() {
+		var key, group string
+		if err := rows.Scan(&key, &group); err != nil {
+			dbInteraction.Warning("Could not scan bib_groups: %s", err)
+			continue
+		}
+		matches = append(matches, TBibFieldMatch{key, group})
+	}
+	return matches
+}
+
+// addBibGroupEntry adds entryKey to groupName in bib_groups; no-op if already present.
+func addBibGroupEntry(groupName, entryKey string) error {
+	_, err := db.Exec(
+		`INSERT OR IGNORE INTO bib_groups (group_name, entry_key) VALUES (?, ?)`,
+		groupName, entryKey)
+	return err
+}
+
+// removeBibGroupEntry removes entryKey from groupName in bib_groups; no-op if not present.
+func removeBibGroupEntry(groupName, entryKey string) error {
+	_, err := db.Exec(
+		`DELETE FROM bib_groups WHERE group_name = ? AND entry_key = ?`,
+		groupName, entryKey)
+	return err
+}
+
 // saveBibGroupsToDb writes l.GroupEntries to bib_groups using bibExec (transaction-aware).
 func saveBibGroupsToDb(l *TBibTeXLibrary) {
 	for group, entries := range l.GroupEntries {
@@ -1250,6 +1724,8 @@ func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 				l.AddKeyHint(KeyForDBLP(dblp), key)
 			}
 		}
+		l.keyOldiesModified = false
+		l.keyHintsModified = false
 		return
 	}
 	rows, err := db.Query(
@@ -1275,6 +1751,8 @@ func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 			l.AddKeyHint(KeyForDBLP(value), key)
 		}
 	}
+	l.keyOldiesModified = false
+	l.keyHintsModified = false
 }
 
 // buildTitleIndexFromDb rebuilds l.TitleIndex from the title field in bib_entries.
@@ -1356,64 +1834,3 @@ func forEachBibEntryType(fn func(key, entryType string)) {
 	}
 }
 
-// forEachBibField calls fn(key, field, value) for every field row in bib_entries.
-func forEachBibField(fn func(key, field, value string)) {
-	if entryCache != nil {
-		for key, e := range entryCache {
-			for field, value := range e.Fields {
-				fn(key, field, value)
-			}
-		}
-		return
-	}
-	rows, err := db.Query(`SELECT entry_key, field, value FROM bib_entries`)
-	if err != nil {
-		dbInteraction.Warning("Could not query bib_entries fields: %s", err)
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var key, field, value string
-		if err := rows.Scan(&key, &field, &value); err != nil {
-			dbInteraction.Warning("Could not scan bib_entries row: %s", err)
-			continue
-		}
-		fn(key, field, value)
-	}
-}
-
-// forEachBibGroup calls fn(groupName, entryKey) for every row in bib_groups.
-func forEachBibGroup(fn func(groupName, entryKey string)) {
-	rows, err := db.Query(`SELECT group_name, entry_key FROM bib_groups`)
-	if err != nil {
-		dbInteraction.Warning("Could not query bib_groups: %s", err)
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var groupName, entryKey string
-		if err := rows.Scan(&groupName, &entryKey); err != nil {
-			dbInteraction.Warning("Could not scan bib_groups row: %s", err)
-			continue
-		}
-		fn(groupName, entryKey)
-	}
-}
-
-// forEachBibComment calls fn(content) for each comment in insertion order.
-func forEachBibComment(fn func(content string)) {
-	rows, err := db.Query(`SELECT content FROM bib_comments ORDER BY position`)
-	if err != nil {
-		dbInteraction.Warning("Could not query bib_comments: %s", err)
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var content string
-		if err := rows.Scan(&content); err != nil {
-			dbInteraction.Warning("Could not scan bib_comments row: %s", err)
-			continue
-		}
-		fn(content)
-	}
-}

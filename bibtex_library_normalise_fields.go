@@ -314,6 +314,8 @@ func NormalisePagesValue(l *TBibTeXLibrary, pages string) string {
 
 // FLIP ORDER of key and field!!
 func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
+	value = replaceUnicodeEscapes(value)
+
 	valueNormaliser, hasNormaliser := fieldNormalisers[field]
 
 	if hasNormaliser {

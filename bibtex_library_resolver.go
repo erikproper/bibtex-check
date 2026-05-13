@@ -14,10 +14,8 @@
 
 package main
 
-//import "fmt"
-
 func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
-	regularFileReference := FilesFolder + key + ".pdf"
+	regularFileReference := l.FilesFolder + key + ".pdf"
 	otherFileReference := l.FileReferencety(otherKey)
 
 	fqOtherFileReference := l.FilesRoot + otherFileReference
@@ -140,7 +138,6 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if answer == "y" {
 			if field != PreferredAliasField {
 				l.UpdateEntryFieldAlias(key, field, challenge, current)
-				l.WriteAllMappingsFiles()
 			} else {
 				delete(l.KeyToKey, challenge)
 			}
@@ -150,7 +147,6 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		} else if answer == "n" {
 			if field != PreferredAliasField {
 				l.UpdateEntryFieldAlias(key, field, current, challenge)
-				l.WriteAllMappingsFiles()
 			} else {
 				delete(l.KeyToKey, current)
 			}
@@ -160,7 +156,6 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		} else if answer == "Y" {
 			if field != PreferredAliasField {
 				l.UpdateGenericFieldAlias(field, challenge, current)
-				l.WriteAllMappingsFiles()
 			} else {
 				delete(l.KeyToKey, challenge)
 			}
@@ -170,7 +165,6 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		} else if answer == "N" {
 			if field != PreferredAliasField {
 				l.UpdateGenericFieldAlias(field, current, challenge)
-				l.WriteAllMappingsFiles()
 			} else {
 				delete(l.KeyToKey, current)
 			}

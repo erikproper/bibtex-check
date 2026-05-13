@@ -15,7 +15,6 @@
 package main
 
 import (
-	"os"
 	"regexp"
 	"strings"
 )
@@ -132,9 +131,7 @@ func (l *TBibTeXLibrary) CheckURLRedundance(entry *TBibTeXEntry) {
 	url := entry.FieldValue("url")
 
 	if l.IsRedundantURL(url, entry.Key) {
-		// CONSTANTS!!!
-		l.Warning("Can empty url for " + entry.Key + ", which is " + url)
-
+		l.Progress(ProgressRemovedRedundantURL, entry.Key, url)
 		l.setEntryField(entry, "url", "")
 	}
 }
@@ -157,14 +154,268 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 	return false
 }
 
-// Checks if a given preferred alias fits the desired format of 	[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*
-// Examples: gordijn2002e3value, overbeek2010matchmaking, ...
-func (l *TBibTeXLibrary) CheckPreferredKey(entry *TBibTeXEntry) bool {
-	var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z][a-z,0-9]*$`)
+var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z]([a-z0-9-]*[a-z0-9])?$`)
 
+var stripNonAlpha = regexp.MustCompile(`[^a-z]`)
+var stripNonAlphaNum = regexp.MustCompile(`[^a-z0-9]`)
+
+var titleKeywordStopWords = map[string]bool{
+	"a": true, "an": true, "the": true, "of": true, "in": true, "on": true,
+	"at": true, "to": true, "for": true, "by": true, "and": true, "or": true,
+	"with": true, "from": true, "is": true, "are": true, "was": true, "were": true,
+	"proceedings": true, "workshop": true, "conference": true, "symposium": true,
+	"international": true, "annual": true,
+}
+
+// titleKeywords returns all meaningful words from a title, in order, suitable
+// for use as the keyword component of a preferred alias.
+func titleKeywords(title string) []string {
+	words := strings.FieldsFunc(title, func(r rune) bool {
+		return r == ' ' || r == '-' || r == ':' || r == ',' || r == '.' || r == '/' || r == '~' || r == '('
+	})
+	var result []string
+	seen := map[string]bool{}
+	for _, w := range words {
+		clean := stripNonAlphaNum.ReplaceAllString(TeXStringIndexer(w), "")
+		if clean == "" || titleKeywordStopWords[clean] || seen[clean] {
+			continue
+		}
+		if clean[0] >= '0' && clean[0] <= '9' {
+			continue
+		}
+		seen[clean] = true
+		result = append(result, clean)
+	}
+	return result
+}
+
+// splitOnUnbracedSpaces splits s on spaces that are outside brace groups,
+// so "{Smith Kline}" is kept as a single token.
+func splitOnUnbracedSpaces(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	depth := 0
+	for _, r := range s {
+		switch r {
+		case '{':
+			depth++
+			cur.WriteRune(r)
+		case '}':
+			depth--
+			cur.WriteRune(r)
+		case ' ':
+			if depth == 0 {
+				if cur.Len() > 0 {
+					tokens = append(tokens, cur.String())
+					cur.Reset()
+				}
+			} else {
+				cur.WriteRune(r)
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
+}
+
+// deriveAliasBase derives the <surname><year> prefix for a preferred alias.
+// For "Last, First" names the surname is everything before the comma.
+// For "First … Last" names the surname is the last brace-aware token, so
+// "Osvaldo Cair{\'o} Battistutti" → "battistutti" and
+// "John {Smith Kline}" → "smithkline".
+// Name fallback chain: author → editor → crossref parent author/editor →
+// publisher → crossref parent publisher → DBLP venue code (second-to-last segment).
+// Year falls back to the crossref parent's year if the entry has none.
+// Warns and returns "" if surname or year cannot be determined after all fallbacks.
+func (l *TBibTeXLibrary) deriveAliasBase(entry *TBibTeXEntry) string {
+	nameField := entry.FieldValue("author")
+	if nameField == "" {
+		nameField = entry.FieldValue("editor")
+	}
+
+	// Load crossref parent once; used as fallback for both name and year.
+	var parent *TBibTeXEntry
+	if crossrefKey := entry.FieldValue("crossref"); crossrefKey != "" {
+		if p := l.buildEntry(l.MapEntryKey(crossrefKey)); p.Exists() {
+			parent = p
+		}
+	}
+
+	if nameField == "" && parent != nil {
+		nameField = parent.FieldValue("author")
+		if nameField == "" {
+			nameField = parent.FieldValue("editor")
+		}
+	}
+	if nameField == "" {
+		nameField = entry.FieldValue("publisher")
+	}
+	if nameField == "" && parent != nil {
+		nameField = parent.FieldValue("publisher")
+	}
+	// Last resort: venue code from the DBLP key (second-to-last segment,
+	// e.g. "bled" from "conf/bled/2006").
+	if nameField == "" {
+		if dblpKey := entry.FieldValue(DBLPField); dblpKey != "" {
+			parts := strings.Split(dblpKey, "/")
+			if len(parts) >= 2 {
+				nameField = parts[len(parts)-2]
+			}
+		}
+	}
+	if nameField == "" {
+		l.Warning(WarningCannotDeriveAliasNoName, entry.Key)
+		return ""
+	}
+
+	first := strings.TrimSpace(strings.Split(nameField, " and ")[0])
+
+	var surnameRaw string
+	if idx := strings.Index(first, ", "); idx >= 0 {
+		surnameRaw = first[:idx]
+	} else {
+		tokens := splitOnUnbracedSpaces(first)
+		if len(tokens) == 0 {
+			l.Warning(WarningCannotDeriveAliasNoName, entry.Key)
+			return ""
+		}
+		surnameRaw = tokens[len(tokens)-1]
+	}
+
+	surname := stripNonAlpha.ReplaceAllString(TeXStringIndexer(surnameRaw), "")
+	if surname == "" {
+		l.Warning(WarningCannotDeriveAliasEmptySurname, entry.Key, surnameRaw)
+		return ""
+	}
+
+	year := entry.FieldValue("year")
+	if !IsValidYear(year) && parent != nil {
+		year = parent.FieldValue("year")
+	}
+	if !IsValidYear(year) {
+		l.Warning(WarningCannotDeriveAliasNoYear, entry.Key)
+		return ""
+	}
+
+	return surname + year
+}
+
+// derivePreferredAlias returns the first non-colliding <surname><year><keyword>
+// alias candidate. It first tries each single title keyword, then concatenations
+// of 2 adjacent keywords, then 3, etc. — so "knowledge" and "graphs" are tried
+// individually before "knowledgegraphs" is tried as a compound.
+// If all keyword combinations are exhausted (or the title has no usable keywords),
+// the last segment of the DBLP key is tried as a final fallback.
+// Returns "" if base data is missing (silent) or all approaches are exhausted (warns).
+func (l *TBibTeXLibrary) derivePreferredAlias(entry *TBibTeXEntry) string {
+	base := l.deriveAliasBase(entry)
+	if base == "" {
+		return ""
+	}
+
+	tryCandidate := func(keyword string) (string, bool) {
+		candidate := base + keyword
+		if !validPreferredKeyAlias.MatchString(candidate) {
+			return "", false
+		}
+		if target, inUse := l.HintToKey[candidate]; inUse && target != entry.Key {
+			return "", false
+		}
+		return candidate, true
+	}
+
+	// For bookish entries with a DBLP key, try the venue code (second-to-last
+	// DBLP segment, e.g. "bled" from "conf/bled/2006") as the first keyword
+	// candidate before falling back to title keywords.
+	if BibTeXBookish.Contains(entry.FieldValue(EntryTypeField)) {
+		if dblpKey := entry.FieldValue(DBLPField); dblpKey != "" {
+			parts := strings.Split(dblpKey, "/")
+			if len(parts) >= 2 {
+				keyword := stripNonAlphaNum.ReplaceAllString(TeXStringIndexer(parts[len(parts)-2]), "")
+				if candidate, ok := tryCandidate(keyword); ok {
+					return candidate
+				}
+			}
+		}
+	}
+
+	keywords := titleKeywords(entry.FieldValue(TitleField))
+	for length := 1; length <= len(keywords); length++ {
+		for start := 0; start+length <= len(keywords); start++ {
+			if candidate, ok := tryCandidate(strings.Join(keywords[start:start+length], "")); ok {
+				return candidate
+			}
+		}
+	}
+
+	// Last resort: last two segments of the DBLP key joined
+	// (e.g. "icac/X05a" → "icacx05a" from "conf/icac/X05a").
+	if dblpKey := entry.FieldValue(DBLPField); dblpKey != "" {
+		parts := strings.Split(dblpKey, "/")
+		suffix := parts[len(parts)-1]
+		if len(parts) >= 2 {
+			suffix = parts[len(parts)-2] + suffix
+		}
+		keyword := stripNonAlphaNum.ReplaceAllString(TeXStringIndexer(suffix), "")
+		if candidate, ok := tryCandidate(keyword); ok {
+			return candidate
+		}
+	}
+
+	if len(keywords) == 0 {
+		l.Warning(WarningNoTitleKeywordsForPreferredAlias, entry.Key, base)
+	} else {
+		l.Warning(WarningCannotDeriveUniquePreferredAlias, entry.Key, base)
+	}
+	return ""
+}
+
+// setPreferredAlias sets alias as the preferred alias for entry, registering it
+// in both KeyToKey and HintToKey.
+func (l *TBibTeXLibrary) setPreferredAlias(entry *TBibTeXEntry, alias string) {
+	l.setEntryField(entry, PreferredAliasField, alias)
+	l.AddKeyAlias(alias, entry.Key)
+	l.AddKeyHint(alias, entry.Key)
+}
+
+// CheckAndEnforcePreferredAlias validates and, when possible, corrects the preferred alias.
+// Format rule: ^[a-z]+[0-9][0-9][0-9][0-9][a-z]([a-z0-9-]*[a-z0-9])?$  e.g. gordijn2002e3value or balau2026human-ai-balance
+func (l *TBibTeXLibrary) CheckAndEnforcePreferredAlias(entry *TBibTeXEntry) {
 	alias := entry.FieldValue(PreferredAliasField)
 
-	return alias == "" || validPreferredKeyAlias.MatchString(alias)
+	if alias != "" {
+		// Cross-check: alias must be registered as a hint.
+		if _, known := l.HintToKey[alias]; !known {
+			l.AddKeyHint(alias, entry.Key)
+		}
+
+		if validPreferredKeyAlias.MatchString(alias) {
+			return
+		}
+
+		// Non-compliant alias: warn, try to derive a valid replacement.
+		l.Warning(WarningInvalidPreferredKeyAlias, alias, entry.Key)
+		if derived := l.derivePreferredAlias(entry); derived != "" {
+			// Keep old non-compliant alias as a hint; set the derived one.
+			l.setPreferredAlias(entry, derived)
+			l.Progress(ProgressGeneratedPreferredAlias, derived, entry.Key)
+		}
+		return
+	}
+
+	// No alias yet. Only generate one for DBLP-linked entries (temporary until doubles are cleaned up).
+	if entry.FieldValue(DBLPField) == "" {
+		return
+	}
+
+	if derived := l.derivePreferredAlias(entry); derived != "" {
+		l.setPreferredAlias(entry, derived)
+		l.Progress(ProgressGeneratedPreferredAlias, derived, entry.Key)
+	}
 }
 
 func (l *TBibTeXLibrary) CheckTitlePresence(entry *TBibTeXEntry) {
@@ -172,6 +423,7 @@ func (l *TBibTeXLibrary) CheckTitlePresence(entry *TBibTeXEntry) {
 		l.Warning(WarningEmptyTitle, entry.Key)
 	}
 }
+
 
 func (l *TBibTeXLibrary) CheckDOIPresence(entry *TBibTeXEntry) {
 	foundDOI := entry.FieldValue("doi")
@@ -450,10 +702,10 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 	}
 }
 
-func (l *TBibTeXLibrary) CheckFileReferences(key, otherKey string) {
-	upsertBibEntryField(key, LocalURLField, l.ResolveFileReferences(key, otherKey))
-}
-
+//// How does this relate???
+//func (l *TBibTeXLibrary) CheckFileReferences(key, otherKey string) {
+//	upsertBibEntryField(key, LocalURLField, l.ResolveFileReferences(key, otherKey))
+//}
 func (l *TBibTeXLibrary) CheckFileReference(entry *TBibTeXEntry) {
 	l.setEntryField(entry, LocalURLField, l.ResolveFileReferences(entry.Key, entry.Key))
 }
@@ -621,7 +873,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckDOIPresence(entry)
 			l.CheckEPrint(entry)
 			l.CheckCrossref(entry)
-			l.CheckPreferredKey(entry)
+			l.CheckAndEnforcePreferredAlias(entry)
 			l.CheckBookishTitles(entry)
 			l.CheckISBNFromDOI(entry)
 			l.CheckTitlePresence(entry)
@@ -647,32 +899,3 @@ func (l *TBibTeXLibrary) CheckEntries() {
 	})
 }
 
-func (l *TBibTeXLibrary) CheckFiles() {
-	// CONSTANT!!!!
-	l.Progress("Checking for superfluous and duplicate files.")
-	filePath := l.FilesRoot + FilesFolder
-
-	files, err := os.ReadDir(filePath)
-	if err != nil {
-		return
-	}
-
-	for _, e := range files {
-		fileName := e.Name()
-		if strings.HasSuffix(fileName, ".pdf") {
-			key := strings.TrimSuffix(fileName, ".pdf")
-			if l.EntryExists(key) {
-				l.FileMD5Index.AddValueToStringSetMap(MD5ForFile(filePath+fileName), key)
-			} else {
-				l.Warning("File %s is not associated to any entry", fileName)
-			}
-		}
-	}
-
-	for _, Keys := range l.FileMD5Index {
-		if Keys.Size() > 1 {
-			l.Warning("File, with same content, is used by multiple different files: %s", Keys.String())
-			l.MaybeMergeEntrySet(Keys)
-		}
-	}
-}

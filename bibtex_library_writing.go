@@ -51,13 +51,6 @@ func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing
 // - As we ignore preambles, these are not written.
 func (l *TBibTeXLibrary) WriteBibTeXFile() {
 	if !l.NoBibFileWriting {
-		EntryGroups := TStringSetMap{}
-		for group, keys := range l.GroupEntries {
-			for key := range keys.Elements() {
-				EntryGroups.AddValueToStringSetMap(key, group)
-			}
-		}
-
 		entryTypes := map[string]string{}
 		forEachBibEntryType(func(key, entryType string) {
 			entryTypes[key] = entryType
@@ -67,8 +60,7 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 			// non-bookish entries first (crossref-friendly order)
 			for entry, entryType := range entryTypes {
 				if !BibTeXBookish.Contains(entryType) {
-					groups := EntryGroups.GetValueSetFromStringSetMap(entry).Stringify()
-					bibWriter.WriteString(l.EntryString(entry, groups))
+					bibWriter.WriteString(l.EntryString(entry, ""))
 					bibWriter.WriteString("\n")
 				}
 			}
@@ -76,8 +68,7 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 			// bookish entries second
 			for entry, entryType := range entryTypes {
 				if BibTeXBookish.Contains(entryType) {
-					groups := EntryGroups.GetValueSetFromStringSetMap(entry).Stringify()
-					bibWriter.WriteString(l.EntryString(entry, groups))
+					bibWriter.WriteString(l.EntryString(entry, ""))
 					bibWriter.WriteString("\n")
 				}
 			}
@@ -118,49 +109,12 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 	}
 }
 
-func (l *TBibTeXLibrary) WriteCache() {
-	l.WriteFieldsCache()
-	l.WriteGroupsCache()
-	l.WriteCommentsCache()
-}
-
-func (l *TBibTeXLibrary) WriteGroupsCache() {
-	if !l.NoBibFileWriting {
-		l.writeLibraryFile(GroupsCacheExtension, ProgressWritingGroupsCache, func(groupsWriter *bufio.Writer) {
-			forEachBibGroup(func(groupName, entryKey string) {
-				groupsWriter.WriteString(entryKey + "	" + groupName + "\n")
-			})
-		})
-	}
-}
-
-func (l *TBibTeXLibrary) WriteFieldsCache() {
-	if !l.NoBibFileWriting {
-		l.writeLibraryFile(FieldsCacheExtension, ProgressWritingFieldsCache, func(fieldsWriter *bufio.Writer) {
-			forEachBibField(func(key, field, value string) {
-				if value != "" {
-					fieldsWriter.WriteString(key + "	" + field + "	" + value + "\n")
-				}
-			})
-		})
-	}
-}
-
-func (l *TBibTeXLibrary) WriteCommentsCache() {
-	if !l.NoBibFileWriting {
-		l.writeLibraryFile(CommentsCacheExtension, ProgressWritingCommentsCache, func(commentsWriter *bufio.Writer) {
-			forEachBibComment(func(content string) {
-				commentsWriter.WriteString(CacheCommentsSeparator + "\n")
-				commentsWriter.WriteString(content + "\n")
-			})
-		})
-	}
-}
 
 // Write the challenges and winners for field values, of this library, to a file
 func (l *TBibTeXLibrary) WriteEntryFieldMappingsFile() {
 	if !l.NoEntryFieldMappingsFileWriting {
-		l.writeLibraryFile(EntryFieldMappingsFilePath, ProgressWritingEntryFieldMappingsFile, func(w *bufio.Writer) {
+		setTableDirty("filter_entry_field_mappings")
+		if l.writeLibraryFile(EntryFieldMappingsFilePath, ProgressWritingEntryFieldMappingsFile, func(w *bufio.Writer) {
 			var lines []string
 			for key, fieldChallenges := range l.EntryFieldSourceToTarget {
 				if l.EntryExists(key) {
@@ -168,7 +122,7 @@ func (l *TBibTeXLibrary) WriteEntryFieldMappingsFile() {
 						if field != PreferredAliasField {
 							for challenger, winner := range challenges {
 								if l.MapFieldValue(field, challenger) != l.MapEntryFieldValue(key, field, winner) {
-									lines = append(lines, key+csvDelimiter+field+csvDelimiter+l.MapEntryFieldValue(key, field, winner)+csvDelimiter+challenger)
+									lines = append(lines, csvLine(key, field, l.MapEntryFieldValue(key, field, winner), challenger))
 								}
 							}
 						}
@@ -179,14 +133,18 @@ func (l *TBibTeXLibrary) WriteEntryFieldMappingsFile() {
 			for _, line := range lines {
 				w.WriteString(line + "\n")
 			}
-		})
-		saveEntryFieldMappingsToDb(l)
+		}) {
+			saveEntryFieldMappingsToDb(l)
+			clearTableDirty("filter_entry_field_mappings")
+			setTableLastWritten("filter_entry_field_mappings")
+		}
 	}
 }
 
 func (l *TBibTeXLibrary) WriteKeyNonDoublesFile() {
 	if !l.NoKeyNonDoublesFileWriting {
-		l.writeLibraryFile(KeyNonDoublesFilePath, ProgressWritingNonDoublesFile, func(w *bufio.Writer) {
+		setTableDirty("key_non_doubles")
+		if l.writeLibraryFile(KeyNonDoublesFilePath, ProgressWritingNonDoublesFile, func(w *bufio.Writer) {
 			var lines []string
 			for key, set := range l.NonDoubles {
 				if key == l.MapEntryKey(key) && l.EntryExists(key) {
@@ -203,20 +161,24 @@ func (l *TBibTeXLibrary) WriteKeyNonDoublesFile() {
 			for _, line := range lines {
 				w.WriteString(line + "\n")
 			}
-		})
-		saveKeyNonDoublesToDb(l)
+		}) {
+			saveKeyNonDoublesToDb(l)
+			clearTableDirty("key_non_doubles")
+			setTableLastWritten("key_non_doubles")
+		}
 	}
 }
 
 func (l *TBibTeXLibrary) WriteGenericFieldMappingsFile() {
 	if !l.NoGenericFieldMappingsFileWriting {
-		l.writeLibraryFile(GenericFieldMappingsFilePath, ProgressWritingGenericFieldMappingsFile, func(w *bufio.Writer) {
+		setTableDirty("filter_generic_field_mappings")
+		if l.writeLibraryFile(GenericFieldMappingsFilePath, ProgressWritingGenericFieldMappingsFile, func(w *bufio.Writer) {
 			var lines []string
 			for field, challenges := range l.GenericFieldSourceToTarget {
 				if field != PreferredAliasField {
 					for challenger, winner := range challenges {
 						if challenger != winner {
-							lines = append(lines, field+csvDelimiter+l.MapFieldValue(field, winner)+csvDelimiter+challenger)
+							lines = append(lines, csvLine(field, l.MapFieldValue(field, winner), challenger))
 						}
 					}
 				}
@@ -225,14 +187,18 @@ func (l *TBibTeXLibrary) WriteGenericFieldMappingsFile() {
 			for _, line := range lines {
 				w.WriteString(line + "\n")
 			}
-		})
-		saveGenericFieldMappingsToDb(l)
+		}) {
+			saveGenericFieldMappingsToDb(l)
+			clearTableDirty("filter_generic_field_mappings")
+			setTableLastWritten("filter_generic_field_mappings")
+		}
 	}
 }
 
 func (l *TBibTeXLibrary) WriteNameMappingFile() {
 	if !l.NoNameMappingsFileWriting {
-		l.writeLibraryFile(NameMappingsFilePath, ProgressWritingNameMappingsFile, func(w *bufio.Writer) {
+		setTableDirty("name_mappings")
+		if l.writeLibraryFile(NameMappingsFilePath, ProgressWritingNameMappingsFile, func(w *bufio.Writer) {
 			var lines []string
 			for alias, original := range l.NameAliasToName {
 				if alias != original {
@@ -243,15 +209,19 @@ func (l *TBibTeXLibrary) WriteNameMappingFile() {
 			for _, line := range lines {
 				w.WriteString(line + "\n")
 			}
-		})
-		saveNameMappingsToDb(l)
+		}) {
+			saveNameMappingsToDb(l)
+			clearTableDirty("name_mappings")
+			setTableLastWritten("name_mappings")
+		}
 	}
 }
 
 // Write entry key alias/original pairs to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) WriteKeyOldiesFile() {
 	if !l.NoKeyOldiesFileWriting {
-		l.writeLibraryFile(KeyOldiesFilePath, ProgressWritingKeyOldiesFile, func(w *bufio.Writer) {
+		setTableDirty("key_oldies")
+		if l.writeLibraryFile(KeyOldiesFilePath, ProgressWritingKeyOldiesFile, func(w *bufio.Writer) {
 			var lines []string
 			for source, target := range l.KeyToKey {
 				target = l.MapEntryKey(target)
@@ -263,15 +233,19 @@ func (l *TBibTeXLibrary) WriteKeyOldiesFile() {
 			for _, line := range lines {
 				w.WriteString(line + "\n")
 			}
-		})
-		saveKeyOldiesToDb(l)
+		}) {
+			saveKeyOldiesToDb(l)
+			clearTableDirty("key_oldies")
+			setTableLastWritten("key_oldies")
+		}
 	}
 }
 
 // Write entry key source/target pairs to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) WriteKeyHintsFile() {
 	if !l.NoKeyHintsFileWriting {
-		l.writeLibraryFile(KeyHintsFilePath, ProgressWritingKeyHintsFile, func(w *bufio.Writer) {
+		setTableDirty("key_hints")
+		if l.writeLibraryFile(KeyHintsFilePath, ProgressWritingKeyHintsFile, func(w *bufio.Writer) {
 			var lines []string
 			for source, target := range l.HintToKey {
 				target = l.MapEntryKey(target)
@@ -284,8 +258,33 @@ func (l *TBibTeXLibrary) WriteKeyHintsFile() {
 			for _, line := range lines {
 				w.WriteString(line + "\n")
 			}
-		})
-		saveKeyHintsToDb(l)
+		}) {
+			saveKeyHintsToDb(l)
+			clearTableDirty("key_hints")
+			setTableLastWritten("key_hints")
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) WritePDFConfirmedOkFile() {
+	if !l.NoPDFConfirmedOkFileWriting {
+		setTableDirty("pdf_confirmed_ok")
+		if l.writeLibraryFile(PDFConfirmedOkFilePath, ProgressWritingPDFConfirmedOkFile, func(w *bufio.Writer) {
+			var lines []string
+			for key, date := range l.PDFConfirmedOk {
+				if l.EntryExists(key) {
+					lines = append(lines, csvLine(key, date))
+				}
+			}
+			sort.Strings(lines)
+			for _, line := range lines {
+				w.WriteString(line + "\n")
+			}
+		}) {
+			savePDFConfirmedOkToDb(l)
+			clearTableDirty("pdf_confirmed_ok")
+			setTableLastWritten("pdf_confirmed_ok")
+		}
 	}
 }
 
@@ -299,12 +298,13 @@ func (l *TBibTeXLibrary) WriteAllMappingsFiles() {
 
 func (l *TBibTeXLibrary) WriteCrossFieldMappingsFile() {
 	if !l.NoCrossFieldMappingsFileWriting {
-		l.writeLibraryFile(CrossFieldMappingsFilePath, ProgressWritingFieldMappingsFile, func(w *bufio.Writer) {
+		setTableDirty("filter_cross_field_mappings")
+		if l.writeLibraryFile(CrossFieldMappingsFilePath, ProgressWritingFieldMappingsFile, func(w *bufio.Writer) {
 			var lines []string
 			for sourceField, sourceFieldMappings := range l.FieldMappings {
 				for sourceValue, targetFieldMappings := range sourceFieldMappings {
 					for targetField, targetValue := range targetFieldMappings {
-						lines = append(lines, sourceField+csvDelimiter+sourceValue+csvDelimiter+targetField+csvDelimiter+targetValue)
+						lines = append(lines, csvLine(sourceField, sourceValue, targetField, targetValue))
 					}
 				}
 			}
@@ -312,7 +312,10 @@ func (l *TBibTeXLibrary) WriteCrossFieldMappingsFile() {
 			for _, line := range lines {
 				w.WriteString(line + "\n")
 			}
-		})
-		saveCrossFieldMappingsToDb(l)
+		}) {
+			saveCrossFieldMappingsToDb(l)
+			clearTableDirty("filter_cross_field_mappings")
+			setTableLastWritten("filter_cross_field_mappings")
+		}
 	}
 }

@@ -12,9 +12,82 @@
 
 package main
 
-import "strings"
+import (
+	"regexp"
+	"strconv"
+	"strings"
+)
 
-//import "fmt"
+var unicodeEscapeRE = regexp.MustCompile(`\\unicode\{(\d+)\}`)
+
+// normaliseUnicodeRune maps a Unicode code point to its BibTeX-normalised string.
+// Characters that have a plain ASCII equivalent use it so that later passes like
+// the {-} → - substitution can fire correctly.
+func normaliseUnicodeRune(r rune) string {
+	switch r {
+	case 0x2006, 0x2009, 0x2028, 0x00A0, 0x3000:
+		return " "
+	case 0x00AD, 0x200B, 0x200C, 0x200D, 0x2060:
+		return ""
+	case 0x2010, 0x2011, 0x2212:
+		return "-"
+	case 0x2012, 0x2013, 0x2500:
+		return "--"
+	case 0x2014:
+		return "---"
+	case 0x2018, 0x2019:
+		return "'"
+	case 0x201C:
+		return "``"
+	case 0x201D:
+		return "''"
+	case 0x3001, 0xFF0C:
+		return ","
+	case 0xFF0E:
+		return "."
+	case 0xFF1A:
+		return ":"
+	case 0xFF1B:
+		return ";"
+	case 0xFF01:
+		return "!"
+	case 0xFF1F:
+		return "? "
+	case 0xFF08:
+		return "("
+	case 0xFF09:
+		return ")"
+	case 0xFF3B, 0x3015:
+		return "{"
+	case 0xFF3D, 0x3016, 0xFF5D:
+		return "}"
+	case 0xFF5B:
+		return "{"
+	case 0x2751:
+		return "*"
+	case 0x2026:
+		return "..."
+	case 0xFF41:
+		return "a"
+	default:
+		return string(r)
+	}
+}
+
+// replaceUnicodeEscapes converts \unicode{N} to the normalised string for code point N.
+func replaceUnicodeEscapes(s string) string {
+	return unicodeEscapeRE.ReplaceAllStringFunc(s, func(match string) string {
+		sub := unicodeEscapeRE.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		n, err := strconv.Atoi(sub[1])
+		if err != nil || n < 0 {
+			return match
+		}
+		return normaliseUnicodeRune(rune(n))
+	})
+}
 
 var (
 	TeXSpaces,
@@ -156,6 +229,7 @@ func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, ne
 }
 
 func ApplyLaTeXMap(s string) string {
+	s = replaceUnicodeEscapes(s)
 	result := strings.ReplaceAll(s, "{-}", "-")
 	// Need to do this twice ... to deal with " - - - "
 	result = strings.ReplaceAll(result, " - ", " -- ")

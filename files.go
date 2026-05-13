@@ -16,9 +16,11 @@ package main
 import (
 	"bufio"
 	"crypto/md5"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/udhos/equalfile"
@@ -137,4 +139,43 @@ func processFile(fullFilePath string, process func(string)) bool {
 	}
 
 	return scanner.Err() == nil
+}
+
+// processCSVFile reads a CSV file using encoding/csv (handles quoted fields containing
+// the delimiter) and calls process for each record. The delimiter is taken from csvDelimiter.
+func processCSVFile(fullFilePath string, process func([]string)) bool {
+	file, err := os.Open(fullFilePath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	r := csv.NewReader(file)
+	r.Comma = rune(csvDelimiter[0])
+	r.FieldsPerRecord = -1
+	r.LazyQuotes = true
+
+	for {
+		record, err := r.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			continue
+		}
+		process(record)
+	}
+	return true
+}
+
+// csvLine formats fields as a single CSV line using encoding/csv, quoting any field
+// that contains the delimiter. The trailing newline is stripped so callers can
+// append "\n" themselves (consistent with the rest of the write infrastructure).
+func csvLine(fields ...string) string {
+	var buf strings.Builder
+	w := csv.NewWriter(&buf)
+	w.Comma = rune(csvDelimiter[0])
+	_ = w.Write(fields)
+	w.Flush()
+	return strings.TrimRight(buf.String(), "\n")
 }

@@ -31,12 +31,12 @@ type (
 	TBibTeXLibrary struct {
 		FilesRoot    string           // Path to folder with library related files
 		BaseName     string           // BaseName of the library related files
+		FilesFolder  string           // Path to the PDF files folder, relative to FilesRoot
 		Comments     []string      // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		GroupEntries TStringSetMap
 		TitleIndex   TStringSetMap //
 		//		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                        TStringSetMap             //
-		FileMD5Index                     TStringSetMap             //
 		DOIIndex                         TStringSetMap             //
 		NonDoubles                       TStringSetMap             //
 		HintToKey                        TStringMap                // Mapping from key hints to the actual entry key.
@@ -58,11 +58,20 @@ type (
 		NoKeyHintsFileWriting            bool
 		NoNameMappingsFileWriting        bool
 		NoKeyNonDoublesFileWriting          bool
-		keyNonDoublesModified               bool
+		keyNonDoublesModified            bool
 		nameMappingsModified             bool
+		keyHintsModified                 bool
+		keyOldiesModified                bool
+		crossFieldMappingsModified       bool
+		genericFieldMappingsModified     bool
+		entryFieldMappingsModified       bool
 		harvestNameAliases               bool
 		capturedDBLPEntry                *TBibTeXEntry
 		NoCrossFieldMappingsFileWriting       bool
+		NoPDFConfirmedOkFileWriting           bool
+		PDFConfirmedOk                        TStringMap
+		pdfConfirmedOkModified                bool
+		URLsIgnore                            TStringSet
 		ignoreIllegalFields              bool
 
 		TBibTeXTeX
@@ -85,6 +94,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 
 	l.FilesRoot = filesRoot
 	l.BaseName = baseName
+	l.FilesFolder = baseName + ".files/"
 
 	l.Comments = []string{}
 	l.FieldMappings = TStringStringStringMap{}
@@ -93,7 +103,6 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	//	l.BookTitleIndex = TStringSetMap{}
 	l.ISBNIndex = TStringSetMap{}
 	l.DOIIndex = TStringSetMap{}
-	l.FileMD5Index = TStringSetMap{}
 	l.NonDoubles = TStringSetMap{}
 	l.KeyToKey = TStringMap{}
 	l.KeyIsTemporary = TStringSetNew()
@@ -115,6 +124,9 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.NoKeyHintsFileWriting = false
 	l.NoNameMappingsFileWriting = false
 	l.NoCrossFieldMappingsFileWriting = false
+	l.NoPDFConfirmedOkFileWriting = false
+	l.PDFConfirmedOk = TStringMap{}
+	l.URLsIgnore = TStringSetNew()
 	l.ignoreIllegalFields = false
 }
 
@@ -183,6 +195,7 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 
 	// And inverse mapping
 	l.EntryFieldTargetToSource.AddValueToStringTrippleSetMap(entry, field, target, alias)
+	l.entryFieldMappingsModified = true
 }
 
 // Update the registration of a target over an alias for a given entry and its field.
@@ -228,7 +241,7 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 
 	// And inverse mapping
 	l.GenericFieldTargetToSource.AddValueToStringPairSetMap(field, target, alias)
-
+	l.genericFieldMappingsModified = true
 }
 
 // Update the registration of a target over a alias for a given entry and its field.
@@ -582,13 +595,8 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 
 			if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
 				l.MergeEntries(source, target)
-				l.WriteAllMappingsFiles()
-				l.WriteCrossFieldMappingsFile()
-				l.WriteBibTeXFile()
-				l.WriteCache()
 			} else {
 				l.AddNonDoubles(source, target)
-				l.WriteKeyNonDoublesFile()
 			}
 		}
 	}
@@ -637,16 +645,25 @@ func (l *TBibTeXLibrary) addAliasForKey(aliasMap *TStringMap, alias, key, warnin
 
 // Add a new key alias ... addAliasForKey would be the more consistent name
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
-	l.NoKeyOldiesFileWriting = !l.addAliasForKey(&l.KeyToKey, alias, key, WarningAmbiguousKeyOldie) || l.NoKeyOldiesFileWriting
+	if l.addAliasForKey(&l.KeyToKey, alias, key, WarningAmbiguousKeyOldie) {
+		l.keyOldiesModified = true
+	} else {
+		l.NoKeyOldiesFileWriting = true
+	}
 }
 
 // Add a new key hint
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
-	l.NoKeyHintsFileWriting = !l.addAliasForKey(&l.HintToKey, hint, key, WarningAmbiguousKeyHint) || l.NoKeyHintsFileWriting
+	if l.addAliasForKey(&l.HintToKey, hint, key, WarningAmbiguousKeyHint) {
+		l.keyHintsModified = true
+	} else {
+		l.NoKeyHintsFileWriting = true
+	}
 }
 
 func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, targetValue string) {
 	l.FieldMappings.SetValueForStringTripleMap(sourceField, sourceValue, targetField, targetValue)
+	l.crossFieldMappingsModified = true
 }
 
 /*

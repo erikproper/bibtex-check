@@ -31,14 +31,7 @@ var (
 )
 
 const (
-	FilesFolder = "Files/"
-	NoKey       = ""
-
-	CacheCommentsSeparator = "@@@@@@@@"
-
-	FieldsCacheExtension   = ".cache_fields"
-	GroupsCacheExtension   = ".cache_groups"
-	CommentsCacheExtension = ".cache_comments"
+	NoKey = ""
 
 	BibFileExtension    = ".bib"
 	sqliteFileExtension = ".sqlite3"
@@ -54,6 +47,15 @@ const (
 	KeyOldiesFilePath             = ".tables/key_oldies.csv"
 	KeyHintsFilePath              = ".tables/key_hints.csv"
 	ShortenMappingsFilePath       = ".tables/shorten_mappings.csv"
+	PDFConfirmedOkFilePath        = ".tables/pdf_confirmed_ok.csv"
+
+	// These two live at FilesRoot level (no BaseName prefix), matching the legacy
+	// urls.ignore / urls.failed flat files they supersede.
+	URLsIgnoreFilePath = "urls_ignore.csv"
+	URLsFailedFilePath = "urls_failed.csv"
+
+	// Legacy filename checked as a migration fallback when urls_ignore.csv is absent.
+	URLsIgnoreLegacyFile = "urls.ignore"
 
 	DefaultLanguage = "eng"
 )

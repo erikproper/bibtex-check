@@ -43,13 +43,6 @@ func processTitleValue(l *TBibTeXLibrary, key, value string) (string, string) {
 	return TitleField, value
 }
 
-func processGroupsValue(l *TBibTeXLibrary, key, value string) (string, string) {
-	for _, group := range strings.Split(value, ",") {
-		l.GroupEntries.AddValueToStringSetMap(strings.TrimSpace(group), key)
-	}
-
-	return GroupsField, ""
-}
 
 func processJabrefFileValue(l *TBibTeXLibrary, key, value string) (string, string) {
 	var (
@@ -134,7 +127,7 @@ func init() {
 	fieldProcessors[DBLPField] = processDBLPValue
 	fieldProcessors[PreferredAliasField] = processPreferredAliasValue
 	fieldProcessors[TitleField] = processTitleValue
-	fieldProcessors[GroupsField] = processGroupsValue
+
 	fieldProcessors[IgnoreField] = processFieldToIgnoreValue
 
 	///// NUANCE when doing syncs ...
