@@ -319,10 +319,16 @@ func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 	valueNormaliser, hasNormaliser := fieldNormalisers[field]
 
 	if hasNormaliser {
-		return valueNormaliser(l, value)
+		value = valueNormaliser(l, value)
 	} else {
-		return strings.TrimSpace(value)
+		value = strings.TrimSpace(value)
 	}
+
+	if strings.Contains(value, `\unicode{`) {
+		l.Warning(WarningUnresolvedUnicode, field, value)
+	}
+
+	return value
 }
 
 func init() {

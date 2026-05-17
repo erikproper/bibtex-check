@@ -18,75 +18,88 @@ import (
 	"strings"
 )
 
-var unicodeEscapeRE = regexp.MustCompile(`\\unicode\{(\d+)\}`)
+var (
+	unicodeEscapeRE       = regexp.MustCompile(`\\unicode\{(x[0-9A-Fa-f]+|\d+)\}`)
+	bracedUnicodeEscapeRE = regexp.MustCompile(`\{\\unicode\{(x[0-9A-Fa-f]+|\d+)\}\}`)
+)
 
-// normaliseUnicodeRune maps a Unicode code point to its BibTeX-normalised string.
-// Characters that have a plain ASCII equivalent use it so that later passes like
-// the {-} → - substitution can fire correctly.
-func normaliseUnicodeRune(r rune) string {
-	switch r {
-	case 0x2006, 0x2009, 0x2028, 0x00A0, 0x3000:
-		return " "
-	case 0x00AD, 0x200B, 0x200C, 0x200D, 0x2060:
-		return ""
-	case 0x2010, 0x2011, 0x2212:
-		return "-"
-	case 0x2012, 0x2013, 0x2500:
-		return "--"
-	case 0x2014:
-		return "---"
-	case 0x2018, 0x2019:
-		return "'"
-	case 0x201C:
-		return "``"
-	case 0x201D:
-		return "''"
-	case 0x3001, 0xFF0C:
-		return ","
-	case 0xFF0E:
-		return "."
-	case 0xFF1A:
-		return ":"
-	case 0xFF1B:
-		return ";"
-	case 0xFF01:
-		return "!"
-	case 0xFF1F:
-		return "? "
-	case 0xFF08:
-		return "("
-	case 0xFF09:
-		return ")"
-	case 0xFF3B, 0x3015:
-		return "{"
-	case 0xFF3D, 0x3016, 0xFF5D:
-		return "}"
-	case 0xFF5B:
-		return "{"
-	case 0x2751:
-		return "*"
-	case 0x2026:
-		return "..."
-	case 0xFF41:
-		return "a"
-	default:
-		return string(r)
-	}
+// normaliseUnicodeMap maps known Unicode code points to their BibTeX-normalised strings.
+// ASCII-equivalent mappings are preferred so that later passes (e.g. {-}→-) fire correctly.
+// Unknown non-ASCII code points are NOT listed here; normaliseUnicodeRune returns the
+// original \unicode{N} escape for them so that NormaliseFieldValue can emit a warning.
+var normaliseUnicodeMap = map[rune]string{
+	0x2006: " ", 0x2009: " ", 0x2028: " ", 0x00A0: " ", 0x3000: " ",
+	0x00AD: "", 0x200B: "", 0x200C: "", 0x200D: "", 0x2060: "",
+	0x2010: "-", 0x2011: "-", 0x2212: "-",
+	0x2012: "--", 0x2013: "--", 0x2500: "--",
+	0x2014: "---",
+	0x2018: "'", 0x2019: "'",
+	0x201C: "``",
+	0x201D: "''",
+	0x3001: ",", 0xFF0C: ",",
+	0xFF0E: ".",
+	0xFF1A: ":",
+	0xFF1B: ";",
+	0xFF01: "!",
+	0xFF1F: "? ",
+	0xFF08: "(",
+	0xFF09: ")",
+	0xFF3B: "{", 0x3015: "{",
+	0xFF3D: "}", 0x3016: "}", 0xFF5D: "}",
+	0xFF5B: "{",
+	0x2751: "*",
+	0x2026: "...",
+	0xFF41: "a",
 }
 
-// replaceUnicodeEscapes converts \unicode{N} to the normalised string for code point N.
+// normaliseUnicodeRune looks up r in normaliseUnicodeMap.
+// For unknown non-ASCII code points it returns the original \unicode{N} escape so that
+// NormaliseFieldValue can detect and warn about unresolved escapes.
+func normaliseUnicodeRune(r rune) string {
+	if mapped, ok := normaliseUnicodeMap[r]; ok {
+		return mapped
+	}
+	if r < 128 {
+		return string(r)
+	}
+	return `\unicode{` + strconv.Itoa(int(r)) + `}`
+}
+
+// parseUnicodeArg parses a \unicode argument that is either decimal ("8220") or
+// hex with an x-prefix ("x201C") and returns the code point value.
+func parseUnicodeArg(arg string) (rune, bool) {
+	if strings.HasPrefix(arg, "x") || strings.HasPrefix(arg, "X") {
+		n, err := strconv.ParseInt(arg[1:], 16, 32)
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		return rune(n), true
+	}
+	n, err := strconv.Atoi(arg)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return rune(n), true
+}
+
+// replaceUnicodeEscapes converts \unicode{N} (and {\unicode{N}}) to the normalised
+// string for code point N. N may be decimal or hex (x-prefixed). The braced form is
+// handled first so that surrounding braces are dropped and the mapped value is inserted
+// directly into the surrounding text.
 func replaceUnicodeEscapes(s string) string {
-	return unicodeEscapeRE.ReplaceAllStringFunc(s, func(match string) string {
-		sub := unicodeEscapeRE.FindStringSubmatch(match)
+	applyMap := func(re *regexp.Regexp, match string) string {
+		sub := re.FindStringSubmatch(match)
 		if len(sub) < 2 {
 			return match
 		}
-		n, err := strconv.Atoi(sub[1])
-		if err != nil || n < 0 {
+		r, ok := parseUnicodeArg(sub[1])
+		if !ok {
 			return match
 		}
-		return normaliseUnicodeRune(rune(n))
-	})
+		return normaliseUnicodeRune(r)
+	}
+	s = bracedUnicodeEscapeRE.ReplaceAllStringFunc(s, func(m string) string { return applyMap(bracedUnicodeEscapeRE, m) })
+	return unicodeEscapeRE.ReplaceAllStringFunc(s, func(m string) string { return applyMap(unicodeEscapeRE, m) })
 }
 
 var (
@@ -188,7 +201,10 @@ func (t *TBibTeXTeX) CollectTeXTokenElement(s *string, isOfferedProtection bool,
 			return true
 
 		case t.CollectCharacterThatWas('\\', s):
-			*needsProtection = !isOfferedProtection && !t.ThisCharacterIsIn(TeXNoProtect)
+			// Only set needsProtection; never clear it — uppercase letters before \& must stay protected.
+			if !isOfferedProtection && !t.ThisCharacterIsIn(TeXNoProtect) {
+				*needsProtection = true
+			}
 			t.inWord = false
 
 			t.CollectCharacterThatWasThere(s)
@@ -230,7 +246,13 @@ func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, ne
 
 func ApplyLaTeXMap(s string) string {
 	s = replaceUnicodeEscapes(s)
-	result := strings.ReplaceAll(s, "{-}", "-")
+	result := strings.ReplaceAll(s, "{\\-}", "")  // LaTeX hyphenation hint (braced)
+	result = strings.ReplaceAll(result, "\\-", "") // LaTeX hyphenation hint (bare)
+	result = strings.ReplaceAll(result, "{---}", "---")
+	result = strings.ReplaceAll(result, "{--}", "--")
+	result = strings.ReplaceAll(result, "{-}", "-")
+	result = strings.ReplaceAll(result, "{?}", "?")
+	result = strings.ReplaceAll(result, "{\\&}", "\\&")
 	// Need to do this twice ... to deal with " - - - "
 	result = strings.ReplaceAll(result, " - ", " -- ")
 	result = strings.ReplaceAll(result, " - ", " -- ")
@@ -240,6 +262,12 @@ func ApplyLaTeXMap(s string) string {
 		result = strings.ReplaceAll(result, "{"+source+"}", target)
 		result = strings.ReplaceAll(result, source, target)
 	}
+
+	result = strings.ReplaceAll(result, "{}_", "\x00sub") // protect subscript base
+	result = strings.ReplaceAll(result, "{}^", "\x00sup") // protect superscript base
+	result = strings.ReplaceAll(result, "{}", "")          // strip standalone empty braces
+	result = strings.ReplaceAll(result, "\x00sub", "{}_") // restore subscript base
+	result = strings.ReplaceAll(result, "\x00sup", "{}^") // restore superscript base
 
 	return result
 }

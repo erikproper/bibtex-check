@@ -21,6 +21,8 @@ package main
 import (
 	"bufio"
 	"database/sql"
+	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"sort"
@@ -109,6 +111,111 @@ func connectToDatabase() {
 	ensurePDFConfirmedOkTableExists()
 	ensureURLsIgnoreTableExists()
 	ensureBibTablesExist()
+}
+
+// --- safe parse (copy-on-write DB swap) ---
+
+var safeParseTemp string // non-empty while a safe parse is in progress
+
+// copyFile copies src to dst byte-for-byte.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+// reopenDb closes the current db connection and opens a new one at path,
+// re-ensuring all table schemas exist (idempotent).
+func reopenDb(path string) {
+	if db != nil {
+		db.Close()
+	}
+	var err error
+	db, err = sql.Open(sqliteDatabaseDriver, path)
+	if err != nil {
+		dbInteraction.Progress("Could not open sqlite database %s: %s", path, err)
+	}
+	ensureTableDatesTableExists()
+	ensureNameMappingsTableExists()
+	ensureKeyHintsTableExists()
+	ensureKeyOldiesTableExists()
+	ensureKeyNonDoublesTableExists()
+	ensureCrossFieldMappingsTableExists()
+	ensureEntryFieldMappingsTableExists()
+	ensureGenericFieldMappingsTableExists()
+	ensurePDFConfirmedOkTableExists()
+	ensureURLsIgnoreTableExists()
+	ensureBibTablesExist()
+}
+
+// beginSafeParse copies the live SQLite file to a temp location outside Nextcloud,
+// then switches db to that temp file. Returns false if setup fails (caller falls
+// through to an unsafe parse on the live file).
+func beginSafeParse() bool {
+	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
+	ts := time.Now().Format("20060102_150405")
+	safeParseTemp = fmt.Sprintf("%s/bibtex_check_%s_%s.sqlite3",
+		os.TempDir(), bibTeXBaseName, ts)
+
+	if err := copyFile(livePath, safeParseTemp); err != nil {
+		dbInteraction.Warning("Safe parse: could not copy database to temp: %s", err)
+		safeParseTemp = ""
+		return false
+	}
+	reopenDb(safeParseTemp)
+	return true
+}
+
+// commitSafeParse completes a successful safe parse: backs up the untouched original
+// live file and then moves the parsed temp into its place.
+func commitSafeParse() {
+	if safeParseTemp == "" {
+		return
+	}
+	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
+	backupDir := bibTeXFolder + bibTeXBaseName + ".backups"
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		dbInteraction.Warning("Safe parse: could not create backup dir: %s", err)
+	}
+	ts := time.Now().Format("20060102_150405")
+	backupPath := fmt.Sprintf("%s/%s.sqlite3", backupDir, ts)
+
+	// Step 1: rename live (untouched original) → backup.
+	if err := os.Rename(livePath, backupPath); err != nil {
+		dbInteraction.Warning("Safe parse: could not create backup: %s", err)
+	}
+
+	// Step 2: move temp → live. Fall back to copy+remove if crossing filesystems.
+	if err := os.Rename(safeParseTemp, livePath); err != nil {
+		if copyErr := copyFile(safeParseTemp, livePath); copyErr != nil {
+			dbInteraction.Warning("Safe parse: could not install new database: %s", copyErr)
+		}
+		os.Remove(safeParseTemp)
+	}
+
+	reopenDb(livePath)
+	safeParseTemp = ""
+}
+
+// rollbackSafeParse discards a failed safe parse:
+// deletes the temp file and reopens the untouched live database.
+func rollbackSafeParse() {
+	if safeParseTemp == "" {
+		return
+	}
+	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
+	os.Remove(safeParseTemp)
+	reopenDb(livePath)
+	safeParseTemp = ""
 }
 
 // --- table_modification_times table ---
@@ -588,11 +695,14 @@ func ensureCrossFieldMappingsTableExists() {
 		);`)
 }
 
-// maybeReloadCrossFieldMappingsDb syncs the flat file into the DB when the file is newer.
+// maybeReloadCrossFieldMappingsDb syncs the flat file into the DB when the file is newer,
+// or when entry_field_mappings (upstream dependency) has been updated.
 func maybeReloadCrossFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + CrossFieldMappingsFilePath
 
-	if fileModTime(fileName) <= tableModTime("filter_cross_field_mappings") {
+	crossTime := tableModTime("filter_cross_field_mappings")
+	if fileModTime(fileName) <= crossTime &&
+		tableModTime("filter_entry_field_mappings") <= crossTime {
 		return
 	}
 
@@ -687,11 +797,15 @@ func ensureEntryFieldMappingsTableExists() {
 		);`)
 }
 
-// maybeReloadEntryFieldMappingsDb syncs the flat file into the DB when the file is newer.
+// maybeReloadEntryFieldMappingsDb syncs the flat file into the DB when the file is newer,
+// or when name_mappings or generic_field_mappings (upstream dependencies) have been updated.
 func maybeReloadEntryFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + EntryFieldMappingsFilePath
 
-	if fileModTime(fileName) <= tableModTime("filter_entry_field_mappings") {
+	entryTime := tableModTime("filter_entry_field_mappings")
+	if fileModTime(fileName) <= entryTime &&
+		tableModTime("name_mappings") <= entryTime &&
+		tableModTime("filter_generic_field_mappings") <= entryTime {
 		return
 	}
 
@@ -792,11 +906,13 @@ func ensureGenericFieldMappingsTableExists() {
 		);`)
 }
 
-// maybeReloadGenericFieldMappingsDb syncs the flat file into the DB when the file is newer.
+// maybeReloadGenericFieldMappingsDb syncs the flat file into the DB when the file is newer
+// or when name_mappings (which normalises its values at load time) has been updated.
 func maybeReloadGenericFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + GenericFieldMappingsFilePath
 
-	if fileModTime(fileName) <= tableModTime("filter_generic_field_mappings") {
+	genericTime := tableModTime("filter_generic_field_mappings")
+	if fileModTime(fileName) <= genericTime && tableModTime("name_mappings") <= genericTime {
 		return
 	}
 
@@ -1080,7 +1196,6 @@ func commitBibTransaction() {
 			dbInteraction.Error("Could not commit bib transaction: %s", err)
 		}
 		activeTx = nil
-		bibEntriesModified = false
 	}
 }
 

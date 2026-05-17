@@ -171,7 +171,7 @@ var titleKeywordStopWords = map[string]bool{
 // for use as the keyword component of a preferred alias.
 func titleKeywords(title string) []string {
 	words := strings.FieldsFunc(title, func(r rune) bool {
-		return r == ' ' || r == '-' || r == ':' || r == ',' || r == '.' || r == '/' || r == '~' || r == '('
+		return r == ' ' || r == ':' || r == ',' || r == '.' || r == '/' || r == '~' || r == '('
 	})
 	var result []string
 	seen := map[string]bool{}
@@ -416,6 +416,38 @@ func (l *TBibTeXLibrary) CheckAndEnforcePreferredAlias(entry *TBibTeXEntry) {
 		l.setPreferredAlias(entry, derived)
 		l.Progress(ProgressGeneratedPreferredAlias, derived, entry.Key)
 	}
+}
+
+// repairBadPreferredAliases re-derives preferred aliases that have a single-letter
+// suffix after the year (e.g. "adam2005e" — legacy from hyphen-splitting bug) or
+// that contain "unicode" (legacy from unresolved \unicode macro calls).
+// If derivation yields the same alias (e.g. "unicode" is genuinely in the title)
+// or fails, the current alias is kept unchanged.
+// The old alias is retained in HintToKey as a redirect hint.
+func (l *TBibTeXLibrary) repairBadPreferredAliases() {
+	l.Progress(ProgressRepairingPreferredAliases)
+	singleLetterSuffix := regexp.MustCompile(`^[a-z]+[0-9]{4}[a-z]$`)
+
+	forEachBibEntryKey(func(key string) bool {
+		entry := l.buildEntry(key)
+		if !entry.Exists() {
+			return true
+		}
+		alias := entry.FieldValue(PreferredAliasField)
+		if alias == "" {
+			return true
+		}
+		if !singleLetterSuffix.MatchString(alias) && !strings.Contains(alias, "unicode") {
+			return true
+		}
+		derived := l.derivePreferredAlias(entry)
+		if derived == "" || derived == alias {
+			return true
+		}
+		l.Progress(ProgressGeneratedPreferredAlias, derived, key)
+		l.setPreferredAlias(entry, derived)
+		return true
+	})
 }
 
 func (l *TBibTeXLibrary) CheckTitlePresence(entry *TBibTeXEntry) {
@@ -812,7 +844,7 @@ func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {
 func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	key := l.MapEntryKey(keyRAW) // Needed??
 
-	l.MaybeSyncDBLPEntry(key)
+	l.MaybeFixDBLPEntry(key)
 
 	entryType := l.EntryType(key)
 	entryDBLP := l.EntryFieldValueity(key, DBLPField)

@@ -16,7 +16,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "14.11"
+const AppVersion = "14.18"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -76,21 +76,33 @@ func loadBibFromDb() {
 }
 
 func parseBibIntoDb() bool {
+	safeOk := beginSafeParse()
+	if !safeOk {
+		Library.Warning("Proceeding without safe-parse backup; database not protected during reparse.")
+	}
+
 	clearBibTables()
 	beginBibTransaction()
 	if !Library.ReadBib(BibFile) {
 		rollbackBibTransaction()
+		if safeOk {
+			rollbackSafeParse()
+			os.Exit(1)
+		}
 		return false
 	}
 	saveBibGroupsToDb(&Library)
 	saveBibCommentsToDb(&Library)
 	commitBibTransaction()
+
+	if safeOk {
+		commitSafeParse()
+	}
+
+	bibEntriesModified = false // parse is a load, not a modification
 	initEntryCache()
 	reportCacheMode()
 	refreshBibDbTimestamp()
-	// Aliases/hints populated by the parser are loaded state, not modifications.
-	Library.keyOldiesModified = false
-	Library.keyHintsModified = false
 	return true
 }
 
@@ -204,6 +216,12 @@ func cleanKeys(args []string) []string {
 }
 
 // --- Command functions ---
+
+func doTempFix() {
+	if openLibraryToUpdate() {
+		Library.repairBadPreferredAliases()
+	}
+}
 
 func doDefaultRun() {
 	if openLibraryToUpdate() {
@@ -420,7 +438,7 @@ func doFixAllEntries() {
 	}
 }
 
-func doSyncAllDblpEntries() {
+func doFixDblpEntries() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		total := countBibEntries()
@@ -445,7 +463,7 @@ func doNewKey() {
 	fmt.Println(KeyFromTime(time.Now()))
 }
 
-func doSyncDblpFor(args []string) {
+func doFixDblpFor(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		for _, key := range cleanKeys(args) {
@@ -541,8 +559,8 @@ func main() {
 		cmdShowEntry          bool
 		cmdFixEntries         bool
 		cmdFixAllEntries      bool
-		cmdSyncAllDblpEntries bool
-		cmdSyncDblpFor        bool
+		cmdFixDblpEntries     bool
+		cmdFixDblpFor         bool
 		cmdAddDblpEntry       bool
 		cmdAddKeyMapping      bool
 		cmdMergeEntries       bool
@@ -558,10 +576,11 @@ func main() {
 		cmdRenderAsHTML       bool
 		cmdRenderAsText       bool
 		cmdCheckPdfs          bool
+		cmdTempFix            bool
 	)
 
 	flag.BoolVar(&cmdGet, "get", false, "generate local .bib from bib.config + .map in CWD")
-	flag.BoolVar(&cmdGetPdfs, "get_pdfs", false, "print shell get-commands for missing PDFs")
+	flag.BoolVar(&cmdGetPdfs, "get_pdfs", false, "download missing PDFs into the files folder")
 	flag.BoolVar(&cmdFindEntries, "find_entries", false, "list entries matching field [value] (key TAB value per line)")
 	flag.BoolVar(&cmdEntryKey, "entry_key", false, "resolve alias to canonical key")
 	flag.BoolVar(&cmdEntryKeyAlias, "entry_key_alias", false, "get preferred alias for a key")
@@ -569,8 +588,8 @@ func main() {
 	flag.BoolVar(&cmdFixEntries, "fix_entries", false, "fix/check specific entries")
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
 	flag.BoolVar(&cmdFixAllEntries, "fix_all_entries", false, "fix/check all entries")
-	flag.BoolVar(&cmdSyncAllDblpEntries, "sync_all_dblp_entries", false, "DBLP-sync all entries that have a DBLP key")
-	flag.BoolVar(&cmdSyncDblpFor, "sync_dblp_for", false, "DBLP-sync specific entries")
+	flag.BoolVar(&cmdFixDblpEntries, "fix_dblp_entries", false, "fix/check all entries that have a DBLP key")
+	flag.BoolVar(&cmdFixDblpFor, "fix_dblp_for", false, "fix/check specific entries with DBLP")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "add one or more new entries from DBLP")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mapping", false, "add key alias(es) to a canonical key")
@@ -587,7 +606,8 @@ func main() {
 	flag.BoolVar(&cmdRenderAsTex, "render_as_tex", false, "render entry as TeX bibliography reference")
 	flag.BoolVar(&cmdRenderAsHTML, "render_as_html", false, "render entry as HTML bibliography reference")
 	flag.BoolVar(&cmdRenderAsText, "render_as_text", false, "render entry as plain-text bibliography reference")
-	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "interactively check PDF health in the files folder")
+	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "check PDF health, orphan files, and duplicates in the files folder")
+	flag.BoolVar(&cmdTempFix, "temp_fix", false, "re-derive preferred aliases with single-letter suffix or unicode substring")
 
 	flag.Parse()
 	args := flag.Args()
@@ -670,15 +690,15 @@ func main() {
 	case cmdFixAllEntries:
 		doFixAllEntries()
 
-	case cmdSyncAllDblpEntries:
-		doSyncAllDblpEntries()
+	case cmdFixDblpEntries:
+		doFixDblpEntries()
 
-	case cmdSyncDblpFor:
+	case cmdFixDblpFor:
 		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "Usage: -sync_dblp_for <key>...")
+			fmt.Fprintln(os.Stderr, "Usage: -fix_dblp_for <key>...")
 			os.Exit(1)
 		}
-		doSyncDblpFor(args)
+		doFixDblpFor(args)
 
 	case cmdAddDblpEntry:
 		if len(args) == 0 {
@@ -767,6 +787,9 @@ func main() {
 	case cmdCheckPdfs:
 		doCheckPDFs()
 
+	case cmdTempFix:
+		doTempFix()
+
 	default:
 		if len(args) > 0 {
 			fmt.Fprintln(os.Stderr, "Unexpected arguments (did you forget a command flag?):", args)
@@ -785,9 +808,24 @@ func main() {
 		Library.WriteKeyNonDoublesFile()
 		wroteFiles = true
 	}
-	if forceWrite || Library.nameMappingsModified || Library.keyHintsModified ||
-		Library.keyOldiesModified || Library.genericFieldMappingsModified || Library.entryFieldMappingsModified {
-		Library.WriteAllMappingsFiles()
+	if forceWrite || Library.keyOldiesModified {
+		Library.WriteKeyOldiesFile()
+		wroteFiles = true
+	}
+	if forceWrite || Library.keyHintsModified {
+		Library.WriteKeyHintsFile()
+		wroteFiles = true
+	}
+	if forceWrite || Library.nameMappingsModified {
+		Library.WriteNameMappingFile()
+		wroteFiles = true
+	}
+	if forceWrite || Library.genericFieldMappingsModified {
+		Library.WriteGenericFieldMappingsFile()
+		wroteFiles = true
+	}
+	if forceWrite || Library.entryFieldMappingsModified {
+		Library.WriteEntryFieldMappingsFile()
 		wroteFiles = true
 	}
 	if forceWrite || Library.crossFieldMappingsModified {

@@ -31,7 +31,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 		return false
 	}
 
-	l.Progress("Syncing entry %s with the DBLP version %s", key, DBLPKey)
+	l.Progress("Fixing entry %s against DBLP version %s", key, DBLPKey)
 
 	l.capturedDBLPEntry = &TBibTeXEntry{Key: KeyForDBLP(DBLPKey), Fields: map[string]string{}}
 	l.harvestNameAliases = true
@@ -69,7 +69,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	return ""
 }
 
-func (l *TBibTeXLibrary) MaybeSyncDBLPEntry(key string) {
+func (l *TBibTeXLibrary) MaybeFixDBLPEntry(key string) {
 	if DBLPKey := l.EntryFieldValueity(key, DBLPField); DBLPKey != "" {
 		l.MaybeMergeDBLPEntry(DBLPKey, key)
 	}
