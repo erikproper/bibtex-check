@@ -25,36 +25,15 @@ var (
 
 // normaliseUnicodeMap maps known Unicode code points to their BibTeX-normalised strings.
 // ASCII-equivalent mappings are preferred so that later passes (e.g. {-}→-) fire correctly.
-// Unknown non-ASCII code points are NOT listed here; normaliseUnicodeRune returns the
-// original \unicode{N} escape for them so that NormaliseFieldValue can emit a warning.
-var normaliseUnicodeMap = map[rune]string{
-	0x2006: " ", 0x2009: " ", 0x2028: " ", 0x00A0: " ", 0x3000: " ",
-	0x00AD: "", 0x200B: "", 0x200C: "", 0x200D: "", 0x2060: "",
-	0x2010: "-", 0x2011: "-", 0x2212: "-",
-	0x2012: "--", 0x2013: "--", 0x2500: "--",
-	0x2014: "---",
-	0x2018: "'", 0x2019: "'",
-	0x201C: "``",
-	0x201D: "''",
-	0x3001: ",", 0xFF0C: ",",
-	0xFF0E: ".",
-	0xFF1A: ":",
-	0xFF1B: ";",
-	0xFF01: "!",
-	0xFF1F: "? ",
-	0xFF08: "(",
-	0xFF09: ")",
-	0xFF3B: "{", 0x3015: "{",
-	0xFF3D: "}", 0x3016: "}", 0xFF5D: "}",
-	0xFF5B: "{",
-	0x2751: "*",
-	0x2026: "...",
-	0xFF41: "a",
-}
+// normaliseUnicodeMap is populated by loadUnicodeMap from unicode_map.csv at startup.
+// Code points not listed here are kept as \unicode{N} by normaliseUnicodeRune so that the
+// bib file remains valid LaTeX (callers supply \usepackage{unicode} or \def\unicode#1{}).
+var normaliseUnicodeMap map[rune]string
 
-// normaliseUnicodeRune looks up r in normaliseUnicodeMap.
-// For unknown non-ASCII code points it returns the original \unicode{N} escape so that
-// NormaliseFieldValue can detect and warn about unresolved escapes.
+// normaliseUnicodeRune looks up r in normaliseUnicodeMap and returns the mapped
+// string when found. ASCII code points not in the map are returned as-is.
+// Unmapped non-ASCII code points are kept as \unicode{N} so the bib file remains
+// valid LaTeX (callers supply \usepackage{unicode} or \def\unicode#1{}).
 func normaliseUnicodeRune(r rune) string {
 	if mapped, ok := normaliseUnicodeMap[r]; ok {
 		return mapped
@@ -263,6 +242,7 @@ func ApplyLaTeXMap(s string) string {
 		result = strings.ReplaceAll(result, source, target)
 	}
 
+	result = strings.ReplaceAll(result, "{ }", " ")        // brace-protected space → regular space
 	result = strings.ReplaceAll(result, "{}_", "\x00sub") // protect subscript base
 	result = strings.ReplaceAll(result, "{}^", "\x00sup") // protect superscript base
 	result = strings.ReplaceAll(result, "{}", "")          // strip standalone empty braces

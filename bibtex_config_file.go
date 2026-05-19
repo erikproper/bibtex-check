@@ -24,14 +24,19 @@ import (
 )
 
 type TBibTeXConfig struct {
-	Version      string `json:"version"`
-	CSVDelimiter string `json:"csv_delimiter"`
-	KeyPrefix    string `json:"key_prefix"`
+	Version          string `json:"version"`
+	CSVDelimiter     string `json:"csv_delimiter"`
+	KeyPrefix        string `json:"key_prefix"`
+	GlobalFolder     string `json:"global_folder"`
+	DblpFolderLegacy string `json:"dblp_folder,omitempty"` // migrated to global_folder on next write
+	BackupFolder     string `json:"backup_folder"`
 }
 
 var (
 	csvDelimiter = ";"
 	keyPrefix    = ""
+	globalFolder = "" // set by loadBibTeXConfig; defaults to bibTeXFolder when empty
+	backupFolder = "" // set by loadBibTeXConfig; defaults to bibTeXFolder+bibTeXBaseName+".backups/" when empty
 )
 
 func writeBibTeXConfig(configPath string, cfg TBibTeXConfig) {
@@ -79,6 +84,24 @@ func loadBibTeXConfig(configPath string) {
 	}
 	if cfg.KeyPrefix != "" {
 		keyPrefix = cfg.KeyPrefix
+	}
+	// Migrate legacy dblp_folder → global_folder on next config write.
+	if cfg.GlobalFolder == "" && cfg.DblpFolderLegacy != "" {
+		cfg.GlobalFolder = cfg.DblpFolderLegacy
+		needsWrite = true
+	}
+	cfg.DblpFolderLegacy = "" // suppress old key on next write
+	if cfg.GlobalFolder != "" {
+		globalFolder = cfg.GlobalFolder
+		if !strings.HasSuffix(globalFolder, "/") {
+			globalFolder += "/"
+		}
+	}
+	if cfg.BackupFolder != "" {
+		backupFolder = cfg.BackupFolder
+		if !strings.HasSuffix(backupFolder, "/") {
+			backupFolder += "/"
+		}
 	}
 
 	if keyPrefix == "" {

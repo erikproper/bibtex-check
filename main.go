@@ -16,7 +16,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "14.18"
+const AppVersion = "15.52"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -182,23 +182,44 @@ var BibFile string
 
 var instanceLockFile *os.File // held open for the lifetime of the process to maintain the flock
 
-// acquireInstanceLock obtains an exclusive flock on <basename>.lock.
-// Exits immediately if another instance already holds the lock for the same base.
+// flockPath obtains an exclusive non-blocking flock on lockPath.
+// Exits immediately if another instance already holds that lock.
 // The OS releases the lock automatically when the process exits.
-func acquireInstanceLock() {
-	lockPath := bibTeXFolder + bibTeXBaseName + LockFileExtension
-
+func flockPath(lockPath string) {
 	var err error
 	instanceLockFile, err = os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not open lock file %s: %s\n", lockPath, err)
 		os.Exit(1)
 	}
-
 	if err := syscall.Flock(int(instanceLockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		fmt.Fprintf(os.Stderr, "Another instance is already running for %s\n", bibTeXBaseName)
+		fmt.Fprintf(os.Stderr, "Another instance is already running (%s)\n", lockPath)
 		os.Exit(1)
 	}
+}
+
+func acquireInstanceLock() {
+	flockPath(bibTeXFolder + bibTeXBaseName + LockFileExtension)
+}
+
+func acquireDblpLock() {
+	flockPath(dblpEffectiveFolder() + bibTeXBaseName + ".dblp" + LockFileExtension)
+}
+
+// requireNoDblpImport exits with a clear message if a DBLP import is currently
+// in progress in another process (i.e. the DBLP lock file is held).
+func requireNoDblpImport() {
+	lockPath := dblpEffectiveFolder() + bibTeXBaseName + ".dblp" + LockFileExtension
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return // can't tell; let the command proceed
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintln(os.Stderr, "DBLP import in progress — try again later.")
+		os.Exit(1)
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint — check only, not holding
 }
 
 // cleanKeys strips \cite{} wrappers from each arg and splits comma-joined cite
@@ -389,8 +410,14 @@ func doEntryKey(args []string) {
 func doEntryKeyAlias(args []string, withMap bool) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
-		key := Library.MapEntryKey(cleanKey(args[0]))
+		rawKey := cleanKey(args[0])
+		key := Library.MapEntryKey(rawKey)
 		alias := Library.PreferredKey(key)
+		if alias == "" && key != rawKey && validPreferredKeyAlias.MatchString(rawKey) {
+			// Input is a valid preferred-alias that resolved to a canonical key;
+			// use it directly so -map works before preferredalias is set on the entry.
+			alias = rawKey
+		}
 		if alias != "" {
 			fmt.Println(alias)
 			if withMap {
@@ -577,6 +604,9 @@ func main() {
 		cmdRenderAsText       bool
 		cmdCheckPdfs          bool
 		cmdTempFix            bool
+		cmdLoadDblpXml      bool
+		cmdVerifyDblpImport bool
+		cmdUpdateDblp       bool
 	)
 
 	flag.BoolVar(&cmdGet, "get", false, "generate local .bib from bib.config + .map in CWD")
@@ -608,9 +638,27 @@ func main() {
 	flag.BoolVar(&cmdRenderAsText, "render_as_text", false, "render entry as plain-text bibliography reference")
 	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "check PDF health, orphan files, and duplicates in the files folder")
 	flag.BoolVar(&cmdTempFix, "temp_fix", false, "re-derive preferred aliases with single-letter suffix or unicode substring")
-
+	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP SQLite database")
+	flag.BoolVar(&cmdVerifyDblpImport, "verify_dblp_import", false, "cross-check DBLP SQLite import against scraped bib files")
+	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
 	flag.Parse()
 	args := flag.Args()
+
+	// Go's flag parser stops at the first non-flag argument, so modifier flags
+	// that appear after positional args (e.g. -entry_key_alias key -map) are
+	// not parsed. Rescan args for known modifiers and strip them out.
+	{
+		var filtered []string
+		for _, a := range args {
+			if a == "-map" || a == "--map" {
+				cmdMap = true
+			} else {
+				filtered = append(filtered, a)
+			}
+		}
+		args = filtered
+	}
+
 	Reporting.SetStepMode(cmdStep)
 
 	if cmdVersion {
@@ -633,13 +681,39 @@ func main() {
 	Reporting = TInteraction{}
 
 	loadBibTeXConfig(bibTeXFolder + bibTeXBaseName + ConfigFileExtension)
+	if backupFolder == "" {
+		backupFolder = bibTeXFolder + bibTeXBaseName + ".backups/"
+	}
+	if globalFolder == "" {
+		globalFolder = bibTeXFolder
+	}
+	loadUnicodeMap(globalFolder + "unicode_map.csv")
+	loadHtmlCommandsMap(globalFolder + "html_commands_map.csv")
+	loadHtmlCharacterMap(globalFolder + "html_character_map.csv")
 
 	if cmdNewKey {
 		doNewKey()
 		os.Exit(0)
 	}
 
+	if cmdUpdateDblp {
+		acquireDblpLock()
+		doUpdateDblp()
+		os.Exit(0)
+	}
+
+	if cmdLoadDblpXml {
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -load_dblp_xml <path.xml.gz>")
+			os.Exit(1)
+		}
+		acquireDblpLock()
+		doLoadDblpXml(args)
+		os.Exit(0)
+	}
+
 	acquireInstanceLock()
+
 	connectToDatabase()
 
 	switch {
@@ -690,10 +764,16 @@ func main() {
 	case cmdFixAllEntries:
 		doFixAllEntries()
 
+	case cmdVerifyDblpImport:
+		requireNoDblpImport()
+		doVerifyDblpImport()
+
 	case cmdFixDblpEntries:
+		requireNoDblpImport()
 		doFixDblpEntries()
 
 	case cmdFixDblpFor:
+		requireNoDblpImport()
 		if len(args) == 0 {
 			fmt.Fprintln(os.Stderr, "Usage: -fix_dblp_for <key>...")
 			os.Exit(1)
@@ -701,6 +781,7 @@ func main() {
 		doFixDblpFor(args)
 
 	case cmdAddDblpEntry:
+		requireNoDblpImport()
 		if len(args) == 0 {
 			fmt.Fprintln(os.Stderr, "Usage: -add_dblp_entry <dblp-key>...")
 			os.Exit(1)

@@ -94,14 +94,23 @@ func processFieldToIgnoreValue(l *TBibTeXLibrary, key, value string) (string, st
 // It always, first, conducts a normalisation of the field value.
 // If a field specific process function exists, then it is applied on the normalised value.
 // Otherwise, we simply return the normalised value.
+// When capturedDBLPEntry is active the raw pre-normalisation value is captured directly,
+// so that verify and fix comparisons work against the as-scraped data.
 func (l *TBibTeXLibrary) ProcessRawEntryFieldValue(key, field, value string) {
+	if l.capturedDBLPEntry != nil {
+		if value != "" {
+			l.capturedDBLPEntry.Fields[field] = value
+		}
+		return
+	}
+
 	value = l.MapNormalisedEntryFieldValue(key, field, value)
 
 	l.ProcessEntryFieldValue(key, field, value)
 }
 
 // The general function call to process field values when reading from the cache.
-// This should not need any normalisation of the field valie.
+// This should not need any normalisation of the field value.
 
 func (l *TBibTeXLibrary) ProcessEntryFieldValue(key, field, value string) {
 	if l.capturedDBLPEntry != nil {

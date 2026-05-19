@@ -176,6 +176,9 @@ func titleKeywords(title string) []string {
 	var result []string
 	seen := map[string]bool{}
 	for _, w := range words {
+		if strings.Contains(w, `\unicode{`) {
+			continue
+		}
 		clean := stripNonAlphaNum.ReplaceAllString(TeXStringIndexer(w), "")
 		if clean == "" || titleKeywordStopWords[clean] || seen[clean] {
 			continue
@@ -286,6 +289,10 @@ func (l *TBibTeXLibrary) deriveAliasBase(entry *TBibTeXEntry) string {
 		surnameRaw = tokens[len(tokens)-1]
 	}
 
+	if strings.Contains(surnameRaw, `\unicode{`) {
+		l.Warning(WarningCannotDeriveAliasEmptySurname, entry.Key, surnameRaw)
+		return ""
+	}
 	surname := stripNonAlpha.ReplaceAllString(TeXStringIndexer(surnameRaw), "")
 	if surname == "" {
 		l.Warning(WarningCannotDeriveAliasEmptySurname, entry.Key, surnameRaw)
@@ -782,6 +789,24 @@ func (l *TBibTeXLibrary) CheckURLDate(entry *TBibTeXEntry) {
 	l.Warning(WarningBadDate, date, entry.Key)
 }
 
+func (l *TBibTeXLibrary) CheckWithdrawn(entry *TBibTeXEntry) {
+	date := entry.FieldValue("withdrawn")
+	if date == "" {
+		return
+	}
+
+	if !IsValidDate(date) {
+		l.Warning("Invalid date %q in withdrawn field for entry %s", date, entry.Key)
+		return
+	}
+
+	if entry.FieldValue("author") != "{Withdrawn publication}" {
+		if l.WarningYesNoQuestion("Set author to {Withdrawn publication}", "Entry %s has withdrawn date but author is not {Withdrawn publication}", entry.Key) {
+			l.setEntryField(entry, "author", "{Withdrawn publication}")
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 	key := l.MapEntryKey(keyRAW) // Dealias, while we are likely to do this immediately after a merge (for now)
 	// After merging all doubles, we can do this as part of the consistency check and CheckCrossref in particular, and then don't need to dealias.
@@ -918,6 +943,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckISBN(entry)
 			l.CheckYear(entry)
 			l.CheckURLDate(entry)
+			l.CheckWithdrawn(entry)
 		}
 	}
 }

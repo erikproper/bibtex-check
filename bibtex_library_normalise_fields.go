@@ -324,10 +324,6 @@ func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 		value = strings.TrimSpace(value)
 	}
 
-	if strings.Contains(value, `\unicode{`) {
-		l.Warning(WarningUnresolvedUnicode, field, value)
-	}
-
 	return value
 }
 

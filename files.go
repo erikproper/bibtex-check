@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -70,27 +71,27 @@ func timestamp() string {
 	return result
 }
 
-// Create a backup of an existing file.
+// BackupFile copies sourceFile into backupFolder, appending a timestamp suffix.
 func BackupFile(sourceFile string) bool {
-	// Open the source file
 	source, err := os.Open(sourceFile)
 	if err != nil {
 		return false
 	}
 	defer source.Close()
 
-	// Create the backup file
-	destination, err := os.Create(sourceFile + "." + timestamp())
+	if err := os.MkdirAll(backupFolder, 0755); err != nil {
+		return false
+	}
+	destPath := filepath.Join(backupFolder, filepath.Base(sourceFile)+"."+timestamp())
+	destination, err := os.Create(destPath)
 	if err != nil {
 		return false
 	}
 	defer destination.Close()
 
-	// Copy the contents of the source file to the backup file
 	if _, err = io.Copy(destination, source); err != nil {
 		return false
 	}
-
 	return true
 }
 

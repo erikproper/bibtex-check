@@ -47,7 +47,7 @@ func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
 // Rethink this name ... "Field", since it may also work on the type ...
 func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRaw, currentRaw string) string {
 	current := l.MapFieldValue(field, currentRaw)
-	challenge := l.MapFieldValue(field, challengeRaw)
+	challenge := l.MapFieldValue(field, l.NormaliseFieldValue(field, challengeRaw))
 
 	// OK. The key, field, and challenge are needed here. But, current is likely to be derivable from l with key and field.
 	// But ... needs to be checked once done with the legacy migration.
@@ -122,7 +122,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 
 		// NEED A SET HERE!!
 		options := TStringSetNew()
-		if field == EntryTypeField || field == "year" || field == "pages" ||
+		if field == EntryTypeField || field == "year" || field == "pages" || field == "author" || field == "editor" ||
 			field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {
 			options.Add("y", "n")
 		} else {

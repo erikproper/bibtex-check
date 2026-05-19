@@ -116,6 +116,13 @@ func connectToDatabase() {
 // --- safe parse (copy-on-write DB swap) ---
 
 var safeParseTemp string // non-empty while a safe parse is in progress
+var safeParseOriginalCount int
+
+func countDistinctBibEntries() int {
+	var n int
+	db.QueryRow(`SELECT COUNT(DISTINCT entry_key) FROM bib_entries`).Scan(&n)
+	return n
+}
 
 // copyFile copies src to dst byte-for-byte.
 func copyFile(src, dst string) error {
@@ -166,6 +173,8 @@ func beginSafeParse() bool {
 	safeParseTemp = fmt.Sprintf("%s/bibtex_check_%s_%s.sqlite3",
 		os.TempDir(), bibTeXBaseName, ts)
 
+	safeParseOriginalCount = countDistinctBibEntries() // count entries before switching to temp
+
 	if err := copyFile(livePath, safeParseTemp); err != nil {
 		dbInteraction.Warning("Safe parse: could not copy database to temp: %s", err)
 		safeParseTemp = ""
@@ -182,16 +191,27 @@ func commitSafeParse() {
 		return
 	}
 	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
-	backupDir := bibTeXFolder + bibTeXBaseName + ".backups"
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
+	if err := os.MkdirAll(backupFolder, 0755); err != nil {
 		dbInteraction.Warning("Safe parse: could not create backup dir: %s", err)
 	}
 	ts := time.Now().Format("20060102_150405")
-	backupPath := fmt.Sprintf("%s/%s.sqlite3", backupDir, ts)
+	backupPath := fmt.Sprintf("%s%s.%s%s", backupFolder, bibTeXBaseName, ts, sqliteFileExtension)
+
+	// Entry count sanity check: warn if the re-parsed DB has fewer entries than the original.
+	if safeParseOriginalCount > 0 {
+		newCount := countDistinctBibEntries()
+		if newCount < safeParseOriginalCount {
+			dbInteraction.Warning(
+				"Safe parse: re-parsed DB has %d entries, original had %d (-%d). Check for missing entries before proceeding.",
+				newCount, safeParseOriginalCount, safeParseOriginalCount-newCount)
+		}
+	}
 
 	// Step 1: rename live (untouched original) → backup.
+	// Abort if backup fails — never overwrite the live database without a backup.
 	if err := os.Rename(livePath, backupPath); err != nil {
-		dbInteraction.Warning("Safe parse: could not create backup: %s", err)
+		dbInteraction.Warning("Safe parse: could not create backup, aborting install: %s", err)
+		return
 	}
 
 	// Step 2: move temp → live. Fall back to copy+remove if crossing filesystems.
@@ -836,7 +856,12 @@ func maybeReloadEntryFieldMappingsDb() {
 }
 
 // loadEntryFieldMappingsFromDb populates l.EntryFieldSourceToTarget from the DB.
-// Applies the same normalisation as ReadEntryFieldMappingsFile (MapNormalisedFieldValue).
+// The CSV is always written with already-normalised values (WriteEntryFieldMappingsFile
+// iterates the in-memory map whose keys are MapFieldValue(NormaliseFieldValue(raw))).
+// Re-applying NormaliseFieldValue here would produce double-normalisation and break the
+// round-trip for non-idempotent normalisers (e.g. NormaliseTitleString on math strings).
+// We therefore apply only MapFieldValue (generic field alias resolution) and trust that
+// the CSV values are in normalised form.
 func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) {
 	rows, err := db.Query(
 		`SELECT entry_key, field, winner, challenger FROM filter_entry_field_mappings`)
@@ -853,8 +878,8 @@ func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) {
 			continue
 		}
 		l.AddEntryFieldAlias(key, field,
-			l.MapNormalisedFieldValue(field, challenger),
-			l.MapNormalisedFieldValue(field, winner),
+			l.MapFieldValue(field, challenger),
+			l.MapFieldValue(field, winner),
 			true)
 	}
 }
@@ -1006,12 +1031,24 @@ func ensureURLsIgnoreTableExists() {
 }
 
 func maybeReloadURLsIgnoreDb() {
-	csvFile := bibTeXFolder + URLsIgnoreFilePath
+	csvFile := bibTeXFolder + bibTeXBaseName + URLsIgnoreFilePath
+	rootCSV := bibTeXFolder + URLsIgnoreRootFilePath
 	legacyFile := bibTeXFolder + URLsIgnoreLegacyFile
+
+	// Migrate from old root-level location to the tables folder on first run.
+	if !FileExists(csvFile) {
+		if FileExists(rootCSV) {
+			copyFile(rootCSV, csvFile)
+		} else if FileExists(legacyFile) {
+			copyFile(legacyFile, csvFile)
+		}
+	}
 
 	// Pick whichever source file exists and is newer than the DB.
 	sourceFile := csvFile
-	if !FileExists(csvFile) && FileExists(legacyFile) {
+	if !FileExists(csvFile) && FileExists(rootCSV) {
+		sourceFile = rootCSV
+	} else if !FileExists(csvFile) && FileExists(legacyFile) {
 		sourceFile = legacyFile
 	}
 	if fileModTime(sourceFile) <= tableModTime("urls_ignore") {

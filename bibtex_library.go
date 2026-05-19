@@ -178,13 +178,15 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 		return
 	}
 
-	// Check for ambiguity of aliases
+	if l.EntryFieldSourceToTarget[entry][field][alias] == target {
+		return
+	}
+
+	// Check for ambiguity of aliases — warn and skip, but do not block other writes.
 	if check {
 		if currentTarget, aliasIsAlreadyAliased := l.EntryFieldSourceToTarget[entry][field][alias]; aliasIsAlreadyAliased {
 			if currentTarget != target {
-				l.Warning("line 162: "+WarningAmbiguousAlias, alias, currentTarget, target)
-				l.NoEntryFieldMappingsFileWriting = true
-
+				l.Warning(WarningAmbiguousAlias, alias, currentTarget, target)
 				return
 			}
 		}

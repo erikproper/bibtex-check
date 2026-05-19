@@ -46,16 +46,16 @@ const (
 	KeyNonDoublesFilePath            = ".tables/key_non_doubles.csv"
 	KeyOldiesFilePath             = ".tables/key_oldies.csv"
 	KeyHintsFilePath              = ".tables/key_hints.csv"
-	ShortenMappingsFilePath       = ".tables/shorten_mappings.csv"
+	ShortenMappingsFilePath       = "shorten_mappings.csv"
 	PDFConfirmedOkFilePath        = ".tables/pdf_confirmed_ok.csv"
 
-	// These two live at FilesRoot level (no BaseName prefix), matching the legacy
-	// urls.ignore / urls.failed flat files they supersede.
-	URLsIgnoreFilePath = "urls_ignore.csv"
+	// urls_ignore lives in the tables folder alongside other per-library CSVs.
+	URLsIgnoreFilePath = ".tables/urls_ignore.csv"
 	URLsFailedFilePath = "urls_failed.csv"
 
-	// Legacy filename checked as a migration fallback when urls_ignore.csv is absent.
-	URLsIgnoreLegacyFile = "urls.ignore"
+	// Legacy paths checked as migration fallbacks when the tables location is absent.
+	URLsIgnoreLegacyFile    = "urls.ignore"
+	URLsIgnoreRootFilePath  = "urls_ignore.csv"
 
 	DefaultLanguage = "eng"
 )
@@ -160,7 +160,8 @@ func init() {
 		"month", "year", "note", "doi", "key", "author", TitleField,
 		DBLPField, "researchgate", "abstract", "ketwords",
 		"eprinttype", "eprint", "langid",
-		"url", "urldate", "urloriginal")
+		"url", "urldate", "urloriginal",
+		"withdrawn")
 
 	// Needed for what?? Legacy? Import??
 	//BibTeXImportFields.Unite(BibTeXAllowedFields)

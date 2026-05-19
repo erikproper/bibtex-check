@@ -25,11 +25,12 @@ import (
 
 // TBibGetConfig mirrors the bib.config JSON file.
 type TBibGetConfig struct {
-	FileName   string `json:"file_name"`
+	FileName    string `json:"file_name"`
 	IncludeDOI  bool   `json:"include_doi"`
 	IncludeISBN bool   `json:"include_isbn"`
 	BiberMode   bool   `json:"biber_mode"`
 	Shorten     bool   `json:"shorten"`
+	ShortenFile string `json:"shorten_file"`
 	IncludeURL  bool   `json:"include_url"`
 }
 
@@ -116,10 +117,13 @@ func rewriteBibGetMap(fileName string, pairs []TBibGetPair) {
 // TShortenMappings maps field name to an ordered list of (from, to) pairs.
 type TShortenMappings map[string][][2]string
 
-// readShortenMappings reads <basePath><ShortenMappingsFilePath> (field;from;to CSV).
-func readShortenMappings(basePath string) TShortenMappings {
+// readShortenMappingsFile reads a shorten-mappings CSV from the given file path.
+func readShortenMappingsFile(path string) TShortenMappings {
 	result := TShortenMappings{}
-	processFile(basePath+ShortenMappingsFilePath, func(line string) {
+	processFile(path, func(line string) {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			return
+		}
 		parts := strings.SplitN(line, csvDelimiter, 3)
 		if len(parts) != 3 {
 			return
@@ -135,12 +139,38 @@ func readShortenMappings(basePath string) TShortenMappings {
 	return result
 }
 
+// readShortenMappings reads shorten_mappings.csv from the global folder.
+func readShortenMappings(folder string) TShortenMappings {
+	return readShortenMappingsFile(folder + ShortenMappingsFilePath)
+}
+
 // applyShorten applies shorten_mappings substitutions to a field value.
 func applyShorten(mappings TShortenMappings, field, value string) string {
 	for _, pair := range mappings[field] {
 		value = strings.ReplaceAll(value, pair[0], pair[1])
 	}
 	return value
+}
+
+// mergeShortenMappings merges override into base: for each field, override entries
+// replace base entries with the same "from" value; remaining base entries are kept first.
+func mergeShortenMappings(base, override TShortenMappings) TShortenMappings {
+	result := TShortenMappings{}
+	for field, pairs := range base {
+		overrideFroms := map[string]bool{}
+		for _, p := range override[field] {
+			overrideFroms[p[0]] = true
+		}
+		for _, p := range pairs {
+			if !overrideFroms[p[0]] {
+				result[field] = append(result[field], p)
+			}
+		}
+	}
+	for field, pairs := range override {
+		result[field] = append(result[field], pairs...)
+	}
+	return result
 }
 
 // biberMonth maps full month names to biber abbreviations.
@@ -297,8 +327,17 @@ func doGet() {
 
 	var shorten TShortenMappings
 	if cfg.Shorten {
-		basePath := Library.FilesRoot + Library.BaseName
-		shorten = readShortenMappings(basePath)
+		shorten = readShortenMappings(globalFolder)
+		if cfg.ShortenFile != "" {
+			localPath := cfg.ShortenFile
+			if !filepath.IsAbs(localPath) {
+				cwd, err := os.Getwd()
+				if err == nil {
+					localPath = filepath.Join(cwd, localPath)
+				}
+			}
+			shorten = mergeShortenMappings(shorten, readShortenMappingsFile(localPath))
+		}
 	}
 
 	// Build canonical->localKey index (first local key wins, already enforced by readBibGetMap).
@@ -428,30 +467,39 @@ func doGet() {
 }
 
 // appendToMapFile appends alias;canonicalKey to the map file named in bib.config.
-// A no-op when bib.config is absent. Reports an error when the file cannot be opened.
-// Skips the append when the canonical key is already present in the file.
 func appendToMapFile(alias, canonicalKey string) {
+	if canonicalKey == "" {
+		fmt.Fprintln(os.Stderr, "-map: key not found in library, cannot add to map")
+		return
+	}
 	data, err := os.ReadFile("bib.config")
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "-map: no bib.config in current directory")
 		return
 	}
 	var cfg TBibGetConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		fmt.Fprintln(os.Stderr, "Cannot parse bib.config:", err)
+		fmt.Fprintln(os.Stderr, "-map: cannot parse bib.config:", err)
 		return
 	}
 	if cfg.FileName == "" {
+		fmt.Fprintln(os.Stderr, "-map: bib.config has no file_name")
 		return
 	}
 	pairs, _, _ := readBibGetMap(cfg.FileName)
 	for _, p := range pairs {
 		if p.canonicalKey == canonicalKey {
+			if p.localKey != alias {
+				fmt.Fprintf(os.Stderr, "-map: %s is already in %s.map as %s\n", canonicalKey, cfg.FileName, p.localKey)
+			} else {
+				fmt.Fprintf(os.Stderr, "-map: %s is already in %s.map\n", alias, cfg.FileName)
+			}
 			return
 		}
 	}
 	f, err := os.OpenFile(cfg.FileName+".map", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Cannot open map file:", err)
+		fmt.Fprintln(os.Stderr, "-map: cannot open map file:", err)
 		return
 	}
 	defer f.Close()
