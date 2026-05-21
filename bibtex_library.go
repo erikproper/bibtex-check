@@ -432,12 +432,51 @@ func (l *TBibTeXLibrary) AddNameMapping(canonical, alias string) {
 // correct but the chain needs one extra hop at lookup time. Flattening removes that
 // extra hop and ensures NameAliasToName is a single-level map.
 func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
+	l.Progress(ProgressCheckingNameMappings)
+
+	// Phase 1: detect and break cycles. Collect the edge to remove for each
+	// cycle (the edge that closes the loop), then delete them all at once so
+	// we don't modify the map while ranging over it.
+	type removal struct{ from, to string }
+	var removals []removal
+	seenCycle := map[string]bool{}
+
+	for start := range l.NameAliasToName {
+		visited := map[string]bool{start: true}
+		path := []string{start}
+		cur := start
+		for {
+			next, ok := l.NameAliasToName[cur]
+			if !ok {
+				break
+			}
+			path = append(path, next)
+			if visited[next] {
+				edge := cur + "→" + next
+				if !seenCycle[edge] {
+					seenCycle[edge] = true
+					l.Warning("Cycle in name mappings (auto-fixed): %s", strings.Join(path, " → "))
+					removals = append(removals, removal{cur, next})
+				}
+				break
+			}
+			visited[next] = true
+			cur = next
+		}
+	}
+
+	for _, r := range removals {
+		l.NameToAliases.DeleteValueFromStringSetMap(r.to, r.from)
+		delete(l.NameAliasToName, r.from)
+		l.nameMappingsModified = true
+	}
+
+	// Phase 2: flatten multi-hop chains (A → B → C becomes A → C).
 	type redirect struct{ alias, trueCanonical string }
 	var redirects []redirect
 
 	for alias, x := range l.NameAliasToName {
 		if _, xIsAlso := l.NameAliasToName[x]; xIsAlso {
-			// Follow chain to the ultimate canonical.
 			ultimate := x
 			for {
 				next, ok := l.NameAliasToName[ultimate]

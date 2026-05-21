@@ -4,17 +4,21 @@
  * Package:   Main
  * Component: DBLPXMLImporter
  *
- * Streaming importer from DBLP XML exports (.xml.gz) into a dedicated SQLite DB.
+ * Streaming importer from DBLP XML exports (.xml.gz) into the file-based
+ * DBLP store under ~/BiBTeX.Generics/DBLP/.
  * Field values are stored VERBATIM: HTML entity references (&iacute; etc.) are
  * preserved as "&name;" strings, HTML inline tags (<i>, <sup> etc.) are
  * reconstructed as "<tag>...</tag>" text, and Unicode characters from ISO-8859-1
  * decoding are stored as-is. Conversion to LaTeX happens at read time via
  * dblpRawToLaTeX (html_commands_map → html_character_map → unicode_map).
- * The title index is built during import by applying dblpRawToLaTeX before indexing.
+ *
+ * Import is two-pass: the first pass collects name mappings from www (person
+ * homepage) entries; the second pass writes entry files with names already
+ * mapped to their canonical bibtex= forms.
  *
  * Creator: Henderik A. Proper (e.proper@acm.org), Luxembourg, in collaboration with Claude.ai
  *
- * Version of: 18.05.2026
+ * Version of: 19.05.2026
  *
  */
 
@@ -22,15 +26,11 @@ package main
 
 import (
 	"compress/gzip"
-	"crypto/md5"
-	"database/sql"
-	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -42,266 +42,8 @@ import (
 
 // dblpDisambigSuffix matches the trailing disambiguation number that DBLP
 // appends to person names in the bibtex= attribute (e.g. "Robert Winter 0001").
-// These suffixes are DBLP-internal and are stripped when building dblp_name_bibtex.
+// These suffixes are DBLP-internal and are stripped when building name maps.
 var dblpDisambigSuffix = regexp.MustCompile(` \d{4}$`)
-
-
-// --- DBLP SQLite DB ---
-
-var dblpDB *sql.DB
-
-const dblpDBFileName = "dblp.sqlite3"
-
-// dblpEffectiveFolder returns the folder used for dblp.sqlite3 and XML.gz files.
-// If global_folder is set in the config, that is used; otherwise falls back to
-// bibTeXFolder so that no config change is required for single-library setups.
-func dblpEffectiveFolder() string {
-	if globalFolder != "" {
-		return globalFolder
-	}
-	return bibTeXFolder
-}
-
-func dblpDBPath() string { return dblpEffectiveFolder() + dblpDBFileName }
-
-func openDblpDB() bool {
-	var err error
-	dblpDB, err = sql.Open(sqliteDatabaseDriver, dblpDBPath())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not open DBLP database %s: %s\n", dblpDBPath(), err)
-		return false
-	}
-	ensureDblpTablesExist()
-	checkAndRebuildTitleIndexIfNeeded()
-	return true
-}
-
-func closeDblpDB() {
-	if dblpDB != nil {
-		dblpDB.Close()
-		dblpDB = nil
-	}
-}
-
-// moveDblpToBackup moves dblp.sqlite3 to the backup folder.
-// os.Rename is used first (instant on the same filesystem); if that fails
-// (e.g. cross-device), it falls back to copy + remove.
-func moveDblpToBackup() error {
-	src := dblpDBPath()
-	if err := os.MkdirAll(backupFolder, 0755); err != nil {
-		return err
-	}
-	dst := filepath.Join(backupFolder, filepath.Base(src)+"."+timestamp())
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-	// Cross-device fallback: copy then remove original.
-	if !BackupFile(src) {
-		return fmt.Errorf("could not copy %s to backup", src)
-	}
-	return os.Remove(src)
-}
-
-func ensureDblpTablesExist() {
-	for _, stmt := range []string{
-		`CREATE TABLE IF NOT EXISTS dblp_entries (
-			dblp_key TEXT    NOT NULL,
-			field    TEXT    NOT NULL,
-			position INTEGER NOT NULL DEFAULT 0,
-			value    TEXT    NOT NULL,
-			PRIMARY KEY (dblp_key, field, position)
-		);`,
-		`CREATE TABLE IF NOT EXISTS dblp_persons (
-			dblp_key TEXT    NOT NULL,
-			role     TEXT    NOT NULL,
-			position INTEGER NOT NULL,
-			name     TEXT    NOT NULL DEFAULT '',
-			orcid    TEXT    NOT NULL DEFAULT '',
-			PRIMARY KEY (dblp_key, role, position)
-		);`,
-		`CREATE TABLE IF NOT EXISTS dblp_title_index (
-			field         TEXT NOT NULL,
-			indexed_title TEXT NOT NULL,
-			dblp_key      TEXT NOT NULL,
-			PRIMARY KEY (field, indexed_title, dblp_key)
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_dblp_title ON dblp_title_index (field, indexed_title);`,
-		`CREATE TABLE IF NOT EXISTS dblp_name_bibtex (
-			plain_name  TEXT PRIMARY KEY,
-			bibtex_name TEXT NOT NULL
-		);`,
-		`CREATE TABLE IF NOT EXISTS dblp_load_log (
-			xml_file    TEXT    PRIMARY KEY,
-			loaded_at   INTEGER NOT NULL,
-			entry_count INTEGER NOT NULL DEFAULT 0
-		);`,
-		`CREATE TABLE IF NOT EXISTS dblp_meta (
-			key   TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		);`,
-	} {
-		if _, err := dblpDB.Exec(stmt); err != nil {
-			fmt.Fprintf(os.Stderr, "DBLP schema error: %s\n", err)
-		}
-	}
-}
-
-func clearDblpTables() {
-	// Drop and recreate so that schema changes (e.g. added/removed columns) take
-	// effect without requiring a manual migration step.
-	for _, stmt := range []string{
-		`DROP TABLE IF EXISTS dblp_entries;`,
-		`DROP TABLE IF EXISTS dblp_persons;`,
-		`DROP TABLE IF EXISTS dblp_title_index;`,
-	} {
-		if _, err := dblpDB.Exec(stmt); err != nil {
-			fmt.Fprintf(os.Stderr, "Could not drop DBLP table: %s\n", err)
-		}
-	}
-	ensureDblpTablesExist()
-}
-
-// prepareDblpTablesForImport drops and recreates the three main import tables
-// WITHOUT any indexes. Indexes degrade INSERT performance 10x at large row
-// counts due to B-tree rebalancing; building them once after all data is
-// loaded (via buildDblpImportIndexes) is dramatically faster.
-func prepareDblpTablesForImport() {
-	for _, stmt := range []string{
-		`DROP TABLE IF EXISTS dblp_entries;`,
-		`DROP TABLE IF EXISTS dblp_persons;`,
-		`DROP TABLE IF EXISTS dblp_title_index;`,
-		`CREATE TABLE dblp_entries (
-			dblp_key TEXT    NOT NULL,
-			field    TEXT    NOT NULL,
-			position INTEGER NOT NULL DEFAULT 0,
-			value    TEXT    NOT NULL
-		);`,
-		`CREATE TABLE dblp_persons (
-			dblp_key TEXT    NOT NULL,
-			role     TEXT    NOT NULL,
-			position INTEGER NOT NULL,
-			name     TEXT    NOT NULL DEFAULT '',
-			orcid    TEXT    NOT NULL DEFAULT ''
-		);`,
-		`CREATE TABLE dblp_title_index (
-			field         TEXT NOT NULL,
-			indexed_title TEXT NOT NULL,
-			dblp_key      TEXT NOT NULL
-		);`,
-	} {
-		if _, err := dblpDB.Exec(stmt); err != nil {
-			fmt.Fprintf(os.Stderr, "DBLP import schema error: %s\n", err)
-		}
-	}
-}
-
-// buildDblpImportIndexes creates the unique indexes after a full import.
-// SQLite builds indexes via a bulk sort pass which is much faster than
-// per-row B-tree maintenance during INSERT.
-func buildDblpImportIndexes() {
-	for _, stmt := range []string{
-		`CREATE UNIQUE INDEX idx_dblp_entries ON dblp_entries (dblp_key, field, position);`,
-		`CREATE UNIQUE INDEX idx_dblp_persons ON dblp_persons (dblp_key, role, position);`,
-		`CREATE UNIQUE INDEX idx_dblp_title_pk ON dblp_title_index (field, indexed_title, dblp_key);`,
-		`CREATE INDEX idx_dblp_title ON dblp_title_index (field, indexed_title);`,
-	} {
-		if _, err := dblpDB.Exec(stmt); err != nil {
-			fmt.Fprintf(os.Stderr, "DBLP index build error: %s\n", err)
-		}
-	}
-}
-
-func csvFileHash(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	h := md5.New()
-	io.Copy(h, f)
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-func rebuildDblpTitleIndex() {
-	dblpDB.Exec(`DELETE FROM dblp_title_index`)
-	rows, err := dblpDB.Query(
-		`SELECT field, value, dblp_key FROM dblp_entries WHERE field IN ('title', 'booktitle') AND position = 0`)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "rebuildDblpTitleIndex: query error: %s\n", err)
-		return
-	}
-	defer rows.Close()
-	tx, err := dblpDB.Begin()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "rebuildDblpTitleIndex: begin error: %s\n", err)
-		return
-	}
-	st, err := tx.Prepare(`INSERT OR REPLACE INTO dblp_title_index (field, indexed_title, dblp_key) VALUES (?, ?, ?)`)
-	if err != nil {
-		tx.Rollback()
-		return
-	}
-	defer st.Close()
-	for rows.Next() {
-		var field, value, key string
-		rows.Scan(&field, &value, &key)
-		value = strings.TrimSuffix(value, ".")
-		if idx := TeXStringIndexer(dblpRawToLaTeX(value)); idx != "" {
-			st.Exec(field, idx, key)
-		}
-	}
-	tx.Commit()
-}
-
-func storeCsvMapHashes() {
-	for _, kv := range [][2]string{
-		{"html_commands_map_hash", csvFileHash(globalFolder + "html_commands_map.csv")},
-		{"html_character_map_hash", csvFileHash(globalFolder + "html_character_map.csv")},
-		{"unicode_map_hash", csvFileHash(globalFolder + "unicode_map.csv")},
-	} {
-		dblpDB.Exec(`INSERT OR REPLACE INTO dblp_meta (key, value) VALUES (?, ?)`, kv[0], kv[1])
-	}
-}
-
-func checkAndRebuildTitleIndexIfNeeded() {
-	type hashEntry struct {
-		key  string
-		hash string
-	}
-	entries := []hashEntry{
-		{"html_commands_map_hash", csvFileHash(globalFolder + "html_commands_map.csv")},
-		{"html_character_map_hash", csvFileHash(globalFolder + "html_character_map.csv")},
-		{"unicode_map_hash", csvFileHash(globalFolder + "unicode_map.csv")},
-	}
-	needRebuild := false
-	for _, e := range entries {
-		var stored string
-		dblpDB.QueryRow(`SELECT value FROM dblp_meta WHERE key = ?`, e.key).Scan(&stored)
-		if stored != e.hash {
-			needRebuild = true
-			break
-		}
-	}
-	if !needRebuild {
-		return
-	}
-	fmt.Fprintf(os.Stderr, "CSV map(s) changed — rebuilding DBLP title index...\n")
-	rebuildDblpTitleIndex()
-	for _, e := range entries {
-		dblpDB.Exec(`INSERT OR REPLACE INTO dblp_meta (key, value) VALUES (?, ?)`, e.key, e.hash)
-	}
-	fmt.Fprintf(os.Stderr, "DBLP title index rebuilt.\n")
-}
-
-func dblpEntryCount() int {
-	if dblpDB == nil {
-		return 0
-	}
-	row := dblpDB.QueryRow(`SELECT COUNT(DISTINCT dblp_key) FROM dblp_entries`)
-	var n int
-	row.Scan(&n)
-	return n
-}
 
 // --- XML parser types ---
 
@@ -333,14 +75,13 @@ var dblpMultiValuedFields = map[string]bool{
 }
 
 // dblpTitleIndexedFields lists the entry fields whose normalised values are
-// stored in dblp_title_index for fast title-based duplicate detection.
+// stored in the title index for fast title-based duplicate detection.
 var dblpTitleIndexedFields = map[string]bool{
 	"title": true, "booktitle": true,
 }
 
 // xmlCollectText reads XML tokens until the matching close tag and returns the
-// concatenated text, storing HTML inline elements verbatim as "<tag>...</tag>" so
-// that dblpRawToLaTeX can convert them to LaTeX at read time via html_commands_map.
+// concatenated text, storing HTML inline elements verbatim as "<tag>...</tag>".
 func xmlCollectText(d *xml.Decoder) (string, error) {
 	var buf strings.Builder
 	var stack []string
@@ -368,97 +109,224 @@ func xmlCollectText(d *xml.Decoder) (string, error) {
 	}
 }
 
-
-// --- Main import function ---
-
-const dblpTxBatchSize = 50_000
-
-// dblpImportFromReader streams DBLP XML from r into dblpDB.
-// progress is called every dblpTxBatchSize entries (may be nil).
-// Returns the total entry count and any fatal error.
-func dblpImportFromReader(r io.Reader, progress func(n int)) (int, error) {
-	decoder := xml.NewDecoder(r)
-	decoder.CharsetReader = func(charset string, input io.Reader) (io.Reader, error) {
+// newDblpDecoder creates an XML decoder for DBLP XML with ISO-8859-1 support
+// and the entity passthrough map. The caller must advance past the <dblp> root.
+func newDblpDecoder(r io.Reader) *xml.Decoder {
+	d := xml.NewDecoder(r)
+	d.CharsetReader = func(charset string, input io.Reader) (io.Reader, error) {
 		if strings.EqualFold(charset, "iso-8859-1") {
 			return transform.NewReader(input, charmap.ISO8859_1.NewDecoder()), nil
 		}
 		return input, nil
 	}
-	decoder.Entity = xmlEntityPassthrough
-	decoder.Strict = false
+	d.Entity = xmlEntityPassthrough
+	d.Strict = false
+	return d
+}
 
-	// Advance to the <dblp> root element.
+// advanceToDblpRoot reads tokens until the <dblp> root element is found.
+func advanceToDblpRoot(d *xml.Decoder) error {
 	for {
-		tok, err := decoder.Token()
+		tok, err := d.Token()
 		if err != nil {
-			return 0, fmt.Errorf("seeking <dblp> root: %w", err)
+			return fmt.Errorf("seeking <dblp> root: %w", err)
 		}
 		if se, ok := tok.(xml.StartElement); ok && se.Name.Local == "dblp" {
+			return nil
+		}
+	}
+}
+
+// --- Key collection (manifest repair) ---
+
+// dblpCollectKeysFromXML streams the DBLP XML reading only the key= attribute of each
+// entry start element (skipping the entire entry body), and returns the resulting manifest.
+// progress is called every dblpProgressInterval entries (may be nil).
+func dblpCollectKeysFromXML(r io.Reader, progress func(n int)) (TDblpManifest, error) {
+	d := newDblpDecoder(r)
+	if err := advanceToDblpRoot(d); err != nil {
+		return nil, err
+	}
+	m := make(TDblpManifest)
+	count := 0
+	for {
+		tok, err := d.Token()
+		if err == io.EOF {
 			break
 		}
-	}
-
-	tx, err := dblpDB.Begin()
-	if err != nil {
-		return 0, fmt.Errorf("begin transaction: %w", err)
-	}
-
-	const qEntry = `INSERT INTO dblp_entries
-		(dblp_key, field, position, value) VALUES (?, ?, ?, ?)`
-	const qPerson = `INSERT INTO dblp_persons
-		(dblp_key, role, position, name, orcid) VALUES (?, ?, ?, ?, ?)`
-	const qTitle = `INSERT INTO dblp_title_index
-		(field, indexed_title, dblp_key) VALUES (?, ?, ?)`
-	const qNameMap = `INSERT OR IGNORE INTO dblp_name_bibtex (plain_name, bibtex_name) VALUES (?, ?)`
-
-	// rebatch commits the current transaction and opens a fresh one, re-preparing
-	// the statements. Called every dblpTxBatchSize entries.
-	var stEntry, stPerson, stTitle, stNameMap *sql.Stmt
-	prepareStmts := func() error {
-		var e error
-		if stEntry, e = tx.Prepare(qEntry); e != nil {
-			return e
-		}
-		if stPerson, e = tx.Prepare(qPerson); e != nil {
-			return e
-		}
-		if stTitle, e = tx.Prepare(qTitle); e != nil {
-			return e
-		}
-		if stNameMap, e = tx.Prepare(qNameMap); e != nil {
-			return e
-		}
-		return nil
-	}
-	closeStmts := func() {
-		if stEntry != nil {
-			stEntry.Close()
-		}
-		if stPerson != nil {
-			stPerson.Close()
-		}
-		if stTitle != nil {
-			stTitle.Close()
-		}
-		if stNameMap != nil {
-			stNameMap.Close()
-		}
-	}
-	if err := prepareStmts(); err != nil {
-		tx.Rollback()
-		return 0, fmt.Errorf("prepare statements: %w", err)
-	}
-
-	rebatch := func() error {
-		closeStmts()
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		tx, err = dblpDB.Begin()
 		if err != nil {
-			return err
+			return m, fmt.Errorf("XML token near entry %d: %w", count, err)
 		}
-		return prepareStmts()
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if !dblpKnownEntryTypes[se.Name.Local] {
+			d.Skip()
+			continue
+		}
+		for _, a := range se.Attr {
+			if a.Name.Local == "key" && a.Value != "" {
+				m.add(a.Value, "") // key-only collection; mdate unknown
+				break
+			}
+		}
+		d.Skip() // skip all child elements — we only needed the key
+		count++
+		if count%dblpProgressInterval == 0 && progress != nil {
+			progress(count)
+		}
+	}
+	return m, nil
+}
+
+// doRepairDblpManifest rebuilds the DBLP manifest files from an XML export
+// without touching any data.json files. The manifest written reflects exactly
+// the set of DBLP keys present in the XML file.
+func doRepairDblpManifest(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: -repair_dblp_manifest <path.xml.gz>\n")
+		os.Exit(1)
+	}
+	xmlGzPath := expandHome(args[0])
+	if !FileExists(xmlGzPath) {
+		fmt.Fprintf(os.Stderr, "File not found: %s\n", xmlGzPath)
+		os.Exit(1)
+	}
+
+	f, err := os.Open(xmlGzPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not open %s: %s\n", xmlGzPath, err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not read gzip from %s: %s\n", xmlGzPath, err)
+		os.Exit(1)
+	}
+	defer gz.Close()
+
+	fmt.Fprintf(os.Stderr, "Collecting DBLP keys from %s...\n", xmlGzPath)
+	start := time.Now()
+	m, err := dblpCollectKeysFromXML(gz, func(n int) {
+		fmt.Fprintf(os.Stderr, "  %d keys collected (%.0fs)...\n", n, time.Since(start).Seconds())
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: XML read error after %d keys: %s\n", len(m), err)
+	}
+
+	total := 0
+	for _, entries := range m {
+		total += len(entries)
+	}
+	fmt.Fprintf(os.Stderr, "  %d keys in %d parent dirs (%.0fs).\n", total, len(m), time.Since(start).Seconds())
+
+	fmt.Fprintf(os.Stderr, "Writing manifests...\n")
+	if err := os.MkdirAll(dblpFolder()+"entries/", 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not create entries folder: %s\n", err)
+		os.Exit(1)
+	}
+	writeDblpManifests(m)
+	fmt.Fprintf(os.Stderr, "Manifest repair complete.\n")
+}
+
+// --- First pass: name map ---
+
+// dblpBuildNameMap does a first streaming pass over the DBLP XML, collecting
+// only www (person homepage) entries to build a plain-name → canonical-name map.
+// The canonical name comes from the bibtex= attribute of the first author that
+// carries one; the disambiguation suffix (e.g. " 0001") is stripped.
+func dblpBuildNameMap(r io.Reader) (map[string]string, error) {
+	d := newDblpDecoder(r)
+	if err := advanceToDblpRoot(d); err != nil {
+		return nil, err
+	}
+
+	nameMap := make(map[string]string)
+	for {
+		tok, err := d.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nameMap, fmt.Errorf("building name map: %w", err)
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local != "www" {
+			d.Skip()
+			continue
+		}
+
+		var authors []dblpXMLPerson
+	childLoop:
+		for {
+			child, cerr := d.Token()
+			if cerr != nil {
+				break
+			}
+			switch ct := child.(type) {
+			case xml.StartElement:
+				if ct.Name.Local != "author" {
+					d.Skip()
+					continue
+				}
+				var bibtex string
+				for _, a := range ct.Attr {
+					if a.Name.Local == "bibtex" {
+						bibtex = a.Value
+					}
+				}
+				text, _ := xmlCollectText(d)
+				authors = append(authors, dblpXMLPerson{Name: text, Bibtex: bibtex})
+			case xml.EndElement:
+				break childLoop
+			}
+		}
+
+		var canonicalName string
+		for _, p := range authors {
+			if p.Bibtex != "" {
+				canonicalName = dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(p.Bibtex), "")
+				break
+			}
+		}
+		if canonicalName != "" {
+			for _, p := range authors {
+				if p.Name != canonicalName {
+					nameMap[p.Name] = canonicalName
+				}
+			}
+		}
+	}
+	return nameMap, nil
+}
+
+// --- Second pass: main import ---
+
+const dblpProgressInterval = 50_000
+
+// dblpImportFromReader streams DBLP XML from r, writing one data.json per entry
+// and one title link.txt per indexed title. nameMap contains the canonical name
+// mappings collected by dblpBuildNameMap. newManifest is updated with every key
+// written. progress is called every dblpProgressInterval entries (may be nil).
+// Returns the total entry count and any fatal error.
+func dblpImportFromReader(r io.Reader, nameMap map[string]string, originalManifest, newManifest TDblpManifest, progress func(n int)) (int, error) {
+	d := newDblpDecoder(r)
+	if err := advanceToDblpRoot(d); err != nil {
+		return 0, err
+	}
+
+	applyNameMap := func(p dblpXMLPerson) TDblpJSONPerson {
+		name := p.Name
+		if mapped, ok := nameMap[name]; ok {
+			name = mapped
+		}
+		return TDblpJSONPerson{Name: name, ORCID: p.ORCID}
 	}
 
 	count := 0
@@ -466,7 +334,7 @@ func dblpImportFromReader(r io.Reader, progress func(n int)) (int, error) {
 
 outer:
 	for {
-		tok, err := decoder.Token()
+		tok, err := d.Token()
 		if err == io.EOF {
 			break
 		}
@@ -480,7 +348,7 @@ outer:
 			continue
 		}
 		if !dblpKnownEntryTypes[se.Name.Local] {
-			decoder.Skip()
+			d.Skip()
 			continue
 		}
 
@@ -497,18 +365,38 @@ outer:
 			}
 		}
 		if dblpKey == "" {
-			decoder.Skip()
+			d.Skip()
 			continue
 		}
 
-		// Collect child elements of this entry.
+		// Skip entries whose mdate hasn't changed — no need to rewrite files or
+		// update indexes. Check manifest first (O(1)); fall back to data.json only
+		// when the entry is absent from the manifest (e.g. after a repair).
+		if mdate != "" {
+			skip := false
+			if existingMdate, inManifest := originalManifest.mdate(dblpKey); inManifest {
+				skip = existingMdate == mdate
+			} else if existing := readDblpJSONEntry(dblpKey); existing != nil {
+				skip = existing.Mdate == mdate
+			}
+			if skip {
+				d.Skip()
+				newManifest.add(dblpKey, mdate)
+				count++
+				if count%dblpProgressInterval == 0 && progress != nil {
+					progress(count)
+				}
+				continue
+			}
+		}
+
 		var authors, editors []dblpXMLPerson
 		var fields []dblpXMLField
 		fieldPos := map[string]int{}
 
 	childLoop:
 		for {
-			child, cerr := decoder.Token()
+			child, cerr := d.Token()
 			if cerr != nil {
 				parseErr = fmt.Errorf("reading entry %s: %w", dblpKey, cerr)
 				break outer
@@ -525,7 +413,7 @@ outer:
 						orcid = a.Value
 					}
 				}
-				text, terr := xmlCollectText(decoder)
+				text, terr := xmlCollectText(d)
 				if terr != nil {
 					parseErr = fmt.Errorf("field %s in %s: %w", name, dblpKey, terr)
 					break outer
@@ -536,8 +424,6 @@ outer:
 				case "editor":
 					editors = append(editors, dblpXMLPerson{Name: text, Bibtex: bibtex, ORCID: orcid})
 				default:
-					// Store text content verbatim; LaTeX conversion via dblpRawToLaTeX happens at read time.
-					// The bibtex= attribute is not used for field values.
 					pos := 0
 					if dblpMultiValuedFields[name] {
 						pos = fieldPos[name]
@@ -550,82 +436,82 @@ outer:
 			}
 		}
 
-		// Write entry to the database.
-		stEntry.Exec(dblpKey, "entrytype", 0, entryType)
-		if mdate != "" {
-			stEntry.Exec(dblpKey, "mdate", 0, mdate)
+		// Build JSON entry.
+		je := &TDblpJSONEntry{
+			EntryType: entryType,
+			Mdate:     mdate,
+			PubType:   pubType,
 		}
-		if pubType != "" {
-			stEntry.Exec(dblpKey, "publtype", 0, pubType)
-		}
+
 		for _, f := range fields {
-			// Store verbatim text content; LaTeX conversion happens at read time.
 			value := f.Value
 			if dblpTitleIndexedFields[f.Name] {
 				value = strings.TrimSuffix(value, ".")
 			}
-			stEntry.Exec(dblpKey, f.Name, f.Position, value)
-			if dblpTitleIndexedFields[f.Name] {
-				// Apply read-time pipeline to build title index from the LaTeX form.
-				if idx := TeXStringIndexer(dblpRawToLaTeX(value)); idx != "" {
-					stTitle.Exec(f.Name, idx, dblpKey)
+			if dblpMultiValuedFields[f.Name] {
+				if je.Multi == nil {
+					je.Multi = make(map[string][]string)
 				}
+				je.Multi[f.Name] = append(je.Multi[f.Name], value)
+			} else {
+				if je.Fields == nil {
+					je.Fields = make(map[string]string)
+				}
+				je.Fields[f.Name] = value
 			}
-		}
-		storePerson := func(role string, i int, p dblpXMLPerson) {
-			// Store plain text name verbatim; dblpRawToLaTeX converts at read time.
-			stPerson.Exec(dblpKey, role, i, p.Name, p.ORCID)
-		}
-		for i, p := range authors {
-			storePerson("author", i, p)
-		}
-		for i, p := range editors {
-			storePerson("editor", i, p)
 		}
 
-				// For person-homepage (www) entries, record all author name variants
-		// in dblp_name_bibtex, mapping plain text names to the canonical LaTeX form
-		// from the bibtex= attribute (with disambiguation suffix stripped).
-		if entryType == "www" {
-			var canonicalName string
-			for _, p := range authors {
-				if p.Bibtex != "" {
-					// applyUnicodeMap handles any stray Unicode in bibtex= values.
-					canonicalName = dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(p.Bibtex), "")
-					break
+		for _, p := range authors {
+			je.Authors = append(je.Authors, applyNameMap(p))
+		}
+		for _, p := range editors {
+			je.Editors = append(je.Editors, applyNameMap(p))
+		}
+
+		if err := writeDblpEntryFile(dblpKey, je); err != nil {
+			parseErr = fmt.Errorf("writing entry %s: %w", dblpKey, err)
+			break outer
+		}
+		newManifest.add(dblpKey, mdate)
+
+		// Write title link files.
+		for _, fieldName := range []string{"title", "booktitle"} {
+			if je.Fields != nil {
+				if value, ok := je.Fields[fieldName]; ok && value != "" {
+					hash := dblpTitleHash(value)
+					writeDblpTitleLink(hash, dblpKey) // non-fatal
 				}
 			}
-			if canonicalName != "" {
-				for _, p := range authors {
-					plain := p.Name // verbatim text content (Unicode)
-					if plain != canonicalName {
-						stNameMap.Exec(plain, canonicalName)
-					}
-				}
+		}
+
+		// Write crossref child link: record this entry as a child of its parent.
+		if je.Fields != nil {
+			if parentKey, ok := je.Fields["crossref"]; ok && parentKey != "" {
+				writeDblpCrossrefChild(parentKey, dblpKey) // non-fatal
+			}
+		}
+
+		// Write person indexes: one entry per author/editor, keyed by name and ORCID.
+		for _, p := range je.Authors {
+			writeDblpPersonEntry(p.Name, dblpKey) // non-fatal
+			if p.ORCID != "" {
+				writeDblpORCIDEntry(p.ORCID, dblpKey) // non-fatal
+			}
+		}
+		for _, p := range je.Editors {
+			writeDblpPersonEntry(p.Name, dblpKey) // non-fatal
+			if p.ORCID != "" {
+				writeDblpORCIDEntry(p.ORCID, dblpKey) // non-fatal
 			}
 		}
 
 		count++
-		if count%dblpTxBatchSize == 0 {
-			if progress != nil {
-				progress(count)
-			}
-			if rerr := rebatch(); rerr != nil {
-				parseErr = fmt.Errorf("rebatch at %d: %w", count, rerr)
-				break outer
-			}
+		if count%dblpProgressInterval == 0 && progress != nil {
+			progress(count)
 		}
 	}
 
-	closeStmts()
-	if parseErr != nil {
-		tx.Rollback()
-		return count, parseErr
-	}
-	if err := tx.Commit(); err != nil {
-		return count, fmt.Errorf("final commit: %w", err)
-	}
-	return count, nil
+	return count, parseErr
 }
 
 // countingReader wraps an io.Reader and tracks the total number of bytes read.
@@ -656,82 +542,118 @@ func doLoadDblpXml(args []string) {
 	}
 	totalBytes := fi.Size()
 
-	if !openDblpDB() {
+	if meta := readDblpMeta(); meta != nil {
+		fmt.Fprintf(os.Stderr, "Existing DBLP store: %d entries from %s (loaded %s)\n",
+			meta.EntryCount, meta.XMLFile, meta.LoadedAt)
+	}
+
+	if err := os.MkdirAll(dblpFolder()+"entries/", 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not create DBLP entries folder: %s\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Counting existing DBLP entries...\n")
-	existing := dblpEntryCount()
-	closeDblpDB()
-
-	if existing > 0 {
-		fmt.Fprintf(os.Stderr, "Backing up existing DBLP database (%d entries)...\n", existing)
-		if err := moveDblpToBackup(); err != nil {
-			fmt.Fprintf(os.Stderr, "Backup failed: %s\n", err)
-			os.Exit(1)
+	// Clear derived indexes so they are rebuilt cleanly from the new XML.
+	for _, indexDir := range []string{"titles/", "crossrefs/", "persons/", "orcids/"} {
+		dir := dblpFolder() + indexDir
+		if _, err := os.Stat(dir); err == nil {
+			fmt.Fprintf(os.Stderr, "Clearing existing %s index...\n", indexDir)
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not clear %s index: %s\n", indexDir, err)
+			}
 		}
 	}
 
-	if !openDblpDB() {
-		os.Exit(1)
+	// Load existing manifests so we know which entries to prune after import.
+	// If entries exist but manifests are absent, rebuild them from the tree first.
+	var originalManifest TDblpManifest
+	if dblpEntriesDirHasContent() {
+		originalManifest = loadDblpManifests()
+		if len(originalManifest) == 0 {
+			fmt.Fprintf(os.Stderr, "Manifests absent — rebuilding from existing entries...\n")
+			if err := rebuildDblpManifests(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: manifest rebuild failed: %s\n", err)
+			} else {
+				originalManifest = loadDblpManifests()
+				fmt.Fprintf(os.Stderr, "  Manifests rebuilt (%d parent dirs).\n", len(originalManifest))
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Loaded manifests: %d parent dirs.\n", len(originalManifest))
+		}
+	} else {
+		originalManifest = make(TDblpManifest)
 	}
-	defer closeDblpDB()
+	newManifest := make(TDblpManifest)
 
-	// Performance pragmas for bulk import.
-	dblpDB.Exec(`PRAGMA synchronous = OFF`)
-	dblpDB.Exec(`PRAGMA journal_mode = OFF`)
-	dblpDB.Exec(`PRAGMA cache_size = -524288`) // 512 MB
+	start := time.Now()
 
-	// Recreate the main tables without indexes. Indexes degrade INSERT
-	// performance 10x at large row counts; they are built in one bulk
-	// sort pass via buildDblpImportIndexes after all rows are loaded.
-	prepareDblpTablesForImport()
-
-	f, err := os.Open(xmlGzPath)
+	// First pass: collect name mappings from www entries.
+	fmt.Fprintf(os.Stderr, "Pass 1: building name map from www entries...\n")
+	f1, err := os.Open(xmlGzPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not open %s: %s\n", xmlGzPath, err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	gz1, err := gzip.NewReader(f1)
+	if err != nil {
+		f1.Close()
+		fmt.Fprintf(os.Stderr, "Could not read gzip from %s: %s\n", xmlGzPath, err)
+		os.Exit(1)
+	}
+	nameMap, err := dblpBuildNameMap(gz1)
+	gz1.Close()
+	f1.Close()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: name map build error: %s\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "  %d name mappings collected (%.0fs).\n", len(nameMap), time.Since(start).Seconds())
 
-	cr := &countingReader{r: f}
-	gz, err := gzip.NewReader(cr)
+	// Second pass: import all entries.
+	fmt.Fprintf(os.Stderr, "Pass 2: importing DBLP XML from %s...\n", xmlGzPath)
+	f2, err := os.Open(xmlGzPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not open %s: %s\n", xmlGzPath, err)
+		os.Exit(1)
+	}
+	defer f2.Close()
+
+	cr := &countingReader{r: f2}
+	gz2, err := gzip.NewReader(cr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not read gzip from %s: %s\n", xmlGzPath, err)
 		os.Exit(1)
 	}
-	defer gz.Close()
+	defer gz2.Close()
 
-	fmt.Fprintf(os.Stderr, "Importing DBLP XML from %s...\n", xmlGzPath)
-	start := time.Now()
-
-	count, err := dblpImportFromReader(gz, func(n int) {
+	pass2Start := time.Now()
+	count, err := dblpImportFromReader(gz2, nameMap, originalManifest, newManifest, func(n int) {
 		pct := float64(cr.n) * 100.0 / float64(totalBytes)
-		fmt.Fprintf(os.Stderr, "  %d entries imported (%.0fs, %.0f%%)...\n",
-			n, time.Since(start).Seconds(), pct)
+		fmt.Fprintf(os.Stderr, "  %d entries written (%.0fs, %.0f%%)...\n",
+			n, time.Since(pass2Start).Seconds(), pct)
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Import failed after %d entries: %s\n", count, err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "Applying www name mappings to person entries...\n")
-	res, uerr := dblpDB.Exec(`UPDATE dblp_persons
-		SET name = (SELECT bibtex_name FROM dblp_name_bibtex WHERE plain_name = dblp_persons.name)
-		WHERE name IN (SELECT plain_name FROM dblp_name_bibtex)`)
-	if uerr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: name-map update failed: %s\n", uerr)
-	} else if n, _ := res.RowsAffected(); n > 0 {
-		fmt.Fprintf(os.Stderr, "  Updated %d person name entries from www mappings.\n", n)
+	// Prune entries present in the old store but absent from the new XML.
+	fmt.Fprintf(os.Stderr, "Pruning stale entries...\n")
+	deleteStaleDblpEntries(originalManifest, newManifest)
+
+	// Write updated manifests.
+	fmt.Fprintf(os.Stderr, "Writing manifests...\n")
+	writeDblpManifests(newManifest)
+
+	meta := TDblpMeta{
+		XMLFile:              xmlGzPath,
+		LoadedAt:             time.Now().UTC().Format(time.RFC3339),
+		EntryCount:           count,
+		HtmlCommandsMapHash:  csvFileHash(globalFolder + "html_commands_map.csv"),
+		HtmlCharacterMapHash: csvFileHash(globalFolder + "html_character_map.csv"),
+		UnicodeMapHash:       csvFileHash(globalFolder + "unicode_map.csv"),
 	}
-
-	fmt.Fprintf(os.Stderr, "Building indexes...\n")
-	buildDblpImportIndexes()
-	storeCsvMapHashes()
-
-	dblpDB.Exec(
-		`INSERT OR REPLACE INTO dblp_load_log (xml_file, loaded_at, entry_count) VALUES (?, ?, ?)`,
-		xmlGzPath, time.Now().UnixMicro(), count)
+	if err := writeDblpMeta(meta); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write meta.json: %s\n", err)
+	}
 
 	fmt.Fprintf(os.Stderr, "DBLP import complete: %d entries in %.1fs\n",
 		count, time.Since(start).Seconds())
@@ -746,7 +668,7 @@ var reDblpUndatedDate = regexp.MustCompile(`dblp\.xml\.gz[^0-9]*(\d{4}-\d{2}-\d{
 
 // doUpdateDblp fetches the DBLP XML index page, identifies the latest dated
 // release (or falls back to the undated dblp.xml.gz stored with today's date),
-// and downloads it to dblpEffectiveFolder() if not already present.
+// and downloads it to dblpFolder() if not already present.
 // The previous .xml.gz is left in place (files have distinct dated names).
 func doUpdateDblp() {
 	fmt.Fprintf(os.Stderr, "Fetching DBLP XML index from %s...\n", dblpXMLIndexURL)
@@ -769,12 +691,10 @@ func doUpdateDblp() {
 		latest = matches[len(matches)-1]
 		downloadURL = dblpXMLIndexURL + latest
 	} else if m := reDblpUndatedDate.FindStringSubmatch(string(body)); m != nil {
-		// No dated files; use the modification date from the directory listing.
 		latest = "dblp-" + m[1] + ".xml.gz"
 		downloadURL = dblpXMLIndexURL + "dblp.xml.gz"
 		fmt.Fprintf(os.Stderr, "No dated files found; using dblp.xml.gz (dated %s) → %s\n", m[1], latest)
 	} else if strings.Contains(string(body), "dblp.xml.gz") {
-		// Undated file present but no parseable date; fall back to today's date.
 		latest = "dblp-" + time.Now().Format("2006-01-02") + ".xml.gz"
 		downloadURL = dblpXMLIndexURL + "dblp.xml.gz"
 		fmt.Fprintf(os.Stderr, "No dated files found; using dblp.xml.gz → %s\n", latest)
@@ -783,7 +703,12 @@ func doUpdateDblp() {
 		os.Exit(1)
 	}
 
-	destPath := dblpEffectiveFolder() + latest
+	if err := os.MkdirAll(dblpFolder(), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not create DBLP folder: %s\n", err)
+		os.Exit(1)
+	}
+
+	destPath := dblpFolder() + latest
 	if FileExists(destPath) {
 		fmt.Fprintf(os.Stderr, "Already have %s — nothing to do.\n", destPath)
 		return
@@ -841,4 +766,31 @@ func doUpdateDblp() {
 	fmt.Fprintf(os.Stderr, "Downloaded %s (%.0f MB) in %.1fs\n",
 		latest, float64(cr.n)/1e6, time.Since(start).Seconds())
 	doLoadDblpXml([]string{destPath})
+
+	// Import succeeded — keep only the two most recent XML files.
+	cleanupDblpXmlFiles()
+}
+
+// cleanupDblpXmlFiles removes all but the two most recent dblp-*.xml.gz files
+// from dblpFolder(). Called only after a successful import.
+func cleanupDblpXmlFiles() {
+	des, err := os.ReadDir(dblpFolder())
+	if err != nil {
+		return
+	}
+	var xmlFiles []string
+	for _, de := range des {
+		if !de.IsDir() && reDblpXMLFilename.MatchString(de.Name()) {
+			xmlFiles = append(xmlFiles, de.Name())
+		}
+	}
+	sort.Strings(xmlFiles) // dblp-YYYY-MM-DD.xml.gz sorts chronologically by name
+	if len(xmlFiles) <= 2 {
+		return
+	}
+	for _, name := range xmlFiles[:len(xmlFiles)-2] {
+		path := dblpFolder() + name
+		fmt.Fprintf(os.Stderr, "Removing old XML: %s\n", path)
+		os.Remove(path)
+	}
 }

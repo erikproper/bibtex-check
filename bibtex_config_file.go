@@ -67,6 +67,15 @@ func promptKeyPrefix() string {
 	}
 }
 
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home + path[1:]
+		}
+	}
+	return path
+}
+
 func loadBibTeXConfig(configPath string) {
 	var cfg TBibTeXConfig
 	needsWrite := false
@@ -92,13 +101,13 @@ func loadBibTeXConfig(configPath string) {
 	}
 	cfg.DblpFolderLegacy = "" // suppress old key on next write
 	if cfg.GlobalFolder != "" {
-		globalFolder = cfg.GlobalFolder
+		globalFolder = expandHome(cfg.GlobalFolder)
 		if !strings.HasSuffix(globalFolder, "/") {
 			globalFolder += "/"
 		}
 	}
 	if cfg.BackupFolder != "" {
-		backupFolder = cfg.BackupFolder
+		backupFolder = expandHome(cfg.BackupFolder)
 		if !strings.HasSuffix(backupFolder, "/") {
 			backupFolder += "/"
 		}

@@ -20,6 +20,63 @@ import (
 	"strings"
 )
 
+// TTermSpinner renders an in-place spinner + progress counter on stdout.
+// A nil receiver is safe on all methods, so callers can do:
+//
+//	spinner := r.NewSpinner(label)
+//	defer spinner.Stop()
+//
+// and the whole thing is a no-op when interaction is silenced.
+type TTermSpinner struct {
+	label string
+	frame int
+}
+
+var spinnerChars = []string{"|", "/", "-", "\\"}
+var activeSpinner *TTermSpinner
+
+// SpinnerInterrupt clears the current spinner line so that a warning/error/progress
+// message can print cleanly on its own line. The spinner is not stopped; the next
+// Update call will redraw it.
+func SpinnerInterrupt() {
+	if activeSpinner != nil {
+		fmt.Print("\r\033[K")
+	}
+}
+
+// NewSpinner creates and activates a spinner with the given label.
+// Returns nil (no-op) when the interaction is silenced.
+func (r *TInteraction) NewSpinner(label string) *TTermSpinner {
+	if r.silenced {
+		return nil
+	}
+	s := &TTermSpinner{label: label}
+	activeSpinner = s
+	return s
+}
+
+// Update redraws the spinner in place showing done/total progress.
+func (s *TTermSpinner) Update(done, total int) {
+	if s == nil {
+		return
+	}
+	pct := 0.0
+	if total > 0 {
+		pct = float64(done) * 100.0 / float64(total)
+	}
+	s.frame = (s.frame + 1) % len(spinnerChars)
+	fmt.Printf("\r%s %s %d/%d (%.0f%%)", spinnerChars[s.frame], s.label, done, total, pct)
+}
+
+// Stop prints a "done" completion line and deactivates the global spinner.
+func (s *TTermSpinner) Stop() {
+	if s == nil {
+		return
+	}
+	fmt.Printf("\r\033[KPROGRESS: %s - done\n", s.label)
+	activeSpinner = nil
+}
+
 type TInteraction struct {
 	silenced          bool
 	questionWasAsked  bool
@@ -115,6 +172,7 @@ func (r *TInteraction) SetInteraction(status bool) {
 // The error message should provide the formatting.
 func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 	if !r.silenced {
+		SpinnerInterrupt()
 		r.outputWasProduced = true
 		fmt.Printf("ERROR:    "+errorMessage+"\n", context...)
 	}
@@ -126,6 +184,7 @@ func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 // The warning message should provide the formatting.
 func (r *TInteraction) Warning(warning string, context ...any) bool {
 	if !r.silenced {
+		SpinnerInterrupt()
 		r.outputWasProduced = true
 		fmt.Printf("WARNING:  "+warning+"\n", context...)
 	}
@@ -179,6 +238,7 @@ func (r *TInteraction) WarningYesNoQuestion(question, warning string, context ..
 // The progress message should provide the formatting.
 func (r *TInteraction) Progress(progress string, context ...any) bool {
 	if !r.silenced {
+		SpinnerInterrupt()
 		r.outputWasProduced = true
 		fmt.Printf("PROGRESS: "+progress+"\n", context...)
 	}

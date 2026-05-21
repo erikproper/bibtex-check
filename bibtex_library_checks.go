@@ -93,17 +93,29 @@ func (l *TBibTeXLibrary) checkValueMapping(valueMap TStringMap, inverseMap TStri
 }
 
 func (l *TBibTeXLibrary) CheckFieldMappings() {
-	l.Progress(ProgressCheckingFieldMappings)
+	total := len(l.GenericFieldSourceToTarget)
+	for _, fieldValueMapping := range l.EntryFieldSourceToTarget {
+		total += len(fieldValueMapping)
+	}
+
+	spinner := l.NewSpinner(ProgressCheckingFieldMappings)
+	done := 0
 
 	for field, valueMapping := range l.GenericFieldSourceToTarget {
+		done++
+		spinner.Update(done, total)
 		l.checkValueMapping(valueMapping, l.GenericFieldTargetToSource[field], ".")
 	}
 
 	for key, fieldValueMapping := range l.EntryFieldSourceToTarget {
 		for field, valueMapping := range fieldValueMapping {
+			done++
+			spinner.Update(done, total)
 			l.checkValueMapping(valueMapping, l.EntryFieldTargetToSource[key][field], WarningMappingForKey+key+".")
 		}
 	}
+
+	spinner.Stop()
 }
 
 /*
@@ -423,38 +435,6 @@ func (l *TBibTeXLibrary) CheckAndEnforcePreferredAlias(entry *TBibTeXEntry) {
 		l.setPreferredAlias(entry, derived)
 		l.Progress(ProgressGeneratedPreferredAlias, derived, entry.Key)
 	}
-}
-
-// repairBadPreferredAliases re-derives preferred aliases that have a single-letter
-// suffix after the year (e.g. "adam2005e" — legacy from hyphen-splitting bug) or
-// that contain "unicode" (legacy from unresolved \unicode macro calls).
-// If derivation yields the same alias (e.g. "unicode" is genuinely in the title)
-// or fails, the current alias is kept unchanged.
-// The old alias is retained in HintToKey as a redirect hint.
-func (l *TBibTeXLibrary) repairBadPreferredAliases() {
-	l.Progress(ProgressRepairingPreferredAliases)
-	singleLetterSuffix := regexp.MustCompile(`^[a-z]+[0-9]{4}[a-z]$`)
-
-	forEachBibEntryKey(func(key string) bool {
-		entry := l.buildEntry(key)
-		if !entry.Exists() {
-			return true
-		}
-		alias := entry.FieldValue(PreferredAliasField)
-		if alias == "" {
-			return true
-		}
-		if !singleLetterSuffix.MatchString(alias) && !strings.Contains(alias, "unicode") {
-			return true
-		}
-		derived := l.derivePreferredAlias(entry)
-		if derived == "" || derived == alias {
-			return true
-		}
-		l.Progress(ProgressGeneratedPreferredAlias, derived, key)
-		l.setPreferredAlias(entry, derived)
-		return true
-	})
 }
 
 func (l *TBibTeXLibrary) CheckTitlePresence(entry *TBibTeXEntry) {
@@ -949,11 +929,17 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 }
 
 func (l *TBibTeXLibrary) CheckEntries() {
-	l.Progress(ProgressCheckingConsistencyOfEntries)
+	total := countBibEntries()
+	spinner := l.NewSpinner(ProgressCheckingConsistencyOfEntries)
+	done := 0
 
 	forEachBibEntryKey(func(key string) bool {
+		done++
+		spinner.Update(done, total)
 		l.CheckEntry(l.buildEntry(key))
 		return true
 	})
+
+	spinner.Stop()
 }
 

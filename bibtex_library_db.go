@@ -29,11 +29,11 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 const (
-	sqliteDatabaseDriver = "sqlite3"
+	sqliteDatabaseDriver = "sqlite"
 )
 
 var (
@@ -72,10 +72,12 @@ func initEntryCache() {
 	}
 	defer rows.Close()
 
+	spinner := dbInteraction.NewSpinner(ProgressLoadingEntryCache)
 	cache := map[string]*TBibTeXEntry{}
 	for rows.Next() {
 		var key, field, value string
 		if err := rows.Scan(&key, &field, &value); err != nil {
+			spinner.Stop()
 			dbInteraction.Warning("Could not scan bib_entries for cache: %s", err)
 			return
 		}
@@ -83,9 +85,11 @@ func initEntryCache() {
 		if !ok {
 			e = &TBibTeXEntry{Key: key, Fields: map[string]string{}}
 			cache[key] = e
+			spinner.Update(len(cache), int(count))
 		}
 		e.Fields[field] = value
 	}
+	spinner.Stop()
 	entryCache = cache
 }
 
@@ -168,6 +172,7 @@ func reopenDb(path string) {
 // then switches db to that temp file. Returns false if setup fails (caller falls
 // through to an unsafe parse on the live file).
 func beginSafeParse() bool {
+	dbInteraction.Progress(ProgressBackingUpDatabase)
 	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
 	ts := time.Now().Format("20060102_150405")
 	safeParseTemp = fmt.Sprintf("%s/bibtex_check_%s_%s.sqlite3",
@@ -410,14 +415,29 @@ func loadNameMappingsFromDb(l *TBibTeXLibrary) {
 // saveNameMappingsToDb upserts all non-self alias pairs into the DB and
 // refreshes the table modification time to match the (just-written) flat file.
 func saveNameMappingsToDb(l *TBibTeXLibrary) {
+	tx, err := db.Begin()
+	if err != nil {
+		dbInteraction.Warning("Could not begin name_mappings save transaction: %s", err)
+		return
+	}
+	if _, err := tx.Exec(`DELETE FROM name_mappings`); err != nil {
+		dbInteraction.Warning("Could not clear name_mappings table: %s", err)
+		tx.Rollback()
+		return
+	}
 	upsert := `INSERT INTO name_mappings (alias, name) VALUES (?, ?)
 	             ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
 	for alias, name := range l.NameAliasToName {
 		if alias != name {
-			if _, err := db.Exec(upsert, alias, name); err != nil {
+			if _, err := tx.Exec(upsert, alias, name); err != nil {
 				dbInteraction.Warning("Name mapping upsert failed: %s", err)
 			}
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		dbInteraction.Warning("Could not commit name_mappings save: %s", err)
+		tx.Rollback()
+		return
 	}
 
 	nameMappingsFileName := bibTeXFolder + bibTeXBaseName + NameMappingsFilePath
@@ -1218,16 +1238,30 @@ func bibQueryRow(query string, args ...any) *sql.Row {
 	return db.QueryRow(query, args...)
 }
 
+var txDepth int
+
 func beginBibTransaction() {
+	txDepth++
+	if txDepth > 1 {
+		return
+	}
 	var err error
 	activeTx, err = db.Begin()
 	if err != nil {
 		dbInteraction.Error("Could not begin bib transaction: %s", err)
 		activeTx = nil
+		txDepth = 0
 	}
 }
 
 func commitBibTransaction() {
+	if txDepth == 0 {
+		return
+	}
+	txDepth--
+	if txDepth > 0 {
+		return
+	}
 	if activeTx != nil {
 		if err := activeTx.Commit(); err != nil {
 			dbInteraction.Error("Could not commit bib transaction: %s", err)
@@ -1237,6 +1271,7 @@ func commitBibTransaction() {
 }
 
 func rollbackBibTransaction() {
+	txDepth = 0
 	if activeTx != nil {
 		activeTx.Rollback()
 		activeTx = nil
@@ -1865,6 +1900,7 @@ func loadCommentsFromDb(l *TBibTeXLibrary) {
 // stored in bib_entries that the parser would normally add via processPreferredAliasValue
 // and processDblpValue.  Must be called on the fast path where no parse takes place.
 func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
+	dbInteraction.Progress(ProgressBuildingKeyAliases)
 	if entryCache != nil {
 		for key, e := range entryCache {
 			if alias := e.Fields[PreferredAliasField]; alias != "" {
@@ -1909,6 +1945,7 @@ func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 
 // buildTitleIndexFromDb rebuilds l.TitleIndex from the title field in bib_entries.
 func buildTitleIndexFromDb(l *TBibTeXLibrary) {
+	dbInteraction.Progress(ProgressBuildingTitleIndex)
 	l.TitleIndex = TStringSetMap{}
 	if entryCache != nil {
 		for key, e := range entryCache {
@@ -1944,12 +1981,12 @@ func (l *TBibTeXLibrary) ValidBibDb() bool {
 		return false
 	}
 	bibFile := l.FilesRoot + l.BaseName + BibFileExtension
-	return bibDbTime > fileModTime(bibFile) &&
-		bibDbTime > tableModTime("filter_cross_field_mappings") &&
-		bibDbTime > tableModTime("filter_entry_field_mappings") &&
-		bibDbTime > tableModTime("filter_generic_field_mappings") &&
-		bibDbTime > tableModTime("name_mappings") &&
-		bibDbTime > tableModTime("key_oldies")
+	return bibDbTime >= fileModTime(bibFile) &&
+		bibDbTime >= tableModTime("filter_cross_field_mappings") &&
+		bibDbTime >= tableModTime("filter_entry_field_mappings") &&
+		bibDbTime >= tableModTime("filter_generic_field_mappings") &&
+		bibDbTime >= tableModTime("name_mappings") &&
+		bibDbTime >= tableModTime("key_oldies")
 }
 
 // refreshBibDbTimestamp marks bib_entries as current. Must be called AFTER WriteBibTeXFile

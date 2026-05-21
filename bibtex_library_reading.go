@@ -15,6 +15,7 @@ package main
 // Read bib files
 func (l *TBibTeXLibrary) ReadBib(filePath string) bool {
 	FullFilePath := l.FilesRoot + l.BaseName + BibFileExtension
+	l.Progress(ProgressReadingBibFile, FullFilePath)
 	l.harvestNameAliases = true
 	defer func() { l.harvestNameAliases = false }()
 	return l.ParseBibFile(FullFilePath)

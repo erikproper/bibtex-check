@@ -16,7 +16,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "15.52"
+const AppVersion = "16.29"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -76,6 +76,7 @@ func loadBibFromDb() {
 }
 
 func parseBibIntoDb() bool {
+	Library.Progress(ProgressReparsingBibFile)
 	safeOk := beginSafeParse()
 	if !safeOk {
 		Library.Warning("Proceeding without safe-parse backup; database not protected during reparse.")
@@ -203,13 +204,13 @@ func acquireInstanceLock() {
 }
 
 func acquireDblpLock() {
-	flockPath(dblpEffectiveFolder() + bibTeXBaseName + ".dblp" + LockFileExtension)
+	flockPath(dblpFolder() + "dblp" + LockFileExtension)
 }
 
 // requireNoDblpImport exits with a clear message if a DBLP import is currently
 // in progress in another process (i.e. the DBLP lock file is held).
 func requireNoDblpImport() {
-	lockPath := dblpEffectiveFolder() + bibTeXBaseName + ".dblp" + LockFileExtension
+	lockPath := dblpFolder() + "dblp" + LockFileExtension
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return // can't tell; let the command proceed
@@ -237,12 +238,6 @@ func cleanKeys(args []string) []string {
 }
 
 // --- Command functions ---
-
-func doTempFix() {
-	if openLibraryToUpdate() {
-		Library.repairBadPreferredAliases()
-	}
-}
 
 func doDefaultRun() {
 	if openLibraryToUpdate() {
@@ -451,13 +446,13 @@ func doFixAllEntries() {
 		forEachBibEntryKey(func(key string) bool {
 			count++
 			Library.Progress(ProgressEntryProgress, count, total, float64(count)*100/float64(total))
-			Reporting.ResetQuestionFlag()
+			Library.ResetQuestionFlag()
 			doAllChecks(key)
 			if cmdStep && Library.OutputWasProduced() {
 				fmt.Printf("--- Press Enter to continue ---")
 				bufio.NewReader(os.Stdin).ReadString('\n')
 			}
-			if Reporting.QuestionWasAsked() && Reporting.AskContinueOrQuit() {
+			if cmdStep && Library.QuestionWasAsked() && Library.AskContinueOrQuit() {
 				return false
 			}
 			return true
@@ -469,20 +464,25 @@ func doFixDblpEntries() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		total := countBibEntries()
+
 		scanned := 0
+		spinner := Library.NewSpinner(ProgressFixingDblpEntries)
+		beginBibTransaction()
 		forEachBibEntryKey(func(key string) bool {
 			scanned++
+			spinner.Update(scanned, total)
 			if Library.EntryFieldValueity(key, DBLPField) != "" {
-				Library.Progress(ProgressEntryProgress, scanned, total, float64(scanned)*100/float64(total))
-				Reporting.ResetQuestionFlag()
-				doAllChecks(key)
-				Reporting.PressEnterToContinue()
-				if Reporting.QuestionWasAsked() && Reporting.AskContinueOrQuit() {
+				Library.ResetQuestionFlag()
+				Library.MaybeFixDBLPEntry(key)
+				Library.PressEnterToContinue()
+				if cmdStep && Library.QuestionWasAsked() && Library.AskContinueOrQuit() {
 					return false
 				}
 			}
 			return true
 		})
+		commitBibTransaction()
+		spinner.Stop()
 	}
 }
 
@@ -602,11 +602,10 @@ func main() {
 		cmdRenderAsTex        bool
 		cmdRenderAsHTML       bool
 		cmdRenderAsText       bool
-		cmdCheckPdfs          bool
-		cmdTempFix            bool
-		cmdLoadDblpXml      bool
-		cmdVerifyDblpImport bool
-		cmdUpdateDblp       bool
+		cmdCheckPdfs        bool
+		cmdLoadDblpXml        bool
+		cmdUpdateDblp         bool
+		cmdRepairDblpManifest bool
 	)
 
 	flag.BoolVar(&cmdGet, "get", false, "generate local .bib from bib.config + .map in CWD")
@@ -637,10 +636,9 @@ func main() {
 	flag.BoolVar(&cmdRenderAsHTML, "render_as_html", false, "render entry as HTML bibliography reference")
 	flag.BoolVar(&cmdRenderAsText, "render_as_text", false, "render entry as plain-text bibliography reference")
 	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "check PDF health, orphan files, and duplicates in the files folder")
-	flag.BoolVar(&cmdTempFix, "temp_fix", false, "re-derive preferred aliases with single-letter suffix or unicode substring")
-	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP SQLite database")
-	flag.BoolVar(&cmdVerifyDblpImport, "verify_dblp_import", false, "cross-check DBLP SQLite import against scraped bib files")
+	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP file store")
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
+	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest files from a .xml.gz export")
 	flag.Parse()
 	args := flag.Args()
 
@@ -690,6 +688,7 @@ func main() {
 	loadUnicodeMap(globalFolder + "unicode_map.csv")
 	loadHtmlCommandsMap(globalFolder + "html_commands_map.csv")
 	loadHtmlCharacterMap(globalFolder + "html_character_map.csv")
+	loadLatexIndexerMap(globalFolder + "latex_indexer.csv")
 
 	if cmdNewKey {
 		doNewKey()
@@ -699,7 +698,6 @@ func main() {
 	if cmdUpdateDblp {
 		acquireDblpLock()
 		doUpdateDblp()
-		os.Exit(0)
 	}
 
 	if cmdLoadDblpXml {
@@ -709,6 +707,15 @@ func main() {
 		}
 		acquireDblpLock()
 		doLoadDblpXml(args)
+		os.Exit(0)
+	}
+
+	if cmdRepairDblpManifest {
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -repair_dblp_manifest <path.xml.gz>")
+			os.Exit(1)
+		}
+		doRepairDblpManifest(args)
 		os.Exit(0)
 	}
 
@@ -764,9 +771,8 @@ func main() {
 	case cmdFixAllEntries:
 		doFixAllEntries()
 
-	case cmdVerifyDblpImport:
-		requireNoDblpImport()
-		doVerifyDblpImport()
+	case cmdUpdateDblp:
+		doFixDblpEntries()
 
 	case cmdFixDblpEntries:
 		requireNoDblpImport()
@@ -867,9 +873,6 @@ func main() {
 
 	case cmdCheckPdfs:
 		doCheckPDFs()
-
-	case cmdTempFix:
-		doTempFix()
 
 	default:
 		if len(args) > 0 {
