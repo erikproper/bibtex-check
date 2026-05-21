@@ -15,12 +15,54 @@
 package main
 
 import (
+	"io"
+	"net/http"
+	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 func KeyForDBLP(key string) string {
 	return "DBLP:" + key
+}
+
+// dblpEntryFromURL fetches the BibTeX record for DBLPKey from dblp.org, writes it to
+// a temp file, parses it via the capturedDBLPEntry mechanism, and returns the result.
+// Returns nil on any network, I/O, or parse error.
+func (l *TBibTeXLibrary) dblpEntryFromURL(DBLPKey string) *TBibTeXEntry {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get("https://dblp.org/rec/" + DBLPKey + ".bib")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	tmpFile, err := os.CreateTemp("", "dblp_*.bib")
+	if err != nil {
+		return nil
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		tmpFile.Close()
+		return nil
+	}
+	tmpFile.Close()
+
+	l.capturedDBLPEntry = &TBibTeXEntry{Key: KeyForDBLP(DBLPKey), Fields: map[string]string{}}
+	l.ParseRawBibFile(tmpPath)
+	dblpEntry := l.capturedDBLPEntry
+	l.capturedDBLPEntry = nil
+
+	if !dblpEntry.Exists() {
+		return nil
+	}
+	return dblpEntry
 }
 
 
@@ -46,24 +88,14 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 		return false
 	}
 
-	var dblpEntry *TBibTeXEntry
-	dblpEntry = dblpEntryFromFile(DBLPKey)
-	if dblpEntry != nil {
-		l.MaybeApplyFieldMappings(dblpEntry)
+	dblpEntry := dblpEntryFromFile(DBLPKey)
+	if dblpEntry == nil {
+		dblpEntry = l.dblpEntryFromURL(DBLPKey)
 	}
 	if dblpEntry == nil {
-		DBLPBibFile := l.FilesRoot + "DBLPScraper/bib/" + DBLPKey + "/bib"
-		if !FileExists(DBLPBibFile) {
-			return false
-		}
-		l.capturedDBLPEntry = &TBibTeXEntry{Key: KeyForDBLP(DBLPKey), Fields: map[string]string{}}
-		l.ParseRawBibFile(DBLPBibFile)
-		dblpEntry = l.capturedDBLPEntry
-		l.capturedDBLPEntry = nil
-		if !dblpEntry.Exists() {
-			return false
-		}
+		return false
 	}
+	l.MaybeApplyFieldMappings(dblpEntry)
 
 	// Both DB and scraped bib store the crossref as the raw DBLP key. Resolve it to
 	// the library key before merging; create the parent entry if it does not exist yet.
@@ -82,14 +114,21 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 	}
 
 
+	// Check before the merge: if the library entry already has a withdrawn date, the
+	// author must stay as {Withdrawn publication} even if DBLP's file store doesn't
+	// know about the withdrawal.
+	locallyWithdrawn := l.EntryFieldValueity(key, "withdrawn") != ""
+
 	beginBibTransaction()
 	changed := l.MergeInMemoryDBLPEntry(dblpEntry, key)
 	if l.EntryFieldValueity(key, DBLPField) != DBLPKey {
 		changed = true
 		l.SetEntryFieldValue(key, DBLPField, DBLPKey)
 	}
-	// If the DBLP store marks this entry as withdrawn, override author and record date.
-	if isWithdrawn, mdate := dblpWithdrawnInfoFromFile(DBLPKey); isWithdrawn {
+	// Override author when withdrawn — either DBLP file store marks it as such, or the
+	// library itself already has a withdrawn date (locally set by the user).
+	isWithdrawn, mdate := dblpWithdrawnInfoFromFile(DBLPKey)
+	if isWithdrawn || locallyWithdrawn {
 		if l.EntryFieldValueity(key, "author") != "{Withdrawn publication}" {
 			l.SetEntryFieldValue(key, "author", "{Withdrawn publication}")
 			changed = true
