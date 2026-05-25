@@ -439,6 +439,22 @@ func NormaliseTitleString(l *TBibTeXLibrary, title string) string {
 	return result
 }
 
+// NormaliseLiteralString normalises fields whose content BibTeX styles never
+// lowercase (publisher, address, institution, etc.). It applies LaTeX character
+// substitutions but does NOT add curly-brace protection for capital letters —
+// only special characters such as accented letters still need their own braces
+// (e.g. Pl{\"u}wig), not surrounding words like DeGruyter.
+func NormaliseLiteralString(l *TBibTeXLibrary, s string) string {
+	l.TBibTeXTeX.TextString(ApplyLaTeXMap(s))
+	l.TBibTeXTeX.inWord = false
+	l.TBibTeXTeX.TeXSpacety()
+
+	result := ""
+	l.TBibTeXTeX.CollectTokenSequencety(&result, true)
+
+	return result
+}
+
 func init() {
 	TeXSpaces.AddString(" ").TreatAsCharacters()
 	TeXNoProtect.AddString("&").TreatAsCharacters()

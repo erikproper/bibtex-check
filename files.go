@@ -71,6 +71,43 @@ func timestamp() string {
 	return result
 }
 
+var libraryBackupCreated bool
+
+// ensureLibraryBackup creates a timestamped backup directory containing the bib
+// file and all CSV tables, at most once per run. It is called before the first
+// write so the snapshot reflects the last known-good state.
+func ensureLibraryBackup() {
+	if libraryBackupCreated || bibTeXBaseName == "" || backupFolder == "" {
+		return
+	}
+	libraryBackupCreated = true
+
+	ts := time.Now().Format("2006-01-02-15-04-05")
+	backupDir := filepath.Join(backupFolder, bibTeXBaseName+"-"+ts)
+
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: could not create library backup directory %s: %s\n", backupDir, err)
+		return
+	}
+
+	bibSrc := bibTeXFolder + bibTeXBaseName + BibFileExtension
+	_ = copyFile(bibSrc, filepath.Join(backupDir, bibTeXBaseName+BibFileExtension))
+
+	tablesDir := bibTeXFolder + bibTeXBaseName + ".tables"
+	backupTablesDir := filepath.Join(backupDir, bibTeXBaseName+".tables")
+	if err := os.MkdirAll(backupTablesDir, 0755); err == nil {
+		if des, err := os.ReadDir(tablesDir); err == nil {
+			for _, de := range des {
+				if !de.IsDir() && strings.HasSuffix(de.Name(), ".csv") {
+					_ = copyFile(filepath.Join(tablesDir, de.Name()), filepath.Join(backupTablesDir, de.Name()))
+				}
+			}
+		}
+	}
+
+	Reporting.Progress(ProgressCreatingLibraryBackup, backupDir)
+}
+
 // BackupFile copies sourceFile into backupFolder, appending a timestamp suffix.
 func BackupFile(sourceFile string) bool {
 	source, err := os.Open(sourceFile)

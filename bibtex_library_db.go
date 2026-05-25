@@ -124,7 +124,7 @@ var safeParseOriginalCount int
 
 func countDistinctBibEntries() int {
 	var n int
-	db.QueryRow(`SELECT COUNT(DISTINCT entry_key) FROM bib_entries`).Scan(&n)
+	db.QueryRow(`SELECT COUNT(DISTINCT entry_key) FROM bib_entries WHERE field = ?`, EntryTypeField).Scan(&n)
 	return n
 }
 
@@ -189,18 +189,15 @@ func beginSafeParse() bool {
 	return true
 }
 
-// commitSafeParse completes a successful safe parse: backs up the untouched original
-// live file and then moves the parsed temp into its place.
+// commitSafeParse completes a successful safe parse by installing the newly
+// reparsed temp database as the live file. The bib+CSV directory backup
+// (created by ensureLibraryBackup before the first write) is the canonical
+// recovery point; no separate SQLite backup is needed.
 func commitSafeParse() {
 	if safeParseTemp == "" {
 		return
 	}
 	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
-	if err := os.MkdirAll(backupFolder, 0755); err != nil {
-		dbInteraction.Warning("Safe parse: could not create backup dir: %s", err)
-	}
-	ts := time.Now().Format("20060102_150405")
-	backupPath := fmt.Sprintf("%s%s.%s%s", backupFolder, bibTeXBaseName, ts, sqliteFileExtension)
 
 	// Entry count sanity check: warn if the re-parsed DB has fewer entries than the original.
 	if safeParseOriginalCount > 0 {
@@ -212,14 +209,7 @@ func commitSafeParse() {
 		}
 	}
 
-	// Step 1: rename live (untouched original) → backup.
-	// Abort if backup fails — never overwrite the live database without a backup.
-	if err := os.Rename(livePath, backupPath); err != nil {
-		dbInteraction.Warning("Safe parse: could not create backup, aborting install: %s", err)
-		return
-	}
-
-	// Step 2: move temp → live. Fall back to copy+remove if crossing filesystems.
+	// Move temp → live. Fall back to copy+remove if crossing filesystems.
 	if err := os.Rename(safeParseTemp, livePath); err != nil {
 		if copyErr := copyFile(safeParseTemp, livePath); copyErr != nil {
 			dbInteraction.Warning("Safe parse: could not install new database: %s", copyErr)
@@ -371,6 +361,7 @@ func maybeReloadNameMappingsDb() {
 	})
 
 	setTableDate("name_mappings", fileModTime(nameMappingsFileName))
+	setTableDate("filter_entry_field_mappings", 0)
 }
 
 // loadNameMappingsFromDb populates l.NameAliasToName and l.NameToAliases from
@@ -741,8 +732,7 @@ func maybeReloadCrossFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + CrossFieldMappingsFilePath
 
 	crossTime := tableModTime("filter_cross_field_mappings")
-	if fileModTime(fileName) <= crossTime &&
-		tableModTime("filter_entry_field_mappings") <= crossTime {
+	if fileModTime(fileName) <= crossTime {
 		return
 	}
 
@@ -769,7 +759,7 @@ func maybeReloadCrossFieldMappingsDb() {
 		}
 	})
 
-	setTableDate("filter_cross_field_mappings", fileModTime(fileName))
+	setTableDate("filter_cross_field_mappings", time.Now().UnixMicro())
 }
 
 // loadCrossFieldMappingsFromDb populates l.FieldMappings from the DB.
@@ -843,9 +833,7 @@ func maybeReloadEntryFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + EntryFieldMappingsFilePath
 
 	entryTime := tableModTime("filter_entry_field_mappings")
-	if fileModTime(fileName) <= entryTime &&
-		tableModTime("name_mappings") <= entryTime &&
-		tableModTime("filter_generic_field_mappings") <= entryTime {
+	if fileModTime(fileName) <= entryTime {
 		return
 	}
 
@@ -872,7 +860,8 @@ func maybeReloadEntryFieldMappingsDb() {
 		}
 	})
 
-	setTableDate("filter_entry_field_mappings", fileModTime(fileName))
+	setTableDate("filter_entry_field_mappings", time.Now().UnixMicro())
+	setTableDate("filter_cross_field_mappings", 0)
 }
 
 // loadEntryFieldMappingsFromDb populates l.EntryFieldSourceToTarget from the DB.
@@ -1038,6 +1027,7 @@ func saveGenericFieldMappingsToDb(l *TBibTeXLibrary) {
 		}
 	}
 	setTableDate("filter_generic_field_mappings", fileModTime(bibTeXFolder+bibTeXBaseName+GenericFieldMappingsFilePath))
+	setTableDate("filter_entry_field_mappings", 0)
 }
 
 // --- urls_ignore table ---

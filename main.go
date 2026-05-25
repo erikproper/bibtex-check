@@ -16,14 +16,15 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "16.30"
+const AppVersion = "16.59"
 
 // Run-state flags consumed by the write tail in main.
 var (
-	skipBibDbRefresh  bool
-	skipBibValidation bool
-	forceWrite        bool
-	cmdStep           bool
+	skipBibDbRefresh     bool
+	skipBibValidation    bool
+	forceWrite           bool
+	cmdStep              bool
+	cmdNoGarbageCleaning bool
 )
 
 func reportCacheMode() {
@@ -169,6 +170,12 @@ func doC3Checks(key string) {
 	Library.CheckEntry(Library.buildEntry(key))
 }
 
+// normalizeDblpKey strips a leading "DBLP:" prefix so that callers can pass
+// keys either way and the internal KeyForDBLP wrapper adds it exactly once.
+func normalizeDblpKey(key string) string {
+	return strings.TrimPrefix(key, "DBLP:")
+}
+
 func doAllChecks(key string) {
 	doC1Checks(key)
 	doC2Checks(key)
@@ -302,7 +309,7 @@ func doRenderAsBibTeX(args []string) {
 	}
 }
 
-func doRenderGroup(args []string) {
+func doRenderGroup(args []string, useAliases bool) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		group := args[0]
@@ -332,9 +339,6 @@ func doRenderGroup(args []string) {
 			if bib == "" {
 				continue
 			}
-			writeFile(pubsFolder+key+".bib", bib)
-			writeFile(citationsFolder+key+".html", Library.renderAsHTML(key)+"\n")
-			writeFile(citationsFolder+key+".tex", Library.renderAsTeX(key)+"\n")
 
 			entry := loadEntryFromDb(key)
 			year := entry.FieldValue("year")
@@ -353,7 +357,40 @@ func doRenderGroup(args []string) {
 					}
 				}
 			}
-			fmt.Printf("%s|%s|%s|%s\n", year, key, rg, dblp)
+
+			fileKey := key
+			if useAliases {
+				if alias := Library.PreferredKey(key); alias != "" {
+					fileKey = alias
+				}
+			}
+
+			writeFile(pubsFolder+fileKey+".bib", bib)
+			writeFile(citationsFolder+fileKey+".html", Library.renderAsHTML(key)+"\n")
+			writeFile(citationsFolder+fileKey+".tex", Library.renderAsTeX(key)+"\n")
+
+			if useAliases {
+				fmt.Printf("%s|%s|%s|%s|%s\n", year, fileKey, rg, dblp, key)
+			} else {
+				fmt.Printf("%s|%s|%s|%s\n", year, key, rg, dblp)
+			}
+		}
+	}
+}
+
+func doListGroupAliases(args []string) {
+	Reporting.SetInteractionOff()
+	if openLibraryToReport() {
+		for _, m := range findBibEntriesByGroup(args[0]) {
+			key := Library.MapEntryKey(m.Key)
+			if key == "" {
+				continue
+			}
+			alias := Library.PreferredKey(key)
+			if alias == "" {
+				alias = key
+			}
+			fmt.Printf("%s|%s\n", key, alias)
 		}
 	}
 }
@@ -465,10 +502,29 @@ func doFixDblpEntries() {
 		Library.ReadKeyNonDoublesFile()
 		total := countBibEntries()
 
+		// Collect bookish and non-bookish keys separately so bookish entries are
+		// processed first — proceedings/books establish venue field mappings that
+		// inpapers/incollections then inherit, preventing double-counting artifacts
+		// (e.g. ScitePress keynotes appearing in both proceedings and inproceedings).
+		// seenKeys tracks every key visited so far; entries added during the bookish
+		// pass (e.g. children added by CheckEntry → ForEachChildOfDBLPKey) are caught
+		// by the drain loop and fixed before the non-bookish pass begins.
+		var bookishKeys, otherKeys []string
+		seenKeys := make(map[string]bool)
+		forEachBibEntryType(func(key, entryType string) {
+			seenKeys[key] = true
+			if BibTeXBookish.Contains(entryType) {
+				bookishKeys = append(bookishKeys, key)
+			} else {
+				otherKeys = append(otherKeys, key)
+			}
+		})
+
+		quit := false
 		scanned := 0
 		spinner := Library.NewSpinner(ProgressFixingDblpEntries)
 		beginBibTransaction()
-		forEachBibEntryKey(func(key string) bool {
+		processKey := func(key string) {
 			scanned++
 			spinner.Update(scanned, total)
 			if Library.EntryFieldValueity(key, DBLPField) != "" {
@@ -476,11 +532,43 @@ func doFixDblpEntries() {
 				Library.MaybeFixDBLPEntry(key)
 				Library.PressEnterToContinue()
 				if cmdStep && Library.QuestionWasAsked() && Library.AskContinueOrQuit() {
-					return false
+					quit = true
 				}
 			}
-			return true
-		})
+		}
+		for _, key := range bookishKeys {
+			if quit {
+				break
+			}
+			processKey(key)
+		}
+		// Drain: fix any entries added during the bookish pass (children created by
+		// CheckEntry). Loop until stable — grandchildren are non-bookish so depth is
+		// bounded, but looping is safer than assuming exactly one level.
+		for !quit {
+			var newKeys []string
+			forEachBibEntryType(func(key, entryType string) {
+				if !seenKeys[key] {
+					seenKeys[key] = true
+					newKeys = append(newKeys, key)
+				}
+			})
+			if len(newKeys) == 0 {
+				break
+			}
+			for _, key := range newKeys {
+				if quit {
+					break
+				}
+				processKey(key)
+			}
+		}
+		for _, key := range otherKeys {
+			if quit {
+				break
+			}
+			processKey(key)
+		}
 		commitBibTransaction()
 		spinner.Stop()
 	}
@@ -493,8 +581,15 @@ func doNewKey() {
 func doFixDblpFor(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
-		for _, key := range cleanKeys(args) {
-			doAllChecks(key)
+		for _, rawKey := range cleanKeys(args) {
+			key := Library.MapEntryKey(rawKey)
+			if key == "" {
+				// Bare DBLP path (no "DBLP:" prefix) — try with the prefix.
+				key = Library.MapEntryKey(KeyForDBLP(rawKey))
+			}
+			if key != "" {
+				doAllChecks(key)
+			}
 		}
 	}
 }
@@ -503,6 +598,7 @@ func doAddDblpEntry(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		for _, dblpKey := range args {
+			dblpKey = normalizeDblpKey(dblpKey)
 			if Library.LookupDBLPKey(dblpKey) == "" {
 				if added := Library.MaybeAddDBLPEntry(dblpKey); added != "" {
 					doAllChecks(added)
@@ -595,10 +691,12 @@ func main() {
 		cmdSetPreferredAlias  bool
 		cmdNewKey             bool
 		cmdMap                bool
+		cmdUseAliases         bool
 		cmdAddToGroup         bool
 		cmdRemoveFromGroup    bool
 		cmdRenderAsBibTeX     bool
 		cmdRenderGroup        bool
+		cmdListGroupAliases   bool
 		cmdRenderAsTex        bool
 		cmdRenderAsHTML       bool
 		cmdRenderAsText       bool
@@ -606,6 +704,7 @@ func main() {
 		cmdLoadDblpXml        bool
 		cmdUpdateDblp         bool
 		cmdRepairDblpManifest bool
+		cmdDeleteGarbage      bool
 	)
 
 	flag.BoolVar(&cmdGet, "get", false, "generate local .bib from bib.config + .map in CWD")
@@ -617,8 +716,9 @@ func main() {
 	flag.BoolVar(&cmdFixEntries, "fix_entries", false, "fix/check specific entries")
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
 	flag.BoolVar(&cmdFixAllEntries, "fix_all_entries", false, "fix/check all entries")
-	flag.BoolVar(&cmdFixDblpEntries, "fix_dblp_entries", false, "fix/check all entries that have a DBLP key")
-	flag.BoolVar(&cmdFixDblpFor, "fix_dblp_for", false, "fix/check specific entries with DBLP")
+	flag.BoolVar(&cmdFixDblpEntries, "fix_all_dblp_entries", false, "fix/check all entries that have a DBLP key")
+	flag.BoolVar(&cmdFixDblpFor, "fix_dblp_entry", false, "fix/check specific entries with DBLP")
+	flag.BoolVar(&cmdFixDblpFor, "fix_dblp_entries", false, "alias for -fix_dblp_entry")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "add one or more new entries from DBLP")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mapping", false, "add key alias(es) to a canonical key")
@@ -631,6 +731,8 @@ func main() {
 	flag.BoolVar(&cmdAddToGroup, "add_to_group", false, "add an entry to a group")
 	flag.BoolVar(&cmdRemoveFromGroup, "remove_from_group", false, "remove an entry from a group")
 	flag.BoolVar(&cmdRenderGroup, "render_group", false, "render all entries in a group to pubs/citations folders")
+	flag.BoolVar(&cmdListGroupAliases, "list_group_aliases", false, "list canonical|alias pairs for all entries in a group")
+	flag.BoolVar(&cmdUseAliases, "use_aliases", false, "use preferred aliases as file names in -render_group")
 	flag.BoolVar(&cmdRenderAsBibTeX, "render_as_bibtex", false, "render entry as self-contained BibTeX")
 	flag.BoolVar(&cmdRenderAsTex, "render_as_tex", false, "render entry as TeX bibliography reference")
 	flag.BoolVar(&cmdRenderAsHTML, "render_as_html", false, "render entry as HTML bibliography reference")
@@ -638,7 +740,9 @@ func main() {
 	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "check PDF health, orphan files, and duplicates in the files folder")
 	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP file store")
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
-	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest files from a .xml.gz export")
+	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
+	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
+	flag.BoolVar(&cmdNoGarbageCleaning, "no_garbage_cleaning", false, "skip background cleanup of the DBLP trash folder")
 	flag.Parse()
 	args := flag.Args()
 
@@ -648,9 +752,12 @@ func main() {
 	{
 		var filtered []string
 		for _, a := range args {
-			if a == "-map" || a == "--map" {
+			switch a {
+			case "-map", "--map":
 				cmdMap = true
-			} else {
+			case "-use_aliases", "--use_aliases":
+				cmdUseAliases = true
+			default:
 				filtered = append(filtered, a)
 			}
 		}
@@ -697,6 +804,7 @@ func main() {
 
 	if cmdUpdateDblp {
 		acquireDblpLock()
+		maybeStartDblpTrashCleanup()
 		doUpdateDblp()
 	}
 
@@ -706,6 +814,7 @@ func main() {
 			os.Exit(1)
 		}
 		acquireDblpLock()
+		maybeStartDblpTrashCleanup()
 		doLoadDblpXml(args)
 		os.Exit(0)
 	}
@@ -715,13 +824,34 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: -repair_dblp_manifest <path.xml.gz>")
 			os.Exit(1)
 		}
+		maybeStartDblpTrashCleanup()
 		doRepairDblpManifest(args)
+		os.Exit(0)
+	}
+
+	if cmdDeleteGarbage {
+		des, err := os.ReadDir(dblpTrashFolder())
+		if err != nil || len(des) == 0 {
+			fmt.Fprintf(os.Stderr, "No DBLP trash to delete.\n")
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "Deleting DBLP trash...\n")
+		start := time.Now()
+		if err := os.RemoveAll(dblpTrashFolder()); err != nil {
+			fmt.Fprintf(os.Stderr, "Error deleting trash: %s\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Done (%.0fs).\n", time.Since(start).Seconds())
 		os.Exit(0)
 	}
 
 	acquireInstanceLock()
 
 	connectToDatabase()
+
+	if !cmdGet && !cmdFindEntries && !cmdEntryKey && !cmdEntryKeyAlias && !cmdShowEntry {
+		maybeStartDblpTrashCleanup()
+	}
 
 	switch {
 	case cmdGet:
@@ -781,13 +911,13 @@ func main() {
 	case cmdFixDblpFor:
 		requireNoDblpImport()
 		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "Usage: -fix_dblp_for <key>...")
+			fmt.Fprintln(os.Stderr, "Usage: -fix_dblp_entry <key>...")
 			os.Exit(1)
 		}
 		doFixDblpFor(args)
 
 	case cmdAddDblpEntry:
-		requireNoDblpImport()
+		// Step 10.4.3: add proper read-vs-write DBLP locking here.
 		if len(args) == 0 {
 			fmt.Fprintln(os.Stderr, "Usage: -add_dblp_entry <dblp-key>...")
 			os.Exit(1)
@@ -838,10 +968,17 @@ func main() {
 
 	case cmdRenderGroup:
 		if len(args) != 3 {
-			fmt.Fprintln(os.Stderr, "Usage: -render_group <group> <pubs_folder> <citations_folder>")
+			fmt.Fprintln(os.Stderr, "Usage: -render_group [-use_aliases] <group> <pubs_folder> <citations_folder>")
 			os.Exit(1)
 		}
-		doRenderGroup(args)
+		doRenderGroup(args, cmdUseAliases)
+
+	case cmdListGroupAliases:
+		if len(args) != 1 {
+			fmt.Fprintln(os.Stderr, "Usage: -list_group_aliases <group>")
+			os.Exit(1)
+		}
+		doListGroupAliases(args)
 
 	case cmdRenderAsBibTeX:
 		if len(args) == 0 {

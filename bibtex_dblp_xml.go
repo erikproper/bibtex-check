@@ -26,14 +26,18 @@ package main
 
 import (
 	"compress/gzip"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/text/encoding/charmap"
@@ -139,8 +143,9 @@ func advanceToDblpRoot(d *xml.Decoder) error {
 
 // --- Key collection (manifest repair) ---
 
-// dblpCollectKeysFromXML streams the DBLP XML reading only the key= attribute of each
-// entry start element (skipping the entire entry body), and returns the resulting manifest.
+// dblpCollectKeysFromXML streams the DBLP XML reading only the key= and mdate=
+// attributes of each entry start element (skipping the entire entry body),
+// and returns the resulting manifest.
 // progress is called every dblpProgressInterval entries (may be nil).
 func dblpCollectKeysFromXML(r io.Reader, progress func(n int)) (TDblpManifest, error) {
 	d := newDblpDecoder(r)
@@ -165,13 +170,19 @@ func dblpCollectKeysFromXML(r io.Reader, progress func(n int)) (TDblpManifest, e
 			d.Skip()
 			continue
 		}
+		var dblpKey, mdate string
 		for _, a := range se.Attr {
-			if a.Name.Local == "key" && a.Value != "" {
-				m.add(a.Value, "") // key-only collection; mdate unknown
-				break
+			switch a.Name.Local {
+			case "key":
+				dblpKey = a.Value
+			case "mdate":
+				mdate = a.Value
 			}
 		}
-		d.Skip() // skip all child elements — we only needed the key
+		d.Skip()
+		if dblpKey != "" {
+			m.add(dblpKey, mdate)
+		}
 		count++
 		if count%dblpProgressInterval == 0 && progress != nil {
 			progress(count)
@@ -180,55 +191,134 @@ func dblpCollectKeysFromXML(r io.Reader, progress func(n int)) (TDblpManifest, e
 	return m, nil
 }
 
-// doRepairDblpManifest rebuilds the DBLP manifest files from an XML export
-// without touching any data.json files. The manifest written reflects exactly
-// the set of DBLP keys present in the XML file.
-func doRepairDblpManifest(args []string) {
-	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: -repair_dblp_manifest <path.xml.gz>\n")
-		os.Exit(1)
-	}
-	xmlGzPath := expandHome(args[0])
-	if !FileExists(xmlGzPath) {
-		fmt.Fprintf(os.Stderr, "File not found: %s\n", xmlGzPath)
-		os.Exit(1)
-	}
-
+// rebuildDblpManifests streams the DBLP XML at xmlGzPath, collecting the key and
+// mdate of each entry, then writes manifest.csv files for those entries that also
+// exist on disk. Parallel stat calls check disk presence: faster than a directory
+// walk because stats are parallelisable and benefit from kernel path-cache warmth,
+// while WalkDir must traverse the entire tree sequentially in a single goroutine.
+func rebuildDblpManifests(xmlGzPath string) (TDblpManifest, error) {
 	f, err := os.Open(xmlGzPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not open %s: %s\n", xmlGzPath, err)
-		os.Exit(1)
+		return nil, err
 	}
 	defer f.Close()
-
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not read gzip from %s: %s\n", xmlGzPath, err)
-		os.Exit(1)
+		return nil, err
 	}
 	defer gz.Close()
 
-	fmt.Fprintf(os.Stderr, "Collecting DBLP keys from %s...\n", xmlGzPath)
-	start := time.Now()
-	m, err := dblpCollectKeysFromXML(gz, func(n int) {
-		fmt.Fprintf(os.Stderr, "  %d keys collected (%.0fs)...\n", n, time.Since(start).Seconds())
+	fmt.Fprintf(os.Stderr, "  Scanning XML...\n")
+	xmlManifest, err := dblpCollectKeysFromXML(gz, func(n int) {
+		fmt.Fprintf(os.Stderr, "\r  %d entries scanned...", n)
 	})
+	xmlTotal := 0
+	for _, entries := range xmlManifest {
+		xmlTotal += len(entries)
+	}
+	fmt.Fprintf(os.Stderr, "\r\033[K  %d entries in XML.\n", xmlTotal)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: XML read error after %d keys: %s\n", len(m), err)
+		return nil, err
 	}
 
-	total := 0
-	for _, entries := range m {
-		total += len(entries)
+	type statJob struct {
+		dblpKey string
+		mdate   string
 	}
-	fmt.Fprintf(os.Stderr, "  %d keys in %d parent dirs (%.0fs).\n", total, len(m), time.Since(start).Seconds())
+	type statHit struct {
+		dblpKey string
+		mdate   string
+	}
+	entriesDir := dblpFolder() + "entries/"
+	jobs := make(chan statJob, dblpStatWorkers*4)
+	hits := make(chan statHit, dblpStatWorkers*4)
 
-	fmt.Fprintf(os.Stderr, "Writing manifests...\n")
-	if err := os.MkdirAll(dblpFolder()+"entries/", 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not create entries folder: %s\n", err)
+	var wg sync.WaitGroup
+	for range dblpStatWorkers {
+		wg.Go(func() {
+			for j := range jobs {
+				path := filepath.Join(entriesDir, j.dblpKey, "data.json")
+				if _, err := os.Lstat(path); err == nil {
+					hits <- statHit{j.dblpKey, j.mdate}
+				}
+			}
+		})
+	}
+	go func() {
+		for parentDir, entries := range xmlManifest {
+			for entryName, me := range entries {
+				var dblpKey string
+				if parentDir == "." {
+					dblpKey = entryName
+				} else {
+					dblpKey = parentDir + "/" + entryName
+				}
+				jobs <- statJob{dblpKey, me.Mdate}
+			}
+		}
+		close(jobs)
+		wg.Wait()
+		close(hits)
+	}()
+
+	fmt.Fprintf(os.Stderr, "  Checking disk entries...\n")
+	filtered := make(TDblpManifest)
+	found := 0
+	for h := range hits {
+		filtered.add(h.dblpKey, h.mdate)
+		found++
+		if found%100_000 == 0 {
+			fmt.Fprintf(os.Stderr, "\r  %d / %d entries on disk (%d%%)...", found, xmlTotal, pct(found, xmlTotal))
+		}
+	}
+	fmt.Fprintf(os.Stderr, "\r\033[K  %d / %d entries on disk (%d%%).\n", found, xmlTotal, pct(found, xmlTotal))
+	writeDblpManifests(filtered)
+	return filtered, nil
+}
+
+// pct returns 100*n/total, or 0 if total is zero.
+func pct(n, total int) int {
+	if total == 0 {
+		return 0
+	}
+	return 100 * n / total
+}
+
+// doRepairDblpManifest rebuilds the entries.manifest from a DBLP XML export and
+// moves the title index to trash for a clean rebuild on the next import.
+// The XML arg must name a file present in dblpFolder().
+func doRepairDblpManifest(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: -repair_dblp_manifest <filename.xml.gz>\n")
 		os.Exit(1)
 	}
-	writeDblpManifests(m)
+	xmlFilename := filepath.Base(args[0])
+	xmlGzPath := dblpFolder() + xmlFilename
+	if !FileExists(xmlGzPath) {
+		fmt.Fprintf(os.Stderr, "File not found in DBLP store: %s\n", xmlGzPath)
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "Rebuilding entry manifests from XML...\n")
+	start := time.Now()
+	if _, err := rebuildDblpManifests(xmlGzPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Manifest rebuild failed: %s\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "  Entry manifests rebuilt (%.0fs).\n", time.Since(start).Seconds())
+
+	// Move the title index to trash; the next doLoadDblpXml rebuilds it fresh.
+	// crossref/person/ORCID indexes are maintained incrementally and left in place.
+	titlesDir := dblpFolder() + "titles/"
+	if _, err := os.Stat(titlesDir); err == nil {
+		if err := moveToDblpTrash(titlesDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not move title index to trash: %s\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  Title index moved to trash — will be rebuilt on next import.\n")
+		}
+	}
+
+	writeDblpCurrentXML(xmlGzPath)
 	fmt.Fprintf(os.Stderr, "Manifest repair complete.\n")
 }
 
@@ -309,6 +399,7 @@ func dblpBuildNameMap(r io.Reader) (map[string]string, error) {
 // --- Second pass: main import ---
 
 const dblpProgressInterval = 50_000
+const dblpStatWorkers = 64
 
 // dblpImportFromReader streams DBLP XML from r, writing one data.json per entry
 // and one title link.txt per indexed title. nameMap contains the canonical name
@@ -369,25 +460,16 @@ outer:
 			continue
 		}
 
-		// Skip entries whose mdate hasn't changed — no need to rewrite files or
-		// update indexes. Check manifest first (O(1)); fall back to data.json only
-		// when the entry is absent from the manifest (e.g. after a repair).
-		if mdate != "" {
-			skip := false
-			if existingMdate, inManifest := originalManifest.mdate(dblpKey); inManifest {
-				skip = existingMdate == mdate
-			} else if existing := readDblpJSONEntry(dblpKey); existing != nil {
-				skip = existing.Mdate == mdate
+		// mdate-based skip — avoids parsing the entry body entirely.
+		manifestEntry, inManifest := originalManifest.get(dblpKey)
+		if mdate != "" && inManifest && manifestEntry.Mdate == mdate {
+			d.Skip()
+			newManifest.add(dblpKey, mdate)
+			count++
+			if count%dblpProgressInterval == 0 && progress != nil {
+				progress(count)
 			}
-			if skip {
-				d.Skip()
-				newManifest.add(dblpKey, mdate)
-				count++
-				if count%dblpProgressInterval == 0 && progress != nil {
-					progress(count)
-				}
-				continue
-			}
+			continue
 		}
 
 		var authors, editors []dblpXMLPerson
@@ -468,7 +550,16 @@ outer:
 			je.Editors = append(je.Editors, applyNameMap(p))
 		}
 
-		if err := writeDblpEntryFile(dblpKey, je); err != nil {
+		jsonBytes, _ := json.Marshal(je)
+
+		// For changed entries (not new) remove stale index entries before
+		// overwriting, so a title or author change doesn't leave ghost links.
+		if inManifest {
+			removeKeyFromAllIndexes(dblpKey, readDblpJSONEntry(dblpKey))
+		}
+
+		// mdate changed or entry not in manifest — write to disk and update indexes.
+		if err := writeDblpEntryFile(dblpKey, jsonBytes); err != nil {
 			parseErr = fmt.Errorf("writing entry %s: %w", dblpKey, err)
 			break outer
 		}
@@ -515,14 +606,15 @@ outer:
 }
 
 // countingReader wraps an io.Reader and tracks the total number of bytes read.
+// n is updated atomically so a ticker goroutine can read it concurrently.
 type countingReader struct {
 	r io.Reader
-	n int64
+	n atomic.Int64
 }
 
 func (cr *countingReader) Read(p []byte) (int, error) {
 	n, err := cr.r.Read(p)
-	cr.n += int64(n)
+	cr.n.Add(int64(n))
 	return n, err
 }
 
@@ -552,28 +644,19 @@ func doLoadDblpXml(args []string) {
 		os.Exit(1)
 	}
 
-	// Clear derived indexes so they are rebuilt cleanly from the new XML.
-	for _, indexDir := range []string{"titles/", "crossrefs/", "persons/", "orcids/"} {
-		dir := dblpFolder() + indexDir
-		if _, err := os.Stat(dir); err == nil {
-			fmt.Fprintf(os.Stderr, "Clearing existing %s index...\n", indexDir)
-			if err := os.RemoveAll(dir); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not clear %s index: %s\n", indexDir, err)
-			}
-		}
-	}
-
 	// Load existing manifests so we know which entries to prune after import.
 	// If entries exist but manifests are absent, rebuild them from the tree first.
 	var originalManifest TDblpManifest
 	if dblpEntriesDirHasContent() {
 		originalManifest = loadDblpManifests()
 		if len(originalManifest) == 0 {
-			fmt.Fprintf(os.Stderr, "Manifests absent — rebuilding from existing entries...\n")
-			if err := rebuildDblpManifests(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: manifest rebuild failed: %s\n", err)
+			fmt.Fprintf(os.Stderr, "Manifests absent — rebuilding from XML...\n")
+			var rebuildErr error
+			originalManifest, rebuildErr = rebuildDblpManifests(xmlGzPath)
+			if rebuildErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: manifest rebuild failed: %s\n", rebuildErr)
+				originalManifest = make(TDblpManifest)
 			} else {
-				originalManifest = loadDblpManifests()
 				fmt.Fprintf(os.Stderr, "  Manifests rebuilt (%d parent dirs).\n", len(originalManifest))
 			}
 		} else {
@@ -625,18 +708,41 @@ func doLoadDblpXml(args []string) {
 	defer gz2.Close()
 
 	pass2Start := time.Now()
+	var processed atomic.Int64
+
+	pass2Done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				n := processed.Load()
+				elapsed := time.Since(pass2Start).Seconds()
+				pct := float64(cr.n.Load()) * 100.0 / float64(totalBytes)
+				eta := 0.0
+				if pct > 0 {
+					eta = elapsed * (100.0 - pct) / pct
+				}
+				fmt.Fprintf(os.Stderr, "\r  %d entries processed (%.0fs elapsed, %.0f%%, ETA ~%.0fs)...",
+					n, elapsed, pct, eta)
+			case <-pass2Done:
+				return
+			}
+		}
+	}()
+
 	count, err := dblpImportFromReader(gz2, nameMap, originalManifest, newManifest, func(n int) {
-		pct := float64(cr.n) * 100.0 / float64(totalBytes)
-		fmt.Fprintf(os.Stderr, "  %d entries written (%.0fs, %.0f%%)...\n",
-			n, time.Since(pass2Start).Seconds(), pct)
+		processed.Store(int64(n))
 	})
+	close(pass2Done)
+	fmt.Fprintf(os.Stderr, "\r\033[K  %d entries processed (%.0fs).\n", count, time.Since(pass2Start).Seconds())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Import failed after %d entries: %s\n", count, err)
 		os.Exit(1)
 	}
 
 	// Prune entries present in the old store but absent from the new XML.
-	fmt.Fprintf(os.Stderr, "Pruning stale entries...\n")
 	deleteStaleDblpEntries(originalManifest, newManifest)
 
 	// Write updated manifests.
@@ -655,6 +761,7 @@ func doLoadDblpXml(args []string) {
 		fmt.Fprintf(os.Stderr, "Warning: could not write meta.json: %s\n", err)
 	}
 
+	writeDblpCurrentXML(xmlGzPath)
 	fmt.Fprintf(os.Stderr, "DBLP import complete: %d entries in %.1fs\n",
 		count, time.Since(start).Seconds())
 }
@@ -710,7 +817,13 @@ func doUpdateDblp() {
 
 	destPath := dblpFolder() + latest
 	if FileExists(destPath) {
-		fmt.Fprintf(os.Stderr, "Already have %s — nothing to do.\n", destPath)
+		if readDblpCurrentXML() == latest {
+			fmt.Fprintf(os.Stderr, "Already have %s — nothing to do.\n", latest)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Found %s but import incomplete — re-importing...\n", latest)
+		doLoadDblpXml([]string{destPath})
+		cleanupDblpXmlFiles()
 		return
 	}
 
@@ -741,11 +854,12 @@ func doUpdateDblp() {
 		for {
 			select {
 			case <-ticker.C:
-				mb := float64(cr.n) / 1e6
+				n := cr.n.Load()
+				mb := float64(n) / 1e6
 				elapsed := time.Since(start).Seconds()
 				if total > 0 {
 					fmt.Fprintf(os.Stderr, "  %.0f / %.0f MB (%.0f%%) %.0fs\n",
-						mb, float64(total)/1e6, float64(cr.n)*100/float64(total), elapsed)
+						mb, float64(total)/1e6, float64(n)*100/float64(total), elapsed)
 				} else {
 					fmt.Fprintf(os.Stderr, "  %.0f MB %.0fs\n", mb, elapsed)
 				}
@@ -764,7 +878,7 @@ func doUpdateDblp() {
 	close(done)
 
 	fmt.Fprintf(os.Stderr, "Downloaded %s (%.0f MB) in %.1fs\n",
-		latest, float64(cr.n)/1e6, time.Since(start).Seconds())
+		latest, float64(cr.n.Load())/1e6, time.Since(start).Seconds())
 	doLoadDblpXml([]string{destPath})
 
 	// Import succeeded — keep only the two most recent XML files.

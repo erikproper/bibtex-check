@@ -30,24 +30,18 @@ func (l *TBibTeXLibrary) readFile(fullFilePath, message string, reading func(str
 	return processFile(fullFilePath, reading)
 }
 
-func (l *TBibTeXLibrary) readDBLPKeyFile(DBLPKey, fileName string, reading func(string)) bool {
-	return l.readFile(l.FilesRoot+"DBLPScraper/bib/"+DBLPKey+"/"+fileName, "", reading)
-}
-
 func (l *TBibTeXLibrary) ForEachChildOfDBLPKey(DBLPKey string, work func(string)) {
-	l.readDBLPKeyFile(DBLPKey, "children", work)
+	for _, child := range readDblpCrossrefChildren(DBLPKey) {
+		work(child)
+	}
 }
 
 func (l *TBibTeXLibrary) MaybeGetDBLPCrossref(DBLPKey string) string {
-	crossrefDBLPKey := ""
-
-	l.readDBLPKeyFile(DBLPKey, "crossref", func(key string) {
-		if key != "" {
-			crossrefDBLPKey = key
-		}
-	})
-
-	return crossrefDBLPKey
+	je := readDblpJSONEntry(DBLPKey)
+	if je == nil {
+		return ""
+	}
+	return je.Fields["crossref"]
 }
 
 // Generic function to read library related files

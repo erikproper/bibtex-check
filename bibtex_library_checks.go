@@ -353,7 +353,7 @@ func (l *TBibTeXLibrary) derivePreferredAlias(entry *TBibTeXEntry) string {
 	if BibTeXBookish.Contains(entry.FieldValue(EntryTypeField)) {
 		if dblpKey := entry.FieldValue(DBLPField); dblpKey != "" {
 			parts := strings.Split(dblpKey, "/")
-			if len(parts) >= 2 {
+			if len(parts) >= 2 && (parts[0] == "conf" || parts[0] == "journals") {
 				keyword := stripNonAlphaNum.ReplaceAllString(TeXStringIndexer(parts[len(parts)-2]), "")
 				if candidate, ok := tryCandidate(keyword); ok {
 					return candidate
@@ -783,6 +783,9 @@ func (l *TBibTeXLibrary) CheckWithdrawn(entry *TBibTeXEntry) {
 	if entry.FieldValue("author") != "{Withdrawn publication}" {
 		if l.WarningYesNoQuestion("Set author to {Withdrawn publication}", "Entry %s has withdrawn date but author is not {Withdrawn publication}", entry.Key) {
 			l.setEntryField(entry, "author", "{Withdrawn publication}")
+			if entry.FieldValue("note") == "Withdrawn." {
+				l.setEntryField(entry, "note", "")
+			}
 		}
 	}
 }

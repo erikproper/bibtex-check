@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // dblpFolder returns the root of the DBLP file store.
@@ -38,6 +39,34 @@ func dblpFolder() string {
 		return globalFolder + "DBLP/"
 	}
 	return bibTeXFolder + "DBLP/"
+}
+
+func dblpTrashFolder() string { return dblpFolder() + "trash/" }
+
+// moveToDblpTrash moves path into the DBLP trash folder with a timestamp
+// suffix. The rename is an O(1) syscall regardless of how many files are inside.
+func moveToDblpTrash(path string) error {
+	if err := os.MkdirAll(dblpTrashFolder(), 0755); err != nil {
+		return err
+	}
+	dest := dblpTrashFolder() + filepath.Base(path) + "-" + time.Now().Format("20060102-150405")
+	return os.Rename(path, dest)
+}
+
+// maybeStartDblpTrashCleanup launches a background goroutine to remove the
+// contents of the DBLP trash folder when it is non-empty. The goroutine is
+// not waited on; if the process exits before it completes the remaining trash
+// is cleaned on the next invocation. Skipped when cmdNoGarbageCleaning is set.
+func maybeStartDblpTrashCleanup() {
+	if cmdNoGarbageCleaning {
+		return
+	}
+	des, err := os.ReadDir(dblpTrashFolder())
+	if err != nil || len(des) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Deleting DBLP trash in background.\n")
+	go os.RemoveAll(dblpTrashFolder())
 }
 
 func dblpEntryFilePath(dblpKey string) string {
@@ -148,16 +177,12 @@ type TDblpMeta struct {
 
 // --- Write functions ---
 
-func writeDblpEntryFile(dblpKey string, je *TDblpJSONEntry) error {
+func writeDblpEntryFile(dblpKey string, jsonBytes []byte) error {
 	path := dblpEntryFilePath(dblpKey)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	data, err := json.Marshal(je)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, jsonBytes, 0644)
 }
 
 // appendToIndexFile appends a single line to a hash-keyed index file,
@@ -165,6 +190,15 @@ func writeDblpEntryFile(dblpKey string, je *TDblpJSONEntry) error {
 func appendToIndexFile(path, line string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
+	}
+	// Skip the write when the line is already present — avoids duplicates when
+	// an entry's mdate changes but its indexed value (title, person, etc.) does not.
+	if existing, err := os.ReadFile(path); err == nil {
+		for _, l := range strings.Split(strings.TrimSpace(string(existing)), "\n") {
+			if l == line {
+				return nil
+			}
+		}
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -352,14 +386,116 @@ func readDblpMeta() *TDblpMeta {
 	return &meta
 }
 
+// readDblpCurrentXML returns the basename of the last successfully imported XML file,
+// or "" if no import has completed.
+func readDblpCurrentXML() string {
+	data, err := os.ReadFile(dblpFolder() + "current.txt")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// writeDblpCurrentXML records xmlPath as the last successfully imported XML file.
+// Only the basename is stored so the path is portable across global_folder changes.
+func writeDblpCurrentXML(xmlPath string) {
+	content := filepath.Base(xmlPath) + "\n"
+	if err := os.WriteFile(dblpFolder()+"current.txt", []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write current.txt: %s\n", err)
+	}
+}
+
+// removeKeyFromIndexFile removes all lines equal to key from the line-delimited file
+// at path. Deletes the file (and prunes empty parent directories up to dblpFolder())
+// when no lines remain.
+func removeKeyFromIndexFile(path, key string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var kept []string
+	changed := false
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		if line == key {
+			changed = true
+		} else {
+			kept = append(kept, line)
+		}
+	}
+	if !changed {
+		return
+	}
+	if len(kept) == 0 {
+		os.Remove(path)
+		pruneEmptyDblpDirs(filepath.Dir(path))
+	} else {
+		os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0644)
+	}
+}
+
+// pruneEmptyDblpDirs removes empty directories from dir up to (but not including)
+// dblpFolder(). Stops at the first non-empty directory.
+func pruneEmptyDblpDirs(dir string) {
+	root := dblpFolder()
+	for dir != root && dir != "/" && dir != "." {
+		if os.Remove(dir) != nil {
+			break
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
+// removeKeyFromAllIndexes removes dblpKey from every index file it contributed to,
+// using the provided JSON entry to compute title/crossref/person/ORCID hashes.
+func removeKeyFromAllIndexes(dblpKey string, je *TDblpJSONEntry) {
+	if je == nil {
+		return
+	}
+	// Title index
+	for _, fieldName := range []string{"title", "booktitle"} {
+		if je.Fields != nil {
+			if value := je.Fields[fieldName]; value != "" {
+				if hash := dblpTitleHash(value); hash != "" {
+					removeKeyFromIndexFile(dblpTitleLinkPath(hash), dblpKey)
+				}
+			}
+		}
+	}
+	// Crossref children index
+	if je.Fields != nil {
+		if parentKey := je.Fields["crossref"]; parentKey != "" {
+			removeKeyFromIndexFile(dblpCrossrefChildrenPath(parentKey), dblpKey)
+		}
+	}
+	// Person and ORCID indexes
+	for _, p := range append(je.Authors, je.Editors...) {
+		if hash := dblpPersonNameHash(p.Name); hash != "" {
+			removeKeyFromIndexFile(dblpPersonEntriesPath(hash), dblpKey)
+		}
+		if p.ORCID != "" {
+			if hash := dblpORCIDHash(p.ORCID); hash != "" {
+				removeKeyFromIndexFile(dblpORCIDEntriesPath(hash), dblpKey)
+			}
+		}
+	}
+}
+
 // --- Manifest ---
 
 const dblpManifestFilename = "manifest.csv"
 
-// TDblpManifest maps parent directories (relative to entries/) to entry names with their mdate.
-// e.g. m["conf/ijcai"]["2023"] = "2024-01-15" for DBLP key "conf/ijcai/2023".
-// An empty mdate string means the mdate is unknown (e.g. after a key-only repair).
-type TDblpManifest map[string]map[string]string
+// TDblpManifestEntry holds the mdate of a DBLP entry's data.json.
+type TDblpManifestEntry struct {
+	Mdate string
+}
+
+// TDblpManifest maps parent directories (relative to entries/) to entry names
+// and their manifest data. e.g. m["conf/ijcai"]["2023"] for DBLP key "conf/ijcai/2023".
+// Persisted as a single flat entries.manifest file at dblpFolder().
+type TDblpManifest map[string]map[string]TDblpManifestEntry
 
 // dblpEntryParentAndName splits a DBLP key into parent directory and entry name.
 // "conf/ijcai/2023" → ("conf/ijcai", "2023").
@@ -375,24 +511,53 @@ func dblpEntryParentAndName(dblpKey string) (parentDir, entryName string) {
 func (m TDblpManifest) add(dblpKey, mdate string) {
 	parentDir, entryName := dblpEntryParentAndName(dblpKey)
 	if m[parentDir] == nil {
-		m[parentDir] = make(map[string]string)
+		m[parentDir] = make(map[string]TDblpManifestEntry)
 	}
-	m[parentDir][entryName] = mdate
+	m[parentDir][entryName] = TDblpManifestEntry{Mdate: mdate}
 }
 
-// mdate returns the stored mdate for dblpKey and whether it was found in the manifest.
-func (m TDblpManifest) mdate(dblpKey string) (string, bool) {
+// get returns the manifest entry for dblpKey and whether it was found.
+func (m TDblpManifest) get(dblpKey string) (TDblpManifestEntry, bool) {
 	parentDir, entryName := dblpEntryParentAndName(dblpKey)
 	if entries, ok := m[parentDir]; ok {
-		mdate, found := entries[entryName]
-		return mdate, found
+		e, found := entries[entryName]
+		return e, found
 	}
-	return "", false
+	return TDblpManifestEntry{}, false
 }
 
-// loadDblpManifests reads all manifest.csv files under entries/ into memory.
-// Returns an empty manifest when none are found.
+func dblpEntriesManifestPath() string { return dblpFolder() + "entries.manifest" }
+
+// loadDblpManifests reads the single entries.manifest file at dblpFolder().
+// Falls back to the legacy per-directory manifest.csv walk when the file is
+// absent, writing the new file immediately so subsequent loads are fast.
 func loadDblpManifests() TDblpManifest {
+	data, err := os.ReadFile(dblpEntriesManifestPath())
+	if err != nil {
+		m := loadDblpManifestsLegacy()
+		if len(m) > 0 {
+			writeDblpManifests(m)
+		}
+		return m
+	}
+	m := make(TDblpManifest)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		i := strings.IndexByte(line, ',')
+		if i < 0 {
+			m.add(line, "")
+			continue
+		}
+		m.add(line[:i], line[i+1:])
+	}
+	return m
+}
+
+// loadDblpManifestsLegacy reads the old per-directory manifest.csv files.
+// Used only as a one-time migration path from loadDblpManifests.
+func loadDblpManifestsLegacy() TDblpManifest {
 	m := make(TDblpManifest)
 	entriesDir := dblpFolder() + "entries/"
 	filepath.WalkDir(entriesDir, func(path string, d fs.DirEntry, err error) error {
@@ -400,56 +565,82 @@ func loadDblpManifests() TDblpManifest {
 			return nil
 		}
 		relDir, _ := filepath.Rel(entriesDir, filepath.Dir(path))
+		parentDir := filepath.ToSlash(relDir)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
-		entries := make(map[string]string)
 		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 			if line == "" {
 				continue
 			}
-			if i := strings.IndexByte(line, ','); i >= 0 {
-				entries[line[:i]] = line[i+1:] // name,mdate format
+			i := strings.IndexByte(line, ',')
+			if i < 0 {
+				m.add(parentDir+"/"+line, "")
+				continue
+			}
+			entryName, mdate := line[:i], line[i+1:]
+			if j := strings.IndexByte(mdate, ','); j >= 0 {
+				mdate = mdate[:j] // strip legacy MD5 column
+			}
+			if parentDir == "." {
+				m.add(entryName, mdate)
 			} else {
-				entries[line] = "" // old format — mdate unknown
+				m.add(parentDir+"/"+entryName, mdate)
 			}
 		}
-		m[filepath.ToSlash(relDir)] = entries
 		return nil
 	})
 	return m
 }
 
-// writeDblpManifests writes one manifest.csv per parent directory in m.
+// writeDblpManifests writes all manifest data to a single flat entries.manifest
+// at dblpFolder(). Format: dblpKey,mdate per line, sorted.
 func writeDblpManifests(m TDblpManifest) {
-	entriesDir := dblpFolder() + "entries/"
+	keys := make([]string, 0)
 	for parentDir, entries := range m {
-		if len(entries) == 0 {
-			continue
-		}
-		names := make([]string, 0, len(entries))
-		for name := range entries {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		var sb strings.Builder
-		for _, name := range names {
-			sb.WriteString(name)
-			if mdate := entries[name]; mdate != "" {
-				sb.WriteByte(',')
-				sb.WriteString(mdate)
+		for entryName := range entries {
+			if parentDir == "." {
+				keys = append(keys, entryName)
+			} else {
+				keys = append(keys, parentDir+"/"+entryName)
 			}
-			sb.WriteByte('\n')
 		}
-		os.WriteFile(entriesDir+parentDir+"/"+dblpManifestFilename, []byte(sb.String()), 0644)
 	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for _, key := range keys {
+		me, _ := m.get(key)
+		sb.WriteString(key)
+		if me.Mdate != "" {
+			sb.WriteByte(',')
+			sb.WriteString(me.Mdate)
+		}
+		sb.WriteByte('\n')
+	}
+	os.WriteFile(dblpEntriesManifestPath(), []byte(sb.String()), 0644)
 }
 
 // deleteStaleDblpEntries deletes entries that appear in original but not in updated,
 // then prunes any parent directories that became empty.
+// Prints an in-place spinner progress line to stderr; silent when there is nothing to delete.
 func deleteStaleDblpEntries(original, updated TDblpManifest) {
+	// Pre-count so the progress line can show N/total.
+	total := 0
+	for parentDir, origEntries := range original {
+		updatedEntries := updated[parentDir]
+		for entryName := range origEntries {
+			if _, ok := updatedEntries[entryName]; !ok {
+				total++
+			}
+		}
+	}
+	if total == 0 {
+		return
+	}
+
 	entriesDir := dblpFolder() + "entries/"
+	done := 0
 	for parentDir, originalEntries := range original {
 		updatedEntries := updated[parentDir]
 		for entryName := range originalEntries {
@@ -457,43 +648,20 @@ func deleteStaleDblpEntries(original, updated TDblpManifest) {
 				continue
 			}
 			entryDir := entriesDir + parentDir + "/" + entryName
+			dblpKey := parentDir + "/" + entryName
+			removeKeyFromAllIndexes(dblpKey, readDblpJSONEntry(dblpKey))
 			os.Remove(entryDir + "/data.json")
 			os.Remove(entryDir) // succeeds only when empty
+			done++
+			pct := float64(done) * 100.0 / float64(total)
+			fmt.Fprintf(os.Stderr, "\r%s Pruning stale entries %d/%d (%.0f%%)",
+				spinnerChars[done%len(spinnerChars)], done, total, pct)
 		}
 		if len(updatedEntries) == 0 {
-			os.Remove(entriesDir + parentDir + "/" + dblpManifestFilename)
 			os.Remove(entriesDir + parentDir)
 		}
 	}
-}
-
-// rebuildDblpManifests walks entries/ and recreates all manifest.csv files from
-// existing data.json files. Used when manifests are absent or corrupted.
-func rebuildDblpManifests() error {
-	entriesDir := dblpFolder() + "entries/"
-	m := make(TDblpManifest)
-	err := filepath.WalkDir(entriesDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || d.Name() != "data.json" {
-			return nil
-		}
-		relEntry, _ := filepath.Rel(entriesDir, filepath.Dir(path))
-		relEntry = filepath.ToSlash(relEntry)
-		parentDir, entryName := dblpEntryParentAndName(relEntry)
-		mdate := ""
-		if je := readDblpJSONEntry(relEntry); je != nil {
-			mdate = je.Mdate
-		}
-		if m[parentDir] == nil {
-			m[parentDir] = make(map[string]string)
-		}
-		m[parentDir][entryName] = mdate
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	writeDblpManifests(m)
-	return nil
+	fmt.Fprintf(os.Stderr, "\r\033[KPruned %d stale entries.\n", done)
 }
 
 // dblpEntriesDirHasContent reports whether entries/ has any subdirectories,

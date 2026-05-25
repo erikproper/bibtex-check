@@ -26,7 +26,7 @@ func (l *TBibTeXLibrary) writeFile(fullFilePath, message string, writing func(*b
 		return false
 	}
 
-	BackupFile(fullFilePath)
+	ensureLibraryBackup()
 
 	file, err := os.Create(fullFilePath)
 	if err != nil {

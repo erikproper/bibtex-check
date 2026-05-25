@@ -330,24 +330,24 @@ func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 func init() {
 	// Define the Normaliser functions.
 	fieldNormalisers = TFieldNormalisers{}
-	fieldNormalisers["address"] = NormaliseTitleString
+	fieldNormalisers["address"] = NormaliseLiteralString
 	fieldNormalisers["author"] = NormaliseNamesString
 	fieldNormalisers["booktitle"] = NormaliseTitleString
 	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString
-	fieldNormalisers["howpublished"] = NormaliseTitleString
+	fieldNormalisers["howpublished"] = NormaliseLiteralString
 	fieldNormalisers["groups"] = NormaliseGroupsValue
-	fieldNormalisers["institution"] = NormaliseTitleString
+	fieldNormalisers["institution"] = NormaliseLiteralString
 	fieldNormalisers["isbn"] = NormaliseISBNValue
 	fieldNormalisers["issn"] = NormaliseISSNValue
 	fieldNormalisers["journal"] = NormaliseTitleString
 	fieldNormalisers["langid"] = NormaliseLanguageID
 	fieldNormalisers["number"] = NormaliseNumberValue
-	fieldNormalisers["organization"] = NormaliseTitleString
+	fieldNormalisers["organization"] = NormaliseLiteralString
 	fieldNormalisers["pages"] = NormalisePagesValue
-	fieldNormalisers["publisher"] = NormaliseTitleString
-	fieldNormalisers["school"] = NormaliseTitleString
-	fieldNormalisers["series"] = NormaliseTitleString
+	fieldNormalisers["publisher"] = NormaliseLiteralString
+	fieldNormalisers["school"] = NormaliseLiteralString
+	fieldNormalisers["series"] = NormaliseLiteralString
 	fieldNormalisers[TitleField] = NormaliseTitleString
 	fieldNormalisers["url"] = NormaliseURLValue
 	fieldNormalisers["urldate"] = NormaliseDateValue

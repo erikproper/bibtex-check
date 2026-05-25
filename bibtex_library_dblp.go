@@ -31,6 +31,8 @@ func KeyForDBLP(key string) string {
 // a temp file, parses it via the capturedDBLPEntry mechanism, and returns the result.
 // Returns nil on any network, I/O, or parse error.
 func (l *TBibTeXLibrary) dblpEntryFromURL(DBLPKey string) *TBibTeXEntry {
+	l.Progress(ProgressFetchingDBLPEntry, DBLPKey)
+
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get("https://dblp.org/rec/" + DBLPKey + ".bib")
 	if err != nil {
@@ -65,7 +67,6 @@ func (l *TBibTeXLibrary) dblpEntryFromURL(DBLPKey string) *TBibTeXEntry {
 	return dblpEntry
 }
 
-
 // resolveDBLPCrossref converts a raw DBLP crossref key (as stored in dblp_entries or
 // scraped bib files) to the corresponding library key. If the parent entry is not yet
 // in the library it is created on the spot. Returns "" if the parent cannot be found
@@ -80,22 +81,33 @@ func (l *TBibTeXLibrary) resolveDBLPCrossref(crossrefDblpKey string) string {
 	return libraryKey
 }
 
-// MaybeMergeDBLPEntry builds a source entry from the DBLP database (primary) or the
-// scraped bib file (fallback), then merges it into the existing entry for key inside
-// a single transaction. Returns true if the merge was performed.
-func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
+// MaybeMergeDBLPEntry builds a source entry from the DBLP database (primary) or,
+// when allowURLFetch is true, a live dblp.org fetch (fallback). Merges into the
+// existing library entry for key inside a single transaction. Returns true if the
+// merge was performed. Pass allowURLFetch=false for bulk fix loops; true when
+// intentionally adding a new entry.
+func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch bool) bool {
 	if key == "" || DBLPKey == "" {
 		return false
 	}
 
 	dblpEntry := dblpEntryFromFile(DBLPKey)
-	if dblpEntry == nil {
+	if dblpEntry == nil && allowURLFetch {
 		dblpEntry = l.dblpEntryFromURL(DBLPKey)
 	}
 	if dblpEntry == nil {
 		return false
 	}
 	l.MaybeApplyFieldMappings(dblpEntry)
+
+	// Normalise all DBLP field values before merging so that the stored entry is
+	// already in normalised form. Without this, CheckEntry finds raw-vs-normalised
+	// mismatches and raises spurious challenges even on brand-new entries.
+	for field, value := range dblpEntry.Fields {
+		if field != EntryTypeField {
+			dblpEntry.Fields[field] = l.NormaliseFieldValue(field, value)
+		}
+	}
 
 	// Both DB and scraped bib store the crossref as the raw DBLP key. Resolve it to
 	// the library key before merging; create the parent entry if it does not exist yet.
@@ -112,7 +124,6 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 			delete(dblpEntry.Fields, "crossref")
 		}
 	}
-
 
 	// Check before the merge: if the library entry already has a withdrawn date, the
 	// author must stay as {Withdrawn publication} even if DBLP's file store doesn't
@@ -131,6 +142,10 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string) bool {
 	if isWithdrawn || locallyWithdrawn {
 		if l.EntryFieldValueity(key, "author") != "{Withdrawn publication}" {
 			l.SetEntryFieldValue(key, "author", "{Withdrawn publication}")
+			changed = true
+		}
+		if l.EntryFieldValueity(key, "note") == "Withdrawn." {
+			l.SetEntryFieldValue(key, "note", "")
 			changed = true
 		}
 		if mdate != "" && l.EntryFieldValueity(key, "withdrawn") != mdate {
@@ -162,7 +177,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	}
 
 	key := l.NewKey()
-	if !l.MaybeMergeDBLPEntry(DBLPKey, key) {
+	if !l.MaybeMergeDBLPEntry(DBLPKey, key, true) {
 		return ""
 	}
 
@@ -178,7 +193,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 
 func (l *TBibTeXLibrary) MaybeFixDBLPEntry(key string) {
 	if DBLPKey := l.EntryFieldValueity(key, DBLPField); DBLPKey != "" {
-		l.MaybeMergeDBLPEntry(DBLPKey, key)
+		l.MaybeMergeDBLPEntry(DBLPKey, key, false)
 	}
 }
 
@@ -199,13 +214,11 @@ func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(DBLPKey, crossref string) string
 	return ""
 }
 
-
 // reCedillaSpace matches the space-form cedilla {\c x} for a single letter x.
 var reCedillaSpace = regexp.MustCompile(`\{\\c ([a-zA-Z])\}`)
 
 // reMathDollar matches inline math $...$ for normalisation to \(...\).
 var reMathDollar = regexp.MustCompile(`\$([^$]+)\$`)
-
 
 // reAccentLong matches the long-form accent {\ACCENT{letter}} used by the DBLP website
 // BibTeX export (e.g. {\'{e}}, {\"{o}}, {\~{a}}) and converts to short-form {\'e}.
@@ -255,8 +268,8 @@ func normalizeTeXEncoding(s string) string {
 	s = reAccentLong.ReplaceAllString(s, `{$1$2}`)
 	s = reOuterBracedCmd.ReplaceAllString(s, `$1{$2}`)
 	s = strings.ReplaceAll(s, `{-}`, `-`)
-//	s = strings.ReplaceAll(s, `{\i}`, `i`)
-//	s = strings.ReplaceAll(s, `\i}`, `i}`)
+	//	s = strings.ReplaceAll(s, `{\i}`, `i`)
+	//	s = strings.ReplaceAll(s, `\i}`, `i}`)
 	s = reCedillaSpace.ReplaceAllString(s, `{\c{$1}}`)
 	s = strings.ReplaceAll(s, `\&`, "\x00amp")
 	s = strings.ReplaceAll(s, `&`, `\&`)

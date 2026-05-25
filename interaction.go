@@ -20,7 +20,7 @@ import (
 	"strings"
 )
 
-// TTermSpinner renders an in-place spinner + progress counter on stdout.
+// TTermSpinner renders an in-place spinner + progress counter on stderr.
 // A nil receiver is safe on all methods, so callers can do:
 //
 //	spinner := r.NewSpinner(label)
@@ -40,7 +40,7 @@ var activeSpinner *TTermSpinner
 // Update call will redraw it.
 func SpinnerInterrupt() {
 	if activeSpinner != nil {
-		fmt.Print("\r\033[K")
+		fmt.Fprint(os.Stderr, "\r\033[K")
 	}
 }
 
@@ -65,7 +65,7 @@ func (s *TTermSpinner) Update(done, total int) {
 		pct = float64(done) * 100.0 / float64(total)
 	}
 	s.frame = (s.frame + 1) % len(spinnerChars)
-	fmt.Printf("\r%s %s %d/%d (%.0f%%)", spinnerChars[s.frame], s.label, done, total, pct)
+	fmt.Fprintf(os.Stderr, "\r%s %s %d/%d (%.0f%%)", spinnerChars[s.frame], s.label, done, total, pct)
 }
 
 // Stop prints a "done" completion line and deactivates the global spinner.
@@ -73,7 +73,7 @@ func (s *TTermSpinner) Stop() {
 	if s == nil {
 		return
 	}
-	fmt.Printf("\r\033[KPROGRESS: %s - done\n", s.label)
+	fmt.Fprintf(os.Stderr, "\r\033[KPROGRESS: %s - done\n", s.label)
 	activeSpinner = nil
 }
 
@@ -107,7 +107,7 @@ func (r *TInteraction) OutputWasProduced() bool {
 // The second return value is non-nil when stdin is closed (EOF or read error).
 // Does not set questionWasAsked (setup prompts, not entry-processing questions).
 func (r *TInteraction) AskForInput(prompt string) (string, error) {
-	fmt.Printf("INPUT:    %s: ", prompt)
+	fmt.Fprintf(os.Stderr, "INPUT:    %s: ", prompt)
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	return strings.TrimSpace(line), err
@@ -124,7 +124,7 @@ func (r *TInteraction) PressEnterToContinue() {
 	if r.silenced || !r.stepMode || !r.outputWasProduced {
 		return
 	}
-	fmt.Printf("--- Press Enter to continue ---")
+	fmt.Fprint(os.Stderr, "--- Press Enter to continue ---")
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadString('\n')
 }
@@ -136,7 +136,7 @@ func (r *TInteraction) AskContinueOrQuit() bool {
 	if r.silenced {
 		return false
 	}
-	fmt.Printf("QUESTION: Continue with next entry, or quit? (c/q): ")
+	fmt.Fprint(os.Stderr, "QUESTION: Continue with next entry, or quit? (c/q): ")
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		answer, _ := reader.ReadString('\n')
@@ -144,7 +144,7 @@ func (r *TInteraction) AskContinueOrQuit() bool {
 		if answer == "c" || answer == "q" {
 			return answer == "q"
 		}
-		fmt.Printf("(c/q): ")
+		fmt.Fprint(os.Stderr, "(c/q): ")
 	}
 }
 
@@ -174,7 +174,7 @@ func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 	if !r.silenced {
 		SpinnerInterrupt()
 		r.outputWasProduced = true
-		fmt.Printf("ERROR:    "+errorMessage+"\n", context...)
+		fmt.Fprintf(os.Stderr, "ERROR:    "+errorMessage+"\n", context...)
 	}
 
 	return true
@@ -186,7 +186,7 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 	if !r.silenced {
 		SpinnerInterrupt()
 		r.outputWasProduced = true
-		fmt.Printf("WARNING:  "+warning+"\n", context...)
+		fmt.Fprintf(os.Stderr, "WARNING:  "+warning+"\n", context...)
 	}
 
 	return true
@@ -205,7 +205,7 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 	}
 	optionSet += "): "
 
-	fmt.Printf("QUESTION: " + question + " " + optionSet)
+	fmt.Fprint(os.Stderr, "QUESTION: "+question+" "+optionSet)
 
 	reader := bufio.NewReader(os.Stdin)
 	validOption := false
@@ -219,7 +219,7 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 			return option
 		}
 
-		fmt.Printf(optionSet)
+		fmt.Fprint(os.Stderr, optionSet)
 	}
 }
 
@@ -240,7 +240,7 @@ func (r *TInteraction) Progress(progress string, context ...any) bool {
 	if !r.silenced {
 		SpinnerInterrupt()
 		r.outputWasProduced = true
-		fmt.Printf("PROGRESS: "+progress+"\n", context...)
+		fmt.Fprintf(os.Stderr, "PROGRESS: "+progress+"\n", context...)
 	}
 	return true
 }
