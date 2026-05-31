@@ -33,12 +33,32 @@ import (
 )
 
 // dblpFolder returns the root of the DBLP file store.
-// Falls back to bibTeXFolder+"DBLP/" when global_folder is not configured.
+// Falls back to bibTeXFolder+"DBLP.cache/" when global_folder is not configured.
 func dblpFolder() string {
 	if globalFolder != "" {
-		return globalFolder + "DBLP/"
+		return globalFolder + "DBLP.cache/"
 	}
-	return bibTeXFolder + "DBLP/"
+	return bibTeXFolder + "DBLP.cache/"
+}
+
+// maybeMigrateDblpFolder renames the legacy "DBLP/" folder to "DBLP.cache/" on first
+// run after upgrading. Called at startup before any DBLP file-store access.
+func maybeMigrateDblpFolder() {
+	newPath := dblpFolder()
+	if _, err := os.Stat(newPath); err == nil {
+		return // already using new name
+	}
+	var oldPath string
+	if globalFolder != "" {
+		oldPath = globalFolder + "DBLP/"
+	} else {
+		oldPath = bibTeXFolder + "DBLP/"
+	}
+	if _, err := os.Stat(oldPath); err == nil {
+		if err := os.Rename(oldPath, newPath); err == nil {
+			dbInteraction.Progress("Migrated DBLP folder: DBLP/ → DBLP.cache/")
+		}
+	}
 }
 
 func dblpTrashFolder() string { return dblpFolder() + "trash/" }
@@ -136,6 +156,19 @@ func csvFileHash(path string) string {
 // a verbatim title value (as stored in data.json). Returns "" for empty titles.
 func dblpTitleHash(verbatimTitle string) string {
 	idx := TeXStringIndexer(dblpRawToLaTeX(verbatimTitle))
+	if idx == "" {
+		return ""
+	}
+	h := md5.Sum([]byte(idx))
+	return hex.EncodeToString(h[:])
+}
+
+// libraryTitleHash returns the MD5 hex digest of the normalised, indexed form
+// of a LaTeX title value (as stored in the library). Produces the same hash as
+// dblpTitleHash for equivalent titles since TeXStringIndexer normalises encoding
+// differences. Returns "" for empty titles.
+func libraryTitleHash(latexTitle string) string {
+	idx := TeXStringIndexer(latexTitle)
 	if idx == "" {
 		return ""
 	}
@@ -280,10 +313,22 @@ func dblpEntryFromFile(dblpKey string) *TBibTeXEntry {
 	return jsonEntryToLibEntry(dblpKey, je)
 }
 
+// dblpEntryTypeToBibTeX maps DBLP-specific entry types to their BibTeX equivalents.
+// DBLP's "data" (dataset) and "www" (person homepage) have no BibTeX counterpart;
+// both are represented as "misc".
+var dblpEntryTypeToBibTeX = map[string]string{
+	"data": "misc",
+	"www":  "misc",
+}
+
 // jsonEntryToLibEntry converts a TDblpJSONEntry to a TBibTeXEntry.
 func jsonEntryToLibEntry(dblpKey string, je *TDblpJSONEntry) *TBibTeXEntry {
 	entry := &TBibTeXEntry{Key: KeyForDBLP(dblpKey), Fields: map[string]string{}}
-	entry.Fields[EntryTypeField] = je.EntryType
+	entryType := je.EntryType
+	if mapped, ok := dblpEntryTypeToBibTeX[entryType]; ok {
+		entryType = mapped
+	}
+	entry.Fields[EntryTypeField] = entryType
 	for field, value := range je.Fields {
 		entry.Fields[field] = dblpRawToLaTeX(value)
 	}

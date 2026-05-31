@@ -322,6 +322,164 @@ func doRepairDblpManifest(args []string) {
 	fmt.Fprintf(os.Stderr, "Manifest repair complete.\n")
 }
 
+// dblpBuildCrossrefIndex streams the DBLP XML at r, collects every entry's
+// crossref field, then wipes crossrefs/ and writes clean, sorted, deduplicated
+// children.txt files. progress is called every dblpProgressInterval entries.
+func dblpBuildCrossrefIndex(r io.Reader, progress func(n int)) error {
+	d := newDblpDecoder(r)
+	if err := advanceToDblpRoot(d); err != nil {
+		return err
+	}
+
+	crossrefs := make(map[string][]string) // parentKey → []childKey
+	count := 0
+
+	for {
+		tok, err := d.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("building crossref index: %w", err)
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if !dblpKnownEntryTypes[se.Name.Local] {
+			d.Skip()
+			continue
+		}
+
+		var dblpKey string
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "key" {
+				dblpKey = attr.Value
+				break
+			}
+		}
+
+		var crossref string
+	entryLoop:
+		for {
+			child, cerr := d.Token()
+			if cerr != nil {
+				break
+			}
+			switch ct := child.(type) {
+			case xml.StartElement:
+				if ct.Name.Local == "crossref" {
+					var val strings.Builder
+					for {
+						inner, ierr := d.Token()
+						if ierr != nil {
+							break
+						}
+						if _, isEnd := inner.(xml.EndElement); isEnd {
+							break
+						}
+						if cd, isText := inner.(xml.CharData); isText {
+							val.WriteString(string(cd))
+						}
+					}
+					crossref = val.String()
+				} else {
+					d.Skip()
+				}
+			case xml.EndElement:
+				_ = ct
+				break entryLoop
+			}
+		}
+
+		if dblpKey != "" && crossref != "" {
+			crossrefs[crossref] = append(crossrefs[crossref], dblpKey)
+		}
+
+		count++
+		if count%dblpProgressInterval == 0 && progress != nil {
+			progress(count)
+		}
+	}
+
+	// Move old index to trash, then write clean, deduplicated children.txt files.
+	if crossrefsDir := dblpFolder() + "crossrefs/"; FileExists(crossrefsDir) {
+		moveToDblpTrash(crossrefsDir) // non-fatal
+	}
+	for parentKey, children := range crossrefs {
+		sort.Strings(children)
+		prev := ""
+		for _, child := range children {
+			if child != prev {
+				writeDblpCrossrefChild(parentKey, child) // non-fatal
+				prev = child
+			}
+		}
+	}
+
+	return nil
+}
+
+// runCrossrefIndexRebuild opens xmlGzPath, runs dblpBuildCrossrefIndex with
+// progress output, and returns whether the rebuild succeeded.
+// total is the expected entry count used for percentage display; pass 0 to show
+// a bare count instead.
+func runCrossrefIndexRebuild(xmlGzPath string, total int) bool {
+	f, err := os.Open(xmlGzPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not open %s for crossref index: %s\n", xmlGzPath, err)
+		return false
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not read gzip for crossref index: %s\n", err)
+		return false
+	}
+	defer gz.Close()
+
+	var lastN int
+	err = dblpBuildCrossrefIndex(gz, func(n int) {
+		lastN = n
+		if total > 0 {
+			fmt.Fprintf(os.Stderr, "\r  %d / %d (%.0f%%)", n, total, 100*float64(n)/float64(total))
+		} else {
+			fmt.Fprintf(os.Stderr, "\r  %d entries scanned...", n)
+		}
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\r\033[KWarning: crossref index rebuild failed: %s\n", err)
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "\r\033[K  Crossref index rebuilt (%d entries scanned).\n", lastN)
+	return true
+}
+
+// doRebuildDblpCrossrefIndex is the CLI handler for -rebuild_dblp_crossref_index.
+// It streams the last imported XML file rather than scanning individual data.json files.
+func doRebuildDblpCrossrefIndex() {
+	xmlFilename := readDblpCurrentXML()
+	if xmlFilename == "" {
+		fmt.Fprintf(os.Stderr, "No DBLP import on record; run -load_dblp_xml first.\n")
+		os.Exit(1)
+	}
+	xmlGzPath := dblpFolder() + xmlFilename
+	if !FileExists(xmlGzPath) {
+		fmt.Fprintf(os.Stderr, "XML file not found: %s\n", xmlGzPath)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Rebuilding DBLP crossref index from %s...\n", xmlFilename)
+	start := time.Now()
+	total := 0
+	if meta := readDblpMeta(); meta != nil {
+		total = meta.EntryCount
+	}
+	if !runCrossrefIndexRebuild(xmlGzPath, total) {
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Done (%.0fs).\n", time.Since(start).Seconds())
+}
+
 // --- First pass: name map ---
 
 // dblpBuildNameMap does a first streaming pass over the DBLP XML, collecting
@@ -554,7 +712,12 @@ outer:
 
 		// For changed entries (not new) remove stale index entries before
 		// overwriting, so a title or author change doesn't leave ghost links.
+		// Also handle duplicate keys within the same XML: if the same dblpKey
+		// already appears in newManifest it was written earlier in this run,
+		// so clean up that first occurrence's links before reprocessing.
 		if inManifest {
+			removeKeyFromAllIndexes(dblpKey, readDblpJSONEntry(dblpKey))
+		} else if _, seenThisRun := newManifest.get(dblpKey); seenThisRun {
 			removeKeyFromAllIndexes(dblpKey, readDblpJSONEntry(dblpKey))
 		}
 
@@ -572,13 +735,6 @@ outer:
 					hash := dblpTitleHash(value)
 					writeDblpTitleLink(hash, dblpKey) // non-fatal
 				}
-			}
-		}
-
-		// Write crossref child link: record this entry as a child of its parent.
-		if je.Fields != nil {
-			if parentKey, ok := je.Fields["crossref"]; ok && parentKey != "" {
-				writeDblpCrossrefChild(parentKey, dblpKey) // non-fatal
 			}
 		}
 
@@ -720,12 +876,10 @@ func doLoadDblpXml(args []string) {
 				n := processed.Load()
 				elapsed := time.Since(pass2Start).Seconds()
 				pct := float64(cr.n.Load()) * 100.0 / float64(totalBytes)
-				eta := 0.0
-				if pct > 0 {
-					eta = elapsed * (100.0 - pct) / pct
-				}
-				fmt.Fprintf(os.Stderr, "\r  %d entries processed (%.0fs elapsed, %.0f%%, ETA ~%.0fs)...",
-					n, elapsed, pct, eta)
+				mbRead := float64(cr.n.Load()) / 1e6
+				mbTotal := float64(totalBytes) / 1e6
+				fmt.Fprintf(os.Stderr, "\r  %d entries processed (%.0fs elapsed, %.0f%%, %.1f/%.0f MB)...",
+					n, elapsed, pct, mbRead, mbTotal)
 			case <-pass2Done:
 				return
 			}
@@ -762,6 +916,13 @@ func doLoadDblpXml(args []string) {
 	}
 
 	writeDblpCurrentXML(xmlGzPath)
+
+	// Pass 3: rebuild the crossref children index from scratch.
+	// Replaces the incremental children.txt writes from pass 2 with a clean,
+	// complete rebuild — eliminating any stale entries from previous imports.
+	fmt.Fprintf(os.Stderr, "Pass 3: rebuilding crossref index...\n")
+	runCrossrefIndexRebuild(xmlGzPath, count)
+
 	fmt.Fprintf(os.Stderr, "DBLP import complete: %d entries in %.1fs\n",
 		count, time.Since(start).Seconds())
 }

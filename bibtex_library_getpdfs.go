@@ -7,7 +7,6 @@
  *
  * URLs listed in urls_ignore.csv (or the legacy urls.ignore) are skipped.
  * Failed downloads are written to urls_failed.csv at FilesRoot level.
- * Springer DOIs and other non-downloadable sources are reported as MANUAL items.
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
@@ -95,12 +94,8 @@ func writeURLsFailedFile(path string, lines []string) {
 
 // GetPDFs downloads missing PDFs for all library entries with a direct-download
 // URL (url field ending in ".pdf"), subject to urls_ignore.
-//
 // Each failed download is recorded in urls_failed.csv (url; reason; date).
 // The file is rewritten on every run so it reflects the current state.
-//
-// Entries whose PDF can only be obtained manually (e.g. Springer DOIs) are
-// printed as MANUAL lines to stdout.
 func (l *TBibTeXLibrary) GetPDFs() {
 	filesDir := l.FilesRoot + l.FilesFolder
 	failedPath := l.FilesRoot + URLsFailedFilePath
@@ -116,22 +111,29 @@ func (l *TBibTeXLibrary) GetPDFs() {
 		url := l.EntryFieldValueity(key, "url")
 		if url != "" && strings.HasSuffix(strings.ToLower(url), ".pdf") {
 			if !l.URLsIgnore.Contains(url) {
+				needsURLDate := l.EntryFieldValueity(key, "doi") == "" &&
+					l.EntryFieldValueity(key, DBLPField) == "" &&
+					l.EntryFieldValueity(key, "isbn") == "" &&
+					l.EntryFieldValueity(key, "issn") == ""
+				missingURLDate := needsURLDate && l.EntryFieldValueity(key, "urldate") == ""
+
 				l.Progress(ProgressDownloadingPDF, key, url)
 				if err := downloadPDF(url, filePath); err != nil {
 					l.Warning(WarningPDFDownloadFailed, key, url, err)
 					failedLines = append(failedLines,
 						csvLine(url, err.Error(), time.Now().Format("2006-01-02")))
+					if missingURLDate {
+						if d, err2 := Reporting.AskForInput(
+							"No urldate for " + key + " (download failed). Enter a date (YYYY-MM-DD) or leave blank to skip"); err2 == nil && IsValidDate(d) {
+							l.SetEntryFieldValue(key, "urldate", d)
+						}
+					}
 				} else {
 					l.Progress(ProgressPDFDownloaded, key, filePath)
+					if missingURLDate {
+						l.SetEntryFieldValue(key, "urldate", time.Now().Format("2006-01-02"))
+					}
 				}
-			}
-		}
-
-		// Non-downloadable sources: report for manual retrieval.
-		if !FileExists(filePath) {
-			doi := l.EntryFieldValueity(key, "doi")
-			if strings.HasPrefix(doi, "10.1007/") {
-				fmt.Printf("MANUAL:   Springer PDF for %s: https://link.springer.com/chapter/%s#preview\n", key, doi)
 			}
 		}
 

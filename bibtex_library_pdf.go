@@ -137,8 +137,7 @@ func (l *TBibTeXLibrary) handleBrokenPDF(key, path, reason string) bool {
 			}
 			return false
 		case "k":
-			l.PDFConfirmedOk[key] = time.Now().Format("2006-01-02")
-			l.pdfConfirmedOkModified = true
+			l.SetMetadata(key, MetaPropPdfConfirmedOk, time.Now().Format("2006-01-02"))
 			return false
 		case "s":
 			return false
@@ -232,13 +231,12 @@ func (l *TBibTeXLibrary) CheckPDFHealth() {
 
 		reason := l.checkOnePDF(key, fullPath)
 		if reason == "" {
-			if _, ok := l.PDFConfirmedOk[key]; ok {
-				delete(l.PDFConfirmedOk, key)
-				l.pdfConfirmedOkModified = true
+			if l.HasMetadata(key, MetaPropPdfConfirmedOk) {
+				l.DeleteMetadata(key, MetaPropPdfConfirmedOk)
 			}
 			continue
 		}
-		if _, ok := l.PDFConfirmedOk[key]; ok {
+		if l.HasMetadata(key, MetaPropPdfConfirmedOk) {
 			continue
 		}
 		if l.handleBrokenPDF(key, fullPath, reason) {

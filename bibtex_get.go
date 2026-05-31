@@ -28,18 +28,21 @@ import (
 
 // TBibGetConfig mirrors the bib.config JSON file.
 type TBibGetConfig struct {
-	FileName    string `json:"file_name"`
-	IncludeDOI  bool   `json:"include_doi"`
-	IncludeISBN bool   `json:"include_isbn"`
-	BiberMode   bool   `json:"biber_mode"`
-	Shorten     bool   `json:"shorten"`
-	ShortenFile string `json:"shorten_file"`
-	IncludeURL  bool   `json:"include_url"`
+	FileName      string `json:"file_name"`
+	IncludeDOI    bool   `json:"include_doi"`
+	IncludeISBN   bool   `json:"include_isbn"`
+	IncludeDblp   bool   `json:"include_dblp"`
+	BiberMode     bool   `json:"biber_mode"`
+	Shorten       bool   `json:"shorten"`
+	ShortenFile   string `json:"shorten_file"`
+	IncludeURL    bool   `json:"include_url"`
+	UrldateAsNote bool   `json:"urldate_as_note"`
 }
 
 // readBibGetConfig reads bib.config from the current working directory.
 // Fields absent from the JSON keep their defaults: include_doi=true,
-// include_isbn=true, include_url=true, biber_mode=false, shorten=false.
+// include_isbn=true, include_url=true, biber_mode=false, shorten=false,
+// include_dblp=false, urldate_as_note=false.
 func readBibGetConfig() (TBibGetConfig, bool) {
 	data, err := os.ReadFile("bib.config")
 	if err != nil {
@@ -217,7 +220,7 @@ func applyBiberMode(field, value string) string {
 var bibGetNonExportFields = func() TStringSet {
 	s := TStringSetNew()
 	s.Add(
-		GroupsField, DBLPField, PreferredAliasField, EntryTypeField,
+		GroupsField, PreferredAliasField, EntryTypeField,
 		LocalURLField, "date-added", "date-modified",
 		"researchgate", "abstract", "ketwords", "repositum",
 		"owner", "creationdate", "modificationdate", JabrefFileField,
@@ -244,6 +247,18 @@ func (l *TBibTeXLibrary) entryGetString(
 
 	result := "@" + entry.EntryType() + "{" + outputKey + ",\n"
 
+	// When urldate_as_note is set, fold urldate into the note field.
+	var urldateNote string
+	if cfg.UrldateAsNote {
+		if urldate := entry.FieldValue("urldate"); urldate != "" {
+			if note := entry.FieldValue("note"); note == "" {
+				urldateNote = "Last visited on: " + urldate
+			} else {
+				urldateNote = note + ", last visited on: " + urldate
+			}
+		}
+	}
+
 	for _, field := range BibTeXAllowedEntryFields[entry.EntryType()].Set().ElementsSorted() {
 		if bibGetNonExportFields.Contains(field) {
 			continue
@@ -257,6 +272,9 @@ func (l *TBibTeXLibrary) entryGetString(
 		if !cfg.IncludeISBN && (field == "isbn" || field == "issn") {
 			continue
 		}
+		if !cfg.IncludeDblp && field == DBLPField {
+			continue
+		}
 
 		value := entry.FieldValue(field)
 		if value == "" {
@@ -268,6 +286,11 @@ func (l *TBibTeXLibrary) entryGetString(
 			if entry.FieldValue("urldate") == "" {
 				continue
 			}
+		}
+
+		// urldate_as_note: suppress urldate and original note (written merged after loop).
+		if cfg.UrldateAsNote && urldateNote != "" && (field == "urldate" || field == "note") {
+			continue
 		}
 
 		// crossref: write the local key directly — skip MapEntryFieldValue because
@@ -287,6 +310,10 @@ func (l *TBibTeXLibrary) entryGetString(
 		}
 
 		result += FormatBibTeXFieldAssignment("", field, l.MapEntryFieldValue(canonicalKey, field, value))
+	}
+
+	if urldateNote != "" {
+		result += FormatBibTeXFieldAssignment("", "note", urldateNote)
 	}
 
 	result += "}\n"

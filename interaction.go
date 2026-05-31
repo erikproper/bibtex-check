@@ -82,6 +82,7 @@ type TInteraction struct {
 	questionWasAsked  bool
 	outputWasProduced bool
 	stepMode          bool
+	stepSize          int
 }
 
 // ResetQuestionFlag clears the per-entry trackers before processing each entry
@@ -113,9 +114,30 @@ func (r *TInteraction) AskForInput(prompt string) (string, error) {
 	return strings.TrimSpace(line), err
 }
 
-// SetStepMode enables or disables per-entry "press Enter" pauses in for-all loops.
+// SetStepMode enables or disables per-entry stepping (size 1).
 func (r *TInteraction) SetStepMode(on bool) {
-	r.stepMode = on
+	if on {
+		r.stepSize = 1
+	} else {
+		r.stepSize = 0
+	}
+	r.stepMode = r.stepSize > 0
+}
+
+// SetStepSize sets the batch size for step mode (0 = off, 1 = per-entry, N = every N entries).
+func (r *TInteraction) SetStepSize(n int) {
+	r.stepSize = n
+	r.stepMode = n > 0
+}
+
+// StepMode reports whether step mode is currently enabled.
+func (r *TInteraction) StepMode() bool {
+	return r.stepMode
+}
+
+// StepSize returns the current step batch size (0 = off).
+func (r *TInteraction) StepSize() int {
+	return r.stepSize
 }
 
 // PressEnterToContinue pauses and waits for the user to press Enter,
@@ -127,6 +149,16 @@ func (r *TInteraction) PressEnterToContinue() {
 	fmt.Fprint(os.Stderr, "--- Press Enter to continue ---")
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadString('\n')
+}
+
+// PressBatchEnterToContinue unconditionally pauses for Enter; used after
+// every N entries in batch step mode (stepSize > 1).
+func (r *TInteraction) PressBatchEnterToContinue() {
+	if r.silenced {
+		return
+	}
+	fmt.Fprint(os.Stderr, "--- Press Enter to continue ---")
+	bufio.NewReader(os.Stdin).ReadString('\n')
 }
 
 // AskContinueOrQuit asks the user whether to continue or quit after an entry
@@ -197,6 +229,7 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
 	r.questionWasAsked = true
 	r.Warning(warning, context...)
+
 	optionSet := "("
 	separator := ""
 	for _, option := range options.ElementsSorted() {
@@ -239,7 +272,6 @@ func (r *TInteraction) WarningYesNoQuestion(question, warning string, context ..
 func (r *TInteraction) Progress(progress string, context ...any) bool {
 	if !r.silenced {
 		SpinnerInterrupt()
-		r.outputWasProduced = true
 		fmt.Fprintf(os.Stderr, "PROGRESS: "+progress+"\n", context...)
 	}
 	return true

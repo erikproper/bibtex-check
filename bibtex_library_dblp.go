@@ -15,10 +15,13 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -68,15 +71,22 @@ func (l *TBibTeXLibrary) dblpEntryFromURL(DBLPKey string) *TBibTeXEntry {
 }
 
 // resolveDBLPCrossref converts a raw DBLP crossref key (as stored in dblp_entries or
-// scraped bib files) to the corresponding library key. If the parent entry is not yet
-// in the library it is created on the spot. Returns "" if the parent cannot be found
-// or created.
-func (l *TBibTeXLibrary) resolveDBLPCrossref(crossrefDblpKey string) string {
+// scraped bib files) to the corresponding library key. When allowURLFetch is true and
+// the parent entry is not yet in the library it is created on the spot (possibly via a
+// live fetch). When allowURLFetch is false and the parent is absent, returns "" so the
+// caller drops the crossref — the parent will be merged separately in a bulk run.
+func (l *TBibTeXLibrary) resolveDBLPCrossref(crossrefDblpKey string, allowURLFetch bool) string {
 	dblpAlias := KeyForDBLP(crossrefDblpKey)
 	libraryKey := l.MapEntryKey(dblpAlias)
 	if libraryKey == dblpAlias {
-		// Parent not yet in library — create it first.
-		libraryKey = l.MaybeAddDBLPEntry(crossrefDblpKey)
+		// Add from local file store regardless of allowURLFetch; URL fetch only
+		// happens inside MaybeMergeDBLPEntry when dblpEntryFromFile returns nil.
+		if dblpEntryFromFile(crossrefDblpKey) != nil || allowURLFetch {
+			libraryKey = l.MaybeAddDBLPEntry(crossrefDblpKey)
+		} else {
+			l.Warning("DBLP crossref not in local DB (skipping): %s", crossrefDblpKey)
+			return ""
+		}
 	}
 	return libraryKey
 }
@@ -98,7 +108,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 	if dblpEntry == nil {
 		return false
 	}
-	l.MaybeApplyFieldMappings(dblpEntry)
+	l.MaybeApplyFieldMappings(dblpEntry, false)
 
 	// Normalise all DBLP field values before merging so that the stored entry is
 	// already in normalised form. Without this, CheckEntry finds raw-vs-normalised
@@ -109,19 +119,61 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 		}
 	}
 
-	// Both DB and scraped bib store the crossref as the raw DBLP key. Resolve it to
-	// the library key before merging; create the parent entry if it does not exist yet.
-	if crossrefDblpKey := dblpEntry.Fields["crossref"]; crossrefDblpKey != "" {
-		if libraryKey := l.resolveDBLPCrossref(crossrefDblpKey); libraryKey != "" {
-			dblpEntry.Fields["crossref"] = libraryKey
-			// DBLP stores short/incomplete inherited fields (booktitle, year, editor…)
-			// on child entries. Strip them so the library's full values are not
-			// overwritten. Full crossref inheritance resolution is deferred to 10.3.
-			for field := range BibTeXMustInheritFields.Elements() {
-				delete(dblpEntry.Fields, field)
+	// For proceedings entries DBLP's JSON booktitle is an internal series abbreviation
+	// (e.g. "IWPSE") that does not appear in DBLP's own BibTeX output. Always replace it
+	// with the full title so child inproceedings can inherit the correct value via crossref.
+	if dblpEntry.Fields[EntryTypeField] == "proceedings" {
+		if title := dblpEntry.Fields["title"]; title != "" {
+			dblpEntry.Fields["booktitle"] = title
+		}
+	}
+
+	// Only entry types in BibTeXCrossreffer (inproceedings, incollection, inbook, misc)
+	// participate in the crossref hierarchy. For all others (e.g. article), DBLP may
+	// carry an internal crossref to its journal volume, but that has no meaning in the
+	// library model — discard it and keep the entry's own field values intact.
+	if BibTeXCrossreffer.Contains(dblpEntry.Fields[EntryTypeField]) {
+		// Both DB and scraped bib store the crossref as the raw DBLP key. Resolve it to
+		// the library key before merging; create the parent entry if it does not exist yet.
+		// A dblp_parent override (from -fix_dblp_hierarchy) takes priority over the raw
+		// DBLP crossref field to handle multi-volume ambiguity (e.g. SCITEPRESS events).
+		crossrefDblpKey := l.DblpParentOverrides[DBLPKey]
+		if crossrefDblpKey == "" {
+			crossrefDblpKey = dblpEntry.Fields["crossref"]
+		}
+		if crossrefDblpKey != "" {
+			if libraryKey := l.resolveDBLPCrossref(crossrefDblpKey, allowURLFetch); libraryKey != "" {
+				dblpEntry.Fields["crossref"] = libraryKey
+				// DBLP stores short/incomplete inherited fields (booktitle, year, editor…)
+				// on child entries. Strip them so the library's full values are not
+				// overwritten. Full crossref inheritance resolution is deferred to 10.3.
+				for field := range BibTeXMustInheritFields.Elements() {
+					delete(dblpEntry.Fields, field)
+				}
+			} else {
+				delete(dblpEntry.Fields, "crossref")
 			}
-		} else {
-			delete(dblpEntry.Fields, "crossref")
+		}
+	} else {
+		delete(dblpEntry.Fields, "crossref")
+	}
+
+	// After crossref resolution: enforce parent entry type and align child year.
+	if resolvedCrossref := dblpEntry.Fields["crossref"]; resolvedCrossref != "" {
+		childType := dblpEntry.Fields[EntryTypeField]
+		if expectedParentType, ok := BibTeXCrossrefType[childType]; ok {
+			currentParentType := l.EntryFieldValueity(resolvedCrossref, EntryTypeField)
+			if currentParentType != "" && currentParentType != expectedParentType &&
+				!l.EntryFieldAliasHasTarget(resolvedCrossref, EntryTypeField, expectedParentType, currentParentType) {
+				l.Progress(ProgressFixedParentType, resolvedCrossref, currentParentType, expectedParentType, key)
+				l.SetEntryFieldValue(resolvedCrossref, EntryTypeField, expectedParentType)
+			}
+		}
+		parentYear := l.EntryFieldValueity(resolvedCrossref, "year")
+		childYear := dblpEntry.Fields["year"]
+		if parentYear != "" && childYear != "" && childYear != parentYear {
+			l.Progress(ProgressFixedChildYear, key, childYear, parentYear)
+			dblpEntry.Fields["year"] = parentYear
 		}
 	}
 
@@ -153,17 +205,15 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 			changed = true
 		}
 	}
+	if strings.HasPrefix(DBLPKey, "data/") {
+		if l.normaliseDblpDataEntry(DBLPKey, key) {
+			changed = true
+		}
+	}
 	commitBibTransaction()
 
 	if changed {
 		bibEntriesModified = true
-		l.CheckEntry(l.buildEntry(key))
-	} else {
-		// Even when nothing else changed, a previously-set DOI may have made an
-		// existing URL redundant. CheckEntry is too expensive to run unconditionally,
-		// but URL redundancy is cheap and avoids a flood of autoremove messages on
-		// the next plain bibtex_check run.
-		l.CheckURLRedundance(l.buildEntry(key))
 	}
 
 	return true
@@ -180,6 +230,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	if !l.MaybeMergeDBLPEntry(DBLPKey, key, true) {
 		return ""
 	}
+	setTableDirty("dblp_hierarchy")
 
 	// Register the DBLP alias in memory immediately so that any subsequent
 	// LookupDBLPKey call in the same run finds this entry rather than creating
@@ -188,12 +239,137 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	l.KeyToKey[KeyForDBLP(DBLPKey)] = key
 	l.HintToKey[KeyForDBLP(DBLPKey)] = key
 
+	// MaybeMergeDBLPEntry writes to the DB but does not update the in-memory
+	// TitleIndex that buildTitleIndexFromDb built at startup. Add the title now
+	// so that CheckNeedToMergeForEqualTitles can detect duplicates for this entry.
+	if title := l.EntryFieldValueity(key, TitleField); title != "" {
+		l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(title), key)
+	}
+
+	l.CheckAndEnforcePreferredAlias(l.buildEntry(key))
+
+	// For bookish entries (proceedings/book) add all children from the DBLP file store,
+	// unless the entry carries the no_dblp_children flag.
+	// Alias registration above must complete first so that LookupDBLPKey on this parent
+	// resolves correctly when children call back into MaybeAddDBLPEntry for their crossref.
+	entryType := l.EntryFieldValueity(key, EntryTypeField)
+	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) {
+		l.ForEachChildOfDBLPKey(DBLPKey, func(childDBLP string) {
+			if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
+				l.SetEntryFieldValue(childKey, "crossref", key)
+			} else {
+				l.MaybeAddDBLPChildEntry(childDBLP, key)
+			}
+		})
+	}
+
 	return key
+}
+
+// MarkDblpKeyMissing records that DBLPKey is not in the local file store for
+// library entry key. Does nothing if DBLPKey is already present in the file store.
+func (l *TBibTeXLibrary) MarkDblpKeyMissing(key, DBLPKey string) {
+	if DBLPKey == "" || dblpEntryFromFile(DBLPKey) != nil {
+		return
+	}
+	canon := l.MapEntryKey(key)
+	if !l.HasMetadata(canon, MetaPropDblpKeyMissing) {
+		l.SetMetadata(canon, MetaPropDblpKeyMissing, time.Now().Format("2006-01-02"))
+	}
+}
+
+// AssociateDblpKey links dblpKey to an existing library entry key.
+// When the DBLP key is already mapped to a different library entry, that entry
+// is merged into key first. Then the entry is refreshed from the local file
+// store (or dblp.org when not yet stored locally), and MarkDblpKeyMissing is
+// called in case the file store does not have it yet.
+func (l *TBibTeXLibrary) AssociateDblpKey(key, dblpKey string) {
+	if existing := l.LookupDBLPKey(dblpKey); existing != "" && existing != key {
+		l.MergeEntries(existing, key)
+	}
+	l.KeyToKey[KeyForDBLP(dblpKey)] = key
+	l.HintToKey[KeyForDBLP(dblpKey)] = key
+	if !l.MaybeMergeDBLPEntry(dblpKey, key, true) {
+		l.SetEntryFieldValue(key, DBLPField, dblpKey)
+		bibEntriesModified = true
+	}
+	l.MarkDblpKeyMissing(key, dblpKey)
+	setTableDirty("dblp_hierarchy")
+}
+
+// AskCandidateDblpKey presents numbered DBLP candidate entries for a library
+// entry and asks the user to choose one (0 = none of them match).
+// Returns the chosen DBLP key, or "" when the user picks 0.
+func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) string {
+	fmt.Fprintf(os.Stderr, "\nLibrary entry:\n%s\n", l.EntryString(key, ""))
+	for i, dblpKey := range candidates {
+		fmt.Fprintf(os.Stderr, "[%d] %s", i+1, dblpKey)
+		if entry := dblpEntryFromFile(dblpKey); entry != nil {
+			if entryType := entry.EntryType(); entryType != "" {
+				fmt.Fprintf(os.Stderr, " (%s)", entryType)
+			}
+			priorityFields := []string{
+				"title", "booktitle", "journal", "year",
+				"author", "editor", "school", "publisher", "series",
+			}
+			shown := TStringSetNew()
+			shown.Add(EntryTypeField)
+			for _, field := range priorityFields {
+				shown.Add(field)
+				if v := entry.Fields[field]; v != "" {
+					fmt.Fprintf(os.Stderr, "\n    %-12s: %s", field, v)
+				}
+			}
+			remaining := []string{}
+			for field := range entry.Fields {
+				if !shown.Contains(field) && entry.Fields[field] != "" {
+					remaining = append(remaining, field)
+				}
+			}
+			sort.Strings(remaining)
+			for _, field := range remaining {
+				fmt.Fprintf(os.Stderr, "\n    %-12s: %s", field, entry.Fields[field])
+			}
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+	}
+	options := TStringSetNew()
+	options.Add("0")
+	for i := range candidates {
+		options.Add(fmt.Sprintf("%d", i+1))
+	}
+	answer := l.WarningQuestion(QuestionExtendDblpCoverageChoose, options,
+		WarningExtendDblpCandidatesFound, key, len(candidates))
+	n, _ := strconv.Atoi(answer)
+	if n <= 0 || n > len(candidates) {
+		return ""
+	}
+	return candidates[n-1]
+}
+
+// CheckDblpKeyMissingWarnings warns about library entries whose DBLP key has
+// been absent from the local file store for more than two months.
+func (l *TBibTeXLibrary) CheckDblpKeyMissingWarnings() {
+	threshold := time.Now().AddDate(0, -2, 0)
+	for key, dateStr := range l.AllEntriesWithProp(MetaPropDblpKeyMissing) {
+		t, err := time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			continue
+		}
+		if t.Before(threshold) {
+			DBLPKey := l.EntryFieldValueity(key, DBLPField)
+			l.Warning(WarningDblpKeyNotInXML, DBLPKey, key, dateStr)
+		}
+	}
 }
 
 func (l *TBibTeXLibrary) MaybeFixDBLPEntry(key string) {
 	if DBLPKey := l.EntryFieldValueity(key, DBLPField); DBLPKey != "" {
-		l.MaybeMergeDBLPEntry(DBLPKey, key, false)
+		if !l.MaybeMergeDBLPEntry(DBLPKey, key, false) {
+			l.MarkDblpKeyMissing(key, DBLPKey)
+		} else {
+			l.DeleteMetadata(key, MetaPropDblpKeyMissing)
+		}
 	}
 }
 
@@ -208,10 +384,54 @@ func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(DBLPKey, crossref string) string
 
 		l.CheckNeedToMergeForEqualTitles(key)
 
+		l.CheckAndEnforcePreferredAlias(l.buildEntry(key))
+
 		return key
 	}
 
 	return ""
+}
+
+// reAccessedOn matches the "Accessed on DATE." note pattern used on DBLP data/ entries.
+// Captures a real ISO date (all digits); the placeholder "YYYY-MM-DD" does not match.
+var reAccessedOn = regexp.MustCompile(`^Accessed on (\d{4}-\d{2}-\d{2})\.$`)
+
+// normaliseDblpDataEntry applies DBLP data/→misc field fixes to a library entry after a
+// DBLP merge. Clears howpublished (url is already set from ee), converts the note
+// "Accessed on DATE." to urldate (using the entry's mdate when the date is a placeholder),
+// and forces the entry type to misc. Returns true when any field was changed.
+func (l *TBibTeXLibrary) normaliseDblpDataEntry(DBLPKey, key string) bool {
+	changed := false
+
+	if l.EntryFieldValueity(key, EntryTypeField) != "misc" {
+		l.SetEntryFieldValue(key, EntryTypeField, "misc")
+		changed = true
+	}
+
+	if l.EntryFieldValueity(key, "howpublished") != "" {
+		l.SetEntryFieldValue(key, "howpublished", "")
+		changed = true
+	}
+
+	if note := l.EntryFieldValueity(key, "note"); note != "" {
+		var urldate string
+		if m := reAccessedOn.FindStringSubmatch(note); m != nil {
+			urldate = m[1]
+		} else if strings.HasPrefix(note, "Accessed on ") {
+			if je := readDblpJSONEntry(DBLPKey); je != nil {
+				urldate = je.Mdate
+			}
+		}
+		if urldate != "" {
+			if l.EntryFieldValueity(key, "urldate") == "" {
+				l.SetEntryFieldValue(key, "urldate", urldate)
+			}
+			l.SetEntryFieldValue(key, "note", "")
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 // reCedillaSpace matches the space-form cedilla {\c x} for a single letter x.
@@ -393,6 +613,7 @@ func dblpRawToLaTeX(s string) string {
 	s = applyHtmlCharMap(s)
 	s = applyUnicodeMap(s)
 	s = applyHtmlCmds(s)
+	s = strings.ReplaceAll(s, "&", `\&`)
 	return s
 }
 

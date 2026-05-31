@@ -30,6 +30,7 @@ type TBibTeXConfig struct {
 	GlobalFolder     string `json:"global_folder"`
 	DblpFolderLegacy string `json:"dblp_folder,omitempty"` // migrated to global_folder on next write
 	BackupFolder     string `json:"backup_folder"`
+	CacheFolder      string `json:"cache_folder"`
 }
 
 var (
@@ -37,6 +38,7 @@ var (
 	keyPrefix    = ""
 	globalFolder = "" // set by loadBibTeXConfig; defaults to bibTeXFolder when empty
 	backupFolder = "" // set by loadBibTeXConfig; defaults to bibTeXFolder+bibTeXBaseName+".backups/" when empty
+	cacheFolder  = "" // set by loadBibTeXConfig; defaults to bibTeXFolder when empty
 )
 
 func writeBibTeXConfig(configPath string, cfg TBibTeXConfig) {
@@ -110,6 +112,12 @@ func loadBibTeXConfig(configPath string) {
 		backupFolder = expandHome(cfg.BackupFolder)
 		if !strings.HasSuffix(backupFolder, "/") {
 			backupFolder += "/"
+		}
+	}
+	if cfg.CacheFolder != "" {
+		cacheFolder = expandHome(cfg.CacheFolder)
+		if !strings.HasSuffix(cacheFolder, "/") {
+			cacheFolder += "/"
 		}
 	}
 

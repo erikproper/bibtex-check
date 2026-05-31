@@ -122,6 +122,22 @@ func (t *TBibTeXTeX) CollectTeXSpacety(s *string) bool {
 	return !t.EndOfStream()
 }
 
+// splitQuotePrefix strips leading and trailing quote-like characters (", `, ')
+// from s, returning them as prefix/suffix so that case-protection braces wrap
+// only the word content: `"Light-Weight` → prefix=`"`, inner=`Light-Weight`.
+func splitQuotePrefix(s string) (prefix, inner, suffix string) {
+	isQ := func(b byte) bool { return b == '"' || b == '\'' || b == '`' }
+	start := 0
+	for start < len(s) && isQ(s[start]) {
+		start++
+	}
+	end := len(s)
+	for end > start && isQ(s[end-1]) {
+		end--
+	}
+	return s[:start], s[start:end], s[end:]
+}
+
 func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection bool) {
 	token := ""
 	spacety := ""
@@ -133,8 +149,12 @@ func (t *TBibTeXTeX) CollectTokenSequencety(tokens *string, isOfferedProtection 
 		/*  */ t.CollectTeXToken(&token, isOfferedProtection, &tokenNeedsProtection, &sequenceNextIsTokenOfSubTitle) {
 		if token != "" {
 			if tokenNeedsProtection {
-				*tokens += spacety + "{" + token + "}"
-
+				prefix, inner, suffix := splitQuotePrefix(token)
+				if inner == "" {
+					*tokens += spacety + token
+				} else {
+					*tokens += spacety + prefix + "{" + inner + "}" + suffix
+				}
 				tokenNeedsProtection = false
 			} else {
 				*tokens += spacety + token
@@ -312,6 +332,9 @@ func ApplyLaTeXMap(s string) string {
 	result = strings.ReplaceAll(result, "{-}", "-")
 	result = strings.ReplaceAll(result, "{?}", "?")
 	result = strings.ReplaceAll(result, "{\\&}", "\\&")
+	result = strings.ReplaceAll(result, "\\&", "\x00AMP") // protect already-escaped &
+	result = strings.ReplaceAll(result, "&", "\\&")       // bare & is invalid outside tabular
+	result = strings.ReplaceAll(result, "\x00AMP", "\\&") // restore
 	// Need to do this twice ... to deal with " - - - "
 	result = strings.ReplaceAll(result, " - ", " -- ")
 	result = strings.ReplaceAll(result, " - ", " -- ")
@@ -428,15 +451,138 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 	return result
 }
 
+// fixMisplacedBraceQuotes moves a leading " out of a case-protection group:
+// {"text} → "{text}  (the closing " is already elsewhere in the string).
+// This repairs entries produced by older versions of the normaliser.
+func fixMisplacedBraceQuotes(s string) string {
+	var buf strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '{' && i+1 < len(s) && s[i+1] == '"' {
+			depth := 1
+			j := i + 2
+			for j < len(s) && depth > 0 {
+				if s[j] == '{' {
+					depth++
+				} else if s[j] == '}' {
+					depth--
+				}
+				if depth > 0 {
+					j++
+				}
+			}
+			if depth == 0 {
+				buf.WriteByte('"')
+				buf.WriteByte('{')
+				buf.WriteString(s[i+2 : j])
+				buf.WriteByte('}')
+				i = j + 1
+			} else {
+				buf.WriteByte(s[i])
+				i++
+			}
+		} else {
+			buf.WriteByte(s[i])
+			i++
+		}
+	}
+	return buf.String()
+}
+
+// convertStraightQuotes converts paired straight double-quotes to LaTeX
+// typographic equivalents and adds {…} case-protection around the content.
+//
+//	"text"    → ``{text}''
+//	"{text}"  → ``{text}''
+//
+// Skips \" (LaTeX accent commands). Returns input unchanged when the
+// unescaped quote count is zero or odd.
+func convertStraightQuotes(s string) string {
+	count := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '"' && (i == 0 || s[i-1] != '\\') {
+			count++
+		}
+	}
+	if count == 0 || count%2 != 0 {
+		return s
+	}
+	var buf strings.Builder
+	open := true
+	addedOpenBrace := false
+	for i := 0; i < len(s); i++ {
+		if s[i] == '"' && (i == 0 || s[i-1] != '\\') {
+			if open {
+				buf.WriteString("``")
+				if i+1 < len(s) && s[i+1] == '{' {
+					addedOpenBrace = false
+				} else {
+					buf.WriteByte('{')
+					addedOpenBrace = true
+				}
+			} else {
+				if addedOpenBrace {
+					buf.WriteByte('}')
+				}
+				buf.WriteString("''")
+			}
+			open = !open
+		} else {
+			buf.WriteByte(s[i])
+		}
+	}
+	return buf.String()
+}
+
+// addCaseProtectionToTeXQuotes wraps the content of ``...'' pairs in {…}
+// when the content does not already start with {.
+//
+//	``World'' → ``{World}''
+func addCaseProtectionToTeXQuotes(s string) string {
+	var buf strings.Builder
+	i := 0
+	for i < len(s) {
+		if i+1 < len(s) && s[i] == '`' && s[i+1] == '`' {
+			j := i + 2
+			for j+1 < len(s) {
+				if s[j] == '\'' && s[j+1] == '\'' {
+					break
+				}
+				j++
+			}
+			if j+1 < len(s) && s[j] == '\'' && s[j+1] == '\'' {
+				content := s[i+2 : j]
+				buf.WriteString("``")
+				if strings.HasPrefix(content, "{") {
+					buf.WriteString(content)
+				} else {
+					buf.WriteByte('{')
+					buf.WriteString(content)
+					buf.WriteByte('}')
+				}
+				buf.WriteString("''")
+				i = j + 2
+			} else {
+				buf.WriteByte(s[i])
+				i++
+			}
+		} else {
+			buf.WriteByte(s[i])
+			i++
+		}
+	}
+	return buf.String()
+}
+
 func NormaliseTitleString(l *TBibTeXLibrary, title string) string {
-	l.TBibTeXTeX.TextString(ApplyLaTeXMap(title))
+	l.TBibTeXTeX.TextString(fixMisplacedBraceQuotes(ApplyLaTeXMap(title)))
 	l.TBibTeXTeX.inWord = false
 	l.TBibTeXTeX.TeXSpacety()
 
 	result := ""
 	l.TBibTeXTeX.CollectTokenSequencety(&result, false)
 
-	return result
+	return addCaseProtectionToTeXQuotes(convertStraightQuotes(result))
 }
 
 // NormaliseLiteralString normalises fields whose content BibTeX styles never

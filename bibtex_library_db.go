@@ -21,6 +21,7 @@ package main
 import (
 	"bufio"
 	"database/sql"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"os"
@@ -37,15 +38,15 @@ const (
 )
 
 var (
-	dbInteraction         TInteraction
-	db                    *sql.DB
-	entryCache            map[string]*TBibTeXEntry
-	entrySnapshots        map[string]map[string]string
-	bibEntriesModified    bool
-	c2TrackingActive      bool
-	c2EntryModified       bool
+	dbInteraction          TInteraction
+	db                     *sql.DB
+	entryCache             map[string]*TBibTeXEntry
+	entrySnapshots         map[string]map[string]string
+	bibEntriesModified     bool
+	c2TrackingActive       bool
+	c2EntryModified        bool
 	entryModTrackingActive bool
-	entryModified         bool
+	entryModified          bool
 )
 
 // --- entry cache ---
@@ -95,8 +96,34 @@ func initEntryCache() {
 
 // --- database connection ---
 
+// dbPath returns the path of the main SQLite cache file. When cache_folder is
+// configured, the file lives there (outside Nextcloud/cloud-sync folders).
+// Otherwise it lives next to the .bib file.
+func dbPath() string {
+	folder := bibTeXFolder
+	if cacheFolder != "" {
+		folder = cacheFolder
+	}
+	return folder + bibTeXBaseName + cacheFileExtension
+}
+
+// maybeMigrateDbFile renames the legacy .sqlite3 file to .cache on first run
+// after upgrading. Called at startup before connectToDatabase.
+func maybeMigrateDbFile() {
+	newPath := dbPath()
+	if _, err := os.Stat(newPath); err == nil {
+		return // already using new name
+	}
+	oldPath := bibTeXFolder + bibTeXBaseName + ".sqlite3"
+	if _, err := os.Stat(oldPath); err == nil {
+		if err := os.Rename(oldPath, newPath); err == nil {
+			dbInteraction.Progress("Migrated database: %s.sqlite3 → %s.cache", bibTeXBaseName, bibTeXBaseName)
+		}
+	}
+}
+
 func connectToDatabase() {
-	dbName := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
+	dbName := dbPath()
 
 	var err error
 	db, err = sql.Open(sqliteDatabaseDriver, dbName)
@@ -109,10 +136,12 @@ func connectToDatabase() {
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
+	ensureDblpParentTableExists()
+	ensureDblpWaivedTableExists()
+	ensureEntryFlagsTableExists()
 	ensureCrossFieldMappingsTableExists()
 	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
-	ensurePDFConfirmedOkTableExists()
 	ensureURLsIgnoreTableExists()
 	ensureBibTablesExist()
 }
@@ -160,10 +189,12 @@ func reopenDb(path string) {
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
+	ensureDblpParentTableExists()
+	ensureDblpWaivedTableExists()
+	ensureEntryFlagsTableExists()
 	ensureCrossFieldMappingsTableExists()
 	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
-	ensurePDFConfirmedOkTableExists()
 	ensureURLsIgnoreTableExists()
 	ensureBibTablesExist()
 }
@@ -173,9 +204,9 @@ func reopenDb(path string) {
 // through to an unsafe parse on the live file).
 func beginSafeParse() bool {
 	dbInteraction.Progress(ProgressBackingUpDatabase)
-	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
+	livePath := dbPath()
 	ts := time.Now().Format("20060102_150405")
-	safeParseTemp = fmt.Sprintf("%s/bibtex_check_%s_%s.sqlite3",
+	safeParseTemp = fmt.Sprintf("%s/bibtex_check_%s_%s.cache",
 		os.TempDir(), bibTeXBaseName, ts)
 
 	safeParseOriginalCount = countDistinctBibEntries() // count entries before switching to temp
@@ -197,7 +228,7 @@ func commitSafeParse() {
 	if safeParseTemp == "" {
 		return
 	}
-	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
+	livePath := dbPath()
 
 	// Entry count sanity check: warn if the re-parsed DB has fewer entries than the original.
 	if safeParseOriginalCount > 0 {
@@ -227,7 +258,7 @@ func rollbackSafeParse() {
 	if safeParseTemp == "" {
 		return
 	}
-	livePath := bibTeXFolder + bibTeXBaseName + sqliteFileExtension
+	livePath := dbPath()
 	os.Remove(safeParseTemp)
 	reopenDb(livePath)
 	safeParseTemp = ""
@@ -316,6 +347,43 @@ func tryCreateTableIfNeeded(command string) {
 		dbInteraction.Error("Could not ensure existence of table: %s", err)
 	}
 }
+
+// --- Filter-file reload dependency chain ---
+//
+// Each mapping table has a CSV flat file and a corresponding SQLite cache table.
+// The table_modification_times table records the mtime of each CSV at the point it
+// was last loaded. maybeReload* functions compare the current CSV mtime against that
+// stored value and re-import only when the file is newer (avoids redundant work).
+//
+// Reload order in loadMappingFiles() / ReadAddressMappings():
+//
+//  1. Address tables (state_names, state_countries, country_names):
+//     Loaded first because they feed into address normalisation used by the field
+//     mapping tables below. If any address file changes, the three field-mapping
+//     table timestamps are zeroed so they reload unconditionally on the next step.
+//
+//  2. name_mappings: author/editor name canonicalisation; independent of others.
+//
+//  3. filter_generic_field_mappings: per-field value normalisation.
+//     Depends on name_mappings (name values are normalised via name aliases).
+//
+//  4. filter_entry_field_mappings: per-(entry,field) overrides.
+//     Depends on name_mappings and generic mappings (values are cross-normalised).
+//
+//  5. filter_cross_field_mappings: source-field → target-field value propagation.
+//     Depends on address tables, name_mappings, and both field mapping tables.
+//
+//  6. key_hints, key_oldies, key_non_doubles: key alias tables; independent of
+//     field mappings but must be loaded before the BibTeX parse/validation pass.
+//
+//  7. dblp_parent, dblp_waived, dblp_key_missing, entry_lineage, entry_flags:
+//     DBLP-related and lineage tables; independent of the mapping chain.
+//
+//  8. pdf_confirmed_ok, urls_ignore: loaded on demand by specific commands.
+//
+// Modified flags (e.g. genericFieldMappingsModified) are set by the load functions
+// when the CSV content differs from what was previously in the DB. The write tail in
+// main() checks these flags and calls the corresponding Write* functions.
 
 // --- name_mappings table ---
 
@@ -571,6 +639,8 @@ func maybeReloadKeyOldiesDb() {
 	})
 
 	setTableDate("key_oldies", fileModTime(keyOldiesFileName))
+	setTableDate("key_non_doubles", 0)
+	setTableDate("key_hints", 0)
 }
 
 // loadKeyOldiesFromDb populates l.KeyToKey from the DB.
@@ -664,6 +734,8 @@ func maybeReloadKeyNonDoublesDb() {
 }
 
 // loadKeyNonDoublesFromDb populates l.NonDoubles from the DB.
+// Calls resolveNonDoubleKey on both keys so that stale aliases are dropped and
+// unimported DBLP: keys are kept as-is for future matching.
 func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 	rows, err := db.Query(`SELECT key1, key2 FROM key_non_doubles`)
 	if err != nil {
@@ -678,7 +750,11 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 			dbInteraction.Warning("Could not scan key_non_doubles row: %s", err)
 			continue
 		}
-		l.AddNonDoubles(key1, key2)
+		r1 := l.resolveNonDoubleKey(key1)
+		r2 := l.resolveNonDoubleKey(key2)
+		if r1 != "" && r2 != "" {
+			l.AddNonDoubles(r1, r2)
+		}
 	}
 }
 
@@ -690,25 +766,250 @@ func syncKeyNonDoublesDbFromFile() {
 }
 
 // saveKeyNonDoublesToDb writes the filtered non-doubles set directly to the DB without a file roundtrip.
+// Pairs where one or both keys are unimported DBLP: keys are preserved alongside
+// normal library-entry pairs.
 func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
 	if _, err := db.Exec(`DELETE FROM key_non_doubles;`); err != nil {
 		dbInteraction.Warning("Could not clear key_non_doubles: %s", err)
 	}
 	insert := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING;`
+	isValidNonDoubleKey := func(k string) bool {
+		return k == l.MapEntryKey(k) && (l.EntryExists(k) || strings.HasPrefix(k, "DBLP:"))
+	}
 	for key, set := range l.NonDoubles {
-		if key == l.MapEntryKey(key) && l.EntryExists(key) {
-			for nonDouble := range set.Elements() {
-				if nonDouble != key && nonDouble == l.MapEntryKey(nonDouble) && l.EntryExists(nonDouble) {
-					if !l.EvidenceForBeingDifferentEntries(key, nonDouble) {
-						if _, err := db.Exec(insert, key, nonDouble); err != nil {
-							dbInteraction.Warning("key_non_doubles insert failed: %s", err)
-						}
-					}
-				}
+		if !isValidNonDoubleKey(key) {
+			continue
+		}
+		for nonDouble := range set.Elements() {
+			if nonDouble == key || !isValidNonDoubleKey(nonDouble) {
+				continue
+			}
+			if l.EntryExists(key) && l.EntryExists(nonDouble) && l.EvidenceForBeingDifferentEntries(key, nonDouble) {
+				continue
+			}
+			if _, err := db.Exec(insert, key, nonDouble); err != nil {
+				dbInteraction.Warning("key_non_doubles insert failed: %s", err)
 			}
 		}
 	}
 	setTableDate("key_non_doubles", fileModTime(bibTeXFolder+bibTeXBaseName+KeyNonDoublesFilePath))
+}
+
+// --- dblp_parent table ---
+
+var dblpParentFileWritingAllowed = true
+
+func ensureDblpParentTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS dblp_parent (
+		  child_key  TEXT NOT NULL PRIMARY KEY,
+		  parent_key TEXT NOT NULL
+		);`)
+}
+
+// maybeReloadDblpParentDb syncs the flat file into the DB when the file is newer.
+func maybeReloadDblpParentDb() {
+	fileName := bibTeXFolder + bibTeXBaseName + DblpParentFilePath
+
+	if fileModTime(fileName) <= tableModTime("dblp_parent") {
+		return
+	}
+
+	if _, err := db.Exec(`DROP TABLE IF EXISTS dblp_parent;`); err != nil {
+		dbInteraction.Warning("Could not drop dblp_parent table: %s", err)
+	}
+	ensureDblpParentTableExists()
+
+	insert := `INSERT INTO dblp_parent (child_key, parent_key) VALUES (?, ?)
+	             ON CONFLICT(child_key) DO UPDATE SET parent_key = excluded.parent_key;`
+
+	processCSVFile(fileName, func(fields []string) {
+		if len(fields) < 2 {
+			dbInteraction.Warning("dblp_parent line too short: %s", strings.Join(fields, csvDelimiter))
+			dblpParentFileWritingAllowed = false
+			return
+		}
+		if _, err := db.Exec(insert, fields[0], fields[1]); err != nil {
+			dbInteraction.Warning("dblp_parent insertion failed: %s", err)
+		}
+	})
+
+	setTableDate("dblp_parent", fileModTime(fileName))
+}
+
+// loadDblpParentFromDb populates l.DblpParentOverrides from the DB.
+func loadDblpParentFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT child_key, parent_key FROM dblp_parent`)
+	if err != nil {
+		dbInteraction.Warning("Could not query dblp_parent: %s", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var child, parent string
+		if err := rows.Scan(&child, &parent); err != nil {
+			dbInteraction.Warning("Could not scan dblp_parent row: %s", err)
+			continue
+		}
+		l.DblpParentOverrides[child] = parent
+	}
+}
+
+// saveDblpParentToDb writes l.DblpParentOverrides directly to the DB.
+func saveDblpParentToDb(l *TBibTeXLibrary) {
+	if _, err := db.Exec(`DELETE FROM dblp_parent;`); err != nil {
+		dbInteraction.Warning("Could not clear dblp_parent: %s", err)
+	}
+	insert := `INSERT INTO dblp_parent (child_key, parent_key) VALUES (?, ?)
+	             ON CONFLICT(child_key) DO UPDATE SET parent_key = excluded.parent_key;`
+	for child, parent := range l.DblpParentOverrides {
+		if _, err := db.Exec(insert, child, parent); err != nil {
+			dbInteraction.Warning("dblp_parent insert failed: %s", err)
+		}
+	}
+	setTableDate("dblp_parent", fileModTime(bibTeXFolder+bibTeXBaseName+DblpParentFilePath))
+}
+
+// --- dblp_waived table ---
+
+var dblpWaivedFileWritingAllowed = true
+
+func ensureDblpWaivedTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS dblp_waived (
+		  key TEXT NOT NULL PRIMARY KEY
+		);`)
+}
+
+// maybeReloadDblpWaivedDb syncs the flat file into the DB when the file is newer.
+func maybeReloadDblpWaivedDb() {
+	fileName := bibTeXFolder + bibTeXBaseName + DblpWaivedFilePath
+
+	if fileModTime(fileName) <= tableModTime("dblp_waived") {
+		return
+	}
+
+	if _, err := db.Exec(`DROP TABLE IF EXISTS dblp_waived;`); err != nil {
+		dbInteraction.Warning("Could not drop dblp_waived table: %s", err)
+	}
+	ensureDblpWaivedTableExists()
+
+	insert := `INSERT INTO dblp_waived (key) VALUES (?) ON CONFLICT(key) DO NOTHING;`
+
+	processCSVFile(fileName, func(fields []string) {
+		if len(fields) < 1 || fields[0] == "" {
+			return
+		}
+		if _, err := db.Exec(insert, fields[0]); err != nil {
+			dbInteraction.Warning("dblp_waived insertion failed: %s", err)
+		}
+	})
+
+	setTableDate("dblp_waived", fileModTime(fileName))
+}
+
+// loadDblpWaivedFromDb populates l.DblpWaived from the DB.
+func loadDblpWaivedFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT key FROM dblp_waived`)
+	if err != nil {
+		dbInteraction.Warning("Could not query dblp_waived: %s", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			dbInteraction.Warning("Could not scan dblp_waived row: %s", err)
+			continue
+		}
+		l.DblpWaived.Add(key)
+	}
+}
+
+// saveDblpWaivedToDb writes l.DblpWaived directly to the DB.
+func saveDblpWaivedToDb(l *TBibTeXLibrary) {
+	if _, err := db.Exec(`DELETE FROM dblp_waived;`); err != nil {
+		dbInteraction.Warning("Could not clear dblp_waived: %s", err)
+	}
+	insert := `INSERT INTO dblp_waived (key) VALUES (?) ON CONFLICT(key) DO NOTHING;`
+	for key := range l.DblpWaived.Elements() {
+		if _, err := db.Exec(insert, key); err != nil {
+			dbInteraction.Warning("dblp_waived insert failed: %s", err)
+		}
+	}
+	setTableDate("dblp_waived", fileModTime(bibTeXFolder+bibTeXBaseName+DblpWaivedFilePath))
+}
+
+// --- entry_flags table ---
+
+var entryFlagsFileWritingAllowed = true
+
+func ensureEntryFlagsTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS entry_flags (
+		  entry_key TEXT NOT NULL,
+		  flag      TEXT NOT NULL,
+		  PRIMARY KEY (entry_key, flag)
+		);`)
+}
+
+func maybeReloadEntryFlagsDb() {
+	ensureEntryFlagsTableExists()
+	csvPath := bibTeXFolder + bibTeXBaseName + EntryFlagsFilePath
+	if fileModTime(csvPath) <= tableModTime("entry_flags") {
+		return
+	}
+	if _, err := db.Exec(`DELETE FROM entry_flags;`); err != nil {
+		dbInteraction.Warning("Could not clear entry_flags: %s", err)
+		return
+	}
+	insert := `INSERT OR IGNORE INTO entry_flags (entry_key, flag) VALUES (?, ?);`
+	processCSVFile(csvPath, func(fields []string) {
+		if len(fields) < 2 {
+			dbInteraction.Warning("Line in entry flags file is too short: %v", fields)
+			return
+		}
+		if _, err := db.Exec(insert, fields[0], fields[1]); err != nil {
+			dbInteraction.Warning("entry_flags insert failed: %s", err)
+		}
+	})
+	setTableDate("entry_flags", fileModTime(csvPath))
+}
+
+func loadEntryFlagsFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT entry_key, flag FROM entry_flags;`)
+	if err != nil {
+		dbInteraction.Warning("Could not query entry_flags: %s", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, flag string
+		if err := rows.Scan(&key, &flag); err != nil {
+			continue
+		}
+		if _, ok := l.EntryFlags[key]; !ok {
+			l.EntryFlags[key] = TStringSetNew()
+		}
+		l.EntryFlags[key].Set().Add(flag)
+	}
+}
+
+func saveEntryFlagsToDb(l *TBibTeXLibrary) {
+	if _, err := db.Exec(`DELETE FROM entry_flags;`); err != nil {
+		dbInteraction.Warning("Could not clear entry_flags: %s", err)
+	}
+	insert := `INSERT OR IGNORE INTO entry_flags (entry_key, flag) VALUES (?, ?);`
+	for key, flags := range l.EntryFlags {
+		for flag := range flags.Elements() {
+			if _, err := db.Exec(insert, key, flag); err != nil {
+				dbInteraction.Warning("entry_flags insert failed: %s", err)
+			}
+		}
+	}
+	setTableDate("entry_flags", fileModTime(bibTeXFolder+bibTeXBaseName+EntryFlagsFilePath))
 }
 
 // --- filter_cross_field_mappings table ---
@@ -732,7 +1033,12 @@ func maybeReloadCrossFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + CrossFieldMappingsFilePath
 
 	crossTime := tableModTime("filter_cross_field_mappings")
-	if fileModTime(fileName) <= crossTime {
+	if fileModTime(fileName) <= crossTime &&
+		tableModTime("name_mappings") <= crossTime &&
+		tableModTime("filter_state_names") <= crossTime &&
+		tableModTime("filter_state_countries") <= crossTime &&
+		tableModTime("filter_country_names") <= crossTime &&
+		tableModTime("filter_generic_field_mappings") <= crossTime {
 		return
 	}
 
@@ -763,26 +1069,33 @@ func maybeReloadCrossFieldMappingsDb() {
 }
 
 // loadCrossFieldMappingsFromDb populates l.FieldMappings from the DB.
-// Applies the same normalisation as ReadCrossFieldMappingsFile (MapFieldValue / NormaliseFieldValue).
-func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) {
+// Normalises source and target values via MapFieldValue / NormaliseFieldValue.
+// Returns true when at least one stored value was changed by normalisation, so
+// the caller can arrange a write-back to persist the canonical form.
+func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	rows, err := db.Query(
 		`SELECT source_field, source_value, target_field, target_value FROM filter_cross_field_mappings`)
 	if err != nil {
 		dbInteraction.Warning("Could not query filter_cross_field_mappings: %s", err)
-		return
+		return false
 	}
 	defer rows.Close()
 
+	normalisationChanged := false
 	for rows.Next() {
 		var sourceField, sourceValue, targetField, targetValue string
 		if err := rows.Scan(&sourceField, &sourceValue, &targetField, &targetValue); err != nil {
 			dbInteraction.Warning("Could not scan filter_cross_field_mappings row: %s", err)
 			continue
 		}
-		l.AddFieldMapping(
-			sourceField, l.MapFieldValue(sourceField, sourceValue),
-			targetField, l.NormaliseFieldValue(targetField, targetValue))
+		normSourceValue := l.MapFieldValue(sourceField, sourceValue)
+		normTargetValue := l.NormaliseFieldValue(targetField, targetValue)
+		if normSourceValue != sourceValue || normTargetValue != targetValue {
+			normalisationChanged = true
+		}
+		l.AddFieldMapping(sourceField, normSourceValue, targetField, normTargetValue)
 	}
+	return normalisationChanged
 }
 
 // syncCrossFieldMappingsDbFromFile forces the DB to be reloaded from the flat file.
@@ -828,12 +1141,18 @@ func ensureEntryFieldMappingsTableExists() {
 }
 
 // maybeReloadEntryFieldMappingsDb syncs the flat file into the DB when the file is newer,
-// or when name_mappings or generic_field_mappings (upstream dependencies) have been updated.
+// or when any upstream normaliser table (generic_field_mappings, address tables) has been updated.
+// name_mappings changes cascade via generic_field_mappings (which zeroes this table's time).
 func maybeReloadEntryFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + EntryFieldMappingsFilePath
 
 	entryTime := tableModTime("filter_entry_field_mappings")
-	if fileModTime(fileName) <= entryTime {
+	if fileModTime(fileName) <= entryTime &&
+		tableModTime("name_mappings") <= entryTime &&
+		tableModTime("filter_generic_field_mappings") <= entryTime &&
+		tableModTime("filter_state_names") <= entryTime &&
+		tableModTime("filter_state_countries") <= entryTime &&
+		tableModTime("filter_country_names") <= entryTime {
 		return
 	}
 
@@ -865,32 +1184,35 @@ func maybeReloadEntryFieldMappingsDb() {
 }
 
 // loadEntryFieldMappingsFromDb populates l.EntryFieldSourceToTarget from the DB.
-// The CSV is always written with already-normalised values (WriteEntryFieldMappingsFile
-// iterates the in-memory map whose keys are MapFieldValue(NormaliseFieldValue(raw))).
-// Re-applying NormaliseFieldValue here would produce double-normalisation and break the
-// round-trip for non-idempotent normalisers (e.g. NormaliseTitleString on math strings).
-// We therefore apply only MapFieldValue (generic field alias resolution) and trust that
-// the CSV values are in normalised form.
-func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) {
+// Uses MapNormalisedFieldValue so that stored values whose normalisation changed after
+// the CSV was written (e.g. "Washington {DC}, {USA}" once the country-name table
+// normalises {USA}→USA and the generic mapping maps the result to "Washington DC, USA")
+// are resolved to the current canonical form. Returns true when at least one value was
+// remapped, so the caller can arrange a write-back.
+func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	rows, err := db.Query(
 		`SELECT entry_key, field, winner, challenger FROM filter_entry_field_mappings`)
 	if err != nil {
 		dbInteraction.Warning("Could not query filter_entry_field_mappings: %s", err)
-		return
+		return false
 	}
 	defer rows.Close()
 
+	normalisationChanged := false
 	for rows.Next() {
 		var key, field, winner, challenger string
 		if err := rows.Scan(&key, &field, &winner, &challenger); err != nil {
 			dbInteraction.Warning("Could not scan filter_entry_field_mappings row: %s", err)
 			continue
 		}
-		l.AddEntryFieldAlias(key, field,
-			l.MapFieldValue(field, challenger),
-			l.MapFieldValue(field, winner),
-			true)
+		normWinner := l.MapNormalisedFieldValue(field, winner)
+		normChallenger := l.MapNormalisedFieldValue(field, challenger)
+		if normWinner != winner || normChallenger != challenger {
+			normalisationChanged = true
+		}
+		l.AddEntryFieldAlias(key, field, normChallenger, normWinner, true)
 	}
+	return normalisationChanged
 }
 
 // syncEntryFieldMappingsDbFromFile forces the DB to be reloaded from the flat file.
@@ -941,12 +1263,16 @@ func ensureGenericFieldMappingsTableExists() {
 }
 
 // maybeReloadGenericFieldMappingsDb syncs the flat file into the DB when the file is newer
-// or when name_mappings (which normalises its values at load time) has been updated.
+// or when any upstream normaliser table (name_mappings, address tables) has been updated.
 func maybeReloadGenericFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + GenericFieldMappingsFilePath
 
 	genericTime := tableModTime("filter_generic_field_mappings")
-	if fileModTime(fileName) <= genericTime && tableModTime("name_mappings") <= genericTime {
+	if fileModTime(fileName) <= genericTime &&
+		tableModTime("name_mappings") <= genericTime &&
+		tableModTime("filter_state_names") <= genericTime &&
+		tableModTime("filter_state_countries") <= genericTime &&
+		tableModTime("filter_country_names") <= genericTime {
 		return
 	}
 
@@ -973,31 +1299,37 @@ func maybeReloadGenericFieldMappingsDb() {
 		}
 	})
 
-	setTableDate("filter_generic_field_mappings", fileModTime(fileName))
+	setTableDate("filter_generic_field_mappings", time.Now().UnixMicro())
+	setTableDate("filter_entry_field_mappings", 0)
 }
 
 // loadGenericFieldMappingsFromDb populates l.GenericFieldSourceToTarget from the DB.
-// Applies the same normalisation as ReadGenericFieldMappingsFile (NormaliseFieldValue).
-func loadGenericFieldMappingsFromDb(l *TBibTeXLibrary) {
+// Normalises challenger and winner via NormaliseFieldValue. Returns true when at least
+// one stored value was changed by normalisation, so the caller can arrange a write-back.
+func loadGenericFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	rows, err := db.Query(
 		`SELECT field, winner, challenger FROM filter_generic_field_mappings`)
 	if err != nil {
 		dbInteraction.Warning("Could not query filter_generic_field_mappings: %s", err)
-		return
+		return false
 	}
 	defer rows.Close()
 
+	normalisationChanged := false
 	for rows.Next() {
 		var field, winner, challenger string
 		if err := rows.Scan(&field, &winner, &challenger); err != nil {
 			dbInteraction.Warning("Could not scan filter_generic_field_mappings row: %s", err)
 			continue
 		}
-		l.AddGenericFieldAlias(field,
-			l.NormaliseFieldValue(field, challenger),
-			l.NormaliseFieldValue(field, winner),
-			true)
+		normChallenger := l.NormaliseFieldValue(field, challenger)
+		normWinner := l.NormaliseFieldValue(field, winner)
+		if normChallenger != challenger || normWinner != winner {
+			normalisationChanged = true
+		}
+		l.AddGenericFieldAlias(field, normChallenger, normWinner, true)
 	}
+	return normalisationChanged
 }
 
 // syncGenericFieldMappingsDbFromFile forces the DB to be reloaded from the flat file.
@@ -1042,46 +1374,70 @@ func ensureURLsIgnoreTableExists() {
 
 func maybeReloadURLsIgnoreDb() {
 	csvFile := bibTeXFolder + bibTeXBaseName + URLsIgnoreFilePath
-	rootCSV := bibTeXFolder + URLsIgnoreRootFilePath
-	legacyFile := bibTeXFolder + URLsIgnoreLegacyFile
 
-	// Migrate from old root-level location to the tables folder on first run.
-	if !FileExists(csvFile) {
-		if FileExists(rootCSV) {
-			copyFile(rootCSV, csvFile)
-		} else if FileExists(legacyFile) {
-			copyFile(legacyFile, csvFile)
-		}
-	}
-
-	// Pick whichever source file exists and is newer than the DB.
-	sourceFile := csvFile
-	if !FileExists(csvFile) && FileExists(rootCSV) {
-		sourceFile = rootCSV
-	} else if !FileExists(csvFile) && FileExists(legacyFile) {
-		sourceFile = legacyFile
-	}
-	if fileModTime(sourceFile) <= tableModTime("urls_ignore") {
+	if !FileExists(csvFile) || fileModTime(csvFile) <= tableModTime("urls_ignore") {
 		return
 	}
 
-	dbInteraction.Progress("Reloading URLs-ignore from %s", sourceFile)
 	if _, err := db.Exec(`DROP TABLE IF EXISTS urls_ignore;`); err != nil {
 		dbInteraction.Warning("Could not drop urls_ignore table: %s", err)
 	}
 	ensureURLsIgnoreTableExists()
 
 	insert := `INSERT INTO urls_ignore (url) VALUES (?) ON CONFLICT(url) DO NOTHING;`
-	processFile(sourceFile, func(line string) {
+	processFile(csvFile, func(line string) {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			return
 		}
-		if _, err := db.Exec(insert, line); err != nil {
+		// Accept urls_failed.csv lines (url;reason;date) and plain URLs alike:
+		// parse as CSV and take the first field only.
+		r := csv.NewReader(strings.NewReader(line))
+		r.Comma = rune(csvDelimiter[0])
+		r.FieldsPerRecord = -1
+		fields, err := r.Read()
+		if err != nil || len(fields) == 0 {
+			return
+		}
+		url := strings.TrimSpace(fields[0])
+		if url == "" {
+			return
+		}
+		if _, err := db.Exec(insert, url); err != nil {
 			dbInteraction.Warning("urls_ignore insert failed: %s", err)
 		}
 	})
-	setTableDate("urls_ignore", fileModTime(sourceFile))
+
+	writeNormalisedURLsIgnoreFile(csvFile)
+	setTableDate("urls_ignore", time.Now().UnixMicro())
+}
+
+// writeNormalisedURLsIgnoreFile rewrites the urls_ignore CSV as a sorted,
+// deduplicated list of plain URLs (one per line, no extra columns).
+func writeNormalisedURLsIgnoreFile(path string) {
+	rows, err := db.Query(`SELECT url FROM urls_ignore ORDER BY url`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	var urls []string
+	for rows.Next() {
+		var url string
+		if rows.Scan(&url) == nil && url != "" {
+			urls = append(urls, url)
+		}
+	}
+	if len(urls) == 0 {
+		return
+	}
+	var buf strings.Builder
+	w := csv.NewWriter(&buf)
+	w.Comma = rune(csvDelimiter[0])
+	for _, url := range urls {
+		_ = w.Write([]string{url})
+	}
+	w.Flush()
+	_ = os.WriteFile(path, []byte(buf.String()), 0644)
 }
 
 func loadURLsIgnoreFromDb(l *TBibTeXLibrary) {
@@ -1099,74 +1455,6 @@ func loadURLsIgnoreFromDb(l *TBibTeXLibrary) {
 		}
 		l.URLsIgnore.Add(url)
 	}
-}
-
-// --- pdf_confirmed_ok table ---
-
-var pdfConfirmedOkFileWritingAllowed = true
-
-func ensurePDFConfirmedOkTableExists() {
-	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS pdf_confirmed_ok (
-		  entry_key      TEXT PRIMARY KEY,
-		  confirmed_date TEXT NOT NULL
-		);`)
-}
-
-func maybeReloadPDFConfirmedOkDb() {
-	fileName := bibTeXFolder + bibTeXBaseName + PDFConfirmedOkFilePath
-	if fileModTime(fileName) <= tableModTime("pdf_confirmed_ok") {
-		return
-	}
-	dbInteraction.Progress("Reloading PDF confirmed-OK from %s", fileName)
-	if _, err := db.Exec(`DROP TABLE IF EXISTS pdf_confirmed_ok;`); err != nil {
-		dbInteraction.Warning("Could not drop pdf_confirmed_ok table: %s", err)
-	}
-	ensurePDFConfirmedOkTableExists()
-	insert := `INSERT INTO pdf_confirmed_ok (entry_key, confirmed_date) VALUES (?, ?)
-	             ON CONFLICT(entry_key) DO NOTHING;`
-	processCSVFile(fileName, func(fields []string) {
-		if len(fields) < 2 {
-			pdfConfirmedOkFileWritingAllowed = false
-			return
-		}
-		if _, err := db.Exec(insert, fields[0], fields[1]); err != nil {
-			dbInteraction.Warning("pdf_confirmed_ok insert failed: %s", err)
-		}
-	})
-	setTableDate("pdf_confirmed_ok", fileModTime(fileName))
-}
-
-func loadPDFConfirmedOkFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT entry_key, confirmed_date FROM pdf_confirmed_ok`)
-	if err != nil {
-		dbInteraction.Warning("Could not query pdf_confirmed_ok: %s", err)
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var key, date string
-		if err := rows.Scan(&key, &date); err != nil {
-			dbInteraction.Warning("Could not scan pdf_confirmed_ok row: %s", err)
-			continue
-		}
-		l.PDFConfirmedOk[key] = date
-	}
-}
-
-func savePDFConfirmedOkToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM pdf_confirmed_ok;`); err != nil {
-		dbInteraction.Warning("Could not clear pdf_confirmed_ok: %s", err)
-	}
-	insert := `INSERT INTO pdf_confirmed_ok (entry_key, confirmed_date) VALUES (?, ?) ON CONFLICT DO NOTHING;`
-	for key, date := range l.PDFConfirmedOk {
-		if l.EntryExists(key) {
-			if _, err := db.Exec(insert, key, date); err != nil {
-				dbInteraction.Warning("pdf_confirmed_ok insert failed: %s", err)
-			}
-		}
-	}
-	setTableDate("pdf_confirmed_ok", fileModTime(bibTeXFolder+bibTeXBaseName+PDFConfirmedOkFilePath))
 }
 
 // --- bib_entries / bib_groups / bib_comments tables ---
@@ -1985,7 +2273,274 @@ func refreshBibDbTimestamp() {
 	setTableDate("bib_entries", time.Now().UnixMicro())
 }
 
+// --- filter_state_names table ---
+
+func ensureStateNamesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS filter_state_names (
+		  alias     TEXT PRIMARY KEY,
+		  canonical TEXT NOT NULL
+		);`)
+}
+
+func maybeReloadStateNamesDb() bool {
+	fileName := bibTeXFolder + bibTeXBaseName + StateNamesFilePath
+
+	if fileModTime(fileName) <= tableModTime("filter_state_names") {
+		return false
+	}
+
+	dbInteraction.Progress("Reloading state names from %s", fileName)
+
+	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_state_names;`); err != nil {
+		dbInteraction.Warning("Could not drop filter_state_names table: %s", err)
+	}
+	ensureStateNamesTableExists()
+
+	upsert := `INSERT INTO filter_state_names (alias, canonical) VALUES (?, ?)
+	             ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical;`
+
+	processFile(fileName, func(line string) {
+		elements := strings.Split(line, csvDelimiter)
+		if len(elements) < 2 || elements[0] == "" || elements[1] == "" {
+			dbInteraction.Warning(WarningStateNamesLineTooShort, line)
+			return
+		}
+		if _, err := db.Exec(upsert, elements[1], elements[0]); err != nil {
+			dbInteraction.Warning("State name insertion failed: %s", err)
+		}
+	})
+
+	setTableDate("filter_state_names", fileModTime(fileName))
+	return true
+}
+
+func loadStateNamesFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT alias, canonical FROM filter_state_names`)
+	if err != nil {
+		dbInteraction.Warning("Could not query filter_state_names: %s", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var alias, canonical string
+		if err := rows.Scan(&alias, &canonical); err != nil {
+			dbInteraction.Warning("Could not scan filter_state_names row: %s", err)
+			continue
+		}
+		l.StateAliasToCanonical[alias] = canonical
+	}
+}
+
+// --- filter_state_countries table ---
+
+func ensureStateCountriesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS filter_state_countries (
+		  state   TEXT PRIMARY KEY,
+		  country TEXT NOT NULL
+		);`)
+}
+
+func maybeReloadStateCountriesDb() bool {
+	fileName := bibTeXFolder + bibTeXBaseName + StateCountriesFilePath
+
+	if fileModTime(fileName) <= tableModTime("filter_state_countries") {
+		return false
+	}
+
+	dbInteraction.Progress("Reloading state countries from %s", fileName)
+
+	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_state_countries;`); err != nil {
+		dbInteraction.Warning("Could not drop filter_state_countries table: %s", err)
+	}
+	ensureStateCountriesTableExists()
+
+	upsert := `INSERT INTO filter_state_countries (state, country) VALUES (?, ?)
+	             ON CONFLICT(state) DO UPDATE SET country = excluded.country;`
+
+	processFile(fileName, func(line string) {
+		elements := strings.Split(line, csvDelimiter)
+		if len(elements) < 2 || elements[0] == "" || elements[1] == "" {
+			dbInteraction.Warning(WarningStateCountriesLineTooShort, line)
+			return
+		}
+		if _, err := db.Exec(upsert, elements[0], elements[1]); err != nil {
+			dbInteraction.Warning("State country insertion failed: %s", err)
+		}
+	})
+
+	setTableDate("filter_state_countries", fileModTime(fileName))
+	return true
+}
+
+func loadStateCountriesFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT state, country FROM filter_state_countries`)
+	if err != nil {
+		dbInteraction.Warning("Could not query filter_state_countries: %s", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var state, country string
+		if err := rows.Scan(&state, &country); err != nil {
+			dbInteraction.Warning("Could not scan filter_state_countries row: %s", err)
+			continue
+		}
+		l.StateToCountry[state] = country
+	}
+}
+
+// --- filter_country_names table ---
+
+func ensureCountryNamesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS filter_country_names (
+		  alias     TEXT PRIMARY KEY,
+		  canonical TEXT NOT NULL
+		);`)
+}
+
+func maybeReloadCountryNamesDb() bool {
+	fileName := bibTeXFolder + bibTeXBaseName + CountryNamesFilePath
+
+	if fileModTime(fileName) <= tableModTime("filter_country_names") {
+		return false
+	}
+
+	dbInteraction.Progress("Reloading country names from %s", fileName)
+
+	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_country_names;`); err != nil {
+		dbInteraction.Warning("Could not drop filter_country_names table: %s", err)
+	}
+	ensureCountryNamesTableExists()
+
+	upsert := `INSERT INTO filter_country_names (alias, canonical) VALUES (?, ?)
+	             ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical;`
+
+	processFile(fileName, func(line string) {
+		elements := strings.Split(line, csvDelimiter)
+		if len(elements) < 2 || elements[0] == "" || elements[1] == "" {
+			dbInteraction.Warning(WarningCountryNamesLineTooShort, line)
+			return
+		}
+		if _, err := db.Exec(upsert, elements[1], elements[0]); err != nil {
+			dbInteraction.Warning("Country name insertion failed: %s", err)
+		}
+	})
+
+	setTableDate("filter_country_names", fileModTime(fileName))
+	return true
+}
+
+func loadCountryNamesFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT alias, canonical FROM filter_country_names`)
+	if err != nil {
+		dbInteraction.Warning("Could not query filter_country_names: %s", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var alias, canonical string
+		if err := rows.Scan(&alias, &canonical); err != nil {
+			dbInteraction.Warning("Could not scan filter_country_names row: %s", err)
+			continue
+		}
+		l.CountryAliasToCanonical[alias] = canonical
+	}
+}
+
+// --- filter_booktitle_country_names table ---
+
+func ensureBooktitleCountryNamesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS filter_booktitle_country_names (
+		  alias     TEXT PRIMARY KEY,
+		  canonical TEXT NOT NULL
+		);`)
+}
+
+func maybeReloadBooktitleCountryNamesDb() bool {
+	fileName := bibTeXFolder + bibTeXBaseName + BooktitleCountryNamesFilePath
+
+	if fileModTime(fileName) <= tableModTime("filter_booktitle_country_names") {
+		return false
+	}
+
+	dbInteraction.Progress("Reloading booktitle country names from %s", fileName)
+
+	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_booktitle_country_names;`); err != nil {
+		dbInteraction.Warning("Could not drop filter_booktitle_country_names table: %s", err)
+	}
+	ensureBooktitleCountryNamesTableExists()
+
+	upsert := `INSERT INTO filter_booktitle_country_names (alias, canonical) VALUES (?, ?)
+	             ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical;`
+
+	processFile(fileName, func(line string) {
+		elements := strings.Split(line, csvDelimiter)
+		if len(elements) < 2 || elements[0] == "" || elements[1] == "" {
+			dbInteraction.Warning(WarningBooktitleCountryNamesLineTooShort, line)
+			return
+		}
+		if _, err := db.Exec(upsert, elements[1], elements[0]); err != nil {
+			dbInteraction.Warning("Booktitle country name insertion failed: %s", err)
+		}
+	})
+
+	setTableDate("filter_booktitle_country_names", fileModTime(fileName))
+	return true
+}
+
+func loadBooktitleCountryNamesFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT alias, canonical FROM filter_booktitle_country_names`)
+	if err != nil {
+		dbInteraction.Warning("Could not query filter_booktitle_country_names: %s", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var alias, canonical string
+		if err := rows.Scan(&alias, &canonical); err != nil {
+			dbInteraction.Warning("Could not scan filter_booktitle_country_names row: %s", err)
+			continue
+		}
+		l.BooktitleCountryAliasToCanonical[alias] = canonical
+	}
+}
+
 // --- bib entry iterators (used by write path) ---
+
+// forEachLibraryChildOf calls fn for every library entry whose crossref field equals parentKey.
+func forEachLibraryChildOf(parentKey string, fn func(childKey string)) {
+	if entryCache != nil {
+		for key, e := range entryCache {
+			if e.Fields["crossref"] == parentKey {
+				fn(key)
+			}
+		}
+		return
+	}
+	rows, err := db.Query(
+		`SELECT entry_key FROM bib_entries WHERE field = 'crossref' AND value = ?`, parentKey)
+	if err != nil {
+		dbInteraction.Warning("Could not query library children of %s: %s", parentKey, err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			dbInteraction.Warning("Could not scan library child row: %s", err)
+			continue
+		}
+		fn(key)
+	}
+}
 
 // forEachBibEntryType calls fn(key, entryType) for every entry stored in bib_entries.
 func forEachBibEntryType(fn func(key, entryType string)) {
@@ -2012,4 +2567,3 @@ func forEachBibEntryType(fn func(key, entryType string)) {
 		fn(key, entryType)
 	}
 }
-

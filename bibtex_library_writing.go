@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 func (l *TBibTeXLibrary) writeFile(fullFilePath, message string, writing func(*bufio.Writer)) bool {
@@ -55,6 +56,17 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 		forEachBibEntryType(func(key, entryType string) {
 			entryTypes[key] = entryType
 		})
+
+		unknownTypes := false
+		for entry, entryType := range entryTypes {
+			if _, known := BibTeXAllowedEntryFields[entryType]; !known {
+				l.Error("Entry %s has unknown entry type %q — bib file write aborted", entry, entryType)
+				unknownTypes = true
+			}
+		}
+		if unknownTypes {
+			return
+		}
 
 		l.writeLibraryFile(BibFileExtension, ProgressWritingBibFile, func(bibWriter *bufio.Writer) {
 			// non-bookish entries first (crossref-friendly order)
@@ -145,16 +157,25 @@ func (l *TBibTeXLibrary) WriteKeyNonDoublesFile() {
 	if !l.NoKeyNonDoublesFileWriting {
 		setTableDirty("key_non_doubles")
 		if l.writeLibraryFile(KeyNonDoublesFilePath, ProgressWritingNonDoublesFile, func(w *bufio.Writer) {
+			// A key is valid for the non-doubles file if it is its own canonical
+			// (not an alias) AND is either a live library entry or an unimported DBLP: key.
+			isValidNonDoubleKey := func(k string) bool {
+				return k == l.MapEntryKey(k) && (l.EntryExists(k) || strings.HasPrefix(k, "DBLP:"))
+			}
 			var lines []string
 			for key, set := range l.NonDoubles {
-				if key == l.MapEntryKey(key) && l.EntryExists(key) {
-					for nonDouble := range set.Elements() {
-						if nonDouble != key && nonDouble == l.MapEntryKey(nonDouble) && l.EntryExists(nonDouble) {
-							if !l.EvidenceForBeingDifferentEntries(key, nonDouble) {
-								lines = append(lines, key+csvDelimiter+nonDouble)
-							}
-						}
+				if !isValidNonDoubleKey(key) {
+					continue
+				}
+				for nonDouble := range set.Elements() {
+					if nonDouble == key || !isValidNonDoubleKey(nonDouble) {
+						continue
 					}
+					// EvidenceForBeingDifferentEntries only applies when both are library entries.
+					if l.EntryExists(key) && l.EntryExists(nonDouble) && l.EvidenceForBeingDifferentEntries(key, nonDouble) {
+						continue
+					}
+					lines = append(lines, key+csvDelimiter+nonDouble)
 				}
 			}
 			sort.Strings(lines)
@@ -165,6 +186,79 @@ func (l *TBibTeXLibrary) WriteKeyNonDoublesFile() {
 			saveKeyNonDoublesToDb(l)
 			clearTableDirty("key_non_doubles")
 			setTableLastWritten("key_non_doubles")
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) WriteDblpWaivedFile() {
+	if !l.NoDblpWaivedFileWriting && l.dblpWaivedModified {
+		setTableDirty("dblp_waived")
+		if l.writeLibraryFile(DblpWaivedFilePath, ProgressWritingDblpWaivedFile, func(w *bufio.Writer) {
+			var lines []string
+			for key := range l.DblpWaived.Elements() {
+				canon := l.MapEntryKey(key)
+				if !l.EntryExists(canon) {
+					continue // entry was merged or removed
+				}
+				if l.EntryFieldValueity(canon, DBLPField) != "" {
+					continue // entry now has a DBLP key — waiver no longer needed
+				}
+				crossrefKey := l.EntryFieldValueity(canon, "crossref")
+				if crossrefKey == "" || l.EntryFieldValueity(crossrefKey, DBLPField) == "" {
+					continue // parent no longer has a DBLP key — waiver no longer relevant
+				}
+				lines = append(lines, canon)
+			}
+			sort.Strings(lines)
+			for _, line := range lines {
+				w.WriteString(line + "\n")
+			}
+		}) {
+			saveDblpWaivedToDb(l)
+			clearTableDirty("dblp_waived")
+			setTableLastWritten("dblp_waived")
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) WriteEntryFlagsFile() {
+	if !l.NoEntryFlagsFileWriting && l.entryFlagsModified {
+		setTableDirty("entry_flags")
+		if l.writeLibraryFile(EntryFlagsFilePath, ProgressWritingEntryFlagsFile, func(w *bufio.Writer) {
+			var lines []string
+			for key, flags := range l.EntryFlags {
+				for flag := range flags.Elements() {
+					lines = append(lines, csvLine(key, flag))
+				}
+			}
+			sort.Strings(lines)
+			for _, line := range lines {
+				w.WriteString(line + "\n")
+			}
+		}) {
+			saveEntryFlagsToDb(l)
+			clearTableDirty("entry_flags")
+			setTableLastWritten("entry_flags")
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) WriteDblpParentFile() {
+	if !l.NoDblpParentFileWriting && l.dblpParentModified {
+		setTableDirty("dblp_parent")
+		if l.writeLibraryFile(DblpParentFilePath, ProgressWritingDblpParentFile, func(w *bufio.Writer) {
+			var lines []string
+			for child, parent := range l.DblpParentOverrides {
+				lines = append(lines, child+csvDelimiter+parent)
+			}
+			sort.Strings(lines)
+			for _, line := range lines {
+				w.WriteString(line + "\n")
+			}
+		}) {
+			saveDblpParentToDb(l)
+			clearTableDirty("dblp_parent")
+			setTableLastWritten("dblp_parent")
 		}
 	}
 }
@@ -241,51 +335,41 @@ func (l *TBibTeXLibrary) WriteKeyOldiesFile() {
 	}
 }
 
-// Write entry key source/target pairs to a bufio.bWriter buffer
 func (l *TBibTeXLibrary) WriteKeyHintsFile() {
-	if !l.NoKeyHintsFileWriting {
-		setTableDirty("key_hints")
-		if l.writeLibraryFile(KeyHintsFilePath, ProgressWritingKeyHintsFile, func(w *bufio.Writer) {
-			var lines []string
-			for source, target := range l.HintToKey {
-				target = l.MapEntryKey(target)
-				if bibEntryExists(target) && source != target &&
-					source != KeyForDBLP(l.EntryFieldValueity(target, DBLPField)) {
-					lines = append(lines, target+csvDelimiter+source)
-				}
-			}
-			sort.Strings(lines)
-			for _, line := range lines {
-				w.WriteString(line + "\n")
-			}
-		}) {
-			saveKeyHintsToDb(l)
-			clearTableDirty("key_hints")
-			setTableLastWritten("key_hints")
-		}
+	if l.NoKeyHintsFileWriting || len(l.newKeyHints) == 0 {
+		return
 	}
-}
+	fullPath := l.FilesRoot + l.BaseName + KeyHintsFilePath
+	l.Progress(ProgressWritingKeyHintsFile, fullPath)
+	setTableDirty("key_hints")
 
-func (l *TBibTeXLibrary) WritePDFConfirmedOkFile() {
-	if !l.NoPDFConfirmedOkFileWriting {
-		setTableDirty("pdf_confirmed_ok")
-		if l.writeLibraryFile(PDFConfirmedOkFilePath, ProgressWritingPDFConfirmedOkFile, func(w *bufio.Writer) {
-			var lines []string
-			for key, date := range l.PDFConfirmedOk {
-				if l.EntryExists(key) {
-					lines = append(lines, csvLine(key, date))
-				}
-			}
-			sort.Strings(lines)
-			for _, line := range lines {
-				w.WriteString(line + "\n")
-			}
-		}) {
-			savePDFConfirmedOkToDb(l)
-			clearTableDirty("pdf_confirmed_ok")
-			setTableLastWritten("pdf_confirmed_ok")
+	ensureLibraryBackup()
+
+	f, err := os.OpenFile(fullPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		l.Warning("Could not open key hints file for append: %s", err)
+		return
+	}
+	defer f.Close()
+
+	var lines []string
+	for source, target := range l.newKeyHints {
+		target = l.MapEntryKey(target)
+		if bibEntryExists(target) && source != target &&
+			source != KeyForDBLP(l.EntryFieldValueity(target, DBLPField)) {
+			lines = append(lines, target+csvDelimiter+source)
 		}
 	}
+	sort.Strings(lines)
+	w := bufio.NewWriter(f)
+	for _, line := range lines {
+		w.WriteString(line + "\n")
+	}
+	w.Flush()
+
+	saveKeyHintsToDb(l)
+	clearTableDirty("key_hints")
+	setTableLastWritten("key_hints")
 }
 
 func (l *TBibTeXLibrary) WriteAllMappingsFiles() {

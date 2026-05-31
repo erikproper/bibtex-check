@@ -29,50 +29,65 @@ import (
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
-		FilesRoot    string           // Path to folder with library related files
-		BaseName     string           // BaseName of the library related files
-		FilesFolder  string           // Path to the PDF files folder, relative to FilesRoot
-		Comments     []string      // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
+		FilesRoot    string   // Path to folder with library related files
+		BaseName     string   // BaseName of the library related files
+		FilesFolder  string   // Path to the PDF files folder, relative to FilesRoot
+		Comments     []string // The Comments included in a BibTeX library. These are not always "just" Comments. BiBDesk uses this to store (as XML) information on e.g. static groups.
 		GroupEntries TStringSetMap
 		TitleIndex   TStringSetMap //
 		//		BookTitleIndex                   TStringSetMap             //
-		ISBNIndex                        TStringSetMap             //
-		DOIIndex                         TStringSetMap             //
-		NonDoubles                       TStringSetMap             //
-		HintToKey                        TStringMap                // Mapping from key hints to the actual entry key.
-		KeyToKey                         TStringMap                // Mapping from key aliases to the actual entry key.
-		FieldMappings                    TStringStringStringMap    // field/value to field/value mapping
-		KeyIsTemporary                   TStringSet                // Keys that are generated for temporary reasons
-		NameAliasToName                  TStringMap                // Mapping from name aliases to the actual name.
-		NameToAliases                    TStringSetMap             // The inverted version of NameAliasToName
-		illegalFields                    TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		foundDoubles                     bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		EntryFieldSourceToTarget         TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
-		EntryFieldTargetToSource         TStringStringStringSetMap // DO WE NEED THE INVERSES??
-		GenericFieldSourceToTarget       TStringStringMap          // A field specific mapping from challenged value to winner values
-		GenericFieldTargetToSource       TStringStringSetMap       //
-		NoBibFileWriting                 bool                      // If set, we should not write out a Bib file (and cache file) for this library as entries might have been lost.
+		ISBNIndex                         TStringSetMap             //
+		DOIIndex                          TStringSetMap             //
+		NonDoubles                        TStringSetMap             //
+		HintToKey                         TStringMap                // Mapping from key hints to the actual entry key.
+		newKeyHints                       TStringMap                // Key hints added in the current run (for append-only write).
+		KeyToKey                          TStringMap                // Mapping from key aliases to the actual entry key.
+		FieldMappings                     TStringStringStringMap    // field/value to field/value mapping
+		KeyIsTemporary                    TStringSet                // Keys that are generated for temporary reasons
+		NameAliasToName                   TStringMap                // Mapping from name aliases to the actual name.
+		NameToAliases                     TStringSetMap             // The inverted version of NameAliasToName
+		StateAliasToCanonical             TStringMap                // Mapping from state name aliases to canonical state names.
+		StateToCountry                    TStringMap                // Mapping from canonical state names to canonical country names.
+		CountryAliasToCanonical           TStringMap                // Mapping from country name aliases to canonical country names.
+		BooktitleCountryAliasToCanonical  TStringMap                // English-only subset of country aliases for booktitle/title normalisation.
+		illegalFields                     TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		foundDoubles                      bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		EntryFieldSourceToTarget          TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
+		EntryFieldTargetToSource          TStringStringStringSetMap // DO WE NEED THE INVERSES??
+		GenericFieldSourceToTarget        TStringStringMap          // A field specific mapping from challenged value to winner values
+		GenericFieldTargetToSource        TStringStringSetMap       //
+		NoBibFileWriting                  bool                      // If set, we should not write out a Bib file (and cache file) for this library as entries might have been lost.
 		NoEntryFieldMappingsFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
 		NoGenericFieldMappingsFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
-		NoKeyOldiesFileWriting           bool
-		NoKeyHintsFileWriting            bool
-		NoNameMappingsFileWriting        bool
-		NoKeyNonDoublesFileWriting          bool
-		keyNonDoublesModified            bool
-		nameMappingsModified             bool
-		keyHintsModified                 bool
-		keyOldiesModified                bool
-		crossFieldMappingsModified       bool
-		genericFieldMappingsModified     bool
-		entryFieldMappingsModified       bool
-		harvestNameAliases               bool
-		capturedDBLPEntry                *TBibTeXEntry
-		NoCrossFieldMappingsFileWriting       bool
-		NoPDFConfirmedOkFileWriting           bool
-		PDFConfirmedOk                        TStringMap
-		pdfConfirmedOkModified                bool
-		URLsIgnore                            TStringSet
-		ignoreIllegalFields              bool
+		NoKeyOldiesFileWriting            bool
+		NoKeyHintsFileWriting             bool
+		NoNameMappingsFileWriting         bool
+		NoKeyNonDoublesFileWriting        bool
+		keyNonDoublesModified             bool
+		DblpParentOverrides               TStringMap // child DBLP key → resolved parent DBLP key
+		NoDblpParentFileWriting           bool
+		dblpParentModified                bool
+		DblpWaived                        TStringSet // library keys exempt from WarningNoDblpKeyForChild
+		NoDblpWaivedFileWriting           bool
+		dblpWaivedModified                bool
+		Metadata              TEntryMetadata // per-entry metadata (see bibtex_library_metadata.go)
+		metadataModified      bool
+		NoMetadataFileWriting bool
+		EntryFlags                        map[string]TStringSet // canonical key → set of flag strings
+		NoEntryFlagsFileWriting           bool
+		entryFlagsModified               bool
+		nameMappingsModified              bool
+		keyHintsModified                  bool
+		keyOldiesModified                 bool
+		crossFieldMappingsModified        bool
+		genericFieldMappingsModified      bool
+		entryFieldMappingsModified        bool
+		harvestNameAliases                bool
+		capturedDBLPEntry                 *TBibTeXEntry
+		NoCrossFieldMappingsFileWriting   bool
+		URLsIgnore                        TStringSet
+		ignoreIllegalFields               bool
+		PreMergeCheck                     func(source, target string) // called before proposing a merge; may associate DBLP keys
 
 		TBibTeXTeX
 		TInteraction  // Error reporting channel
@@ -107,6 +122,10 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.KeyToKey = TStringMap{}
 	l.KeyIsTemporary = TStringSetNew()
 	l.NameAliasToName = TStringMap{}
+	l.StateAliasToCanonical = TStringMap{}
+	l.StateToCountry = TStringMap{}
+	l.CountryAliasToCanonical = TStringMap{}
+	l.BooktitleCountryAliasToCanonical = TStringMap{}
 
 	l.EntryFieldTargetToSource = TStringStringStringSetMap{}
 	l.GenericFieldTargetToSource = TStringStringSetMap{}
@@ -122,11 +141,17 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.NoGenericFieldMappingsFileWriting = false
 	l.NoKeyOldiesFileWriting = false
 	l.NoKeyHintsFileWriting = false
+	l.newKeyHints = TStringMap{}
 	l.NoNameMappingsFileWriting = false
 	l.NoCrossFieldMappingsFileWriting = false
-	l.NoPDFConfirmedOkFileWriting = false
-	l.PDFConfirmedOk = TStringMap{}
+	l.Metadata = TEntryMetadata{}
+	l.NoMetadataFileWriting = false
 	l.URLsIgnore = TStringSetNew()
+	l.DblpParentOverrides = TStringMap{}
+	l.NoDblpParentFileWriting = false
+	l.DblpWaived = TStringSetNew()
+	l.NoDblpWaivedFileWriting = false
+	l.EntryFlags = map[string]TStringSet{}
 	l.ignoreIllegalFields = false
 }
 
@@ -514,6 +539,18 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 		target := l.MapEntryKey(targetRAW)
 
 		if source != target && l.EntryExists(source) {
+			for _, field := range []string{DBLPField, "doi"} {
+				sv := l.EntryFieldValueity(source, field)
+				tv := l.EntryFieldValueity(target, field)
+				if EvidencedUnequal(sv, tv) {
+					l.Warning(WarningMergeConflictingField, source, target, field, sv, tv)
+				}
+			}
+			if l.EvidenceForBeingDifferentEntries(source, target) {
+				if !l.WarningYesNoQuestion(QuestionMergeAnyway, "Entries appear to be different publications") {
+					return target
+				}
+			}
 			l.Progress("Merging %s to %s", source, target)
 
 			sourceEntry := loadEntryFromDb(source)
@@ -614,17 +651,36 @@ func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string)
 	// || l.EvidencedUnequalEntryFields(source, target, "crossref")
 }
 
+// entryDisplayString returns the entry's BibTeX string, appending the parent
+// entry when a crossref is present to give full context for merge decisions.
+func (l *TBibTeXLibrary) entryDisplayString(key string) string {
+	s := l.EntryString(key, "", "  ")
+	if crossref := l.EntryFieldValueity(key, "crossref"); crossref != "" {
+		if parentStr := l.EntryString(crossref, "", "  "); parentStr != "" {
+			s += "  Parent entry:\n" + parentStr
+		}
+	}
+	return s
+}
+
 func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 	// Fix names
 	source := l.MapEntryKey(sourceRAW)
 	target := l.MapEntryKey(targetRAW)
 
 	if l.EntryExists(source) && l.EntryExists(target) {
+		if source != target && !l.NonDoubles[source].Set().Contains(target) {
+			if l.PreMergeCheck != nil {
+				l.PreMergeCheck(source, target)
+				source = l.MapEntryKey(source)
+				target = l.MapEntryKey(target)
+			}
+		}
 		if source != target && !l.NonDoubles[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
 			l.Warning("Found potential double entries")
 
-			sourceEntry := l.EntryString(source, "", "  ")
-			targetEntry := l.EntryString(target, "", "  ")
+			sourceEntry := l.entryDisplayString(source)
+			targetEntry := l.entryDisplayString(target)
 
 			if sourceEntry == "" {
 				l.Warning("Empty source entry: %s", source)
@@ -697,6 +753,7 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
 	if l.addAliasForKey(&l.HintToKey, hint, key, WarningAmbiguousKeyHint) {
 		l.keyHintsModified = true
+		l.newKeyHints[hint] = key
 	} else {
 		l.NoKeyHintsFileWriting = true
 	}
@@ -839,6 +896,26 @@ func CleanJRDate(s string) string {
 
 func (l *TBibTeXLibrary) EntryExists(entry string) bool {
 	return bibEntryExists(entry)
+}
+
+// EntryHasFlag reports whether key has the given flag in EntryFlags.
+func (l *TBibTeXLibrary) EntryHasFlag(key, flag string) bool {
+	if flags, ok := l.EntryFlags[key]; ok {
+		return flags.Set().Contains(flag)
+	}
+	return false
+}
+
+// SetEntryFlag adds flag to key's flag set and marks the table modified.
+func (l *TBibTeXLibrary) SetEntryFlag(key, flag string) {
+	canon := l.MapEntryKey(key)
+	if _, ok := l.EntryFlags[canon]; !ok {
+		l.EntryFlags[canon] = TStringSetNew()
+	}
+	if !l.EntryFlags[canon].Set().Contains(flag) {
+		l.EntryFlags[canon].Set().Add(flag)
+		l.entryFlagsModified = true
+	}
 }
 
 // buildEntry loads a TBibTeXEntry snapshot for key from the DB.
@@ -1031,10 +1108,34 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 	return true
 }
 
-func (l *TBibTeXLibrary) MaybeApplyFieldMappings(entry *TBibTeXEntry) {
-	for sourceField, sourceValue := range entry.Fields {
-		for targetField, targetValue := range l.FieldMappings[sourceField][sourceValue] {
-			l.setEntryField(entry, targetField, targetValue)
+// MaybeApplyFieldMappings applies cross-field mappings to entry until no new fields
+// are derived (saturation). Each target field is assigned at most once across all
+// iterations, which allows mappings to override non-empty fields while still
+// guaranteeing termination. Conflicting rules for an already-assigned field are
+// silently skipped.
+// Pass writeToDb=true for library entries (field value persisted via setEntryField);
+// false for temporary in-memory entries such as DBLP file-store entries, to avoid
+// writing under a foreign key inside an outer transaction.
+func (l *TBibTeXLibrary) MaybeApplyFieldMappings(entry *TBibTeXEntry, writeToDb bool) {
+	fieldIsChanged := map[string]bool{}
+	for {
+		changed := false
+		for sourceField, sourceValue := range entry.Fields {
+			for targetField, targetValue := range l.FieldMappings[sourceField][sourceValue] {
+				if entry.Fields[targetField] != targetValue {
+					if !fieldIsChanged[targetField] {
+						if writeToDb {
+							l.setEntryField(entry, targetField, targetValue)
+						}
+						entry.Fields[targetField] = targetValue
+						fieldIsChanged[targetField] = true
+						changed = true
+					}
+				}
+			}
+		}
+		if !changed {
+			break
 		}
 	}
 }
@@ -1070,9 +1171,25 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 		})
 	}
 
-	l.MaybeApplyFieldMappings(entry)
+	l.MaybeApplyFieldMappings(entry, true)
 
 	return true
+}
+
+// resolveNonDoubleKey maps a raw key from the non-doubles file to the form that
+// should be stored in memory and written back to disk:
+//   - library entry (canonical, not an alias) → return its canonical key
+//   - DBLP: key not yet imported into the library → return as-is (preserve for future match)
+//   - anything else (stale alias, unknown key) → return "" (drop)
+func (l *TBibTeXLibrary) resolveNonDoubleKey(rawKey string) string {
+	canon := l.MapEntryKey(rawKey)
+	if l.EntryExists(canon) {
+		return canon
+	}
+	if strings.HasPrefix(rawKey, "DBLP:") {
+		return rawKey
+	}
+	return ""
 }
 
 func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {

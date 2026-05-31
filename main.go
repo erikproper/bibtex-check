@@ -1,30 +1,50 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
+
+// stepFlag implements flag.Value for -step [N].
+// -step alone means step size 1; -step=N or -step N means step size N.
+type stepFlag int
+
+func (f *stepFlag) String() string   { return strconv.Itoa(int(*f)) }
+func (f *stepFlag) IsBoolFlag() bool { return true }
+func (f *stepFlag) Set(s string) error {
+	if s == "true" {
+		*f = 1
+		return nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return fmt.Errorf("step: expected a positive integer, got %q", s)
+	}
+	*f = stepFlag(n)
+	return nil
+}
 
 var (
 	Library   TBibTeXLibrary
 	Reporting TInteraction
 )
 
-const AppVersion = "16.59"
+const AppVersion = "20.29"
 
 // Run-state flags consumed by the write tail in main.
 var (
-	skipBibDbRefresh     bool
-	skipBibValidation    bool
-	forceWrite           bool
-	cmdStep              bool
-	cmdNoGarbageCleaning bool
+	skipBibDbRefresh      bool
+	skipBibValidation     bool
+	forceWrite            bool
+	cmdStep               stepFlag
+	cmdNoGarbageCleaning  bool
+	cmdAutoFixAlignTitles bool
 )
 
 func reportCacheMode() {
@@ -38,6 +58,13 @@ func reportCacheMode() {
 func initialiseLibrary() {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, bibTeXFolder, bibTeXBaseName)
+	Library.PreMergeCheck = func(source, target string) {
+		if Library.EntryFieldValueity(source, DBLPField) != "" || Library.EntryFieldValueity(target, DBLPField) != "" {
+			return
+		}
+		maybeFindDBLPCandidates(source)
+		maybeFindDBLPCandidates(target)
+	}
 
 	// If bib_entries was dirty on the previous run (crash mid-write), advance its
 	// timestamp now so that any repaired mapping files (whose timestamps are about
@@ -59,11 +86,17 @@ func initialiseLibrary() {
 }
 
 func loadMappingFiles() {
+	Library.ReadAddressMappings()
+	Library.CheckAddressMappings()
 	Library.ReadKeyHintsFile()
 	Library.ReadNameMappingsFile()
 	Library.ReadGenericFieldMappingsFile()
 	Library.ReadEntryFieldMappingsFile()
 	Library.ReadCrossFieldMappingsFile()
+	Library.ReadDblpParentFile()
+	Library.ReadDblpWaivedFile()
+	Library.ReadMetadataFile()
+	Library.ReadEntryFlagsFile()
 	Library.CheckFieldMappings()
 	Library.CheckNameMappingConsistency()
 }
@@ -102,6 +135,7 @@ func parseBibIntoDb() bool {
 	}
 
 	bibEntriesModified = false // parse is a load, not a modification
+	setTableDirty("dblp_hierarchy")
 	initEntryCache()
 	reportCacheMode()
 	refreshBibDbTimestamp()
@@ -128,6 +162,7 @@ func openLibraryToUpdate() bool {
 
 	Library.ReportLibrarySize()
 	Library.CheckKeyOldiesConsistency()
+	Library.CheckEntryFieldMappingWinners()
 	return true
 }
 
@@ -176,8 +211,106 @@ func normalizeDblpKey(key string) string {
 	return strings.TrimPrefix(key, "DBLP:")
 }
 
+// findLibraryEqualWithDblp looks for an existing library entry that shares the
+// same title index as key and already has a dblp field.  When such a peer is
+// found, MaybeMergeEntries is called interactively; if the merge is accepted
+// the function returns true (key now has a dblp field via the merge).
+func findLibraryEqualWithDblp(key string) bool {
+	title := Library.EntryFieldValueity(Library.MapEntryKey(key), TitleField)
+	if title == "" {
+		return false
+	}
+	titleIdx := TeXStringIndexer(title)
+	if titleIdx == "" {
+		return false
+	}
+	peers := Library.TitleIndex[titleIdx]
+	if peers.Size() <= 1 {
+		return false
+	}
+	for _, peer := range peers.ElementsSorted() {
+		peer = Library.MapEntryKey(peer)
+		mappedKey := Library.MapEntryKey(key)
+		if peer == mappedKey {
+			continue
+		}
+		if Library.EntryFieldValueity(peer, DBLPField) == "" {
+			continue
+		}
+		if Library.NonDoubles[mappedKey].Set().Contains(peer) {
+			continue
+		}
+		if Library.EvidenceForBeingDifferentEntries(mappedKey, peer) {
+			continue
+		}
+		Library.MaybeMergeEntries(key, peer)
+		if Library.EntryFieldValueity(Library.MapEntryKey(key), DBLPField) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// maybeFindDBLPCandidates searches the DBLP title index for a library entry
+// that has no dblp field and interactively offers the user numbered candidates.
+// Pick 0 → all candidates are recorded as non-doubles with the library entry.
+// Pick N → AssociateDblpKey is called and the function returns true so the
+// caller can re-run DBLP checks for the now-associated entry.
+func maybeFindDBLPCandidates(key string) bool {
+	if Library.EntryFieldValueity(key, DBLPField) != "" {
+		return false
+	}
+	title := Library.EntryFieldValueity(key, TitleField)
+	hash := libraryTitleHash(title)
+	if hash == "" {
+		return false
+	}
+	allCandidates := readDblpTitleLinks(hash)
+	existing := Library.NonDoubles[key]
+	yearStr := Library.EntryFieldValueity(key, "year")
+	if yearStr == "" {
+		if crossref := Library.EntryFieldValueity(key, "crossref"); crossref != "" {
+			yearStr = Library.EntryFieldValueity(crossref, "year")
+		}
+	}
+	entryYear, entryHasYear := strconv.Atoi(yearStr)
+	var candidates []string
+	for _, c := range allCandidates {
+		if existing.Contains(KeyForDBLP(c)) {
+			continue
+		}
+		if entryHasYear == nil {
+			if ce := dblpEntryFromFile(c); ce != nil {
+				if candYear, err := strconv.Atoi(ce.Fields["year"]); err == nil {
+					diff := candYear - entryYear
+					if diff < -3 || diff > 3 {
+						continue
+					}
+				}
+			}
+		}
+		candidates = append(candidates, c)
+	}
+	if len(candidates) == 0 {
+		return false
+	}
+	if len(candidates) > 9 {
+		candidates = candidates[:9]
+	}
+	chosen := Library.AskCandidateDblpKey(key, candidates)
+	if chosen == "" {
+		for _, c := range candidates {
+			Library.AddNonDoubles(key, KeyForDBLP(c))
+		}
+		return false
+	}
+	Library.AssociateDblpKey(key, chosen)
+	return true
+}
+
 func doAllChecks(key string) {
 	doC1Checks(key)
+	maybeFindDBLPCandidates(key)
 	doC2Checks(key)
 	doC3Checks(key)
 }
@@ -246,17 +379,80 @@ func cleanKeys(args []string) []string {
 
 // --- Command functions ---
 
+// reportHomework prints a summary of remaining work:
+//   - number of unresolved potential duplicate pairs (title-equal, not in non_doubles,
+//     no divergent DBLP/DOI evidence)
+//   - number of entries without a dblp field that have at least one unresolved DBLP
+//     title-index candidate (not already in non_doubles)
+func reportHomework() {
+	// Unresolved potential duplicate pairs.
+	type pair struct{ a, b string }
+	counted := map[pair]bool{}
+	unresolvedPairs := 0
+	for _, keys := range Library.TitleIndex {
+		sorted := keys.ElementsSorted()
+		for i, a := range sorted {
+			if a != Library.MapEntryKey(a) {
+				continue
+			}
+			for _, b := range sorted[i+1:] {
+				if b != Library.MapEntryKey(b) {
+					continue
+				}
+				if a == b {
+					continue
+				}
+				p := pair{a, b}
+				if counted[p] {
+					continue
+				}
+				counted[p] = true
+				if Library.NonDoubles[a].Set().Contains(b) {
+					continue
+				}
+				if Library.EvidenceForBeingDifferentEntries(a, b) {
+					continue
+				}
+				unresolvedPairs++
+			}
+		}
+	}
+
+	// Entries with at least one unresolved DBLP candidate.
+	dblpCandidates := 0
+	forEachBibEntryKey(func(key string) bool {
+		if Library.EntryFieldValueity(key, DBLPField) != "" {
+			return true
+		}
+		hash := libraryTitleHash(Library.EntryFieldValueity(key, TitleField))
+		if hash == "" {
+			return true
+		}
+		existing := Library.NonDoubles[key]
+		for _, c := range readDblpTitleLinks(hash) {
+			if !existing.Set().Contains(KeyForDBLP(c)) {
+				dblpCandidates++
+				return true
+			}
+		}
+		return true
+	})
+
+	Library.Progress("Homework: %d unresolved duplicate pair(s), %d entry/ies with unresolved DBLP candidate(s)", unresolvedPairs, dblpCandidates)
+}
+
 func doDefaultRun() {
 	if openLibraryToUpdate() {
 		Library.CheckEntries()
 		Library.ReadKeyNonDoublesFile()
+		Library.CheckAlignTitles(false)
+		reportHomework()
 	}
 }
 
 func doCheckPDFs() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
-		Library.ReadPDFConfirmedOkFile()
 		Library.CheckPDFHealth()
 	}
 }
@@ -469,6 +665,7 @@ func doShowEntry(args []string) {
 func doFixEntries(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
+		Library.FixDblpHierarchy()
 		for _, key := range cleanKeys(args) {
 			doAllChecks(key)
 		}
@@ -478,19 +675,24 @@ func doFixEntries(args []string) {
 func doFixAllEntries() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
+		Library.FixDblpHierarchy()
 		total := countBibEntries()
 		count := 0
+		stepN := int(cmdStep)
+		questionCounter := 0
 		forEachBibEntryKey(func(key string) bool {
 			count++
 			Library.Progress(ProgressEntryProgress, count, total, float64(count)*100/float64(total))
 			Library.ResetQuestionFlag()
 			doAllChecks(key)
-			if cmdStep && Library.OutputWasProduced() {
-				fmt.Printf("--- Press Enter to continue ---")
-				bufio.NewReader(os.Stdin).ReadString('\n')
-			}
-			if cmdStep && Library.QuestionWasAsked() && Library.AskContinueOrQuit() {
-				return false
+			if stepN > 0 && Library.QuestionWasAsked() {
+				questionCounter++
+				if questionCounter >= stepN {
+					if Library.AskContinueOrQuit() {
+						return false
+					}
+					questionCounter = 0
+				}
 			}
 			return true
 		})
@@ -500,6 +702,10 @@ func doFixAllEntries() {
 func doFixDblpEntries() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
+		Library.FixDblpHierarchy()
+		if cmdAutoFixAlignTitles {
+			Library.CheckAlignTitles(true)
+		}
 		total := countBibEntries()
 
 		// Collect bookish and non-bookish keys separately so bookish entries are
@@ -522,6 +728,8 @@ func doFixDblpEntries() {
 
 		quit := false
 		scanned := 0
+		stepN := int(cmdStep)
+		questionCounter := 0
 		spinner := Library.NewSpinner(ProgressFixingDblpEntries)
 		beginBibTransaction()
 		processKey := func(key string) {
@@ -529,10 +737,17 @@ func doFixDblpEntries() {
 			spinner.Update(scanned, total)
 			if Library.EntryFieldValueity(key, DBLPField) != "" {
 				Library.ResetQuestionFlag()
+				doC1Checks(key)
 				Library.MaybeFixDBLPEntry(key)
-				Library.PressEnterToContinue()
-				if cmdStep && Library.QuestionWasAsked() && Library.AskContinueOrQuit() {
-					quit = true
+				doC3Checks(key)
+				if stepN > 0 && Library.QuestionWasAsked() {
+					questionCounter++
+					if questionCounter >= stepN {
+						if Library.AskContinueOrQuit() {
+							quit = true
+						}
+						questionCounter = 0
+					}
 				}
 			}
 		}
@@ -571,6 +786,7 @@ func doFixDblpEntries() {
 		}
 		commitBibTransaction()
 		spinner.Stop()
+		bibEntriesModified = true
 	}
 }
 
@@ -581,6 +797,7 @@ func doNewKey() {
 func doFixDblpFor(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
+		Library.FixDblpHierarchy()
 		for _, rawKey := range cleanKeys(args) {
 			key := Library.MapEntryKey(rawKey)
 			if key == "" {
@@ -594,18 +811,185 @@ func doFixDblpFor(args []string) {
 	}
 }
 
+
 func doAddDblpEntry(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		for _, dblpKey := range args {
 			dblpKey = normalizeDblpKey(dblpKey)
-			if Library.LookupDBLPKey(dblpKey) == "" {
-				if added := Library.MaybeAddDBLPEntry(dblpKey); added != "" {
-					doAllChecks(added)
-				}
+			if existing := Library.LookupDBLPKey(dblpKey); existing != "" {
+				fmt.Println(existing)
+			} else if added := Library.MaybeAddDBLPEntry(dblpKey); added != "" {
+				Library.MarkDblpKeyMissing(added, dblpKey)
+				fmt.Println(added)
+				doAllChecks(added)
 			}
 		}
 	}
+}
+
+
+// resolveNameToORCID looks up the DBLP persons index for canonicalName, scans
+// for a homepages/ key, and returns the first ORCID found in that entry.
+// Returns "" if no ORCID can be found.
+func resolveNameToORCID(canonicalName string) string {
+	for _, key := range readDblpPersonEntries(canonicalName) {
+		if !strings.HasPrefix(key, "homepages/") {
+			continue
+		}
+		je := readDblpJSONEntry(key)
+		if je == nil {
+			continue
+		}
+		for _, u := range je.Multi["url"] {
+			if strings.HasPrefix(u, "https://orcid.org/") {
+				return strings.TrimPrefix(u, "https://orcid.org/")
+			}
+		}
+	}
+	return ""
+}
+
+// doWatchDblp reads watch.csv and for each watched person/ORCID checks whether
+// all their publications are in the library.  Missing entries are displayed and
+// the user is asked whether to add each one (same flow as -add_dblp_entry).
+func doWatchDblp() {
+	if !openLibraryToUpdate() {
+		return
+	}
+	Library.ReadKeyNonDoublesFile()
+
+	filePath := bibTeXFolder + bibTeXBaseName + WatchFilePath
+	entries := ReadWatchFile(filePath)
+	if len(entries) == 0 {
+		Library.Progress("No watch entries found in %s", filePath)
+		return
+	}
+
+	stepN := int(cmdStep)
+	questionCounter := 0
+	stopped := false
+
+	for _, w := range entries {
+		if stopped {
+			break
+		}
+		var keys []string
+		switch w.EntryType {
+		case "name":
+			if orcid := resolveNameToORCID(w.Value); orcid != "" {
+				Library.Progress("Resolved %q to ORCID %s", w.Value, orcid)
+				keys = readDblpORCIDEntries(orcid)
+			} else {
+				keys = readDblpPersonEntries(w.Value)
+			}
+		case "orcid":
+			keys = readDblpORCIDEntries(w.Value)
+		}
+
+		label := w.Tag
+		if label == "" {
+			label = w.Value
+		}
+
+		if len(keys) == 0 {
+			Library.Warning("No DBLP entries found for %s %q — person may not be in file store", w.EntryType, w.Value)
+			continue
+		}
+
+		newCount := 0
+		for _, key := range keys {
+			// Skip homepage/www entries — they are not publications.
+			if strings.HasPrefix(key, "homepages/") || strings.HasPrefix(key, "homepage/") {
+				continue
+			}
+			// Skip entries already in the library.
+			if Library.LookupDBLPKey(key) != "" {
+				continue
+			}
+			newCount++
+
+			Library.ResetQuestionFlag()
+			fmt.Fprintf(os.Stderr, "\nWatching %s — adding missing publication:\n", label)
+			fmt.Fprintf(os.Stderr, "  DBLP key: %s\n", key)
+			if entry := dblpEntryFromFile(key); entry != nil {
+				if t := entry.EntryType(); t != "" {
+					fmt.Fprintf(os.Stderr, "  type    : %s\n", t)
+				}
+				for _, f := range []string{"title", "booktitle", "journal", "year", "author", "editor"} {
+					if v := entry.Fields[f]; v != "" {
+						fmt.Fprintf(os.Stderr, "  %-9s: %s\n", f, v)
+					}
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "  (not in local file store)\n")
+			}
+
+			if added := Library.MaybeAddDBLPEntry(key); added != "" {
+				Library.MarkDblpKeyMissing(added, key)
+				doAllChecks(added)
+			}
+
+			if stepN > 0 && Library.QuestionWasAsked() {
+				questionCounter++
+				if questionCounter >= stepN {
+					if Library.AskContinueOrQuit() {
+						stopped = true
+						break
+					}
+					questionCounter = 0
+				}
+			}
+		}
+
+		if newCount == 0 {
+			Library.Progress("Watching %s: all publications present (%d total)", label, len(keys))
+		} else {
+			Library.Progress("Watching %s: %d missing publication(s) checked", label, newCount)
+		}
+	}
+}
+
+// doExtendDblpCoverage visits every entry without a dblp field and tries to
+// associate a DBLP key in two stages:
+//  1. Look for a title-equal library entry that already has a dblp field and
+//     offer an interactive merge (inheriting the DBLP key via the merge).
+//  2. If no intra-library peer is found, search the external DBLP title index
+//     and offer the user numbered candidates.
+//
+// Only when a DBLP key is successfully associated does the function run a full
+// doAllChecks on the resulting entry to absorb any other equal entries.
+func doExtendDblpCoverage() {
+	if !openLibraryToUpdate() {
+		return
+	}
+	Library.ReadKeyNonDoublesFile()
+	Library.FixDblpHierarchy()
+	stepN := int(cmdStep)
+	questionCounter := 0
+	forEachBibEntryKey(func(key string) bool {
+		if Library.EntryFieldValueity(key, DBLPField) != "" {
+			return true
+		}
+		Library.ResetQuestionFlag()
+		found := findLibraryEqualWithDblp(key)
+		if !found {
+			found = maybeFindDBLPCandidates(key)
+		}
+		if found {
+			doAllChecks(Library.MapEntryKey(key))
+		}
+		if stepN > 0 && Library.QuestionWasAsked() {
+			questionCounter++
+			if questionCounter >= stepN {
+				if Library.AskContinueOrQuit() {
+					return false
+				}
+				questionCounter = 0
+			}
+		}
+		return true
+	})
 }
 
 func doAddKeyMapping(args []string) {
@@ -619,12 +1003,48 @@ func doAddKeyMapping(args []string) {
 	}
 }
 
+// resolveOrImportKey resolves rawKey to a library entry key. When the key is
+// not in the library but looks like a DBLP path (has a "DBLP:" prefix or
+// contains "/"), it is imported via MaybeAddDBLPEntry and *importedCount is
+// incremented. Returns "" when the key cannot be resolved at all.
+func resolveOrImportKey(rawKey string, importedCount *int) string {
+	canon := Library.MapEntryKey(rawKey)
+	if Library.EntryExists(canon) {
+		return canon
+	}
+	dblpKey := normalizeDblpKey(rawKey)
+	if existing := Library.LookupDBLPKey(dblpKey); existing != "" {
+		return existing
+	}
+	if strings.HasPrefix(rawKey, "DBLP:") || strings.Contains(rawKey, "/") {
+		if added := Library.MaybeAddDBLPEntry(dblpKey); added != "" {
+			*importedCount++
+			return added
+		}
+	}
+	return ""
+}
+
 func doMergeEntries(args []string) {
 	keys := cleanKeys(args)
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
-		target := Library.MapEntryKey(keys[len(keys)-1])
-		for _, alias := range keys[:len(keys)-1] {
+		importedCount := 0
+		resolvedKeys := make([]string, 0, len(keys))
+		for _, rawKey := range keys {
+			resolved := resolveOrImportKey(rawKey, &importedCount)
+			if resolved == "" {
+				fmt.Fprintf(os.Stderr, "Unknown key: %s\n", rawKey)
+				return
+			}
+			resolvedKeys = append(resolvedKeys, resolved)
+		}
+		if importedCount > 1 {
+			fmt.Fprintln(os.Stderr, "Error: -merge_entries accepts at most one not-yet-imported DBLP entry")
+			return
+		}
+		target := resolvedKeys[len(resolvedKeys)-1]
+		for _, alias := range resolvedKeys[:len(resolvedKeys)-1] {
 			Library.MergeEntries(alias, target)
 		}
 		doAllChecks(target)
@@ -653,6 +1073,17 @@ func doSetPreferredAlias(args []string) {
 	}
 }
 
+func doApplyScript() {
+	scriptPath := bibTeXFolder + bibTeXBaseName + ScriptFilePath
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "No script file found at %s\n", scriptPath)
+		return
+	}
+	if openLibraryToUpdate() {
+		Library.ApplyScript(scriptPath)
+	}
+}
+
 func doAddNameMapping(args []string) {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, bibTeXFolder, bibTeXBaseName)
@@ -667,7 +1098,7 @@ func main() {
 	baseFlag := flag.String("base", "", "path/basename of the library (required)")
 	flag.BoolVar(&forceWrite, "force_write", false, "force write even if unchanged")
 
-	flag.BoolVar(&cmdStep, "step", false, "pause for Enter after each entry in for-all loops")
+	flag.Var(&cmdStep, "step", "pause every N entries in for-all loops (default N=1 when flag is given)")
 
 	var cmdVersion bool
 	flag.BoolVar(&cmdVersion, "version", false, "print version and exit")
@@ -684,8 +1115,10 @@ func main() {
 		cmdFixAllEntries      bool
 		cmdFixDblpEntries     bool
 		cmdFixDblpFor         bool
-		cmdAddDblpEntry       bool
-		cmdAddKeyMapping      bool
+		cmdAddDblpEntry          bool
+		cmdExtendDblpCoverage    bool
+		cmdDblpWatch             bool
+		cmdAddKeyMapping         bool
 		cmdMergeEntries       bool
 		cmdAddNameMapping     bool
 		cmdSetPreferredAlias  bool
@@ -703,8 +1136,10 @@ func main() {
 		cmdCheckPdfs        bool
 		cmdLoadDblpXml        bool
 		cmdUpdateDblp         bool
-		cmdRepairDblpManifest bool
-		cmdDeleteGarbage      bool
+		cmdRepairDblpManifest        bool
+		cmdRebuildDblpCrossrefIndex  bool
+		cmdDeleteGarbage                bool
+		cmdApplyScript bool
 	)
 
 	flag.BoolVar(&cmdGet, "get", false, "generate local .bib from bib.config + .map in CWD")
@@ -721,6 +1156,8 @@ func main() {
 	flag.BoolVar(&cmdFixDblpFor, "fix_dblp_entries", false, "alias for -fix_dblp_entry")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "add one or more new entries from DBLP")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
+	flag.BoolVar(&cmdExtendDblpCoverage, "extend_dblp_coverage", false, "interactively associate DBLP keys with entries that have none")
+	flag.BoolVar(&cmdDblpWatch, "dblp_watch", false, "check watched persons/ORCIDs in watch.csv for missing publications")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mapping", false, "add key alias(es) to a canonical key")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mappings", false, "alias for -add_key_mapping")
 	flag.BoolVar(&cmdMergeEntries, "merge_entries", false, "merge entries into target")
@@ -741,8 +1178,23 @@ func main() {
 	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP file store")
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
 	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
+	flag.BoolVar(&cmdRebuildDblpCrossrefIndex, "rebuild_dblp_crossref_index", false, "rebuild DBLP crossref children index from stored data.json files")
 	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
 	flag.BoolVar(&cmdNoGarbageCleaning, "no_garbage_cleaning", false, "skip background cleanup of the DBLP trash folder")
+	flag.BoolVar(&cmdApplyScript, "apply_script", false, "evaluate group assignment rules from <base>.script")
+flag.BoolVar(&cmdAutoFixAlignTitles, "fix", false, "auto-accept all title/volume/edition alignment suggestions (use with -fix_all_dblp_entries)")
+
+	// Normalise "-step N" (space-separated) to "-step=N" before flag.Parse so
+	// that IsBoolFlag-style parsing handles "-step" (no value) correctly too.
+	for i := 1; i < len(os.Args)-1; i++ {
+		if os.Args[i] == "-step" || os.Args[i] == "--step" {
+			if _, err := strconv.Atoi(os.Args[i+1]); err == nil {
+				os.Args[i] = os.Args[i] + "=" + os.Args[i+1]
+				os.Args = append(os.Args[:i+1], os.Args[i+2:]...)
+				break
+			}
+		}
+	}
 	flag.Parse()
 	args := flag.Args()
 
@@ -764,8 +1216,6 @@ func main() {
 		args = filtered
 	}
 
-	Reporting.SetStepMode(cmdStep)
-
 	if cmdVersion {
 		os.Exit(0)
 	}
@@ -784,6 +1234,7 @@ func main() {
 	BibFile = bibTeXBaseName + BibFileExtension
 
 	Reporting = TInteraction{}
+	Reporting.SetStepSize(int(cmdStep))
 
 	loadBibTeXConfig(bibTeXFolder + bibTeXBaseName + ConfigFileExtension)
 	if backupFolder == "" {
@@ -829,6 +1280,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	if cmdRebuildDblpCrossrefIndex {
+		doRebuildDblpCrossrefIndex()
+		os.Exit(0)
+	}
+
 	if cmdDeleteGarbage {
 		des, err := os.ReadDir(dblpTrashFolder())
 		if err != nil || len(des) == 0 {
@@ -847,6 +1303,8 @@ func main() {
 
 	acquireInstanceLock()
 
+	maybeMigrateDbFile()
+	maybeMigrateDblpFolder()
 	connectToDatabase()
 
 	if !cmdGet && !cmdFindEntries && !cmdEntryKey && !cmdEntryKeyAlias && !cmdShowEntry {
@@ -908,7 +1366,7 @@ func main() {
 		requireNoDblpImport()
 		doFixDblpEntries()
 
-	case cmdFixDblpFor:
+case cmdFixDblpFor:
 		requireNoDblpImport()
 		if len(args) == 0 {
 			fmt.Fprintln(os.Stderr, "Usage: -fix_dblp_entry <key>...")
@@ -923,6 +1381,14 @@ func main() {
 			os.Exit(1)
 		}
 		doAddDblpEntry(args)
+
+	case cmdExtendDblpCoverage:
+		requireNoDblpImport()
+		doExtendDblpCoverage()
+
+	case cmdDblpWatch:
+		requireNoDblpImport()
+		doWatchDblp()
 
 	case cmdAddKeyMapping:
 		if len(args) < 2 {
@@ -1011,6 +1477,10 @@ func main() {
 	case cmdCheckPdfs:
 		doCheckPDFs()
 
+
+	case cmdApplyScript:
+		doApplyScript()
+
 	default:
 		if len(args) > 0 {
 			fmt.Fprintln(os.Stderr, "Unexpected arguments (did you forget a command flag?):", args)
@@ -1019,14 +1489,28 @@ func main() {
 		doDefaultRun()
 	}
 
+	Library.CheckDblpKeyMissingWarnings()
+
 	wroteFiles := false
 
-	if forceWrite || Library.pdfConfirmedOkModified {
-		Library.WritePDFConfirmedOkFile()
+	if forceWrite || Library.metadataModified {
+		Library.WriteMetadataFile()
+		wroteFiles = true
+	}
+	if forceWrite || Library.entryFlagsModified {
+		Library.WriteEntryFlagsFile()
 		wroteFiles = true
 	}
 	if forceWrite || Library.keyNonDoublesModified {
 		Library.WriteKeyNonDoublesFile()
+		wroteFiles = true
+	}
+	if forceWrite || Library.dblpParentModified {
+		Library.WriteDblpParentFile()
+		wroteFiles = true
+	}
+	if forceWrite || Library.dblpWaivedModified {
+		Library.WriteDblpWaivedFile()
 		wroteFiles = true
 	}
 	if forceWrite || Library.keyOldiesModified {

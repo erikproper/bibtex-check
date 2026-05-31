@@ -39,59 +39,36 @@ func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
 	}
 }
 
-// Still a major construction site.
-//
-// Needs the library as parameter as we need to access interacton from there .. and lookup additional things.
-//
-// SPLIT like the normalisers ...
-// Rethink this name ... "Field", since it may also work on the type ...
 func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRaw, currentRaw string) string {
 	current := l.MapFieldValue(field, currentRaw)
 	challenge := l.MapFieldValue(field, l.NormaliseFieldValue(field, challengeRaw))
 
-	// OK. The key, field, and challenge are needed here. But, current is likely to be derivable from l with key and field.
-	// But ... needs to be checked once done with the legacy migration.
-
-	// If the the challenge equals the current one, we can just return the current one.
 	if current == challenge {
 		return current
 	}
 
 	if field == "crossref" {
-		if current == challenge {
-			return current
-
-		} else {
-
-			sourceEntry := l.EntryString(current, "", "  ")
-			targetEntry := l.EntryString(challenge, "", "  ")
-
-			if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?", "Different crossrefs (%s, %s) for entries (%s, %s) that you want to merge.\nFirst entry:\n%s\nSecond entry:\n%s", current, challenge, key, challengeKey, sourceEntry, targetEntry) {
-				return l.MergeEntries(current, challenge)
-
-			} else {
-				return current
-
-			}
+		sourceEntry := l.EntryString(current, "", "  ")
+		targetEntry := l.EntryString(challenge, "", "  ")
+		if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?",
+			"Different crossrefs (%s, %s) for entries (%s, %s) that you want to merge.\nFirst entry:\n%s\nSecond entry:\n%s",
+			current, challenge, key, challengeKey, sourceEntry, targetEntry) {
+			return l.MergeEntries(current, challenge)
 		}
+		return current
 	}
 
 	if field == "modificationdate" || field == "creationdate" {
 		if current < challenge {
 			return current
-
-		} else {
-			return challenge
-
 		}
+		return challenge
 	}
 
-	// CHECK the Maybe variation. Need to do this smarter.
 	if field == "url" && l.IsRedundantURL(challenge, key) {
 		return ""
 	}
 
-	// DELETE later
 	if field == "groups" {
 		return current + ", " + challenge
 	}
@@ -100,94 +77,141 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return l.ResolveFileReferences(key, challengeKey)
 	}
 
-	// So we have a difference between the current value and the challenge.
-	// So, who is the target ...
-
 	if l.EntryFieldAliasHasTarget(key, field, current, challenge) {
-		// It is recorded that the challenge is the target over the current value.
-		// So, we can return the challenge as the target
-
 		return challenge
-
 	} else if l.EntryFieldAliasHasTarget(key, field, challenge, current) {
-		// It is recorded that the current value is the target over the challenge
-		// So, we can return the current value as the target
-
 		return current
+	}
 
-	} else {
-		// If no target for an alias is recorded, we need to ask the user ...
-		// And update the recorded challenges
-		// Note: this is an *update* as we may need to update this as a new target for other challenges as well.
+	// Full title beats a braced series abbreviation (e.g. "{ICDE}") in both directions.
+	if field == "booktitle" || field == "title" {
+		currentIsAbbrev := len(current) > 0 && current[0] == '{' && len(current)*3 < len(challenge)
+		challengeIsAbbrev := len(challenge) > 0 && challenge[0] == '{' && len(challenge)*3 < len(current)
+		if currentIsAbbrev {
+			l.UpdateEntryFieldAlias(key, field, current, challenge)
+			return challenge
+		}
+		if challengeIsAbbrev {
+			l.UpdateEntryFieldAlias(key, field, challenge, current)
+			return current
+		}
+	}
 
-		// NEED A SET HERE!!
-		options := TStringSetNew()
-		if field == EntryTypeField || field == "year" || field == "pages" || field == "author" || field == "editor" ||
-			field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {
-			options.Add("y", "n")
+	// Priority-based resolution with lineage tracking.
+	challengeSource := sourceFromChallengeKey(challengeKey)
+	currentRec := l.getLineage(key, field)
+	challengePriority := lineagePriorityOf(challengeSource)
+	currentPriority := lineagePriorityOf(currentRec.Source)
+
+	if challengePriority < currentPriority {
+		return current
+	}
+
+	// Equal or higher priority challenger: compare semantic content.
+	if TeXStringIndexer(current) == TeXStringIndexer(challenge) {
+		// For title/booktitle in library-to-library merges (no external source), brace structure
+		// is semantically significant — fall through to the user challenge rather than silently
+		// accepting either form.
+		if (field == TitleField || field == "booktitle") && challengeSource == "" {
+			// fall through
 		} else {
-			options.Add("Y", "y", "n", "N")
-		}
-		warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
-		question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
-		question += "Current entry:\n" + l.EntryString(key, "", "  ")
-		question += "Keep the value as is?"
-		// Don't like this via "Warning" ... should be a separate class
-		answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
-
-		if answer == "y" {
-			if field != PreferredAliasField {
-				l.UpdateEntryFieldAlias(key, field, challenge, current)
-			} else {
-				delete(l.KeyToKey, challenge)
+			// Semantically equal but textually different: keep our text, mark as intentionally diverged.
+			if challengeSource != "" {
+				l.setLineage(key, field, challengeSource, true)
 			}
-
 			return current
-
-		} else if answer == "n" {
-			if field != PreferredAliasField {
-				l.UpdateEntryFieldAlias(key, field, current, challenge)
-			} else {
-				delete(l.KeyToKey, current)
-			}
-
-			return challenge
-
-		} else if answer == "Y" {
-			if field != PreferredAliasField {
-				l.UpdateGenericFieldAlias(field, challenge, current)
-			} else {
-				delete(l.KeyToKey, challenge)
-			}
-
-			return current
-
-		} else if answer == "N" {
-			if field != PreferredAliasField {
-				l.UpdateGenericFieldAlias(field, current, challenge)
-			} else {
-				delete(l.KeyToKey, current)
-			}
-
-			return challenge
-
 		}
+	}
+
+	// Semantically different: auto-accept known-authoritative fields, otherwise ask.
+	if challengeSource != "" && dblpAutoAcceptFields.Contains(field) {
+		l.setLineage(key, field, challengeSource, false)
+		return challengeRaw
+	}
+
+	// -fix mode: auto-keep current for title/booktitle/volume/edition and record the
+	// entry-specific mapping so DBLP cannot re-challenge with the same old form.
+	if cmdAutoFixAlignTitles && (field == TitleField || field == "booktitle" || field == "volume" || field == "edition") {
+		l.UpdateEntryFieldAlias(key, field, challenge, current)
+		l.setLineage(key, field, challengeSource, true)
+		return current
+	}
+
+	options := TStringSetNew()
+	if field == EntryTypeField || field == "year" || field == "pages" || field == "author" || field == "editor" ||
+		field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {
+		options.Add("y", "n")
+	} else {
+		options.Add("Y", "y", "n", "N")
+	}
+	warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
+	question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
+	question += "Current entry:\n" + l.EntryString(key, "", "  ")
+	question += "Keep the value as is?"
+	answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
+
+	switch answer {
+	case "y":
+		if field != PreferredAliasField {
+			l.UpdateEntryFieldAlias(key, field, challenge, current)
+		} else {
+			delete(l.KeyToKey, challenge)
+		}
+		l.setLineage(key, field, challengeSource, true)
+		return current
+	case "n":
+		if field != PreferredAliasField {
+			l.UpdateEntryFieldAlias(key, field, current, challenge)
+		} else {
+			delete(l.KeyToKey, current)
+		}
+		l.setLineage(key, field, challengeSource, false)
+		return challenge
+	case "Y":
+		if field != PreferredAliasField {
+			l.UpdateGenericFieldAlias(field, challenge, current)
+		} else {
+			delete(l.KeyToKey, challenge)
+		}
+		l.setLineage(key, field, challengeSource, true)
+		return current
+	case "N":
+		if field != PreferredAliasField {
+			l.UpdateGenericFieldAlias(field, current, challenge)
+		} else {
+			delete(l.KeyToKey, current)
+		}
+		l.setLineage(key, field, challengeSource, false)
+		return challenge
 	}
 
 	return current
 }
 
-// If the current value is empty, then we can assign the alias.
 func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challenge, current string) string {
 	if field == "url" && l.IsRedundantURL(challenge, key) {
 		return ""
 	}
 
 	if current == "" {
+		if challenge != "" {
+			challengeSource := sourceFromChallengeKey(challengeKey)
+			if challengeSource != "" {
+				l.setLineage(key, field, challengeSource, false)
+			}
+		}
 		return challenge
-	} else if challenge == "" {
-		return current
-	} else {
-		return l.ResolveFieldValue(key, challengeKey, field, challenge, current)
 	}
+
+	if challenge == "" {
+		// A known-authoritative source asserting empty is allowed to clear the field.
+		challengeSource := sourceFromChallengeKey(challengeKey)
+		if challengeSource != "" && dblpKnownFields.Contains(field) {
+			l.setLineage(key, field, challengeSource, false)
+			return ""
+		}
+		return current
+	}
+
+	return l.ResolveFieldValue(key, challengeKey, field, challenge, current)
 }

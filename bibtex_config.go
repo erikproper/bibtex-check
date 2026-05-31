@@ -34,7 +34,7 @@ const (
 	NoKey = ""
 
 	BibFileExtension    = ".bib"
-	sqliteFileExtension = ".sqlite3"
+	cacheFileExtension  = ".cache"
 	ConfigFileExtension = ".config"
 	LockFileExtension   = ".lock"
 
@@ -43,21 +43,31 @@ const (
 	EntryFieldMappingsFilePath    = ".tables/filter_entry_field_mappings.csv"
 	GenericFieldMappingsFilePath  = ".tables/filter_generic_field_mappings.csv"
 	CrossFieldMappingsFilePath    = ".tables/filter_cross_field_mappings.csv"
-	KeyNonDoublesFilePath            = ".tables/key_non_doubles.csv"
-	KeyOldiesFilePath             = ".tables/key_oldies.csv"
-	KeyHintsFilePath              = ".tables/key_hints.csv"
-	ShortenMappingsFilePath       = "shorten_mappings.csv"
-	PDFConfirmedOkFilePath        = ".tables/pdf_confirmed_ok.csv"
+	StateNamesFilePath                = ".tables/filter_state_names.csv"
+	StateCountriesFilePath            = ".tables/filter_state_countries.csv"
+	CountryNamesFilePath              = ".tables/filter_country_names.csv"
+	BooktitleCountryNamesFilePath     = ".tables/filter_booktitle_country_names.csv"
+	KeyNonDoublesFilePath  = ".tables/key_non_doubles.csv"
+	KeyOldiesFilePath      = ".tables/key_oldies.csv"
+	KeyHintsFilePath       = ".tables/key_hints.csv"
+	WatchFilePath           = ".tables/watch.csv"
+	ScriptFilePath          = ".script"
+	DblpParentFilePath      = ".tables/dblp_parent.csv"
+	DblpWaivedFilePath      = ".tables/dblp_waived.csv"
+	EntryMetadataFilePath   = ".tables/entry_metadata.json"
 
-	// urls_ignore lives in the tables folder alongside other per-library CSVs.
+	ShortenMappingsFilePath = "shorten_mappings.csv"
+	EntryFlagsFilePath      = ".tables/entry_flags.csv"
+
 	URLsIgnoreFilePath = ".tables/urls_ignore.csv"
 	URLsFailedFilePath = "urls_failed.csv"
 
-	// Legacy paths checked as migration fallbacks when the tables location is absent.
-	URLsIgnoreLegacyFile    = "urls.ignore"
-	URLsIgnoreRootFilePath  = "urls_ignore.csv"
-
 	DefaultLanguage = "eng"
+)
+
+// Entry flag values stored in entry_flags.csv / the entry_flags SQLite table.
+const (
+	EntryFlagNoDBLPChildren = "no_dblp_children"
 )
 
 // When dealing with the resolution of ambiguities regarding fields of entries, we also want to treat the type of the entry as a field
@@ -142,7 +152,7 @@ func init() {
 	AddAllowedEntryFields(
 		"mastersthesis", "school", "type", "address", "issn", "isbn")
 	AddAllowedEntryFields(
-		"misc", "howpublished")
+		"misc", "howpublished", "crossref")
 	AddAllowedEntryFields(
 		"phdthesis", "school", "type", "address", "issn", "isbn")
 	AddAllowedEntryFields(
@@ -189,12 +199,13 @@ func init() {
 
 	// Refactor ...
 	BibTeXBookish.Add("proceedings", "book")
-	BibTeXCrossreffer.Add("inproceedings", "incollection", "inbook")
+	BibTeXCrossreffer.Add("inproceedings", "incollection", "inbook", "misc")
 	BibTeXCrossrefType = TStringMap{}
 	// Fill Crossreffer. Target must be Bookish
 	BibTeXCrossrefType["inproceedings"] = "proceedings"
 	BibTeXCrossrefType["incollection"] = "book"
 	BibTeXCrossrefType["inbook"] = "book"
+	BibTeXCrossrefType["misc"] = "misc"
 
 	BibTeXMustInheritFields.Add("booktitle", "year", "editor", "publisher", "volume", "number", "series",
 		"address", "month", "edition", "issn", "isbn", "address", "type", "organization")

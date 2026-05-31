@@ -82,12 +82,15 @@ func (l *TBibTeXLibrary) EntryAllowsForField(entry, field string) bool {
 
 func (l *TBibTeXLibrary) checkValueMapping(valueMap TStringMap, inverseMap TStringSetMap, keyety string) {
 	for source, target := range valueMap {
+		if source == target {
+			continue
+		}
 		if _, targetAlreadyUsedAsSource := valueMap[target]; targetAlreadyUsedAsSource {
 			l.Warning(WarningTargetAlreadyUsedAsSource+keyety, target)
 		}
 
 		if _, sourceAlreadyUsedAsTarget := inverseMap[source]; sourceAlreadyUsedAsTarget {
-			l.Warning(WarningSourceAlreadyUsedAsTarget, source)
+			l.Warning(WarningSourceAlreadyUsedAsTarget+keyety, source)
 		}
 	}
 }
@@ -116,6 +119,60 @@ func (l *TBibTeXLibrary) CheckFieldMappings() {
 	}
 
 	spinner.Stop()
+}
+
+// CheckEntryFieldMappingWinners verifies that every winner recorded in the
+// entry-field alias mappings still matches the entry's actual current field
+// value.  A mismatch means the bib file was edited after the mapping was
+// created without updating the mapping, so the old winner is now stale.
+//
+// Mismatches are fixed automatically: the actual value becomes the new winner,
+// the old winner becomes a challenger (via UpdateEntryFieldAlias, which also
+// cascade-updates every other challenger that pointed to the old winner).
+// Fixes are collected before any map mutation to avoid iteration side-effects.
+// Entries with an empty actual value (field deleted) are skipped.
+func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
+	l.Progress(ProgressCheckingEntryFieldMappingWinners)
+
+	type mismatch struct {
+		entry, field, winner, actual string
+	}
+	var fixes []mismatch
+	deletedMappings := 0
+
+	for entry, fieldMap := range l.EntryFieldSourceToTarget {
+		if !l.EntryExists(entry) {
+			for field, challengerMap := range fieldMap {
+				for challenger, winner := range challengerMap {
+					l.Warning(WarningEntryFieldMappingDeletedEntry, entry, field, challenger, winner)
+					deletedMappings++
+				}
+			}
+			continue
+		}
+
+		for field, challengerMap := range fieldMap {
+			actual := l.MapFieldValue(field, l.EntryFieldValueity(entry, field))
+			if actual == "" {
+				continue
+			}
+			seen := map[string]bool{}
+			for _, winner := range challengerMap {
+				if seen[winner] || winner == actual {
+					continue
+				}
+				seen[winner] = true
+				fixes = append(fixes, mismatch{entry, field, winner, actual})
+			}
+		}
+	}
+
+	for _, m := range fixes {
+		l.Warning(WarningEntryFieldMappingWinnerMismatch, m.entry, m.field, m.winner, m.actual)
+		l.UpdateEntryFieldAlias(m.entry, m.field, m.winner, m.actual)
+	}
+
+	l.Progress(ProgressEntryFieldMappingWinnersResult, len(fixes), deletedMappings)
 }
 
 /*
@@ -759,6 +816,7 @@ func (l *TBibTeXLibrary) CheckYear(entry *TBibTeXEntry) {
 	l.Warning(WarningBadYear, year, entry.Key)
 }
 
+
 func (l *TBibTeXLibrary) CheckURLDate(entry *TBibTeXEntry) {
 	date := entry.FieldValue("urldate")
 
@@ -794,10 +852,11 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 	key := l.MapEntryKey(keyRAW) // Dealias, while we are likely to do this immediately after a merge (for now)
 	// After merging all doubles, we can do this as part of the consistency check and CheckCrossref in particular, and then don't need to dealias.
 
-	if BibTeXCrossreffer.Contains(l.EntryType(key)) {
+	entryTypeForSplit := l.EntryType(key)
+	if BibTeXCrossreffer.Contains(entryTypeForSplit) && entryTypeForSplit != "misc" {
 		crossrefKey := l.EntryFieldValueity(l.MapEntryKey(key), "crossref")
 		if crossrefKey == "" {
-			entryType := l.EntryType(key)
+			entryType := entryTypeForSplit
 
 			bookTitle := l.EntryFieldValueity(l.MapEntryKey(key), "booktitle")
 			if bookTitle == "" {
@@ -847,6 +906,12 @@ func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {
 	if !IsValidKey(entry.Key) {
 		l.Warning(WarningInvalidKey, entry.Key)
 	}
+	if entryType := entry.EntryType(); entryType != "" {
+		if _, known := BibTeXAllowedEntryFields[entryType]; !known {
+			l.Error("Entry %s has unknown entry type %q — bib file writing disabled", entry.Key, entryType)
+			l.NoBibFileWriting = true
+		}
+	}
 }
 
 func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
@@ -875,7 +940,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 			crossrefDBLP = parentDBLP
 		}
 
-		if crossrefKey == "" {
+		if crossrefKey == "" && !l.HasMetadata(key, MetaPropDblpKeyMissing) {
 			l.Warning("Crossref entry type without a crossref %s", key)
 		}
 
@@ -883,14 +948,10 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossrefKey, key, entryDBLP)
 		}
 
-		// Is allowed ..
-		//if entryDBLP == "" && crossrefDBLP != "" {
-		//	l.Warning("Child entry %s does not have a dblp key, while the parent %s does have dblp key %s", key, crossrefKey, crossrefDBLP)
-		//}
 	}
 
-	// Add parent to child check for bookish
-	if BibTeXBookish.Contains(entryType) {
+	// Add parent to child check for bookish (suppressed by no_dblp_children flag).
+	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) && entryDBLP != "" {
 		l.Progress("Checking children of %s", entryDBLP)
 		l.ForEachChildOfDBLPKey(entryDBLP, func(childDBLP string) {
 			childKey := l.LookupDBLPKey(childDBLP)
@@ -901,6 +962,29 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 				l.MaybeAddDBLPChildEntry(childDBLP, key)
 			}
 		})
+
+		// Check that every library child of this DBLP-keyed parent also has a DBLP key.
+		if entryDBLP != "" {
+			forEachLibraryChildOf(key, func(childKey string) {
+				if l.EntryFieldValueity(childKey, DBLPField) == "" && !l.DblpWaived.Contains(childKey) {
+					if l.WarningYesNoQuestion(QuestionAddToDblpWaived, WarningNoDblpKeyForChild, childKey, key, entryDBLP) {
+						l.DblpWaived.Add(childKey)
+						l.dblpWaivedModified = true
+					}
+				}
+			})
+		}
+	}
+}
+
+func (l *TBibTeXLibrary) NormaliseEntryFields(entry *TBibTeXEntry) {
+	for field, current := range entry.Fields {
+		if field == EntryTypeField || field == LocalURLField || field == PreferredAliasField || current == "" {
+			continue
+		}
+		if normalised := l.NormaliseFieldValue(field, current); normalised != current {
+			l.setEntryField(entry, field, normalised)
+		}
 	}
 }
 
@@ -910,6 +994,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 
 		// CheckCrossref can lead to a merger of entries for now ...
 		if entry.Exists() && l.EntryExists(entry.Key) {
+			l.NormaliseEntryFields(entry)
 			l.CheckDOIPresence(entry)
 			l.CheckEPrint(entry)
 			l.CheckCrossref(entry)
@@ -920,8 +1005,6 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckURLRedundance(entry)
 			l.CheckURLDateNeed(entry)
 			l.CheckFileReference(entry)
-
-			// Simple conformity checks
 			l.CheckISSN(entry)
 			l.CheckISBN(entry)
 			l.CheckYear(entry)
@@ -935,11 +1018,23 @@ func (l *TBibTeXLibrary) CheckEntries() {
 	total := countBibEntries()
 	spinner := l.NewSpinner(ProgressCheckingConsistencyOfEntries)
 	done := 0
+	stepN := Reporting.StepSize()
+	questionCounter := 0
 
 	forEachBibEntryKey(func(key string) bool {
 		done++
 		spinner.Update(done, total)
+		l.ResetQuestionFlag()
 		l.CheckEntry(l.buildEntry(key))
+		if stepN > 0 && l.QuestionWasAsked() {
+			questionCounter++
+			if questionCounter >= stepN {
+				if l.AskContinueOrQuit() {
+					return false
+				}
+				questionCounter = 0
+			}
+		}
 		return true
 	})
 

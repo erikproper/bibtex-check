@@ -366,7 +366,7 @@ func (b *TBibTeXStream) FieldValue(value *string) bool {
 		return b.Number(value)
 	}
 
-	return false
+//	return false
 }
 
 // Forced FieldValue

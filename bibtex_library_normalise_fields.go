@@ -330,9 +330,9 @@ func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 func init() {
 	// Define the Normaliser functions.
 	fieldNormalisers = TFieldNormalisers{}
-	fieldNormalisers["address"] = NormaliseLiteralString
+	fieldNormalisers["address"] = NormaliseAddressValue
 	fieldNormalisers["author"] = NormaliseNamesString
-	fieldNormalisers["booktitle"] = NormaliseTitleString
+	fieldNormalisers["booktitle"] = NormaliseBooktitleValue
 	fieldNormalisers["doi"] = NormaliseDOIValue
 	fieldNormalisers["editor"] = NormaliseNamesString
 	fieldNormalisers["howpublished"] = NormaliseLiteralString
