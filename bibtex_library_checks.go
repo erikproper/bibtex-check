@@ -137,7 +137,11 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 	type mismatch struct {
 		entry, field, winner, actual string
 	}
+	type redundant struct {
+		entry, field, challenger string
+	}
 	var fixes []mismatch
+	var redundants []redundant
 	deletedMappings := 0
 
 	for entry, fieldMap := range l.EntryFieldSourceToTarget {
@@ -157,12 +161,19 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 				continue
 			}
 			seen := map[string]bool{}
-			for _, winner := range challengerMap {
+			for challenger, winner := range challengerMap {
 				if seen[winner] || winner == actual {
-					continue
+					seen[winner] = true
+				} else {
+					seen[winner] = true
+					fixes = append(fixes, mismatch{entry, field, winner, actual})
 				}
-				seen[winner] = true
-				fixes = append(fixes, mismatch{entry, field, winner, actual})
+				// A challenger that now normalises to the actual value is
+				// redundant: the name_mapping makes it equivalent to the
+				// winner, so the losing_field_values entry can be deleted.
+				if l.NormaliseFieldValue(field, challenger) == actual {
+					redundants = append(redundants, redundant{entry, field, challenger})
+				}
 			}
 		}
 	}
@@ -170,6 +181,19 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 	for _, m := range fixes {
 		l.Warning(WarningEntryFieldMappingWinnerMismatch, m.entry, m.field, m.winner, m.actual)
 		l.UpdateEntryFieldAlias(m.entry, m.field, m.winner, m.actual)
+	}
+
+	if len(redundants) > 0 {
+		tx, err := db.Begin()
+		if err == nil {
+			for _, r := range redundants {
+				tx.Exec(`DELETE FROM losing_field_values WHERE entry_key = ? AND field = ? AND value = ?`,
+					r.entry, r.field, r.challenger)
+				delete(l.EntryFieldSourceToTarget[r.entry][r.field], r.challenger)
+			}
+			tx.Commit()
+			l.entryFieldMappingsModified = true
+		}
 	}
 
 	l.Progress(ProgressEntryFieldMappingWinnersResult, len(fixes), deletedMappings)
