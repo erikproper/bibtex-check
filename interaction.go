@@ -244,7 +244,9 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 // The warning message should provide the formatting.
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
 	r.questionWasAsked = true
-	r.Warning(warning, context...)
+	if warning != "" {
+		r.Warning(warning, context...)
+	}
 
 	optionSet := "("
 	separator := ""

@@ -35,6 +35,7 @@ const (
 
 	BibFileExtension     = ".bib"
 	KeysFileExtension    = ".keys"    // pull-mode key/alias map (replaces legacy .map)
+	HarvestLogExtension  = ".harvest" // delta log for repeated harvest of the same source bib
 	cacheFileExtension   = ".sqlite3"
 	FoldersFileExtension = ".folders" // bootstrap paths file (global_folder, cache_folder)
 	ConfigFileExtension  = ".config"  // reserved for sync-mode definitions (step 13.2+)

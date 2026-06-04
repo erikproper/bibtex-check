@@ -85,6 +85,7 @@ type (
 		harvestNameAliases                bool
 		localURLBase                      string // when non-empty, prepended to local-url values in EntryString
 		capturedDBLPEntry                 *TBibTeXEntry
+		capturedHarvestEntries            *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB
 		NoCrossFieldMappingsFileWriting   bool
 		URLsIgnore                        TStringSet
 		ignoreIllegalFields               bool
@@ -1090,8 +1091,14 @@ func (l *TBibTeXLibrary) FoundDoubles() bool {
 var uniqueID int
 
 // StartRecordingLibraryEntry begins recording a parsed BibTeX entry.
-// When capturedDBLPEntry is active the entry is captured in memory instead of the DB.
+// When capturedHarvestEntries is active, each entry is captured in memory via
+// capturedDBLPEntry instead of the DB. When capturedDBLPEntry is active alone,
+// a single entry is captured (DBLP URL fetch mode).
 func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool {
+	if l.capturedHarvestEntries != nil {
+		l.capturedDBLPEntry = &TBibTeXEntry{Key: key, Fields: map[string]string{EntryTypeField: entryType}}
+		return true
+	}
 	if l.capturedDBLPEntry != nil {
 		l.capturedDBLPEntry.Key = key
 		l.capturedDBLPEntry.Fields[EntryTypeField] = entryType
@@ -1181,8 +1188,17 @@ func (l *TBibTeXLibrary) CheckIfFieldsAreAllowed(entry *TBibTeXEntry, violationH
 }
 
 // FinishRecordingLibraryEntry completes parsing of a BibTeX entry.
-// When capturedDBLPEntry is active the entry is already in memory; skip all DB-dependent steps.
+// In harvest mode (capturedHarvestEntries non-nil), appends the finished entry to
+// the slice and clears the per-entry scratch. In DBLP URL fetch mode
+// (capturedDBLPEntry set alone), the entry is already in memory; skip DB steps.
 func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
+	if l.capturedHarvestEntries != nil {
+		if l.capturedDBLPEntry != nil {
+			*l.capturedHarvestEntries = append(*l.capturedHarvestEntries, *l.capturedDBLPEntry)
+			l.capturedDBLPEntry = nil
+		}
+		return true
+	}
 	if l.capturedDBLPEntry != nil {
 		return true
 	}

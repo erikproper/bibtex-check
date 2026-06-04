@@ -255,13 +255,19 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	// resolves correctly when children call back into MaybeAddDBLPEntry for their crossref.
 	entryType := l.EntryFieldValueity(key, EntryTypeField)
 	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) {
-		l.ForEachChildOfDBLPKey(DBLPKey, func(childDBLP string) {
-			if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
-				l.SetEntryFieldValue(childKey, "crossref", key)
-			} else {
-				l.MaybeAddDBLPChildEntry(childDBLP, key)
+		children := readDblpCrossrefChildren(DBLPKey)
+		if len(children) > 0 {
+			spinner := l.NewSpinner(fmt.Sprintf("Adding %d children of %s", len(children), DBLPKey))
+			for i, childDBLP := range children {
+				if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
+					l.SetEntryFieldValue(childKey, "crossref", key)
+				} else {
+					l.MaybeAddDBLPChildEntry(childDBLP, key)
+				}
+				spinner.Update(i+1, len(children))
 			}
-		})
+			spinner.Stop()
+		}
 	}
 
 	return key

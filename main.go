@@ -61,6 +61,8 @@ var (
 	cmdStep               stepFlag
 	cmdNoGarbageCleaning  bool
 	cmdAutoFixAlignTitles bool
+	cmdTrustHints         bool // -trust_hints: auto-accept key-hint matches in harvest
+	cmdCollectKeys        bool // -collect_keys: add source keys to hints DB when unambiguous
 )
 
 func reportCacheMode() {
@@ -1243,6 +1245,8 @@ func main() {
 	flag.BoolVar(&forceWrite, "force_write", false, "force write even if unchanged")
 
 	flag.Var(&cmdStep, "step", "pause every N entries in for-all loops (default N=1 when flag is given)")
+	flag.BoolVar(&cmdTrustHints, "trust_hints", false, "harvest: auto-accept key-hint matches without confirmation")
+	flag.BoolVar(&cmdCollectKeys, "collect_keys", false, "harvest: add source entry keys to the hints DB when unambiguous")
 
 	var cmdVersion bool
 	flag.BoolVar(&cmdVersion, "version", false, "print version and exit")
@@ -1292,7 +1296,9 @@ func main() {
 		cmdImport tableListFlag
 
 		cmdImportAllCSV bool // legacy migration helper; kept for migrate.sh compat
-		cmdImportBib                      bool
+		cmdImportBib    bool
+
+		cmdHarvest bool // -harvest: harvest entries from a bib file (path from args) or stdin
 	)
 
 	flag.BoolVar(&cmdSync, "sync", false, "sync library to bib file(s) via exchange config; optional arg narrows to one file")
@@ -1341,6 +1347,7 @@ func main() {
 	flag.Var(&cmdImport, "import", "import tables from <base>.tables/, replace-all with confirmation (bare = all; or comma-separated table names)")
 	flag.BoolVar(&cmdImportAllCSV, "import_all_csv", false, "import all mapping CSVs (migration helper for migrate.sh)")
 	flag.BoolVar(&cmdImportBib, "import_bib", false, "import a bib file into the DB (requires filename argument; use to initialise or reinitialise bib_entries)")
+	flag.BoolVar(&cmdHarvest, "harvest", false, "interactively ingest entries from a bib file (path from args) or stdin into the library")
 
 			flag.BoolVar(&cmdAutoFixAlignTitles, "fix", false, "auto-accept all title/volume/edition alignment suggestions (use with -update_all_dblp_entries)")
 
@@ -1476,7 +1483,6 @@ func main() {
 
 	switch {
 	case cmdSync:
-		Reporting.SetInteractionOff()
 		filter := ""
 		if len(args) > 0 {
 			filter = args[0]
@@ -1701,6 +1707,13 @@ func main() {
 			os.Exit(1)
 		}
 		doImportBib(args[0])
+
+	case cmdHarvest:
+		path := ""
+		if len(args) > 0 {
+			path = args[0]
+		}
+		doHarvest(path)
 
 	default:
 		if len(args) > 0 {

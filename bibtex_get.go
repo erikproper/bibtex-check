@@ -1096,8 +1096,8 @@ func writeFullSync(cfg TBibGetConfig, baseDir string) {
 	}
 
 	if bibWasEdited {
-		// The sync bib was edited externally (e.g. BibDesk): in interactive mode ask
-		// before re-importing; in scripted/silenced mode skip and just overwrite.
+		// The sync bib was edited externally (e.g. BibDesk): ask before re-importing;
+		// in non-interactive mode (scripted / piped) skip re-import and just overwrite.
 		doReimport := false
 		if !Reporting.InteractionIsOff() {
 			doReimport = Reporting.ConfirmAction(fmt.Sprintf("Sync bib was edited externally — re-import %s?", outPath))
@@ -1203,7 +1203,7 @@ func doSync(filter string) {
 			os.Exit(1)
 		}
 		files = append(files, fileEntry{cfg})
-		if cfg.Mode == "full" {
+		if cfg.Mode == "full" || cfg.Mode == "harvest" {
 			needsWrite = true
 		}
 	}
@@ -1222,6 +1222,8 @@ func doSync(filter string) {
 		switch f.cfg.Mode {
 		case "full":
 			writeFullSync(f.cfg, "")
+		case "harvest":
+			runHarvestSync(f.cfg, "")
 		default: // "pull"
 			writePullSync(f.cfg, "")
 		}

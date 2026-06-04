@@ -68,6 +68,15 @@ const (
 	WarningDblpKeyNotInXML                  = "DBLP key %s for entry %s not in local XML (missing since %s)."
 	WarningExtendDblpCandidatesFound        = "Entry %s has no DBLP key — found %d candidate(s)"
 	QuestionExtendDblpCoverageChoose        = "Which DBLP entry matches? (0 = none)"
+
+	QuestionHarvestKeyMatch            = "Merge with this library entry?"
+	QuestionHarvestLibraryChoice       = "Which library entry matches? (0 = none)"
+	QuestionHarvestAction              = "No match found — add to library or skip? (a=add, s=skip, w=waive, q=quit)"
+	QuestionHarvestDblpChoose          = "Which DBLP entry matches? (0 = none)"
+	WarningHarvestDblpCandidatesFound  = "No DBLP key on source entry '%s' — found %d candidate(s)"
+	ProgressHarvestParsed              = "harvest: %d entr%s parsed from %s"
+	ProgressHarvestSkipped             = "harvest: no entries found in source bib"
+
 	ProgressFixedParentType                 = "Auto-fixed parent type for %s: %s → %s (required by child %s)"
 	ProgressFixedChildYear                  = "Auto-fixed year for %s: %s → %s (aligned to parent)"
 

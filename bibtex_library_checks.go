@@ -15,6 +15,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -976,16 +977,20 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 
 	// Add parent to child check for bookish (suppressed by no_dblp_children flag).
 	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) && entryDBLP != "" {
-		l.Progress("Checking children of %s", entryDBLP)
-		l.ForEachChildOfDBLPKey(entryDBLP, func(childDBLP string) {
-			childKey := l.LookupDBLPKey(childDBLP)
-
-			if childKey != "" {
-				l.SetEntryFieldValue(childKey, "crossref", key)
-			} else {
-				l.MaybeAddDBLPChildEntry(childDBLP, key)
+		children := readDblpCrossrefChildren(entryDBLP)
+		if len(children) > 0 {
+			spinner := l.NewSpinner(fmt.Sprintf("Checking %d children of %s", len(children), entryDBLP))
+			for i, childDBLP := range children {
+				childKey := l.LookupDBLPKey(childDBLP)
+				if childKey != "" {
+					l.SetEntryFieldValue(childKey, "crossref", key)
+				} else {
+					l.MaybeAddDBLPChildEntry(childDBLP, key)
+				}
+				spinner.Update(i+1, len(children))
 			}
-		})
+			spinner.Stop()
+		}
 
 		// Check that every library child of this DBLP-keyed parent also has a DBLP key.
 		if entryDBLP != "" {
