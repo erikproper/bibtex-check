@@ -28,12 +28,14 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
-	"strconv"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // TBibGetConfig mirrors the sync config JSON file.
@@ -425,26 +427,50 @@ func readHyphenations() THyphenations {
 	return result
 }
 
+// splitWordWrappers separates leading non-letter characters (e.g. `{`), the
+// bare alphabetic core, and trailing non-letter characters (e.g. `},`).
+func splitWordWrappers(word string) (prefix, bare, suffix string) {
+	start := 0
+	for start < len(word) {
+		r, size := utf8.DecodeRuneInString(word[start:])
+		if unicode.IsLetter(r) {
+			break
+		}
+		start += size
+	}
+	end := len(word)
+	for end > start {
+		r, size := utf8.DecodeLastRuneInString(word[:end])
+		if unicode.IsLetter(r) {
+			break
+		}
+		end -= size
+	}
+	return word[:start], word[start:end], word[end:]
+}
+
 // applyHyphenation replaces words in value with their \- hinted forms.
-// Matching is case-insensitive; the case of the first letter of each word is preserved.
+// Leading/trailing wrapper characters (braces, punctuation) are preserved.
+// Matching is case-insensitive; the case of the first letter is preserved.
 func applyHyphenation(h THyphenations, value string) string {
 	if len(h) == 0 {
 		return value
 	}
 	words := strings.Fields(value)
 	for i, word := range words {
-		lower := strings.ToLower(word)
-		if hinted, ok := h[lower]; ok {
-			if len(word) > 0 && word[0] >= 'A' && word[0] <= 'Z' {
-				// Capitalise first letter of the hinted form.
-				runes := []rune(hinted)
-				if len(runes) > 0 && runes[0] >= 'a' && runes[0] <= 'z' {
-					runes[0] -= 'a' - 'A'
+		prefix, bare, suffix := splitWordWrappers(word)
+		if bare == "" {
+			continue
+		}
+		if hinted, ok := h[strings.ToLower(bare)]; ok {
+			if len(bare) > 0 && unicode.IsUpper(rune(bare[0])) {
+				r := []rune(hinted)
+				if len(r) > 0 && unicode.IsLower(r[0]) {
+					r[0] = unicode.ToUpper(r[0])
+					hinted = string(r)
 				}
-				words[i] = string(runes)
-			} else {
-				words[i] = hinted
 			}
+			words[i] = prefix + hinted + suffix
 		}
 	}
 	return strings.Join(words, " ")
