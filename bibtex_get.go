@@ -50,6 +50,7 @@ type TBibGetConfig struct {
 	ShortenFile   string `json:"shorten_file"`
 	IncludeURL    bool   `json:"include_url"`
 	UrldateAsNote bool   `json:"urldate_as_note"`
+	Hyphenations  bool   `json:"hyphenations"`   // insert \- hints from global_folder/hyphenations.csv
 }
 
 // migrateRawConfigFileNames migrates "file_name" → "file_names" in a raw JSON map.
@@ -224,6 +225,7 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 		return nil, false
 	}
 	var stmts []TSelectStatement
+	var badLines []string
 	processFile(selectPath, func(line string) {
 		line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ";"))
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -231,6 +233,7 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 		}
 		idx := strings.IndexByte(line, '"')
 		if idx < 0 {
+			badLines = append(badLines, line)
 			return
 		}
 		kind := strings.TrimSpace(line[:idx])
@@ -254,8 +257,13 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 		}
 		if kind != "" && len(values) > 0 {
 			stmts = append(stmts, TSelectStatement{kind, values})
+		} else {
+			badLines = append(badLines, line)
 		}
 	})
+	for _, bl := range badLines {
+		fmt.Fprintf(os.Stderr, "WARNING: %s: unrecognised line (expected: kind \"value\";): %q\n", selectPath, bl)
+	}
 	return stmts, true
 }
 
@@ -372,6 +380,71 @@ func mergeShortenMappings(base, override TShortenMappings) TShortenMappings {
 	return result
 }
 
+// THyphenations maps lowercase word → word-with-\- hints (as stored in hyphenations.csv).
+type THyphenations map[string]string
+
+// readHyphenations loads hyphenations.csv from global_folder.
+// Each line: word;word\-with\-hints
+// Validation: stripping \- from the hinted form must reproduce the original word.
+func readHyphenations() THyphenations {
+	result := THyphenations{}
+	path := globalFolder + "hyphenations.csv"
+	processFile(path, func(line string) {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			return
+		}
+		parts := strings.SplitN(line, csvDelimiter, 2)
+		if len(parts) != 2 {
+			return
+		}
+		word := strings.TrimSpace(parts[0])
+		hinted := strings.TrimSpace(parts[1])
+		if word == "" || hinted == "" {
+			return
+		}
+		stripped := strings.ReplaceAll(hinted, `\-`, "")
+		if !strings.EqualFold(stripped, word) {
+			fmt.Fprintf(os.Stderr, "WARNING: hyphenations.csv: stripping \\- from %q yields %q, not %q — skipped\n", hinted, stripped, word)
+			return
+		}
+		result[strings.ToLower(word)] = hinted
+	})
+	return result
+}
+
+// applyHyphenation replaces words in value with their \- hinted forms.
+// Matching is case-insensitive; the case of the first letter of each word is preserved.
+func applyHyphenation(h THyphenations, value string) string {
+	if len(h) == 0 {
+		return value
+	}
+	words := strings.Fields(value)
+	for i, word := range words {
+		lower := strings.ToLower(word)
+		if hinted, ok := h[lower]; ok {
+			if len(word) > 0 && word[0] >= 'A' && word[0] <= 'Z' {
+				// Capitalise first letter of the hinted form.
+				runes := []rune(hinted)
+				if len(runes) > 0 && runes[0] >= 'a' && runes[0] <= 'z' {
+					runes[0] -= 'a' - 'A'
+				}
+				words[i] = string(runes)
+			} else {
+				words[i] = hinted
+			}
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// hyphenateFields is the set of BibTeX fields where \- hints are applied.
+var hyphenateFields = func() TStringSet {
+	s := TStringSetNew()
+	s.Add("title", "booktitle", "journal", "publisher", "series", "note",
+		"school", "institution", "organization", "howpublished", "type")
+	return s
+}()
+
 // biberMonth maps full month names to biber abbreviations.
 var biberMonth = map[string]string{
 	"January":   "jan",
@@ -432,6 +505,7 @@ func (l *TBibTeXLibrary) entryGetString(
 	canonicalKey, outputKey, crossrefLocalKey string,
 	cfg TBibGetConfig,
 	shorten TShortenMappings,
+	hyphenations THyphenations,
 ) string {
 	entry := loadEntryFromDb(canonicalKey)
 	if !entry.Exists() {
@@ -500,6 +574,9 @@ func (l *TBibTeXLibrary) entryGetString(
 		}
 		if cfg.Shorten {
 			value = applyShorten(shorten, field, value)
+		}
+		if cfg.Hyphenations && hyphenateFields.Contains(field) {
+			value = applyHyphenation(hyphenations, value)
 		}
 
 		result += FormatBibTeXFieldAssignment("", field, l.MapEntryFieldValue(canonicalKey, field, value))
@@ -623,12 +700,12 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 		if len(opts) > 0 {
 			optStr = " [" + strings.Join(opts, ", ") + "]"
 		}
-		Library.Progress("Sync pull: %s%s", cfg.FileName, optStr)
-		Library.Progress("  Keys  : %d entr%s from %s", len(pairs), map[bool]string{true: "y", false: "ies"}[len(pairs) == 1], mapFilePath+KeysFileExtension)
+		dbInteraction.Progress("Sync pull: %s%s", cfg.FileName, optStr)
+		dbInteraction.Progress("  Keys  : %d entr%s from %s", len(pairs), map[bool]string{true: "y", false: "ies"}[len(pairs) == 1], mapFilePath+KeysFileExtension)
 		if selectFileFound {
-			Library.Progress("  Select: %d statement(s) → %d extra entr%s from %s", len(selectStmts), len(extraCanonicals), map[bool]string{true: "y", false: "ies"}[len(extraCanonicals) == 1], mapFilePath+".select")
+			dbInteraction.Progress("  Select: %d statement(s) → %d extra entr%s from %s", len(selectStmts), len(extraCanonicals), map[bool]string{true: "y", false: "ies"}[len(extraCanonicals) == 1], mapFilePath+".select")
 		} else {
-			Library.Progress("  Select: %s not found (no .select file)", mapFilePath+".select")
+			dbInteraction.Progress("  Select: %s not found (no .select file)", mapFilePath+".select")
 		}
 	}
 
@@ -639,6 +716,11 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 			localPath := resolveRelative(cfg.ShortenFile)
 			shorten = mergeShortenMappings(shorten, readShortenMappingsFile(localPath))
 		}
+	}
+
+	var hyphenations THyphenations
+	if cfg.Hyphenations {
+		hyphenations = readHyphenations()
 	}
 
 	// Build canonical->outputKey index from explicit .keys pairs.
@@ -733,7 +815,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 			}
 			crossrefLocal = effectiveLocalKey(resolvedCrossref)
 		}
-		w.WriteString(Library.entryGetString(canonical, outputKey, crossrefLocal, cfg, shorten))
+		w.WriteString(Library.entryGetString(canonical, outputKey, crossrefLocal, cfg, shorten, hyphenations))
 		w.WriteString("\n")
 	}
 
@@ -752,20 +834,20 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 	// Bookish entries: explicit .keys pairs then .select extras.
 	for _, p := range pairs {
 		if BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
-			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", cfg, shorten))
+			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", cfg, shorten, hyphenations))
 			w.WriteString("\n")
 		}
 	}
 	for _, p := range extraPairs {
 		if BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
-			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", cfg, shorten))
+			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", cfg, shorten, hyphenations))
 			w.WriteString("\n")
 		}
 	}
 
 	// Auto-added crossref parents.
 	for _, ap := range autoParents {
-		w.WriteString(Library.entryGetString(ap.canonicalKey, ap.localKey, "", cfg, shorten))
+		w.WriteString(Library.entryGetString(ap.canonicalKey, ap.localKey, "", cfg, shorten, hyphenations))
 		w.WriteString("\n")
 	}
 
@@ -984,15 +1066,18 @@ func writeFullSync(cfg TBibGetConfig, baseDir string) {
 	}
 
 	if bibWasEdited {
-		// The sync bib was edited externally (e.g. BibDesk): ask before re-importing,
-		// since BibDesk may have touched the file on open (e.g. local_url → bdsk field
-		// translation) without any meaningful content change, and a concurrent bib.merge
-		// would lose its work if we blindly re-imported.
-		doReimport := Reporting.ConfirmAction(fmt.Sprintf("Sync bib was edited externally — re-import %s?", outPath))
+		// The sync bib was edited externally (e.g. BibDesk): in interactive mode ask
+		// before re-importing; in scripted/silenced mode skip and just overwrite.
+		doReimport := false
+		if !Reporting.InteractionIsOff() {
+			doReimport = Reporting.ConfirmAction(fmt.Sprintf("Sync bib was edited externally — re-import %s?", outPath))
+		} else {
+			dbInteraction.Progress("Sync bib edited externally — overwriting without re-import: %s", outPath)
+		}
 		if doReimport {
-			Reporting.Progress("Re-importing edited sync bib: %s", outPath)
+			dbInteraction.Progress("Re-importing edited sync bib: %s", outPath)
 			if !parseSyncBibFile(outPath) {
-				Reporting.Warning("Re-import failed for %s — skipping write", outPath)
+				fmt.Fprintf(os.Stderr, "WARNING: re-import failed for %s — skipping write\n", outPath)
 				return
 			}
 			// Re-collect entry types from the freshly-parsed DB and regenerate content.
@@ -1004,7 +1089,7 @@ func writeFullSync(cfg TBibGetConfig, baseDir string) {
 		}
 	}
 
-	Reporting.Progress(ProgressWritingGetBib, outPath)
+	dbInteraction.Progress("Sync full: %s → %s (%d entries)", cfg.FileName, outPath, len(entryTypes))
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot create output directory:", err)
 		os.Exit(1)

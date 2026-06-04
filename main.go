@@ -51,7 +51,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.3"
+const AppVersion = "24.10"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1335,7 +1335,7 @@ func main() {
 	flag.StringVar(&repairBibPath, "repair_bib", "", "path to a reference .bib file for -repair_garbled_names (non-DBLP entries)")
 	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
 	flag.BoolVar(&cmdNoGarbageCleaning, "no_garbage_cleaning", false, "skip background cleanup of the DBLP trash folder")
-	flag.BoolVar(&cmdApplyScript, "apply_scripts", false, "evaluate group assignment rules from <base>.scripts/entry_actions")
+	flag.BoolVar(&cmdApplyScript, "do_entry_actions", false, "evaluate group assignment rules from <base>.scripts/entry_actions")
 	// Unified table export / import (v23.0)
 	flag.Var(&cmdExport, "export", "export tables to <base>.tables/ (bare = all; or comma-separated table names)")
 	flag.Var(&cmdImport, "import", "import tables from <base>.tables/, replace-all with confirmation (bare = all; or comma-separated table names)")

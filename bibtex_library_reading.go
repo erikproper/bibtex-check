@@ -12,40 +12,69 @@
 
 package main
 
-import "strings"
+import (
+	"fmt"
+	"os"
+	"strings"
+)
 
-// TWatchEntry is one line from watch.csv describing a person or ORCID to watch.
+// TWatchEntry is one entry from the watch script file describing a person or ORCID to watch.
 // EntryType is "name" (canonical DBLP author name) or "orcid".
-// Value is the name or ORCID string. Tag is a human-readable label.
+// Value is the name or ORCID string.
 type TWatchEntry struct {
 	EntryType string
 	Value     string
-	Tag       string
+	Tag       string // unused in the new script format; kept for caller compatibility
 }
 
-// ReadWatchFile parses watch.csv, skipping blank lines and lines starting with '#'.
-// Each data line must be: tag;type;value  (type = "name" or "orcid").
+// ReadWatchFile parses the watch script file (ErikProper.scripts/watch).
+// Format is the same script style as .select files:
+//
+//	name  "Canonical Author Name";
+//	orcid "0000-0001-2345-6789";
+//
+// Blank lines and lines starting with # are ignored.
 func ReadWatchFile(path string) []TWatchEntry {
-	data := readIndexFile(path)
+	if !FileExists(path) {
+		return nil
+	}
 	var entries []TWatchEntry
-	for _, line := range data {
-		if strings.HasPrefix(line, "#") {
-			continue
+	var badLines []string
+	processFile(path, func(line string) {
+		line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ";"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			return
 		}
-		parts := strings.SplitN(line, ";", 3)
-		if len(parts) < 3 {
-			continue
+		idx := strings.IndexByte(line, '"')
+		if idx < 0 {
+			badLines = append(badLines, line)
+			return
 		}
-		tag := strings.TrimSpace(parts[0])
-		wType := strings.TrimSpace(parts[1])
-		if wType != "name" && wType != "orcid" {
-			continue
+		kind := strings.TrimSpace(line[:idx])
+		if kind != "name" && kind != "orcid" {
+			badLines = append(badLines, line)
+			return
 		}
-		value := strings.TrimSpace(parts[2])
-		if value == "" {
-			continue
+		rest := line[idx:]
+		for {
+			start := strings.IndexByte(rest, '"')
+			if start < 0 {
+				break
+			}
+			rest = rest[start+1:]
+			end := strings.IndexByte(rest, '"')
+			if end < 0 {
+				break
+			}
+			v := strings.TrimSpace(rest[:end])
+			if v != "" {
+				entries = append(entries, TWatchEntry{EntryType: kind, Value: v})
+			}
+			rest = rest[end+1:]
 		}
-		entries = append(entries, TWatchEntry{EntryType: wType, Value: value, Tag: tag})
+	})
+	for _, bl := range badLines {
+		fmt.Fprintf(os.Stderr, "WARNING: %s: unrecognised line (expected: name/orcid \"value\";): %q\n", path, bl)
 	}
 	return entries
 }

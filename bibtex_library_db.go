@@ -50,6 +50,7 @@ var (
 	entryModTrackingActive bool
 	entryModified          bool
 	dbWriteSessionActive   bool
+	changesAtSessionOpen   int64 // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
 )
 
 // --- entry cache ---
@@ -698,6 +699,7 @@ func prepareWorkingDatabase() bool {
 	// In sync: session markers confirm a clean previous close AND sizes match.
 	if wErr == nil && writeSessionIsClean() && wInfo.Size() == hInfo.Size() {
 		markWriteSessionOpen()
+		db.QueryRow(`SELECT total_changes()`).Scan(&changesAtSessionOpen)
 		dbWriteSessionActive = true
 		return true
 	}
@@ -712,6 +714,7 @@ func prepareWorkingDatabase() bool {
 	}
 	reopenDb(working)
 	markWriteSessionOpen()
+	db.QueryRow(`SELECT total_changes()`).Scan(&changesAtSessionOpen)
 	dbWriteSessionActive = true
 	return true
 }
@@ -719,6 +722,7 @@ func prepareWorkingDatabase() bool {
 // finaliseWorkingDatabase copies the working database back to the home path,
 // creates a timestamped backup of the previous home copy, and writes a SQL dump.
 // Called at the end of main after all writes are flushed.
+// Skips the copy entirely when no real data was written (only session markers).
 func finaliseWorkingDatabase() {
 	if !dbWriteSessionActive || !dbIsolationActive() {
 		return
@@ -726,10 +730,20 @@ func finaliseWorkingDatabase() {
 	home := dbHomePath()
 	working := dbPath()
 
-	// Mark session closed in the working DB before flushing so the next run
-	// can confirm a clean state without relying on file mtime comparison.
+	// Mark session closed and check whether anything real was written.
+	// total_changes() is cumulative for this connection; changesAtSessionOpen was
+	// recorded right after markWriteSessionOpen(). The close marker itself accounts
+	// for one more change, so if total_changes() == changesAtSessionOpen+1, only
+	// session markers were written — no need to copy the working DB back to home.
 	if db != nil {
 		markWriteSessionClosed()
+		var totalChanges int64
+		db.QueryRow(`SELECT total_changes()`).Scan(&totalChanges)
+		if totalChanges <= changesAtSessionOpen+1 {
+			db.Close()
+			db = nil
+			return // nothing real was written; home DB is already up to date
+		}
 	}
 
 	if db != nil {

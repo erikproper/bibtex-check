@@ -219,6 +219,7 @@ func (*sCondFieldNumCmp) isCond()      {}
 type scriptProgram struct {
 	groupSets map[string][]string
 	rules     []*sIf
+	changes   int // group assignments added or removed during this run
 }
 
 // ─── Parser ─────────────────────────────────────────────────────────────────────
@@ -623,6 +624,7 @@ func scriptEvalStmt(l *TBibTeXLibrary, key string, prog *scriptProgram, stmt scr
 			if err := addBibGroupEntry(s.group, key); err == nil {
 				l.GroupEntries.AddValueToStringSetMap(s.group, key)
 				bibEntriesModified = true
+				prog.changes++
 				SpinnerInterrupt()
 				l.Progress("Added %s to group %q", key, s.group)
 			}
@@ -632,6 +634,7 @@ func scriptEvalStmt(l *TBibTeXLibrary, key string, prog *scriptProgram, stmt scr
 			if err := removeBibGroupEntry(s.group, key); err == nil {
 				l.GroupEntries.DeleteValueFromStringSetMap(s.group, key)
 				bibEntriesModified = true
+				prog.changes++
 				SpinnerInterrupt()
 				l.Progress("Removed %s from group %q", key, s.group)
 			}
@@ -683,4 +686,9 @@ func (l *TBibTeXLibrary) ApplyScript(path string) {
 		return true
 	})
 	spinner.Stop()
+	if prog.changes > 0 {
+		l.Progress("Script %s: %d group change(s)", path, prog.changes)
+	} else {
+		l.Progress("Script %s: no changes", path)
+	}
 }
