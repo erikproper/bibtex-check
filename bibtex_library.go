@@ -56,7 +56,7 @@ type (
 		EntryFieldTargetToSource          TStringStringStringSetMap // DO WE NEED THE INVERSES??
 		GenericFieldSourceToTarget        TStringStringMap          // A field specific mapping from challenged value to winner values
 		GenericFieldTargetToSource        TStringStringSetMap       //
-		NoBibFileWriting                  bool                      // If set, we should not write out a Bib file (and cache file) for this library as entries might have been lost.
+		NoDBUpdating                  bool                      // If set, the parser encountered errors; do not write bib file or update the database.
 		NoEntryFieldMappingsFileWriting   bool                      // If set, we should not write out a entry mappings file as entries might have been lost.
 		NoGenericFieldMappingsFileWriting bool                      // If set, we should not write out a generic mappings file as entries might have been lost.
 		NoKeyOldiesFileWriting            bool
@@ -83,6 +83,7 @@ type (
 		genericFieldMappingsModified      bool
 		entryFieldMappingsModified        bool
 		harvestNameAliases                bool
+		localURLBase                      string // when non-empty, prepended to local-url values in EntryString
 		capturedDBLPEntry                 *TBibTeXEntry
 		NoCrossFieldMappingsFileWriting   bool
 		URLsIgnore                        TStringSet
@@ -136,7 +137,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.GenericFieldSourceToTarget = TStringStringMap{}
 	l.GenericFieldTargetToSource = TStringStringSetMap{}
 
-	l.NoBibFileWriting = false
+	l.NoDBUpdating = false
 	l.NoEntryFieldMappingsFileWriting = false
 	l.NoGenericFieldMappingsFileWriting = false
 	l.NoKeyOldiesFileWriting = false
@@ -279,6 +280,23 @@ func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target strin
 	for otherAlias, otherTarget := range l.EntryFieldSourceToTarget[entry][field] {
 		if otherTarget == alias {
 			l.AddEntryFieldAlias(entry, field, otherAlias, target, false)
+			// If AddEntryFieldAlias was blocked (e.g. a generic mapping already covers
+			// otherAlias→target), the stale entry-specific mapping still points to the
+			// old alias.  Remove it directly so the generic mapping takes over cleanly.
+			// Guard: only remove when alias != target, otherwise the mapping is already
+			// correct (otherAlias → alias = target) and must not be deleted.
+			if l.EntryFieldSourceToTarget[entry][field][otherAlias] == alias && alias != target {
+				delete(l.EntryFieldSourceToTarget[entry][field], otherAlias)
+				if entryMap, ok := l.EntryFieldTargetToSource[entry]; ok {
+					if fieldMap, ok := entryMap[field]; ok {
+						if aliasSet, exists := fieldMap[alias]; exists {
+							aliasSet.Delete(otherAlias)
+							fieldMap[alias] = aliasSet
+						}
+					}
+				}
+				l.entryFieldMappingsModified = true
+			}
 		}
 	}
 }
@@ -751,6 +769,13 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 
 // Add a new key hint
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
+	resolvedKey := l.MapEntryKey(key)
+	if hint == resolvedKey {
+		return
+	}
+	if existing, ok := l.HintToKey[hint]; ok && l.MapEntryKey(existing) == resolvedKey {
+		return
+	}
 	if l.addAliasForKey(&l.HintToKey, hint, key, WarningAmbiguousKeyHint) {
 		l.keyHintsModified = true
 		l.newKeyHints[hint] = key
@@ -873,7 +898,11 @@ func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) str
 	for _, field := range BibTeXAllowedEntryFields[entry.EntryType()].Set().ElementsSorted() {
 		if field != EntryTypeField {
 			if value := entry.FieldValue(field); value != "" {
-				result += FormatBibTeXFieldAssignment(linePrefix, field, l.MapEntryFieldValue(key, field, value))
+				mapped := l.MapEntryFieldValue(key, field, value)
+				if field == LocalURLField && l.localURLBase != "" {
+					mapped = l.localURLBase + mapped
+				}
+				result += FormatBibTeXFieldAssignment(linePrefix, field, mapped)
 			}
 		}
 	}
@@ -1068,7 +1097,7 @@ func (l *TBibTeXLibrary) StartRecordingLibraryEntry(key, entryType string) bool 
 	if !BibTeXAllowedEntries.Contains(entryType) {
 		l.Warning(WarningUnknownEntryType, key, entryType)
 		/////// MAYBE UPDATE THIS
-		l.NoBibFileWriting = true
+		l.NoDBUpdating = true
 	}
 
 	// Check if an entry with the given key already exists

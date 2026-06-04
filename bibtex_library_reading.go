@@ -88,119 +88,67 @@ func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading 
 }
 
 func (l *TBibTeXLibrary) ReadCrossFieldMappingsFile() {
-	maybeReloadCrossFieldMappingsDb()
-	if !crossFieldMappingsFileWritingAllowed {
-		l.NoCrossFieldMappingsFileWriting = true
-	}
 	normalisationChanged := loadCrossFieldMappingsFromDb(l)
 	l.crossFieldMappingsModified = normalisationChanged
 }
 
-// Read key field challenge file
 func (l *TBibTeXLibrary) ReadEntryFieldMappingsFile() {
-	maybeReloadEntryFieldMappingsDb()
-	if !entryFieldMappingsFileWritingAllowed {
-		l.NoEntryFieldMappingsFileWriting = true
-	}
 	normalisationChanged := loadEntryFieldMappingsFromDb(l)
 	l.entryFieldMappingsModified = normalisationChanged
 }
 
-// Read generic field challenge file
 func (l *TBibTeXLibrary) ReadGenericFieldMappingsFile() {
-	maybeReloadGenericFieldMappingsDb()
-	if !genericFieldMappingsFileWritingAllowed {
-		l.NoGenericFieldMappingsFileWriting = true
-	}
 	normalisationChanged := loadGenericFieldMappingsFromDb(l)
 	l.genericFieldMappingsModified = normalisationChanged
 }
 
 func (l *TBibTeXLibrary) ReadKeyOldiesFile() {
-	maybeReloadKeyOldiesDb()
-	if !keyOldiesFileWritingAllowed {
-		l.NoKeyOldiesFileWriting = true
-	}
 	loadKeyOldiesFromDb(l)
 	l.keyOldiesModified = false
 }
 
 func (l *TBibTeXLibrary) ReadKeyHintsFile() {
-	maybeReloadKeyHintsDb()
-	if !keyHintsFileWritingAllowed {
-		l.NoKeyHintsFileWriting = true
-	}
 	loadKeyHintsFromDb(l)
 	l.keyHintsModified = false
 }
 
 func (l *TBibTeXLibrary) ReadKeyNonDoublesFile() {
-	maybeReloadKeyNonDoublesDb()
-	if !keyNonDoublesFileWritingAllowed {
-		l.NoKeyNonDoublesFileWriting = true
-	}
 	loadKeyNonDoublesFromDb(l)
 	l.keyNonDoublesModified = false
 }
 
 func (l *TBibTeXLibrary) ReadDblpParentFile() {
-	maybeReloadDblpParentDb()
-	if !dblpParentFileWritingAllowed {
-		l.NoDblpParentFileWriting = true
-	}
 	loadDblpParentFromDb(l)
 	l.dblpParentModified = false
 }
 
 func (l *TBibTeXLibrary) ReadDblpWaivedFile() {
-	maybeReloadDblpWaivedDb()
-	if !dblpWaivedFileWritingAllowed {
-		l.NoDblpWaivedFileWriting = true
-	}
 	loadDblpWaivedFromDb(l)
 	l.dblpWaivedModified = false
 }
 
-
 func (l *TBibTeXLibrary) ReadURLsIgnoreFile() {
-	maybeReloadURLsIgnoreDb()
 	loadURLsIgnoreFromDb(l)
 }
 
 func (l *TBibTeXLibrary) ReadEntryFlagsFile() {
-	maybeReloadEntryFlagsDb()
-	if !entryFlagsFileWritingAllowed {
-		l.NoEntryFlagsFileWriting = true
-	}
 	loadEntryFlagsFromDb(l)
 	l.entryFlagsModified = false
 }
 
 func (l *TBibTeXLibrary) ReadAddressMappings() {
-	maybeWriteDefaultCsv(bibTeXFolder+bibTeXBaseName+StateNamesFilePath, defaultStateNames)
-	maybeWriteDefaultCsv(bibTeXFolder+bibTeXBaseName+StateCountriesFilePath, defaultStateCountries)
-	maybeWriteDefaultCsv(bibTeXFolder+bibTeXBaseName+CountryNamesFilePath, defaultCountryNames)
-	maybeWriteDefaultCsv(bibTeXFolder+bibTeXBaseName+BooktitleCountryNamesFilePath, defaultBooktitleCountryNames)
-	addressReloaded := maybeReloadStateNamesDb()
+	maybeBootstrapStateNamesTable()
+	maybeBootstrapStateCountriesTable()
+	maybeBootstrapCountryNamesTable()
+	maybeBootstrapBooktitleCountryNamesTable()
 	loadStateNamesFromDb(l)
-	addressReloaded = maybeReloadStateCountriesDb() || addressReloaded
 	loadStateCountriesFromDb(l)
-	addressReloaded = maybeReloadCountryNamesDb() || addressReloaded
 	loadCountryNamesFromDb(l)
-	addressReloaded = maybeReloadBooktitleCountryNamesDb() || addressReloaded
 	loadBooktitleCountryNamesFromDb(l)
-	if addressReloaded {
-		setTableDate("filter_cross_field_mappings", 0)
-		setTableDate("filter_entry_field_mappings", 0)
-		setTableDate("filter_generic_field_mappings", 0)
-	}
 }
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {
-	maybeReloadNameMappingsDb()
-	if !nameMappingsFileWritingAllowed {
-		l.NoNameMappingsFileWriting = true
-	}
+	repairCorruptNameMappings() // GO_REVISIT: remove after production deployment confirms blob corruption is gone
 	loadNameMappingsFromDb(l)
 	l.nameMappingsModified = false
 }

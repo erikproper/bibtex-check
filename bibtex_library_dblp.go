@@ -167,6 +167,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 				!l.EntryFieldAliasHasTarget(resolvedCrossref, EntryTypeField, expectedParentType, currentParentType) {
 				l.Progress(ProgressFixedParentType, resolvedCrossref, currentParentType, expectedParentType, key)
 				l.SetEntryFieldValue(resolvedCrossref, EntryTypeField, expectedParentType)
+				l.UpdateEntryFieldAlias(resolvedCrossref, EntryTypeField, currentParentType, expectedParentType)
 			}
 		}
 		parentYear := l.EntryFieldValueity(resolvedCrossref, "year")

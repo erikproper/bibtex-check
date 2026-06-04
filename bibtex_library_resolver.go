@@ -83,6 +83,15 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return current
 	}
 
+	// If the normalised forms are equal, there is no genuine content difference —
+	// only a representation difference (e.g. "China" vs "{China}" after country
+	// normalisation).  Silently adopt the normalised form without prompting.
+	// This check comes after the stored-mapping lookups so explicit user decisions
+	// (recorded via UpdateEntryFieldAlias) still take precedence.
+	if normCurrent := l.MapFieldValue(field, l.NormaliseFieldValue(field, currentRaw)); normCurrent == challenge {
+		return normCurrent
+	}
+
 	// Full title beats a braced series abbreviation (e.g. "{ICDE}") in both directions.
 	if field == "booktitle" || field == "title" {
 		currentIsAbbrev := len(current) > 0 && current[0] == '{' && len(current)*3 < len(challenge)

@@ -51,7 +51,7 @@ func (l *TBibTeXLibrary) writeLibraryFile(fileExtension, message string, writing
 // Notes:
 // - As we ignore preambles, these are not written.
 func (l *TBibTeXLibrary) WriteBibTeXFile() {
-	if !l.NoBibFileWriting {
+	if !l.NoDBUpdating {
 		entryTypes := map[string]string{}
 		forEachBibEntryType(func(key, entryType string) {
 			entryTypes[key] = entryType
@@ -125,8 +125,8 @@ func (l *TBibTeXLibrary) WriteBibTeXFile() {
 // Write the challenges and winners for field values, of this library, to a file
 func (l *TBibTeXLibrary) WriteEntryFieldMappingsFile() {
 	if !l.NoEntryFieldMappingsFileWriting {
-		setTableDirty("filter_entry_field_mappings")
-		if l.writeLibraryFile(EntryFieldMappingsFilePath, ProgressWritingEntryFieldMappingsFile, func(w *bufio.Writer) {
+		setTableDirty("losing_field_values")
+		if l.writeLibraryFile(LosingFieldValuesFilePath, ProgressWritingEntryFieldMappingsFile, func(w *bufio.Writer) {
 			var lines []string
 			for key, fieldChallenges := range l.EntryFieldSourceToTarget {
 				if l.EntryExists(key) {
@@ -134,7 +134,7 @@ func (l *TBibTeXLibrary) WriteEntryFieldMappingsFile() {
 						if field != PreferredAliasField {
 							for challenger, winner := range challenges {
 								if l.MapFieldValue(field, challenger) != l.MapEntryFieldValue(key, field, winner) {
-									lines = append(lines, csvLine(key, field, l.MapEntryFieldValue(key, field, winner), challenger))
+									lines = append(lines, csvLine(key, field, challenger))
 								}
 							}
 						}
@@ -147,8 +147,8 @@ func (l *TBibTeXLibrary) WriteEntryFieldMappingsFile() {
 			}
 		}) {
 			saveEntryFieldMappingsToDb(l)
-			clearTableDirty("filter_entry_field_mappings")
-			setTableLastWritten("filter_entry_field_mappings")
+			clearTableDirty("losing_field_values")
+			setTableLastWritten("losing_field_values")
 		}
 	}
 }
@@ -223,23 +223,11 @@ func (l *TBibTeXLibrary) WriteDblpWaivedFile() {
 
 func (l *TBibTeXLibrary) WriteEntryFlagsFile() {
 	if !l.NoEntryFlagsFileWriting && l.entryFlagsModified {
-		setTableDirty("entry_flags")
-		if l.writeLibraryFile(EntryFlagsFilePath, ProgressWritingEntryFlagsFile, func(w *bufio.Writer) {
-			var lines []string
-			for key, flags := range l.EntryFlags {
-				for flag := range flags.Elements() {
-					lines = append(lines, csvLine(key, flag))
-				}
-			}
-			sort.Strings(lines)
-			for _, line := range lines {
-				w.WriteString(line + "\n")
-			}
-		}) {
-			saveEntryFlagsToDb(l)
-			clearTableDirty("entry_flags")
-			setTableLastWritten("entry_flags")
-		}
+		setTableDirty("entry_metadata")
+		saveEntryFlagsToDb(l)
+		clearTableDirty("entry_metadata")
+		setTableLastWritten("entry_metadata")
+		l.entryFlagsModified = false
 	}
 }
 
@@ -265,7 +253,7 @@ func (l *TBibTeXLibrary) WriteDblpParentFile() {
 
 func (l *TBibTeXLibrary) WriteGenericFieldMappingsFile() {
 	if !l.NoGenericFieldMappingsFileWriting {
-		setTableDirty("filter_generic_field_mappings")
+		setTableDirty("generic_field_mappings")
 		if l.writeLibraryFile(GenericFieldMappingsFilePath, ProgressWritingGenericFieldMappingsFile, func(w *bufio.Writer) {
 			var lines []string
 			for field, challenges := range l.GenericFieldSourceToTarget {
@@ -283,8 +271,8 @@ func (l *TBibTeXLibrary) WriteGenericFieldMappingsFile() {
 			}
 		}) {
 			saveGenericFieldMappingsToDb(l)
-			clearTableDirty("filter_generic_field_mappings")
-			setTableLastWritten("filter_generic_field_mappings")
+			clearTableDirty("generic_field_mappings")
+			setTableLastWritten("generic_field_mappings")
 		}
 	}
 }
@@ -382,7 +370,7 @@ func (l *TBibTeXLibrary) WriteAllMappingsFiles() {
 
 func (l *TBibTeXLibrary) WriteCrossFieldMappingsFile() {
 	if !l.NoCrossFieldMappingsFileWriting {
-		setTableDirty("filter_cross_field_mappings")
+		setTableDirty("cross_field_mappings")
 		if l.writeLibraryFile(CrossFieldMappingsFilePath, ProgressWritingFieldMappingsFile, func(w *bufio.Writer) {
 			var lines []string
 			for sourceField, sourceFieldMappings := range l.FieldMappings {
@@ -398,8 +386,8 @@ func (l *TBibTeXLibrary) WriteCrossFieldMappingsFile() {
 			}
 		}) {
 			saveCrossFieldMappingsToDb(l)
-			clearTableDirty("filter_cross_field_mappings")
-			setTableLastWritten("filter_cross_field_mappings")
+			clearTableDirty("cross_field_mappings")
+			setTableLastWritten("cross_field_mappings")
 		}
 	}
 }

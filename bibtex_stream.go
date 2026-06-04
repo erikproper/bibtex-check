@@ -143,7 +143,7 @@ func (b *TBibTeXStream) SkipToNextEntry(from string) bool {
 func (b *TBibTeXStream) ReportParsingError(message string, context ...any) bool {
 	// If we needed to report an error, then do not write the BibFile after an update
 	// POST MIGRO update
-	b.library.NoBibFileWriting = true
+	b.library.NoDBUpdating = true
 
 	if !b.skippingEntry {
 		b.ReportError(message, context...)
@@ -245,8 +245,15 @@ func (b *TBibTeXStream) GroupedFieldElement(groupEndCharacter byte, inTeXMode bo
 		return b.GroupedContentety(EndGroupCharacter, inTeXMode, content) &&
 			/* */ b.CollectCharacterThatWas(EndGroupCharacter, content)
 
-	// Elements that involve an escape. For example \", \', or \vdash
+	// Elements that involve an escape. For example \", \', or \vdash.
+	// In BibTeX, \ does not escape the group-end delimiter: \} inside a
+	// brace-delimited field still closes the field at the }. Collect the \
+	// as literal content and return false so the outer GroupedContentety loop
+	// exits, allowing the caller to collect the closing delimiter normally.
 	case b.CollectCharacterThatWas(EscapeCharacter, content):
+		if b.ThisCharacterIs(groupEndCharacter) {
+			return false
+		}
 		return b.CollectCharacterThatWasThere(content)
 
 	// When inTeXMode, then TeXSpaces count as one space

@@ -909,7 +909,7 @@ func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {
 	if entryType := entry.EntryType(); entryType != "" {
 		if _, known := BibTeXAllowedEntryFields[entryType]; !known {
 			l.Error("Entry %s has unknown entry type %q — bib file writing disabled", entry.Key, entryType)
-			l.NoBibFileWriting = true
+			l.NoDBUpdating = true
 		}
 	}
 }
@@ -1038,6 +1038,36 @@ func (l *TBibTeXLibrary) CheckEntries() {
 		return true
 	})
 
+	spinner.Stop()
+}
+
+// RenormaliseNameFields reloads name_mappings from the DB (picking up any mappings
+// added or changed since the library was opened) then sweeps all author and editor
+// values in bib_entries through the updated normaliser. Called after
+// -import_name_mappings / -add_name_mappings to apply new mappings immediately
+// without requiring a separate bib.check run (§11.3 cascade).
+func (l *TBibTeXLibrary) RenormaliseNameFields() {
+	loadNameMappingsFromDb(l)
+	l.CheckNameMappingConsistency()
+
+	total := countBibEntries()
+	spinner := l.NewSpinner("Re-normalising author/editor fields")
+	done := 0
+	forEachBibEntryKey(func(key string) bool {
+		done++
+		spinner.Update(done, total)
+		entry := l.buildEntry(key)
+		for _, field := range []string{"author", "editor"} {
+			current := entry.FieldValue(field)
+			if current == "" {
+				continue
+			}
+			if normalised := l.NormaliseFieldValue(field, current); normalised != current {
+				l.setEntryField(entry, field, normalised)
+			}
+		}
+		return true
+	})
 	spinner.Stop()
 }
 

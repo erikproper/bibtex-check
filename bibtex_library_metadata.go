@@ -30,8 +30,9 @@ type TEntryMetadata map[string]map[string]string
 const (
 	MetaPropPdfConfirmedOk    = "pdf_confirmed_ok"
 	MetaPropDblpKeyMissing    = "dblp_key_missing"
-	MetaPropAlignVolumeWaived = "align_volume_waived"
+	MetaPropAlignVolumeWaived  = "align_volume_waived"
 	MetaPropAlignEditionWaived = "align_edition_waived"
+	MetaPropAlignCountryWaived = "align_country_waived"
 )
 
 // lineageSourceKey returns the metadata property key for a lineage source record.
@@ -87,25 +88,19 @@ func (l *TBibTeXLibrary) AllEntriesWithProp(prop string) map[string]string {
 	return result
 }
 
-// ReadMetadataFile loads entry_metadata.json.
+// ReadMetadataFile loads entry metadata from the DB.
 func (l *TBibTeXLibrary) ReadMetadataFile() {
-	path := bibTeXFolder + bibTeXBaseName + EntryMetadataFilePath
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	if jsonErr := json.Unmarshal(data, &l.Metadata); jsonErr != nil {
-		l.Warning("Could not parse %s: %s — metadata writes suppressed", path, jsonErr)
-		l.NoMetadataFileWriting = true
-	}
+	loadEntryMetadataFromDb(l)
 	l.metadataModified = false
 }
 
-// WriteMetadataFile writes entry_metadata.json when the metadata has been modified.
+// WriteMetadataFile writes entry metadata to the DB and keeps entry_metadata.json
+// as a human-readable backup.
 func (l *TBibTeXLibrary) WriteMetadataFile() {
 	if l.NoMetadataFileWriting || !l.metadataModified {
 		return
 	}
+	saveEntryMetadataToDb(l)
 	path := bibTeXFolder + bibTeXBaseName + EntryMetadataFilePath
 	data, err := json.MarshalIndent(l.Metadata, "", "  ")
 	if err != nil {
@@ -114,7 +109,6 @@ func (l *TBibTeXLibrary) WriteMetadataFile() {
 	}
 	if writeErr := os.WriteFile(path, data, 0644); writeErr != nil {
 		l.Warning("Could not write %s: %s", path, writeErr)
-		return
 	}
 	l.metadataModified = false
 }

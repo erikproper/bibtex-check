@@ -33,33 +33,39 @@ var (
 const (
 	NoKey = ""
 
-	BibFileExtension    = ".bib"
-	cacheFileExtension  = ".cache"
-	ConfigFileExtension = ".config"
-	LockFileExtension   = ".lock"
+	BibFileExtension     = ".bib"
+	cacheFileExtension   = ".sqlite3"
+	FoldersFileExtension = ".folders" // bootstrap paths file (global_folder, cache_folder)
+	ConfigFileExtension  = ".config"  // reserved for sync-mode definitions (step 13.2+)
+	LockFileExtension    = ".lock"
+	tablesFolderSuffix   = ".tables"
+	scriptsFolderSuffix  = ".scripts"
 
-	// Mapping/hint/oldie tables live in a <basename>.tables/ subfolder as CSV files.
-	NameMappingsFilePath          = ".tables/filter_name_mappings.csv"
-	EntryFieldMappingsFilePath    = ".tables/filter_entry_field_mappings.csv"
-	GenericFieldMappingsFilePath  = ".tables/filter_generic_field_mappings.csv"
-	CrossFieldMappingsFilePath    = ".tables/filter_cross_field_mappings.csv"
-	StateNamesFilePath                = ".tables/filter_state_names.csv"
-	StateCountriesFilePath            = ".tables/filter_state_countries.csv"
-	CountryNamesFilePath              = ".tables/filter_country_names.csv"
-	BooktitleCountryNamesFilePath     = ".tables/filter_booktitle_country_names.csv"
-	KeyNonDoublesFilePath  = ".tables/key_non_doubles.csv"
-	KeyOldiesFilePath      = ".tables/key_oldies.csv"
-	KeyHintsFilePath       = ".tables/key_hints.csv"
-	WatchFilePath           = ".tables/watch.csv"
-	ScriptFilePath          = ".script"
-	DblpParentFilePath      = ".tables/dblp_parent.csv"
-	DblpWaivedFilePath      = ".tables/dblp_waived.csv"
-	EntryMetadataFilePath   = ".tables/entry_metadata.json"
+	// All exportable/importable tables live in <basename>.tables/ as CSV files,
+	// named after their DB table (or "folders" for the bootstrap settings).
+	NameMappingsFilePath          = tablesFolderSuffix + "/name_mappings.csv"
+	EntryFieldMappingsFilePath    = tablesFolderSuffix + "/filter_entry_field_mappings.csv" // legacy; superseded by LosingFieldValuesFilePath
+	LosingFieldValuesFilePath     = tablesFolderSuffix + "/losing_field_values.csv"
+	GenericFieldMappingsFilePath  = tablesFolderSuffix + "/generic_field_mappings.csv"
+	CrossFieldMappingsFilePath    = tablesFolderSuffix + "/cross_field_mappings.csv"
+	StateNamesFilePath            = tablesFolderSuffix + "/state_names.csv"
+	StateCountriesFilePath        = tablesFolderSuffix + "/state_countries.csv"
+	CountryNamesFilePath          = tablesFolderSuffix + "/country_names.csv"
+	BooktitleCountryNamesFilePath = tablesFolderSuffix + "/booktitle_country_names.csv"
+	KeyNonDoublesFilePath         = tablesFolderSuffix + "/key_non_doubles.csv"
+	KeyOldiesFilePath             = tablesFolderSuffix + "/key_oldies.csv"
+	KeyHintsFilePath              = tablesFolderSuffix + "/key_hints.csv"
+	ScriptFilePath                = scriptsFolderSuffix + "/entry_actions"
+	DblpParentFilePath            = tablesFolderSuffix + "/dblp_parent.csv"
+	DblpWaivedFilePath            = tablesFolderSuffix + "/dblp_waived.csv"
+	EntryMetadataFilePath         = tablesFolderSuffix + "/entry_metadata.csv"
+	ShortenMappingsFilePath       = tablesFolderSuffix + "/shorten_mappings.csv"
+	EntryFlagsFilePath            = tablesFolderSuffix + "/entry_flags.csv"
+	URLsIgnoreFilePath            = tablesFolderSuffix + "/urls_ignore.csv"
+	BibEntriesFilePath            = tablesFolderSuffix + "/bib_entries.csv"
+	FoldersCSVFilePath            = tablesFolderSuffix + "/folders.csv"
+	ConfigCSVFilePath             = tablesFolderSuffix + "/config.csv"
 
-	ShortenMappingsFilePath = "shorten_mappings.csv"
-	EntryFlagsFilePath      = ".tables/entry_flags.csv"
-
-	URLsIgnoreFilePath = ".tables/urls_ignore.csv"
 	URLsFailedFilePath = "urls_failed.csv"
 
 	DefaultLanguage = "eng"

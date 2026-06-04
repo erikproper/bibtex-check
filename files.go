@@ -93,8 +93,8 @@ func ensureLibraryBackup() {
 	bibSrc := bibTeXFolder + bibTeXBaseName + BibFileExtension
 	_ = copyFile(bibSrc, filepath.Join(backupDir, bibTeXBaseName+BibFileExtension))
 
-	tablesDir := bibTeXFolder + bibTeXBaseName + ".tables"
-	backupTablesDir := filepath.Join(backupDir, bibTeXBaseName+".tables")
+	tablesDir := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix
+	backupTablesDir := filepath.Join(backupDir, bibTeXBaseName+tablesFolderSuffix)
 	if err := os.MkdirAll(backupTablesDir, 0755); err == nil {
 		if des, err := os.ReadDir(tablesDir); err == nil {
 			for _, de := range des {
@@ -204,6 +204,19 @@ func processCSVFile(fullFilePath string, process func([]string)) bool {
 		process(record)
 	}
 	return true
+}
+
+// csvUnquoteField reverses the quoting that csvLine (encoding/csv) applies:
+// if s is surrounded by double-quotes, the outer quotes are stripped and any
+// doubled quote inside ("") is unescaped to a single ".
+// Fields that are not quoted are returned unchanged.
+// Used by processFile-based readers that split on the raw delimiter and need
+// to handle CSV-quoted fields produced by writeCSVExport / csvLine.
+func csvUnquoteField(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return strings.ReplaceAll(s[1:len(s)-1], `""`, `"`)
+	}
+	return s
 }
 
 // csvLine formats fields as a single CSV line using encoding/csv, quoting any field

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,22 @@ import (
 	"syscall"
 	"time"
 )
+
+// tableListFlag implements flag.Value for -export/-import.
+// Used bare (-export) it sets the value to "all" via IsBoolFlag.
+// Used with a value (-export name_mappings,bib_entries) it stores that value.
+type tableListFlag string
+
+func (f *tableListFlag) String() string   { return string(*f) }
+func (f *tableListFlag) IsBoolFlag() bool { return true }
+func (f *tableListFlag) Set(s string) error {
+	if s == "true" {
+		*f = "all"
+	} else {
+		*f = tableListFlag(s)
+	}
+	return nil
+}
 
 // stepFlag implements flag.Value for -step [N].
 // -step alone means step size 1; -step=N or -step N means step size N.
@@ -35,7 +52,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "20.29"
+const AppVersion = "23.13"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -80,8 +97,8 @@ func initialiseLibrary() {
 	// If name_mappings was repaired, the normalisation pass for cross-field and
 	// generic-field mappings may have used stale aliases — force a fresh reload.
 	if nameMappingsRepaired {
-		setTableDate("filter_cross_field_mappings", 0)
-		setTableDate("filter_generic_field_mappings", 0)
+		setTableDate("cross_field_mappings", 0)
+		setTableDate("generic_field_mappings", 0)
 	}
 }
 
@@ -107,6 +124,76 @@ func loadBibFromDb() {
 	buildKeyAliasesFromDb(&Library)
 	initEntryCache()
 	reportCacheMode()
+}
+
+// parseSyncBibFile clears the bib tables and re-parses a sync bib file (full mode).
+// On success the working DB contains the re-imported entries and bibEntriesModified
+// is set so the home DB is updated at close. On failure the working DB is restored
+// from the home copy via the safe-parse rollback mechanism.
+// doImportBib is the -import_bib entry point: clears all bib tables and re-imports
+// from the given bib file (full replace — same semantics as -import_XXX for mapping
+// tables). After this, normal runs load from DB only; the bib file is not touched
+// again unless -import_bib or -sync is invoked explicitly.
+//
+// Companion (step 14.4 — harvest mode): -upsert_bib will upsert entries from a bib
+// file without clearing existing ones (entries already in DB are updated; new ones
+// are added; nothing is deleted). Unlike -import_bib, -upsert_bib will also accept
+// stdin when no filename is given (to support piping from other tools).
+func doImportBib(path string) {
+	if !prepareWorkingDatabase() {
+		return
+	}
+	maybeMigrateToLosingFieldValues()
+	initialiseLibrary()
+	Library.ReadKeyOldiesFile()
+	loadMappingFiles()
+	Library.Progress(ProgressImportingBibFile, path)
+	if !parseSyncBibFile(path) {
+		return
+	}
+	buildTitleIndexFromDb(&Library)
+	Library.ReportLibrarySize()
+}
+
+func parseSyncBibFile(path string) bool {
+	Library.NoDBUpdating = false // clear any flag left from a previous operation
+	Library.Progress(ProgressReparsingBibFile)
+	safeOk := beginSafeParse()
+	if !safeOk {
+		Library.Warning("Proceeding without safe-parse backup; database not protected during reparse.")
+	}
+	clearBibTables()
+	beginBibTransaction()
+	if !Library.ParseBibFile(path) {
+		rollbackBibTransaction()
+		if safeOk {
+			rollbackSafeParse()
+		}
+		return false
+	}
+	saveBibGroupsToDb(&Library)
+	saveBibCommentsToDb(&Library)
+	commitBibTransaction()
+	// Guard: if the parser set NoDBUpdating (unknown entry types, parse errors
+	// that did not abort parsing, etc.) treat this as a failed import. Roll back the
+	// safe-parse temp DB so the working DB reverts to the pre-parse state and the
+	// home DB is not affected.
+	if Library.NoDBUpdating {
+		Library.Warning("Sync bib re-import aborted: parser reported errors — home database unchanged.")
+		if safeOk {
+			rollbackSafeParse()
+		}
+		return false
+	}
+	if safeOk {
+		commitSafeParse()
+	}
+	bibEntriesModified = true
+	setTableDirty("dblp_hierarchy")
+	initEntryCache()
+	reportCacheMode()
+	refreshBibDbTimestamp()
+	return true
 }
 
 func parseBibIntoDb() bool {
@@ -143,6 +230,11 @@ func parseBibIntoDb() bool {
 }
 
 func openLibraryToUpdate() bool {
+	if !prepareWorkingDatabase() {
+		return false
+	}
+	maybeMigrateTableConstraints()
+	maybeMigrateToLosingFieldValues()
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
@@ -151,13 +243,25 @@ func openLibraryToUpdate() bool {
 		buildTitleIndexFromDb(&Library)
 		loadBibFromDb()
 		if skipBibValidation {
-			Library.WriteBibTeXFile()
+			// Crash recovery: bib_entries was dirty on the previous run.
+			// DB is already the primary — no bib file write needed; just clear dirty state.
 			clearTableDirty("bib_entries")
 			refreshBibDbTimestamp()
 			skipBibValidation = false
 		}
-	} else if !parseBibIntoDb() {
-		return false
+	} else {
+		// No bib_entries yet. Bootstrap: if the canonical .bib file is present, import it now.
+		bibPath := bibTeXFolder + bibTeXBaseName + BibFileExtension
+		if FileExists(bibPath) {
+			Library.Progress(ProgressImportingBibFile, bibPath)
+			if !parseSyncBibFile(bibPath) {
+				return false
+			}
+			buildTitleIndexFromDb(&Library)
+		} else {
+			fmt.Fprintln(os.Stderr, "Database not initialised — run '-import_bib <file.bib>' to import the bib file first.")
+			return false
+		}
 	}
 
 	Library.ReportLibrarySize()
@@ -169,20 +273,18 @@ func openLibraryToUpdate() bool {
 func openLibraryToReport() bool {
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
+	loadMappingFiles()
 
 	if skipBibValidation || Library.ValidBibDb() {
 		loadBibFromDb()
 		if skipBibValidation {
-			Library.WriteBibTeXFile()
 			clearTableDirty("bib_entries")
 			refreshBibDbTimestamp()
 			skipBibValidation = false
 		}
 	} else {
-		loadMappingFiles()
-		if !parseBibIntoDb() {
-			return false
-		}
+		fmt.Fprintln(os.Stderr, "Database not initialised — run '-import_bib <file.bib>' to import the bib file first.")
+		return false
 	}
 
 	Library.ReportLibrarySize()
@@ -380,17 +482,16 @@ func cleanKeys(args []string) []string {
 // --- Command functions ---
 
 // reportHomework prints a summary of remaining work:
-//   - number of unresolved potential duplicate pairs (title-equal, not in non_doubles,
-//     no divergent DBLP/DOI evidence)
+//   - number of title-hash groups that contain at least one unresolved potential
+//     duplicate pair (title-equal, not in non_doubles, no divergent DBLP/DOI evidence)
 //   - number of entries without a dblp field that have at least one unresolved DBLP
 //     title-index candidate (not already in non_doubles)
 func reportHomework() {
-	// Unresolved potential duplicate pairs.
-	type pair struct{ a, b string }
-	counted := map[pair]bool{}
-	unresolvedPairs := 0
+	// Groups with at least one unresolved potential duplicate pair.
+	unresolvedGroups := 0
 	for _, keys := range Library.TitleIndex {
 		sorted := keys.ElementsSorted()
+		groupUnresolved := false
 		for i, a := range sorted {
 			if a != Library.MapEntryKey(a) {
 				continue
@@ -399,22 +500,21 @@ func reportHomework() {
 				if b != Library.MapEntryKey(b) {
 					continue
 				}
-				if a == b {
-					continue
-				}
-				p := pair{a, b}
-				if counted[p] {
-					continue
-				}
-				counted[p] = true
 				if Library.NonDoubles[a].Set().Contains(b) {
 					continue
 				}
 				if Library.EvidenceForBeingDifferentEntries(a, b) {
 					continue
 				}
-				unresolvedPairs++
+				groupUnresolved = true
+				break
 			}
+			if groupUnresolved {
+				break
+			}
+		}
+		if groupUnresolved {
+			unresolvedGroups++
 		}
 	}
 
@@ -438,7 +538,7 @@ func reportHomework() {
 		return true
 	})
 
-	Library.Progress("Homework: %d unresolved duplicate pair(s), %d entry/ies with unresolved DBLP candidate(s)", unresolvedPairs, dblpCandidates)
+	Library.Progress("Homework: %d title group(s) with unresolved duplicate(s), %d entry/ies with unresolved DBLP candidate(s)", unresolvedGroups, dblpCandidates)
 }
 
 func doDefaultRun() {
@@ -662,6 +762,28 @@ func doShowEntry(args []string) {
 	}
 }
 
+func doRepairGarbledNames(repairBasePath string) {
+	if !openLibraryToUpdate() {
+		return
+	}
+	if repairBasePath == "" {
+		repairBasePath = bibTeXFolder + "Repair"
+	}
+	var repairDb *sql.DB
+	if repairBasePath != "" {
+		repairDbPath := repairBasePath + cacheFileExtension
+		var err error
+		repairDb, err = sql.Open(sqliteDatabaseDriver, repairDbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not open repair DB %s: %s\n", repairDbPath, err)
+			return
+		}
+		defer repairDb.Close()
+	}
+	n := Library.RepairGarbledNames(repairDb)
+	Library.Progress("Repaired %d garbled author/editor field(s)", n)
+}
+
 func doFixEntries(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
@@ -699,7 +821,7 @@ func doFixAllEntries() {
 	}
 }
 
-func doFixDblpEntries() {
+func doUpsertDblpEntries() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
@@ -794,7 +916,7 @@ func doNewKey() {
 	fmt.Println(KeyFromTime(time.Now()))
 }
 
-func doFixDblpFor(args []string) {
+func doUpsertDblpFor(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
@@ -812,7 +934,7 @@ func doFixDblpFor(args []string) {
 }
 
 
-func doAddDblpEntry(args []string) {
+func doUpsertDblpEntryFromDblpKeys(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		for _, dblpKey := range args {
@@ -859,7 +981,7 @@ func doWatchDblp() {
 	}
 	Library.ReadKeyNonDoublesFile()
 
-	filePath := bibTeXFolder + bibTeXBaseName + WatchFilePath
+	filePath := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix + "/watch"
 	entries := ReadWatchFile(filePath)
 	if len(entries) == 0 {
 		Library.Progress("No watch entries found in %s", filePath)
@@ -1105,7 +1227,7 @@ func main() {
 	flag.BoolVar(&cmdVersion, "v", false, "print version and exit")
 
 	var (
-		cmdGet                bool
+		cmdSync               bool
 		cmdGetPdfs            bool
 		cmdFindEntries        bool
 		cmdEntryKey           bool
@@ -1113,9 +1235,8 @@ func main() {
 		cmdShowEntry          bool
 		cmdFixEntries         bool
 		cmdFixAllEntries      bool
-		cmdFixDblpEntries     bool
-		cmdFixDblpFor         bool
-		cmdAddDblpEntry          bool
+		cmdAddDblpEntry    bool
+		cmdAddDblpEntries  bool
 		cmdExtendDblpCoverage    bool
 		cmdDblpWatch             bool
 		cmdAddKeyMapping         bool
@@ -1133,16 +1254,26 @@ func main() {
 		cmdRenderAsTex        bool
 		cmdRenderAsHTML       bool
 		cmdRenderAsText       bool
-		cmdCheckPdfs        bool
-		cmdLoadDblpXml        bool
-		cmdUpdateDblp         bool
-		cmdRepairDblpManifest        bool
-		cmdRebuildDblpCrossrefIndex  bool
-		cmdDeleteGarbage                bool
-		cmdApplyScript bool
+		cmdCheckPdfs                bool
+		cmdAlignBooktitleCountries  bool
+		cmdLoadDblpXml              bool
+		cmdUpdateDblp               bool
+		cmdRepairDblpManifest       bool
+		cmdRebuildDblpCrossrefIndex bool
+		cmdRepairGarbledNames       bool
+		repairBase                  string
+		cmdDeleteGarbage            bool
+		cmdApplyScript              bool
+		// Unified table export/import (v23.0).
+		// Bare flag (-export) means "all"; with value (-export t1,t2) means those tables.
+		cmdExport tableListFlag
+		cmdImport tableListFlag
+
+		cmdImportAllCSV bool // legacy migration helper; kept for migrate.sh compat
+		cmdImportBib                      bool
 	)
 
-	flag.BoolVar(&cmdGet, "get", false, "generate local .bib from bib.config + .map in CWD")
+	flag.BoolVar(&cmdSync, "sync", false, "sync library to bib file(s) via exchange config; optional arg narrows to one file")
 	flag.BoolVar(&cmdGetPdfs, "get_pdfs", false, "download missing PDFs into the files folder")
 	flag.BoolVar(&cmdFindEntries, "find_entries", false, "list entries matching field [value] (key TAB value per line)")
 	flag.BoolVar(&cmdEntryKey, "entry_key", false, "resolve alias to canonical key")
@@ -1151,10 +1282,8 @@ func main() {
 	flag.BoolVar(&cmdFixEntries, "fix_entries", false, "fix/check specific entries")
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
 	flag.BoolVar(&cmdFixAllEntries, "fix_all_entries", false, "fix/check all entries")
-	flag.BoolVar(&cmdFixDblpEntries, "fix_all_dblp_entries", false, "fix/check all entries that have a DBLP key")
-	flag.BoolVar(&cmdFixDblpFor, "fix_dblp_entry", false, "fix/check specific entries with DBLP")
-	flag.BoolVar(&cmdFixDblpFor, "fix_dblp_entries", false, "alias for -fix_dblp_entry")
-	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "add one or more new entries from DBLP")
+	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
+	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "upsert DBLP data for one or more given entries (library or DBLP keys)")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
 	flag.BoolVar(&cmdExtendDblpCoverage, "extend_dblp_coverage", false, "interactively associate DBLP keys with entries that have none")
 	flag.BoolVar(&cmdDblpWatch, "dblp_watch", false, "check watched persons/ORCIDs in watch.csv for missing publications")
@@ -1175,14 +1304,23 @@ func main() {
 	flag.BoolVar(&cmdRenderAsHTML, "render_as_html", false, "render entry as HTML bibliography reference")
 	flag.BoolVar(&cmdRenderAsText, "render_as_text", false, "render entry as plain-text bibliography reference")
 	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "check PDF health, orphan files, and duplicates in the files folder")
+	flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "detect and fix unbraced country names in booktitle fields")
 	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP file store")
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
 	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
+	flag.BoolVar(&cmdRepairGarbledNames, "repair_garbled_names", false, "repair garbled author/editor fields using DBLP data and an optional reference DB") // GO_REVISIT: remove after production repair confirmed complete
+	flag.StringVar(&repairBase, "repair_base", "", "path/basename of a reference SQLite DB for -repair_garbled_names (non-DBLP entries)") // GO_REVISIT: remove with repair_garbled_names
 	flag.BoolVar(&cmdRebuildDblpCrossrefIndex, "rebuild_dblp_crossref_index", false, "rebuild DBLP crossref children index from stored data.json files")
 	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
 	flag.BoolVar(&cmdNoGarbageCleaning, "no_garbage_cleaning", false, "skip background cleanup of the DBLP trash folder")
 	flag.BoolVar(&cmdApplyScript, "apply_script", false, "evaluate group assignment rules from <base>.script")
-flag.BoolVar(&cmdAutoFixAlignTitles, "fix", false, "auto-accept all title/volume/edition alignment suggestions (use with -fix_all_dblp_entries)")
+	// Unified table export / import (v23.0)
+	flag.Var(&cmdExport, "export", "export tables to <base>.tables/ (bare = all; or comma-separated table names)")
+	flag.Var(&cmdImport, "import", "import tables from <base>.tables/, replace-all with confirmation (bare = all; or comma-separated table names)")
+	flag.BoolVar(&cmdImportAllCSV, "import_all_csv", false, "import all mapping CSVs (migration helper for migrate.sh)")
+	flag.BoolVar(&cmdImportBib, "import_bib", false, "import a bib file into the DB (requires filename argument; use to initialise or reinitialise bib_entries)")
+
+			flag.BoolVar(&cmdAutoFixAlignTitles, "fix", false, "auto-accept all title/volume/edition alignment suggestions (use with -update_all_dblp_entries)")
 
 	// Normalise "-step N" (space-separated) to "-step=N" before flag.Parse so
 	// that IsBoolFlag-style parsing handles "-step" (no value) correctly too.
@@ -1236,7 +1374,7 @@ flag.BoolVar(&cmdAutoFixAlignTitles, "fix", false, "auto-accept all title/volume
 	Reporting = TInteraction{}
 	Reporting.SetStepSize(int(cmdStep))
 
-	loadBibTeXConfig(bibTeXFolder + bibTeXBaseName + ConfigFileExtension)
+	loadBibTeXFolders(bibTeXFolder + bibTeXBaseName + FoldersFileExtension)
 	if backupFolder == "" {
 		backupFolder = bibTeXFolder + bibTeXBaseName + ".backups/"
 	}
@@ -1305,18 +1443,23 @@ flag.BoolVar(&cmdAutoFixAlignTitles, "fix", false, "auto-accept all title/volume
 
 	maybeMigrateDbFile()
 	maybeMigrateDblpFolder()
+	maybeMigrateTablesFolder()
+	maybeMigrateScriptFile()
+	maybeMigrateToHomePath()
 	connectToDatabase()
 
-	if !cmdGet && !cmdFindEntries && !cmdEntryKey && !cmdEntryKeyAlias && !cmdShowEntry {
+	if !cmdSync && !cmdFindEntries && !cmdEntryKey && !cmdEntryKeyAlias && !cmdShowEntry {
 		maybeStartDblpTrashCleanup()
 	}
 
 	switch {
-	case cmdGet:
+	case cmdSync:
 		Reporting.SetInteractionOff()
-		if openLibraryToReport() {
-			doGet()
+		filter := ""
+		if len(args) > 0 {
+			filter = args[0]
 		}
+		doSync(filter)
 
 	case cmdGetPdfs:
 		doGetPdfs()
@@ -1359,28 +1502,38 @@ flag.BoolVar(&cmdAutoFixAlignTitles, "fix", false, "auto-accept all title/volume
 	case cmdFixAllEntries:
 		doFixAllEntries()
 
+	case cmdRepairGarbledNames:
+		doRepairGarbledNames(repairBase)
+
 	case cmdUpdateDblp:
-		doFixDblpEntries()
+		doUpsertDblpEntries()
 
-	case cmdFixDblpEntries:
+	case cmdAddDblpEntries:
 		requireNoDblpImport()
-		doFixDblpEntries()
-
-case cmdFixDblpFor:
-		requireNoDblpImport()
-		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "Usage: -fix_dblp_entry <key>...")
-			os.Exit(1)
-		}
-		doFixDblpFor(args)
+		doUpsertDblpEntries()
 
 	case cmdAddDblpEntry:
-		// Step 10.4.3: add proper read-vs-write DBLP locking here.
+		requireNoDblpImport()
 		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "Usage: -add_dblp_entry <dblp-key>...")
+			fmt.Fprintln(os.Stderr, "Usage: -add_dblp_entry <key>...")
 			os.Exit(1)
 		}
-		doAddDblpEntry(args)
+		// Route each argument: DBLP keys (containing "/") go to doAddDblpEntry;
+		// library keys go to doFixDblpFor.
+		var libKeys, dblpKeys []string
+		for _, arg := range args {
+			if strings.Contains(arg, "/") {
+				dblpKeys = append(dblpKeys, arg)
+			} else {
+				libKeys = append(libKeys, arg)
+			}
+		}
+		if len(libKeys) > 0 {
+			doUpsertDblpFor(libKeys)
+		}
+		if len(dblpKeys) > 0 {
+			doUpsertDblpEntryFromDblpKeys(dblpKeys)
+		}
 
 	case cmdExtendDblpCoverage:
 		requireNoDblpImport()
@@ -1477,9 +1630,51 @@ case cmdFixDblpFor:
 	case cmdCheckPdfs:
 		doCheckPDFs()
 
+	case cmdAlignBooktitleCountries:
+		if openLibraryToUpdate() {
+			Library.CheckAlignBooktitleCountries()
+		}
 
 	case cmdApplyScript:
 		doApplyScript()
+
+	case cmdExport != "":
+		// IsBoolFlag=true means "-export table" parses as bare "-export" with "table" in args.
+		// When the spec is the default "all" and positional args are present, treat the first
+		// arg as the table spec so "-export bib_entries" works alongside "-export=bib_entries".
+		exportSpec := string(cmdExport)
+		if exportSpec == "all" && len(args) > 0 {
+			exportSpec = strings.Join(args, ",")
+		}
+		if openLibraryToReport() {
+			ExportTables(exportSpec)
+		}
+
+	case cmdImport != "":
+		importSpec := string(cmdImport)
+		if importSpec == "all" && len(args) > 0 {
+			importSpec = strings.Join(args, ",")
+		}
+		if openLibraryToUpdate() {
+			ImportTables(importSpec, &Library)
+		}
+
+	case cmdImportAllCSV:
+		// Does not require ValidBibDb: mapping tables are imported independently of bib entries.
+		if prepareWorkingDatabase() {
+			maybeMigrateTableConstraints()
+			maybeMigrateToLosingFieldValues()
+			if ImportAllCSVExchangeFiles() {
+				dbInteraction.Progress("All CSV exchange files imported successfully.")
+			}
+		}
+
+	case cmdImportBib:
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -import_bib <file.bib>")
+			os.Exit(1)
+		}
+		doImportBib(args[0])
 
 	default:
 		if len(args) > 0 {
@@ -1491,58 +1686,26 @@ case cmdFixDblpFor:
 
 	Library.CheckDblpKeyMissingWarnings()
 
-	wroteFiles := false
-
-	if forceWrite || Library.metadataModified {
-		Library.WriteMetadataFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.entryFlagsModified {
-		Library.WriteEntryFlagsFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.keyNonDoublesModified {
-		Library.WriteKeyNonDoublesFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.dblpParentModified {
-		Library.WriteDblpParentFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.dblpWaivedModified {
-		Library.WriteDblpWaivedFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.keyOldiesModified {
-		Library.WriteKeyOldiesFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.keyHintsModified {
-		Library.WriteKeyHintsFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.nameMappingsModified {
-		Library.WriteNameMappingFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.genericFieldMappingsModified {
-		Library.WriteGenericFieldMappingsFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.entryFieldMappingsModified {
-		Library.WriteEntryFieldMappingsFile()
-		wroteFiles = true
-	}
-	if forceWrite || Library.crossFieldMappingsModified {
-		Library.WriteCrossFieldMappingsFile()
-		wroteFiles = true
-	}
-	if forceWrite || bibEntriesModified {
-		Library.WriteBibTeXFile()
+	// DB-primary (step 13.6 + 22.7): the bib file is never written during a normal run.
+	// Bib file writes happen only via -sync (full mode). All entry changes are already
+	// persisted to the working DB by setEntryField; finaliseWorkingDatabase flushes them home.
+	if (forceWrite || bibEntriesModified) && !skipBibDbRefresh {
 		clearTableDirty("bib_entries")
-		wroteFiles = true
-	}
-	if wroteFiles && !skipBibDbRefresh {
 		refreshBibDbTimestamp()
 	}
+
+	if Library.keyOldiesModified {
+		saveKeyOldiesToDb(&Library)
+	}
+	if Library.keyHintsModified {
+		saveKeyHintsToDb(&Library)
+	}
+	if Library.nameMappingsModified {
+		saveNameMappingsToDb(&Library)
+	}
+	if Library.entryFieldMappingsModified {
+		saveEntryFieldMappingsToDb(&Library)
+	}
+
+	finaliseWorkingDatabase()
 }

@@ -22,9 +22,11 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 	"sort"
 	"strings"
@@ -47,6 +49,7 @@ var (
 	c2EntryModified        bool
 	entryModTrackingActive bool
 	entryModified          bool
+	dbWriteSessionActive   bool
 )
 
 // --- entry cache ---
@@ -107,18 +110,191 @@ func dbPath() string {
 	return folder + bibTeXBaseName + cacheFileExtension
 }
 
-// maybeMigrateDbFile renames the legacy .sqlite3 file to .cache on first run
-// after upgrading. Called at startup before connectToDatabase.
+// maybeMigrateDbFile renames any legacy database file to the current extension
+// (.cache → .sqlite3). Migrates both the working path and, when isolation is
+// active, the home path. Called at startup before connectToDatabase.
 func maybeMigrateDbFile() {
-	newPath := dbPath()
-	if _, err := os.Stat(newPath); err == nil {
-		return // already using new name
+	migrateDbFilePath(dbPath())
+	if dbIsolationActive() {
+		migrateDbFilePath(dbHomePath())
 	}
-	oldPath := bibTeXFolder + bibTeXBaseName + ".sqlite3"
+}
+
+func migrateDbFilePath(newPath string) {
+	if info, err := os.Stat(newPath); err == nil {
+		if info.Size() > 0 {
+			return // valid file already at new extension
+		}
+		os.Remove(newPath) // remove stale zero-byte file before renaming
+	}
+	oldPath := strings.TrimSuffix(newPath, cacheFileExtension) + ".cache"
 	if _, err := os.Stat(oldPath); err == nil {
 		if err := os.Rename(oldPath, newPath); err == nil {
-			dbInteraction.Progress("Migrated database: %s.sqlite3 → %s.cache", bibTeXBaseName, bibTeXBaseName)
+			dbInteraction.Progress("Migrated database: %s.cache → %s.sqlite3", bibTeXBaseName, bibTeXBaseName)
 		}
+	}
+}
+
+// maybeMigrateTablesFolder handles the two-step folder-name migration:
+//   v13.1: .tables/ → .exchange/   (old direction, now reverted)
+//   v23.0: .exchange/ → .tables/   (canonical name restored)
+// It also renames internal files that changed name in v23.0.
+func maybeMigrateTablesFolder() {
+	newDir := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix // .tables
+	oldDir := bibTeXFolder + bibTeXBaseName + ".exchange"
+
+	// v23.0: rename .exchange → .tables
+	if _, err := os.Stat(newDir); err != nil {
+		if _, err2 := os.Stat(oldDir); err2 == nil {
+			if err3 := os.Rename(oldDir, newDir); err3 != nil {
+				dbInteraction.Warning("Could not migrate .exchange folder: %s", err3)
+				return
+			}
+			dbInteraction.Progress("Migrated %s.exchange → %s.tables", bibTeXBaseName, bibTeXBaseName)
+		}
+	}
+
+	// Rename filter_name_mappings.csv → name_mappings.csv (v23.0 file rename).
+	maybeRenameInTablesDir("filter_name_mappings.csv", "name_mappings.csv")
+	// Convert entry_metadata.json → entry_metadata.csv (v23.0 format change).
+	maybeConvertEntryMetadataToCSV()
+}
+
+// maybeRenameInTablesDir renames oldFile to newFile inside the tables folder if
+// oldFile exists and newFile does not.
+func maybeRenameInTablesDir(oldFile, newFile string) {
+	dir := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix
+	oldPath := dir + "/" + oldFile
+	newPath := dir + "/" + newFile
+	if _, err := os.Stat(newPath); err == nil {
+		return // already renamed
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		return // old file absent
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		dbInteraction.Warning("Could not rename %s → %s: %s", oldFile, newFile, err)
+	}
+}
+
+// maybeConvertEntryMetadataToCSV migrates the JSON entry_metadata export to
+// CSV format (entry_key;property;value).
+func maybeConvertEntryMetadataToCSV() {
+	dir := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix
+	jsonPath := dir + "/entry_metadata.json"
+	csvPath := dir + "/entry_metadata.csv"
+	if _, err := os.Stat(csvPath); err == nil {
+		return // already converted
+	}
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
+		return // no JSON file
+	}
+	var m map[string]map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		return
+	}
+	f, err := os.Create(csvPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	for entryKey, props := range m {
+		for prop, val := range props {
+			f.WriteString(csvLine(entryKey, prop, val) + "\n")
+		}
+	}
+	os.Remove(jsonPath)
+}
+
+// maybeMigrateScriptFile moves the legacy <base>.script file to
+// <base>.scripts/entry_actions on first run after upgrading.
+func maybeMigrateScriptFile() {
+	newPath := bibTeXFolder + bibTeXBaseName + ScriptFilePath
+	if _, err := os.Stat(newPath); err == nil {
+		return
+	}
+	oldPath := bibTeXFolder + bibTeXBaseName + ".script"
+	if _, err := os.Stat(oldPath); err != nil {
+		return
+	}
+	scriptsDir := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		dbInteraction.Warning("Could not create scripts directory: %s", err)
+		return
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		dbInteraction.Warning("Could not migrate .script file: %s", err)
+		return
+	}
+	dbInteraction.Progress("Migrated %s.script → %s.scripts/entry_actions", bibTeXBaseName, bibTeXBaseName)
+}
+
+var tableConstraintsMigrated bool
+
+// maybeMigrateTableConstraints detects mapping tables that were created without
+// their required UNIQUE / PRIMARY KEY constraint (due to CREATE TABLE IF NOT EXISTS
+// leaving an older schema in place) and recreates them with deduplication.
+// Also detects and clears bloated tables (e.g. key_hints accumulating transient
+// DBLP-derived hints over many runs).
+// Must be called after prepareWorkingDatabase() so the correct DB file is open.
+// Guarded by tableConstraintsMigrated so it runs at most once per process.
+func maybeMigrateTableConstraints() {
+	if tableConstraintsMigrated {
+		return
+	}
+	tableConstraintsMigrated = true
+	type tableSpec struct {
+		table   string
+		pk      string // PRIMARY KEY column name
+		cols    string // column definitions for the recreated table
+		selCols string // explicit column list for INSERT ... SELECT
+	}
+	tables := []tableSpec{
+		{"name_mappings", "alias", "alias TEXT PRIMARY KEY, name TEXT NOT NULL", "alias, name"},
+		{"key_hints",     "hint",  "hint TEXT PRIMARY KEY, key TEXT NOT NULL",   "hint, key"},
+		{"key_oldies",    "alias", "alias TEXT PRIMARY KEY, key TEXT NOT NULL",  "alias, key"},
+	}
+
+	for _, t := range tables {
+		var createSQL string
+		db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, t.table).Scan(&createSQL)
+		if strings.Contains(strings.ToUpper(createSQL), "PRIMARY KEY") {
+			continue // constraint already present
+		}
+		dbInteraction.Progress("Migrating %s: adding PRIMARY KEY on %s and deduplicating", t.table, t.pk)
+		tmp := t.table + "_migration_tmp"
+		stmts := []string{
+			`DROP TABLE IF EXISTS ` + tmp,
+			`CREATE TABLE ` + tmp + ` (` + t.cols + `)`,
+			fmt.Sprintf(`INSERT OR IGNORE INTO %s (%s) SELECT %s FROM %s`, tmp, t.selCols, t.selCols, t.table),
+			`DROP TABLE ` + t.table,
+			`ALTER TABLE ` + tmp + ` RENAME TO ` + t.table,
+		}
+		ok := true
+		for _, stmt := range stmts {
+			if _, err := db.Exec(stmt); err != nil {
+				dbInteraction.Warning("Migration of %s failed at %q: %s", t.table, stmt, err)
+				ok = false
+				break
+			}
+		}
+		if ok {
+			dbInteraction.Progress("Migrated %s: PRIMARY KEY added, duplicates removed", t.table)
+		}
+	}
+
+	// One-time bloat cleanup: key_hints accumulates transient DBLP-derived hints over
+	// many runs because buildKeyAliasesFromDb used to reset keyHintsModified=false,
+	// preventing the filter in saveKeyHintsToDb from ever running a clean save.
+	// If key_hints has more than 3× the number of bib entries, clear it — it will be
+	// rebuilt from preferredalias fields on this same run.
+	var hintCount, entryCount int
+	db.QueryRow(`SELECT COUNT(*) FROM key_hints`).Scan(&hintCount)
+	db.QueryRow(`SELECT COUNT(DISTINCT entry_key) FROM bib_entries WHERE field = ?`, EntryTypeField).Scan(&entryCount)
+	if entryCount > 0 && hintCount > entryCount*3 {
+		dbInteraction.Progress("Cleaning bloated key_hints: %d rows for %d entries — clearing for rebuild", hintCount, entryCount)
+		db.Exec(`DELETE FROM key_hints`)
 	}
 }
 
@@ -132,17 +308,24 @@ func connectToDatabase() {
 	}
 
 	ensureTableDatesTableExists()
+	maybeMigrateFilterTableNames()
+	maybeConsolidateEntryFlags()
 	ensureNameMappingsTableExists()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
 	ensureDblpParentTableExists()
 	ensureDblpWaivedTableExists()
-	ensureEntryFlagsTableExists()
 	ensureCrossFieldMappingsTableExists()
 	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
 	ensureURLsIgnoreTableExists()
+	ensureEntryMetadataTableExists()
+	ensureLosingFieldValuesTableExists()
+	ensureConfigTableExists()
+	maybeBootstrapConfigFromFile()
+	loadBibTeXSettings()
+	ensureShortenMappingsTableExists()
 	ensureBibTablesExist()
 }
 
@@ -185,17 +368,21 @@ func reopenDb(path string) {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", path, err)
 	}
 	ensureTableDatesTableExists()
+	maybeMigrateFilterTableNames()
 	ensureNameMappingsTableExists()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
 	ensureDblpParentTableExists()
 	ensureDblpWaivedTableExists()
-	ensureEntryFlagsTableExists()
 	ensureCrossFieldMappingsTableExists()
 	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
 	ensureURLsIgnoreTableExists()
+	ensureEntryMetadataTableExists()
+	ensureLosingFieldValuesTableExists()
+	ensureConfigTableExists()
+	ensureShortenMappingsTableExists()
 	ensureBibTablesExist()
 }
 
@@ -206,8 +393,8 @@ func beginSafeParse() bool {
 	dbInteraction.Progress(ProgressBackingUpDatabase)
 	livePath := dbPath()
 	ts := time.Now().Format("20060102_150405")
-	safeParseTemp = fmt.Sprintf("%s/bibtex_check_%s_%s.cache",
-		os.TempDir(), bibTeXBaseName, ts)
+	safeParseTemp = fmt.Sprintf("%s/bibtex_check_%s_%s%s",
+		os.TempDir(), bibTeXBaseName, ts, cacheFileExtension)
 
 	safeParseOriginalCount = countDistinctBibEntries() // count entries before switching to temp
 
@@ -264,6 +451,341 @@ func rollbackSafeParse() {
 	safeParseTemp = ""
 }
 
+// --- config table ---
+
+func ensureConfigTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS config (
+		  key   TEXT PRIMARY KEY,
+		  value TEXT NOT NULL
+		);`)
+}
+
+// GetConfig returns the value for key from the config table, or defaultValue if absent.
+func GetConfig(key, defaultValue string) string {
+	var val string
+	if err := db.QueryRow(`SELECT value FROM config WHERE key = ?`, key).Scan(&val); err != nil {
+		return defaultValue
+	}
+	return val
+}
+
+// SetConfig writes key → value into the config table.
+func SetConfig(key, value string) {
+	db.Exec(`INSERT INTO config (key, value) VALUES (?, ?)
+	           ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+}
+
+// maybeBootstrapConfigFromFile copies non-bootstrap settings from the in-memory config
+// (loaded from the .folders file or migrated from the legacy .config file) into the DB
+// config table on first run. Bootstrap keys (cache_folder, global_folder) remain in the
+// .folders file only and are never written to the DB.
+func maybeBootstrapConfigFromFile() {
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM config`).Scan(&count)
+	if count > 0 {
+		return
+	}
+	if keyPrefix != "" {
+		SetConfig("key_prefix", keyPrefix)
+	}
+	if csvDelimiter != "" {
+		SetConfig("csv_delimiter", csvDelimiter)
+	}
+	if backupFolder != "" {
+		SetConfig("backup_folder", backupFolder)
+	}
+	SetConfig("version", AppVersion)
+}
+
+// loadBibTeXSettings reads non-bootstrap settings from the DB config table and
+// overrides the in-memory vars set by loadBibTeXFolders. Called after the DB is
+// open and after maybeBootstrapConfigFromFile has run.
+func loadBibTeXSettings() {
+	if v := GetConfig("key_prefix", ""); v != "" {
+		keyPrefix = v
+	} else if keyPrefix != "" {
+		// Migrated from legacy .folders: persist to DB now.
+		SetConfig("key_prefix", keyPrefix)
+	} else {
+		// Fresh install with no key_prefix anywhere: prompt and save to DB.
+		keyPrefix = promptKeyPrefix()
+		SetConfig("key_prefix", keyPrefix)
+	}
+	if v := GetConfig("csv_delimiter", ""); v != "" {
+		csvDelimiter = v
+	}
+	// .folders takes precedence; only read from DB when .folders did not set it.
+	if backupFolder == "" {
+		if v := GetConfig("backup_folder", ""); v != "" {
+			backupFolder = expandHome(v)
+			if !strings.HasSuffix(backupFolder, "/") {
+				backupFolder += "/"
+			}
+		}
+	}
+	SetConfig("version", AppVersion)
+}
+
+// configExchangePath returns the path of the config exchange CSV file.
+func configExchangePath() string {
+	return bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/config.csv"
+}
+
+// ExportConfig writes the user-settable config table entries to the exchange CSV.
+func ExportConfig() {
+	path := configExchangePath()
+	if err := os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755); err != nil {
+		dbInteraction.Warning("Could not create exchange folder: %s", err)
+		return
+	}
+	rows, err := db.Query(`SELECT key, value FROM config WHERE key != 'version' ORDER BY key`)
+	if err != nil {
+		dbInteraction.Warning("Could not read config table: %s", err)
+		return
+	}
+	defer rows.Close()
+	var lines []string
+	for rows.Next() {
+		var key, value string
+		if rows.Scan(&key, &value) == nil {
+			lines = append(lines, csvLine(key, value))
+		}
+	}
+	content := strings.Join(lines, "\n")
+	if len(lines) > 0 {
+		content += "\n"
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		dbInteraction.Warning("Could not write %s: %s", path, err)
+		return
+	}
+	dbInteraction.Progress("Exported %d config entries to %s", len(lines), path)
+}
+
+// importConfigFromCSV reads key;value pairs from the exchange CSV. When replace is
+// true, all existing non-version rows are deleted first (import); when false, existing
+// rows are upserted (add).
+func importConfigFromCSV(replace bool) {
+	path := configExchangePath()
+	count := 0
+	processCSVFile(path, func(fields []string) {
+		if len(fields) < 2 {
+			return
+		}
+		key, value := strings.TrimSpace(fields[0]), strings.TrimSpace(fields[1])
+		if key == "" || key == "version" {
+			return
+		}
+		count++
+		_ = value // validated below
+	})
+	if count == 0 {
+		dbInteraction.Warning("No valid config entries found in %s", path)
+		return
+	}
+	if replace {
+		db.Exec(`DELETE FROM config WHERE key != 'version'`)
+	}
+	processCSVFile(path, func(fields []string) {
+		if len(fields) < 2 {
+			return
+		}
+		key, value := strings.TrimSpace(fields[0]), strings.TrimSpace(fields[1])
+		if key == "" || key == "version" {
+			return
+		}
+		SetConfig(key, value)
+	})
+	verb := "Imported"
+	if !replace {
+		verb = "Added"
+	}
+	dbInteraction.Progress("%s %d config entries from %s", verb, count, path)
+}
+
+// --- write-session isolation ---
+
+// dbHomePath returns the permanent home location for the database, next to the bib file.
+func dbHomePath() string {
+	return bibTeXFolder + bibTeXBaseName + cacheFileExtension
+}
+
+// dbIsolationActive reports whether the working path differs from the home path.
+func dbIsolationActive() bool {
+	return dbHomePath() != dbPath()
+}
+
+// maybeMigrateToHomePath establishes the home database copy on the first run after
+// write-session isolation is introduced. If the home path is absent or empty but the
+// working path holds a real database, the working copy becomes the initial home copy.
+func maybeMigrateToHomePath() {
+	if !dbIsolationActive() {
+		return
+	}
+	home := dbHomePath()
+	if info, err := os.Stat(home); err == nil && info.Size() > 0 {
+		return
+	}
+	working := dbPath()
+	wInfo, err := os.Stat(working)
+	if err != nil || wInfo.Size() == 0 {
+		return
+	}
+	if err := copyFile(working, home); err != nil {
+		dbInteraction.Warning("Could not establish home database: %s", err)
+		return
+	}
+	os.Chtimes(home, wInfo.ModTime(), wInfo.ModTime())
+	dbInteraction.Progress("Established home database: %s", home)
+}
+
+// prepareWorkingDatabase ensures the working database is a current copy of the home
+// database before a write session begins. Detects a stale working copy left by a
+// crash and offers the user a chance to restore. Returns false on setup failure.
+func prepareWorkingDatabase() bool {
+	if !dbIsolationActive() {
+		dbWriteSessionActive = true
+		return true
+	}
+	home := dbHomePath()
+	working := dbPath()
+
+	hInfo, hErr := os.Stat(home)
+	if hErr != nil {
+		// No home DB yet. If a bib file exists for this base, create an empty home DB
+		// so the normal open flow can proceed and auto-import it via ValidBibDb() == false.
+		bibPath := bibTeXFolder + bibTeXBaseName + BibFileExtension
+		if _, bibErr := os.Stat(bibPath); bibErr != nil {
+			dbInteraction.Warning("Home database not found: %s", home)
+			return false
+		}
+		f, createErr := os.Create(home)
+		if createErr != nil {
+			dbInteraction.Warning("Could not create home database %s: %s", home, createErr)
+			return false
+		}
+		f.Close()
+		hInfo, _ = os.Stat(home)
+	}
+
+	wInfo, wErr := os.Stat(working)
+
+	// Crash recovery: primary check uses session markers; legacy fallback uses
+	// size+mtime for DBs written before session markers were introduced.
+	crashed := writeSessionIsCrashed()
+	if !crashed && wErr == nil && wInfo.Size() > 0 &&
+		wInfo.Size() != hInfo.Size() && wInfo.ModTime().After(hInfo.ModTime()) {
+		crashed = true
+	}
+	if crashed {
+		var entryCount int
+		db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = ?`, EntryTypeField).Scan(&entryCount)
+		if entryCount > 0 {
+			dbInteraction.Warning(WarningWorkingDbNewer)
+			answer, _ := dbInteraction.AskForInput("Restore home from working copy? [y/N]")
+			if strings.EqualFold(answer, "y") {
+				if err := copyFile(working, home); err != nil {
+					dbInteraction.Warning("Could not restore: %s", err)
+					return false
+				}
+				hInfo, _ = os.Stat(home)
+				dbInteraction.Progress("Restored home database from working copy.")
+			}
+		}
+	}
+
+	// In sync: session markers confirm a clean previous close AND sizes match.
+	if wErr == nil && writeSessionIsClean() && wInfo.Size() == hInfo.Size() {
+		markWriteSessionOpen()
+		dbWriteSessionActive = true
+		return true
+	}
+
+	dbInteraction.Progress(ProgressCopyingToWorkingDatabase)
+	if err := copyFile(home, working); err != nil {
+		dbInteraction.Warning("Could not copy database to working location: %s", err)
+		return false
+	}
+	if hNew, err := os.Stat(home); err == nil {
+		os.Chtimes(working, hNew.ModTime(), hNew.ModTime())
+	}
+	reopenDb(working)
+	markWriteSessionOpen()
+	dbWriteSessionActive = true
+	return true
+}
+
+// finaliseWorkingDatabase copies the working database back to the home path,
+// creates a timestamped backup of the previous home copy, and writes a SQL dump.
+// Called at the end of main after all writes are flushed.
+func finaliseWorkingDatabase() {
+	if !dbWriteSessionActive || !dbIsolationActive() {
+		return
+	}
+	home := dbHomePath()
+	working := dbPath()
+
+	// Mark session closed in the working DB before flushing so the next run
+	// can confirm a clean state without relying on file mtime comparison.
+	if db != nil {
+		markWriteSessionClosed()
+	}
+
+	if db != nil {
+		db.Close()
+		db = nil
+	}
+
+	ts := time.Now().Format("20060102_150405")
+	backupPath := backupFolder + bibTeXBaseName + "_" + ts + cacheFileExtension
+	if err := os.MkdirAll(backupFolder, 0o755); err == nil {
+		if err := copyFile(home, backupPath); err != nil {
+			dbInteraction.Warning("Could not back up home database: %s", err)
+		}
+	}
+
+	dbInteraction.Progress(ProgressSavingDatabaseToHome)
+	wInfo, wErr := os.Stat(working)
+	if err := copyFile(working, home); err != nil {
+		dbInteraction.Warning("Could not save working database to home: %s", err)
+		return
+	}
+	// Sync home mtime to working's mtime so the next run's skip-copy check triggers.
+	if wErr == nil {
+		os.Chtimes(home, wInfo.ModTime(), wInfo.ModTime())
+	}
+
+	writeDatabaseDump()
+
+	// writeDatabaseDump() opens the home DB via the sqlite3 CLI, which may trigger
+	// a WAL checkpoint or other write that updates home's mtime. Read back home's
+	// actual stored mtime and apply it to working so both agree exactly — prevents
+	// a spurious "working newer than home" warning on the next run.
+	if hFinal, err := os.Stat(home); err == nil {
+		os.Chtimes(working, hFinal.ModTime(), hFinal.ModTime())
+	}
+}
+
+// writeDatabaseDump writes a SQL dump of the home database to $base.dump using
+// the sqlite3 CLI tool. Skips with a warning if sqlite3 is not available.
+func writeDatabaseDump() {
+	dumpPath := bibTeXFolder + bibTeXBaseName + ".dump"
+	out, err := os.Create(dumpPath)
+	if err != nil {
+		dbInteraction.Warning("Could not create dump file: %s", err)
+		return
+	}
+	defer out.Close()
+	cmd := exec.Command("sqlite3", dbHomePath(), ".dump")
+	cmd.Stdout = out
+	if err := cmd.Run(); err != nil {
+		dbInteraction.Warning("Could not write database dump (sqlite3 not in PATH?): %s", err)
+		out.Close()
+		os.Remove(dumpPath)
+	}
+}
+
 // --- table_modification_times table ---
 
 func ensureTableDatesTableExists() {
@@ -277,6 +799,33 @@ func ensureTableDatesTableExists() {
 	// Migrate existing databases that have only the original single column.
 	db.Exec(`ALTER TABLE table_modification_times ADD COLUMN dirty INT NOT NULL DEFAULT 0`)
 	db.Exec(`ALTER TABLE table_modification_times ADD COLUMN last_written_time INT NOT NULL DEFAULT 0`)
+}
+
+// maybeMigrateFilterTableNames renames all legacy filter_* table names to their
+// canonical non-prefixed form. This covers:
+//   - The v23.3 intermediate rename filter_losing_field_values → losing_field_values
+//   - All original filter_* tables that should never have had the prefix.
+func maybeMigrateFilterTableNames() {
+	renames := [][2]string{
+		{"filter_losing_field_values", "losing_field_values"},
+		{"filter_generic_field_mappings", "generic_field_mappings"},
+		{"filter_cross_field_mappings", "cross_field_mappings"},
+		{"filter_state_names", "state_names"},
+		{"filter_state_countries", "state_countries"},
+		{"filter_country_names", "country_names"},
+		{"filter_booktitle_country_names", "booktitle_country_names"},
+	}
+	for _, pair := range renames {
+		old, new := pair[0], pair[1]
+		var n int
+		db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, old).Scan(&n)
+		if n == 0 {
+			continue
+		}
+		db.Exec(`ALTER TABLE ` + old + ` RENAME TO ` + new)
+		db.Exec(`UPDATE table_modification_times SET table_name = ? WHERE table_name = ?`, new, old)
+		dbInteraction.Progress("Migrated table %s → %s", old, new)
+	}
 }
 
 func setTableDate(tableName string, date int64) {
@@ -301,6 +850,46 @@ func tableModTime(tableName string) int64 {
 		date = 0
 	}
 	return date
+}
+
+// --- write-session markers ---
+//
+// Two virtual entries in table_modification_times track whether the working DB
+// was left in a clean state:
+//
+//   write_session_open   — set to open_time when a write session starts;
+//                          updated to close_time when it ends cleanly
+//   write_session_closed — set to 0 when a write session starts;
+//                          set to the same close_time when it ends cleanly
+//
+// After a clean close both entries hold the same non-zero time.
+// After a crash or CTRL-C the closed entry is still 0 while open is non-zero.
+
+func markWriteSessionOpen() {
+	now := time.Now().UnixMicro()
+	setTableDate("write_session_open", now)
+	setTableDate("write_session_closed", 0)
+}
+
+func markWriteSessionClosed() {
+	t := time.Now().UnixMicro()
+	setTableDate("write_session_open", t)
+	setTableDate("write_session_closed", t)
+}
+
+// writeSessionIsClean reports whether the working DB was cleanly closed in the
+// previous write session (both marker times are equal and non-zero).
+func writeSessionIsClean() bool {
+	open := tableModTime("write_session_open")
+	closed := tableModTime("write_session_closed")
+	return open > 0 && open == closed
+}
+
+// writeSessionIsCrashed reports whether the working DB was left in an
+// open-but-not-closed state (open time recorded, closed time is 0).
+func writeSessionIsCrashed() bool {
+	return tableModTime("write_session_open") > 0 &&
+		tableModTime("write_session_closed") == 0
 }
 
 func setTableDirty(tableName string) {
@@ -364,13 +953,13 @@ func tryCreateTableIfNeeded(command string) {
 //
 //  2. name_mappings: author/editor name canonicalisation; independent of others.
 //
-//  3. filter_generic_field_mappings: per-field value normalisation.
+//  3. generic_field_mappings: per-field value normalisation.
 //     Depends on name_mappings (name values are normalised via name aliases).
 //
 //  4. filter_entry_field_mappings: per-(entry,field) overrides.
 //     Depends on name_mappings and generic mappings (values are cross-normalised).
 //
-//  5. filter_cross_field_mappings: source-field → target-field value propagation.
+//  5. cross_field_mappings: source-field → target-field value propagation.
 //     Depends on address tables, name_mappings, and both field mapping tables.
 //
 //  6. key_hints, key_oldies, key_non_doubles: key alias tables; independent of
@@ -397,9 +986,75 @@ func ensureNameMappingsTableExists() {
 		);`)
 }
 
+// repairCorruptNameMappings detects alias rows whose value contains embedded
+// newlines — a sign that encoding/csv with LazyQuotes=true consumed subsequent
+// CSV lines into a single quoted field during a prior importNameMappingsFromCSV call.
+// For each corrupt row it re-inserts the embedded individual alias pairs directly
+// into the DB (no CSV dependency) and then deletes the corrupt row.
+// Returns true when at least one corrupt row was found and repaired.
+func repairCorruptNameMappings() bool {
+	var maxAliasLen int
+	db.QueryRow(`SELECT COALESCE(MAX(LENGTH(alias)), 0) FROM name_mappings`).Scan(&maxAliasLen)
+	if maxAliasLen <= 500 {
+		return false
+	}
+
+	dbInteraction.Progress("Corrupt name_mappings data detected (max alias length %d) — repairing in-DB", maxAliasLen)
+
+	rows, err := db.Query(`SELECT alias, name FROM name_mappings WHERE LENGTH(alias) > 500`)
+	if err != nil {
+		dbInteraction.Warning("Could not query corrupt name_mappings rows: %s", err)
+		return false
+	}
+
+	type pair struct{ alias, name string }
+	var corrupt []pair
+	for rows.Next() {
+		var p pair
+		if err := rows.Scan(&p.alias, &p.name); err == nil {
+			corrupt = append(corrupt, p)
+		}
+	}
+	rows.Close()
+
+	upsert := `INSERT INTO name_mappings (alias, name) VALUES (?, ?)
+	             ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
+
+	for _, p := range corrupt {
+		// The blob is the content that encoding/csv read after the opening " of the
+		// problematic CSV line.  Split it on newlines to recover the individual entries
+		// that were swallowed.  Each embedded line is a complete "name;alias" pair from
+		// the original CSV.  The very first fragment is the alias of the blob's own name.
+		for i, line := range strings.Split(p.alias, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			elements := strings.SplitN(line, csvDelimiter, 2)
+			if i == 0 {
+				// First fragment: this is the alias portion of the triggering line;
+				// the canonical is p.name.
+				if line != "" {
+					db.Exec(upsert, ApplyLaTeXMap(csvUnquoteField(line)), ApplyLaTeXMap(p.name))
+				}
+			} else if len(elements) == 2 && elements[0] != "" && elements[1] != "" {
+				// Subsequent fragments: full "canonical;alias" CSV lines.
+				db.Exec(upsert, ApplyLaTeXMap(csvUnquoteField(elements[1])), ApplyLaTeXMap(csvUnquoteField(elements[0])))
+			}
+		}
+		db.Exec(`DELETE FROM name_mappings WHERE alias = ?`, p.alias)
+	}
+
+	dbInteraction.Progress("Repaired %d corrupt name_mappings row(s)", len(corrupt))
+	return true
+}
+
 // maybeReloadNameMappingsDb syncs the flat file into the DB when the file is newer.
 // Each line must have two non-empty fields: canonical name and alias.
 func maybeReloadNameMappingsDb() {
+	// Repair any corrupt rows left by encoding/csv before the timestamp check.
+	repairCorruptNameMappings()
+
 	nameMappingsFileName := bibTeXFolder + bibTeXBaseName + NameMappingsFilePath
 
 	if fileModTime(nameMappingsFileName) <= tableModTime("name_mappings") {
@@ -419,7 +1074,9 @@ func maybeReloadNameMappingsDb() {
 	processFile(nameMappingsFileName, func(line string) {
 		elements := strings.Split(line, csvDelimiter)
 		if len(elements) >= 2 && elements[0] != "" && elements[1] != "" {
-			if _, err := db.Exec(upsert, ApplyLaTeXMap(elements[1]), ApplyLaTeXMap(elements[0])); err != nil {
+			name := csvUnquoteField(elements[0])
+			alias := csvUnquoteField(elements[1])
+			if _, err := db.Exec(upsert, ApplyLaTeXMap(alias), ApplyLaTeXMap(name)); err != nil {
 				dbInteraction.Warning("Name mapping insertion failed: %s", err)
 			}
 		} else {
@@ -429,7 +1086,7 @@ func maybeReloadNameMappingsDb() {
 	})
 
 	setTableDate("name_mappings", fileModTime(nameMappingsFileName))
-	setTableDate("filter_entry_field_mappings", 0)
+	setTableDate("losing_field_values", 0)
 }
 
 // loadNameMappingsFromDb populates l.NameAliasToName and l.NameToAliases from
@@ -564,6 +1221,12 @@ func loadKeyHintsFromDb(l *TBibTeXLibrary) {
 			dbInteraction.Warning("Could not scan key_hints row: %s", err)
 			continue
 		}
+		// Skip stale hints whose target was removed (e.g. by an interrupted merge).
+		// Mark modified so saveKeyHintsToDb will write the clean state at end of run.
+		if resolvedKey := l.MapEntryKey(key); !bibEntryExists(resolvedKey) {
+			l.keyHintsModified = true
+			continue
+		}
 		l.AddKeyHint(hint, key)
 	}
 }
@@ -644,6 +1307,9 @@ func maybeReloadKeyOldiesDb() {
 }
 
 // loadKeyOldiesFromDb populates l.KeyToKey from the DB.
+// Rows whose target no longer exists as a bib entry, or whose chain passes through
+// a non-existent intermediate, are skipped and flagged dirty so saveKeyOldiesToDb
+// will write a clean (flattened) state at end of run.
 func loadKeyOldiesFromDb(l *TBibTeXLibrary) {
 	rows, err := db.Query(`SELECT alias, key FROM key_oldies`)
 	if err != nil {
@@ -652,13 +1318,28 @@ func loadKeyOldiesFromDb(l *TBibTeXLibrary) {
 	}
 	defer rows.Close()
 
+	type pair struct{ alias, key string }
+	var pairs []pair
 	for rows.Next() {
 		var alias, key string
 		if err := rows.Scan(&alias, &key); err != nil {
 			dbInteraction.Warning("Could not scan key_oldies row: %s", err)
 			continue
 		}
-		l.AddKeyAlias(alias, key)
+		pairs = append(pairs, pair{alias, key})
+	}
+
+	for _, p := range pairs {
+		l.AddKeyAlias(p.alias, p.key)
+	}
+
+	// Detect chains that need flattening or targets that no longer exist.
+	for _, p := range pairs {
+		resolved := l.MapEntryKey(p.key)
+		if !bibEntryExists(resolved) || resolved != p.key {
+			l.keyOldiesModified = true
+			break
+		}
 	}
 }
 
@@ -942,46 +1623,53 @@ func saveDblpWaivedToDb(l *TBibTeXLibrary) {
 	setTableDate("dblp_waived", fileModTime(bibTeXFolder+bibTeXBaseName+DblpWaivedFilePath))
 }
 
-// --- entry_flags table ---
+// --- entry_flags → entry_metadata (v23.4 merge) ---
+//
+// entry_flags is now stored inside entry_metadata with value = 'true'.
+// knownEntryFlags lists every flag property name so load/save can target only
+// those rows and leave unrelated metadata rows untouched.
 
-var entryFlagsFileWritingAllowed = true
-
-func ensureEntryFlagsTableExists() {
-	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS entry_flags (
-		  entry_key TEXT NOT NULL,
-		  flag      TEXT NOT NULL,
-		  PRIMARY KEY (entry_key, flag)
-		);`)
+func knownEntryFlags() []string {
+	return []string{EntryFlagNoDBLPChildren}
 }
 
-func maybeReloadEntryFlagsDb() {
-	ensureEntryFlagsTableExists()
-	csvPath := bibTeXFolder + bibTeXBaseName + EntryFlagsFilePath
-	if fileModTime(csvPath) <= tableModTime("entry_flags") {
+// maybeConsolidateEntryFlags migrates the legacy entry_flags table into
+// entry_metadata (value = 'true'), then drops the old table.
+func maybeConsolidateEntryFlags() {
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='entry_flags'`).Scan(&n)
+	if n == 0 {
 		return
 	}
-	if _, err := db.Exec(`DELETE FROM entry_flags;`); err != nil {
-		dbInteraction.Warning("Could not clear entry_flags: %s", err)
-		return
+	rows, err := db.Query(`SELECT entry_key, flag FROM entry_flags`)
+	if err == nil {
+		upsert := `INSERT OR IGNORE INTO entry_metadata (entry_key, property, value) VALUES (?, ?, 'true')`
+		for rows.Next() {
+			var key, flag string
+			if rows.Scan(&key, &flag) == nil {
+				db.Exec(upsert, key, flag)
+			}
+		}
+		rows.Close()
 	}
-	insert := `INSERT OR IGNORE INTO entry_flags (entry_key, flag) VALUES (?, ?);`
-	processCSVFile(csvPath, func(fields []string) {
-		if len(fields) < 2 {
-			dbInteraction.Warning("Line in entry flags file is too short: %v", fields)
-			return
-		}
-		if _, err := db.Exec(insert, fields[0], fields[1]); err != nil {
-			dbInteraction.Warning("entry_flags insert failed: %s", err)
-		}
-	})
-	setTableDate("entry_flags", fileModTime(csvPath))
+	db.Exec(`DROP TABLE entry_flags`)
+	db.Exec(`DELETE FROM table_modification_times WHERE table_name = 'entry_flags'`)
+	dbInteraction.Progress("Merged entry_flags into entry_metadata")
 }
 
 func loadEntryFlagsFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT entry_key, flag FROM entry_flags;`)
+	flags := knownEntryFlags()
+	placeholders := strings.Repeat("?,", len(flags))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(flags))
+	for i, f := range flags {
+		args[i] = f
+	}
+	rows, err := db.Query(
+		`SELECT entry_key, property FROM entry_metadata WHERE value = 'true' AND property IN (`+placeholders+`)`,
+		args...)
 	if err != nil {
-		dbInteraction.Warning("Could not query entry_flags: %s", err)
+		dbInteraction.Warning("Could not query entry_flags from entry_metadata: %s", err)
 		return
 	}
 	defer rows.Close()
@@ -998,27 +1686,31 @@ func loadEntryFlagsFromDb(l *TBibTeXLibrary) {
 }
 
 func saveEntryFlagsToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM entry_flags;`); err != nil {
-		dbInteraction.Warning("Could not clear entry_flags: %s", err)
+	flags := knownEntryFlags()
+	placeholders := strings.Repeat("?,", len(flags))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(flags))
+	for i, f := range flags {
+		args[i] = f
 	}
-	insert := `INSERT OR IGNORE INTO entry_flags (entry_key, flag) VALUES (?, ?);`
-	for key, flags := range l.EntryFlags {
-		for flag := range flags.Elements() {
-			if _, err := db.Exec(insert, key, flag); err != nil {
-				dbInteraction.Warning("entry_flags insert failed: %s", err)
+	db.Exec(`DELETE FROM entry_metadata WHERE value = 'true' AND property IN (`+placeholders+`)`, args...)
+	upsert := `INSERT OR IGNORE INTO entry_metadata (entry_key, property, value) VALUES (?, ?, 'true')`
+	for key, flagSet := range l.EntryFlags {
+		for flag := range flagSet.Elements() {
+			if _, err := db.Exec(upsert, key, flag); err != nil {
+				dbInteraction.Warning("entry_flags save to entry_metadata failed: %s", err)
 			}
 		}
 	}
-	setTableDate("entry_flags", fileModTime(bibTeXFolder+bibTeXBaseName+EntryFlagsFilePath))
 }
 
-// --- filter_cross_field_mappings table ---
+// --- cross_field_mappings table ---
 
 var crossFieldMappingsFileWritingAllowed = true
 
 func ensureCrossFieldMappingsTableExists() {
 	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS filter_cross_field_mappings (
+		CREATE TABLE IF NOT EXISTS cross_field_mappings (
 		  source_field TEXT NOT NULL,
 		  source_value TEXT NOT NULL,
 		  target_field TEXT NOT NULL,
@@ -1032,24 +1724,24 @@ func ensureCrossFieldMappingsTableExists() {
 func maybeReloadCrossFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + CrossFieldMappingsFilePath
 
-	crossTime := tableModTime("filter_cross_field_mappings")
+	crossTime := tableModTime("cross_field_mappings")
 	if fileModTime(fileName) <= crossTime &&
 		tableModTime("name_mappings") <= crossTime &&
-		tableModTime("filter_state_names") <= crossTime &&
-		tableModTime("filter_state_countries") <= crossTime &&
-		tableModTime("filter_country_names") <= crossTime &&
-		tableModTime("filter_generic_field_mappings") <= crossTime {
+		tableModTime("state_names") <= crossTime &&
+		tableModTime("state_countries") <= crossTime &&
+		tableModTime("country_names") <= crossTime &&
+		tableModTime("generic_field_mappings") <= crossTime {
 		return
 	}
 
 	dbInteraction.Progress("Reloading cross-field mappings from %s", fileName)
 
-	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_cross_field_mappings;`); err != nil {
-		dbInteraction.Warning("Could not drop filter_cross_field_mappings table: %s", err)
+	if _, err := db.Exec(`DROP TABLE IF EXISTS cross_field_mappings;`); err != nil {
+		dbInteraction.Warning("Could not drop cross_field_mappings table: %s", err)
 	}
 	ensureCrossFieldMappingsTableExists()
 
-	upsert := `INSERT INTO filter_cross_field_mappings
+	upsert := `INSERT INTO cross_field_mappings
 	             (source_field, source_value, target_field, target_value) VALUES (?, ?, ?, ?)
 	             ON CONFLICT(source_field, source_value, target_field)
 	               DO UPDATE SET target_value = excluded.target_value;`
@@ -1065,7 +1757,7 @@ func maybeReloadCrossFieldMappingsDb() {
 		}
 	})
 
-	setTableDate("filter_cross_field_mappings", time.Now().UnixMicro())
+	setTableDate("cross_field_mappings", time.Now().UnixMicro())
 }
 
 // loadCrossFieldMappingsFromDb populates l.FieldMappings from the DB.
@@ -1074,9 +1766,9 @@ func maybeReloadCrossFieldMappingsDb() {
 // the caller can arrange a write-back to persist the canonical form.
 func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	rows, err := db.Query(
-		`SELECT source_field, source_value, target_field, target_value FROM filter_cross_field_mappings`)
+		`SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings`)
 	if err != nil {
-		dbInteraction.Warning("Could not query filter_cross_field_mappings: %s", err)
+		dbInteraction.Warning("Could not query cross_field_mappings: %s", err)
 		return false
 	}
 	defer rows.Close()
@@ -1085,7 +1777,7 @@ func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	for rows.Next() {
 		var sourceField, sourceValue, targetField, targetValue string
 		if err := rows.Scan(&sourceField, &sourceValue, &targetField, &targetValue); err != nil {
-			dbInteraction.Warning("Could not scan filter_cross_field_mappings row: %s", err)
+			dbInteraction.Warning("Could not scan cross_field_mappings row: %s", err)
 			continue
 		}
 		normSourceValue := l.MapFieldValue(sourceField, sourceValue)
@@ -1100,16 +1792,16 @@ func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 
 // syncCrossFieldMappingsDbFromFile forces the DB to be reloaded from the flat file.
 func syncCrossFieldMappingsDbFromFile() {
-	setTableDate("filter_cross_field_mappings", 0)
+	setTableDate("cross_field_mappings", 0)
 	maybeReloadCrossFieldMappingsDb()
 }
 
 // saveCrossFieldMappingsToDb writes the field mappings directly to the DB without a file roundtrip.
 func saveCrossFieldMappingsToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM filter_cross_field_mappings;`); err != nil {
-		dbInteraction.Warning("Could not clear filter_cross_field_mappings: %s", err)
+	if _, err := db.Exec(`DELETE FROM cross_field_mappings;`); err != nil {
+		dbInteraction.Warning("Could not clear cross_field_mappings: %s", err)
 	}
-	upsert := `INSERT INTO filter_cross_field_mappings
+	upsert := `INSERT INTO cross_field_mappings
 	             (source_field, source_value, target_field, target_value) VALUES (?, ?, ?, ?)
 	             ON CONFLICT(source_field, source_value, target_field)
 	               DO UPDATE SET target_value = excluded.target_value;`
@@ -1117,12 +1809,12 @@ func saveCrossFieldMappingsToDb(l *TBibTeXLibrary) {
 		for sourceValue, targetFieldMappings := range sourceFieldMappings {
 			for targetField, targetValue := range targetFieldMappings {
 				if _, err := db.Exec(upsert, sourceField, sourceValue, targetField, targetValue); err != nil {
-					dbInteraction.Warning("filter_cross_field_mappings insert failed: %s", err)
+					dbInteraction.Warning("cross_field_mappings insert failed: %s", err)
 				}
 			}
 		}
 	}
-	setTableDate("filter_cross_field_mappings", fileModTime(bibTeXFolder+bibTeXBaseName+CrossFieldMappingsFilePath))
+	setTableDate("cross_field_mappings", fileModTime(bibTeXFolder+bibTeXBaseName+CrossFieldMappingsFilePath))
 }
 
 // --- filter_entry_field_mappings table ---
@@ -1140,104 +1832,99 @@ func ensureEntryFieldMappingsTableExists() {
 		);`)
 }
 
-// maybeReloadEntryFieldMappingsDb syncs the flat file into the DB when the file is newer,
-// or when any upstream normaliser table (generic_field_mappings, address tables) has been updated.
-// name_mappings changes cascade via generic_field_mappings (which zeroes this table's time).
+// maybeReloadEntryFieldMappingsDb syncs the losing_field_values CSV into the DB when the
+// file is newer, or when any upstream normaliser table has been updated.
 func maybeReloadEntryFieldMappingsDb() {
-	fileName := bibTeXFolder + bibTeXBaseName + EntryFieldMappingsFilePath
+	fileName := bibTeXFolder + bibTeXBaseName + LosingFieldValuesFilePath
 
-	entryTime := tableModTime("filter_entry_field_mappings")
+	entryTime := tableModTime("losing_field_values")
 	if fileModTime(fileName) <= entryTime &&
 		tableModTime("name_mappings") <= entryTime &&
-		tableModTime("filter_generic_field_mappings") <= entryTime &&
-		tableModTime("filter_state_names") <= entryTime &&
-		tableModTime("filter_state_countries") <= entryTime &&
-		tableModTime("filter_country_names") <= entryTime {
+		tableModTime("generic_field_mappings") <= entryTime &&
+		tableModTime("state_names") <= entryTime &&
+		tableModTime("state_countries") <= entryTime &&
+		tableModTime("country_names") <= entryTime {
 		return
 	}
 
 	dbInteraction.Progress("Reloading entry field aliases from %s", fileName)
 
-	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_entry_field_mappings;`); err != nil {
-		dbInteraction.Warning("Could not drop filter_entry_field_mappings table: %s", err)
+	if _, err := db.Exec(`DELETE FROM losing_field_values`); err != nil {
+		dbInteraction.Warning("Could not clear losing_field_values: %s", err)
 	}
-	ensureEntryFieldMappingsTableExists()
 
-	upsert := `INSERT INTO filter_entry_field_mappings
-	             (entry_key, field, winner, challenger) VALUES (?, ?, ?, ?)
-	             ON CONFLICT(entry_key, field, challenger)
-	               DO UPDATE SET winner = excluded.winner;`
+	upsert := `INSERT INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?)
+	             ON CONFLICT(entry_key, field, value) DO NOTHING`
 
 	processCSVFile(fileName, func(fields []string) {
-		if len(fields) < 4 {
+		if len(fields) < 3 {
 			dbInteraction.Warning(WarningEntryFieldMappingsLineTooShort, strings.Join(fields, csvDelimiter))
 			entryFieldMappingsFileWritingAllowed = false
 			return
 		}
-		if _, err := db.Exec(upsert, fields[0], fields[1], fields[2], fields[3]); err != nil {
+		if _, err := db.Exec(upsert, fields[0], fields[1], fields[2]); err != nil {
 			dbInteraction.Warning("Entry field alias insertion failed: %s", err)
 		}
 	})
 
-	setTableDate("filter_entry_field_mappings", time.Now().UnixMicro())
-	setTableDate("filter_cross_field_mappings", 0)
+	setTableDate("losing_field_values", time.Now().UnixMicro())
+	setTableDate("cross_field_mappings", 0)
 }
 
 // loadEntryFieldMappingsFromDb populates l.EntryFieldSourceToTarget from the DB.
-// Uses MapNormalisedFieldValue so that stored values whose normalisation changed after
-// the CSV was written (e.g. "Washington {DC}, {USA}" once the country-name table
-// normalises {USA}→USA and the generic mapping maps the result to "Washington DC, USA")
-// are resolved to the current canonical form. Returns true when at least one value was
-// remapped, so the caller can arrange a write-back.
+// The winner is read from bib_entries (current accepted value); only the loser is stored
+// in losing_field_values. Rows with no matching bib_entries value are skipped.
+// Returns true when at least one value was remapped by MapFieldValue, so the caller
+// can arrange a write-back.
 func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
-	rows, err := db.Query(
-		`SELECT entry_key, field, winner, challenger FROM filter_entry_field_mappings`)
+	rows, err := db.Query(`
+		SELECT lfv.entry_key, lfv.field, lfv.value AS loser, be.value AS winner
+		FROM losing_field_values lfv
+		JOIN bib_entries be ON be.entry_key = lfv.entry_key AND be.field = lfv.field`)
 	if err != nil {
-		dbInteraction.Warning("Could not query filter_entry_field_mappings: %s", err)
+		dbInteraction.Warning("Could not query losing_field_values: %s", err)
 		return false
 	}
 	defer rows.Close()
 
 	normalisationChanged := false
 	for rows.Next() {
-		var key, field, winner, challenger string
-		if err := rows.Scan(&key, &field, &winner, &challenger); err != nil {
-			dbInteraction.Warning("Could not scan filter_entry_field_mappings row: %s", err)
+		var key, field, loser, winner string
+		if err := rows.Scan(&key, &field, &loser, &winner); err != nil {
+			dbInteraction.Warning("Could not scan losing_field_values row: %s", err)
 			continue
 		}
-		normWinner := l.MapNormalisedFieldValue(field, winner)
-		normChallenger := l.MapNormalisedFieldValue(field, challenger)
-		if normWinner != winner || normChallenger != challenger {
+		normWinner := l.MapFieldValue(field, winner)
+		normLoser := l.MapFieldValue(field, loser)
+		if normWinner != winner || normLoser != loser {
 			normalisationChanged = true
 		}
-		l.AddEntryFieldAlias(key, field, normChallenger, normWinner, true)
+		l.AddEntryFieldAlias(key, field, normLoser, normWinner, true)
 	}
 	return normalisationChanged
 }
 
 // syncEntryFieldMappingsDbFromFile forces the DB to be reloaded from the flat file.
 func syncEntryFieldMappingsDbFromFile() {
-	setTableDate("filter_entry_field_mappings", 0)
+	setTableDate("losing_field_values", 0)
 	maybeReloadEntryFieldMappingsDb()
 }
 
-// saveEntryFieldMappingsToDb writes the filtered entry field aliases directly to the DB without a file roundtrip.
+// saveEntryFieldMappingsToDb writes the losing field values to the DB without a file roundtrip.
 func saveEntryFieldMappingsToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM filter_entry_field_mappings;`); err != nil {
-		dbInteraction.Warning("Could not clear filter_entry_field_mappings: %s", err)
+	if _, err := db.Exec(`DELETE FROM losing_field_values`); err != nil {
+		dbInteraction.Warning("Could not clear losing_field_values: %s", err)
 	}
-	upsert := `INSERT INTO filter_entry_field_mappings
-	             (entry_key, field, winner, challenger) VALUES (?, ?, ?, ?)
-	             ON CONFLICT(entry_key, field, challenger)
-	               DO UPDATE SET winner = excluded.winner;`
+	upsert := `INSERT INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?)
+	             ON CONFLICT(entry_key, field, value) DO NOTHING`
 	for key, fieldChallenges := range l.EntryFieldSourceToTarget {
 		if l.EntryExists(key) {
 			for field, challenges := range fieldChallenges {
 				if field != PreferredAliasField {
 					for challenger, winner := range challenges {
 						if l.MapFieldValue(field, challenger) != l.MapEntryFieldValue(key, field, winner) {
-							if _, err := db.Exec(upsert, key, field, l.MapEntryFieldValue(key, field, winner), challenger); err != nil {
-								dbInteraction.Warning("filter_entry_field_mappings insert failed: %s", err)
+							if _, err := db.Exec(upsert, key, field, challenger); err != nil {
+								dbInteraction.Warning("losing_field_values insert failed: %s", err)
 							}
 						}
 					}
@@ -1245,16 +1932,16 @@ func saveEntryFieldMappingsToDb(l *TBibTeXLibrary) {
 			}
 		}
 	}
-	setTableDate("filter_entry_field_mappings", fileModTime(bibTeXFolder+bibTeXBaseName+EntryFieldMappingsFilePath))
+	setTableDate("losing_field_values", fileModTime(bibTeXFolder+bibTeXBaseName+LosingFieldValuesFilePath))
 }
 
-// --- filter_generic_field_mappings table ---
+// --- generic_field_mappings table ---
 
 var genericFieldMappingsFileWritingAllowed = true
 
 func ensureGenericFieldMappingsTableExists() {
 	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS filter_generic_field_mappings (
+		CREATE TABLE IF NOT EXISTS generic_field_mappings (
 		  field      TEXT NOT NULL,
 		  winner     TEXT NOT NULL,
 		  challenger TEXT NOT NULL,
@@ -1267,23 +1954,23 @@ func ensureGenericFieldMappingsTableExists() {
 func maybeReloadGenericFieldMappingsDb() {
 	fileName := bibTeXFolder + bibTeXBaseName + GenericFieldMappingsFilePath
 
-	genericTime := tableModTime("filter_generic_field_mappings")
+	genericTime := tableModTime("generic_field_mappings")
 	if fileModTime(fileName) <= genericTime &&
 		tableModTime("name_mappings") <= genericTime &&
-		tableModTime("filter_state_names") <= genericTime &&
-		tableModTime("filter_state_countries") <= genericTime &&
-		tableModTime("filter_country_names") <= genericTime {
+		tableModTime("state_names") <= genericTime &&
+		tableModTime("state_countries") <= genericTime &&
+		tableModTime("country_names") <= genericTime {
 		return
 	}
 
 	dbInteraction.Progress("Reloading generic field aliases from %s", fileName)
 
-	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_generic_field_mappings;`); err != nil {
-		dbInteraction.Warning("Could not drop filter_generic_field_mappings table: %s", err)
+	if _, err := db.Exec(`DROP TABLE IF EXISTS generic_field_mappings;`); err != nil {
+		dbInteraction.Warning("Could not drop generic_field_mappings table: %s", err)
 	}
 	ensureGenericFieldMappingsTableExists()
 
-	upsert := `INSERT INTO filter_generic_field_mappings
+	upsert := `INSERT INTO generic_field_mappings
 	             (field, winner, challenger) VALUES (?, ?, ?)
 	             ON CONFLICT(field, challenger)
 	               DO UPDATE SET winner = excluded.winner;`
@@ -1299,8 +1986,8 @@ func maybeReloadGenericFieldMappingsDb() {
 		}
 	})
 
-	setTableDate("filter_generic_field_mappings", time.Now().UnixMicro())
-	setTableDate("filter_entry_field_mappings", 0)
+	setTableDate("generic_field_mappings", time.Now().UnixMicro())
+	setTableDate("losing_field_values", 0)
 }
 
 // loadGenericFieldMappingsFromDb populates l.GenericFieldSourceToTarget from the DB.
@@ -1308,9 +1995,9 @@ func maybeReloadGenericFieldMappingsDb() {
 // one stored value was changed by normalisation, so the caller can arrange a write-back.
 func loadGenericFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	rows, err := db.Query(
-		`SELECT field, winner, challenger FROM filter_generic_field_mappings`)
+		`SELECT field, winner, challenger FROM generic_field_mappings`)
 	if err != nil {
-		dbInteraction.Warning("Could not query filter_generic_field_mappings: %s", err)
+		dbInteraction.Warning("Could not query generic_field_mappings: %s", err)
 		return false
 	}
 	defer rows.Close()
@@ -1319,11 +2006,11 @@ func loadGenericFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	for rows.Next() {
 		var field, winner, challenger string
 		if err := rows.Scan(&field, &winner, &challenger); err != nil {
-			dbInteraction.Warning("Could not scan filter_generic_field_mappings row: %s", err)
+			dbInteraction.Warning("Could not scan generic_field_mappings row: %s", err)
 			continue
 		}
-		normChallenger := l.NormaliseFieldValue(field, challenger)
-		normWinner := l.NormaliseFieldValue(field, winner)
+		normChallenger := l.MapFieldValue(field, challenger)
+		normWinner := l.MapFieldValue(field, winner)
 		if normChallenger != challenger || normWinner != winner {
 			normalisationChanged = true
 		}
@@ -1334,16 +2021,16 @@ func loadGenericFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 
 // syncGenericFieldMappingsDbFromFile forces the DB to be reloaded from the flat file.
 func syncGenericFieldMappingsDbFromFile() {
-	setTableDate("filter_generic_field_mappings", 0)
+	setTableDate("generic_field_mappings", 0)
 	maybeReloadGenericFieldMappingsDb()
 }
 
 // saveGenericFieldMappingsToDb writes the filtered generic field aliases directly to the DB without a file roundtrip.
 func saveGenericFieldMappingsToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM filter_generic_field_mappings;`); err != nil {
-		dbInteraction.Warning("Could not clear filter_generic_field_mappings: %s", err)
+	if _, err := db.Exec(`DELETE FROM generic_field_mappings;`); err != nil {
+		dbInteraction.Warning("Could not clear generic_field_mappings: %s", err)
 	}
-	upsert := `INSERT INTO filter_generic_field_mappings
+	upsert := `INSERT INTO generic_field_mappings
 	             (field, winner, challenger) VALUES (?, ?, ?)
 	             ON CONFLICT(field, challenger)
 	               DO UPDATE SET winner = excluded.winner;`
@@ -1352,14 +2039,14 @@ func saveGenericFieldMappingsToDb(l *TBibTeXLibrary) {
 			for challenger, winner := range challenges {
 				if challenger != winner {
 					if _, err := db.Exec(upsert, field, l.MapFieldValue(field, winner), challenger); err != nil {
-						dbInteraction.Warning("filter_generic_field_mappings insert failed: %s", err)
+						dbInteraction.Warning("generic_field_mappings insert failed: %s", err)
 					}
 				}
 			}
 		}
 	}
-	setTableDate("filter_generic_field_mappings", fileModTime(bibTeXFolder+bibTeXBaseName+GenericFieldMappingsFilePath))
-	setTableDate("filter_entry_field_mappings", 0)
+	setTableDate("generic_field_mappings", fileModTime(bibTeXFolder+bibTeXBaseName+GenericFieldMappingsFilePath))
+	setTableDate("losing_field_values", 0)
 }
 
 // --- urls_ignore table ---
@@ -1455,6 +2142,197 @@ func loadURLsIgnoreFromDb(l *TBibTeXLibrary) {
 		}
 		l.URLsIgnore.Add(url)
 	}
+}
+
+// --- entry_metadata table ---
+
+func ensureEntryMetadataTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS entry_metadata (
+		  entry_key TEXT NOT NULL,
+		  property  TEXT NOT NULL,
+		  value     TEXT NOT NULL,
+		  PRIMARY KEY (entry_key, property)
+		);`)
+}
+
+// maybeReloadEntryMetadataDb migrates entry_metadata.json into the DB when the JSON
+// file is newer than the DB table (one-time migration on first 21.x run, or when the
+// user has manually edited the JSON file).
+func maybeReloadEntryMetadataDb() {
+	fileName := bibTeXFolder + bibTeXBaseName + EntryMetadataFilePath
+	if fileModTime(fileName) <= tableModTime("entry_metadata") {
+		return
+	}
+	data, err := os.ReadFile(fileName)
+	if err != nil {
+		return
+	}
+	var meta TEntryMetadata
+	if jsonErr := json.Unmarshal(data, &meta); jsonErr != nil {
+		dbInteraction.Warning("Could not parse %s for DB migration: %s", fileName, jsonErr)
+		return
+	}
+	db.Exec(`DELETE FROM entry_metadata`)
+	upsert := `INSERT INTO entry_metadata (entry_key, property, value) VALUES (?, ?, ?)
+	             ON CONFLICT(entry_key, property) DO UPDATE SET value = excluded.value`
+	for key, props := range meta {
+		for prop, val := range props {
+			if _, err := db.Exec(upsert, key, prop, val); err != nil {
+				dbInteraction.Warning("entry_metadata insert failed: %s", err)
+			}
+		}
+	}
+	setTableDate("entry_metadata", fileModTime(fileName))
+}
+
+func loadEntryMetadataFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT entry_key, property, value FROM entry_metadata`)
+	if err != nil {
+		dbInteraction.Warning("Could not query entry_metadata: %s", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, prop, val string
+		if err := rows.Scan(&key, &prop, &val); err != nil {
+			dbInteraction.Warning("Could not scan entry_metadata row: %s", err)
+			continue
+		}
+		if l.Metadata[key] == nil {
+			l.Metadata[key] = map[string]string{}
+		}
+		l.Metadata[key][prop] = val
+	}
+}
+
+func saveEntryMetadataToDb(l *TBibTeXLibrary) {
+	db.Exec(`DELETE FROM entry_metadata`)
+	upsert := `INSERT INTO entry_metadata (entry_key, property, value) VALUES (?, ?, ?)
+	             ON CONFLICT(entry_key, property) DO UPDATE SET value = excluded.value`
+	for key, props := range l.Metadata {
+		for prop, val := range props {
+			if _, err := db.Exec(upsert, key, prop, val); err != nil {
+				dbInteraction.Warning("entry_metadata insert failed: %s", err)
+			}
+		}
+	}
+	setTableDate("entry_metadata", time.Now().UnixMicro())
+}
+
+// --- losing_field_values table ---
+
+func ensureLosingFieldValuesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS losing_field_values (
+		  entry_key TEXT NOT NULL,
+		  field     TEXT NOT NULL,
+		  value     TEXT NOT NULL,
+		  PRIMARY KEY (entry_key, field, value)
+		);`)
+}
+
+// maybeMigrateToLosingFieldValues copies challengers from the legacy
+// filter_entry_field_mappings table into losing_field_values on the first run
+// after the 21.x upgrade.
+func maybeMigrateToLosingFieldValues() {
+	var newCount int
+	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values`).Scan(&newCount)
+	if newCount > 0 {
+		return
+	}
+	var oldCount int
+	db.QueryRow(`SELECT COUNT(*) FROM filter_entry_field_mappings`).Scan(&oldCount)
+	if oldCount == 0 {
+		return
+	}
+	if _, err := db.Exec(`
+		INSERT OR IGNORE INTO losing_field_values (entry_key, field, value)
+		SELECT entry_key, field, challenger FROM filter_entry_field_mappings
+	`); err != nil {
+		dbInteraction.Warning("Could not migrate entry field mappings: %s", err)
+		return
+	}
+	// Set the timestamp to the max of all upstream dependency tables so that
+	// maybeReloadEntryFieldMappingsDb does not immediately clear the migrated data
+	// because an upstream table appears newer.
+	maxT := tableModTime("filter_entry_field_mappings")
+	for _, dep := range []string{
+		"state_names", "state_countries", "country_names",
+		"name_mappings", "generic_field_mappings",
+	} {
+		if t := tableModTime(dep); t > maxT {
+			maxT = t
+		}
+	}
+	setTableDate("losing_field_values", maxT)
+	dbInteraction.Progress("Migrated entry field mappings to losing_field_values")
+}
+
+// --- shorten_mappings table ---
+
+func ensureShortenMappingsTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS shorten_mappings (
+		  field     TEXT NOT NULL,
+		  original  TEXT NOT NULL,
+		  shortened TEXT NOT NULL,
+		  PRIMARY KEY (field, original)
+		);`)
+}
+
+// maybeReloadShortenMappingsDb syncs the global shorten_mappings.csv into the DB
+// when the file is newer than the stored table timestamp.
+func maybeReloadShortenMappingsDb() {
+	fileName := globalFolder + ShortenMappingsFilePath
+	if fileModTime(fileName) <= tableModTime("shorten_mappings") {
+		return
+	}
+	if _, err := db.Exec(`DELETE FROM shorten_mappings`); err != nil {
+		dbInteraction.Warning("Could not clear shorten_mappings: %s", err)
+		return
+	}
+	upsert := `INSERT INTO shorten_mappings (field, original, shortened) VALUES (?, ?, ?)
+	             ON CONFLICT(field, original) DO UPDATE SET shortened = excluded.shortened`
+	processFile(fileName, func(line string) {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			return
+		}
+		parts := strings.SplitN(line, csvDelimiter, 3)
+		if len(parts) != 3 {
+			return
+		}
+		field := strings.TrimSpace(parts[0])
+		from := strings.TrimSpace(parts[1])
+		to := strings.TrimSpace(parts[2])
+		if field == "" || from == "" {
+			return
+		}
+		if _, err := db.Exec(upsert, field, from, to); err != nil {
+			dbInteraction.Warning("shorten_mappings insert failed: %s", err)
+		}
+	})
+	setTableDate("shorten_mappings", fileModTime(fileName))
+}
+
+// loadShortenMappingsFromDb loads the shorten_mappings table into a TShortenMappings map.
+func loadShortenMappingsFromDb() TShortenMappings {
+	result := TShortenMappings{}
+	rows, err := db.Query(`SELECT field, original, shortened FROM shorten_mappings`)
+	if err != nil {
+		dbInteraction.Warning("Could not query shorten_mappings: %s", err)
+		return result
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var field, original, shortened string
+		if err := rows.Scan(&field, &original, &shortened); err != nil {
+			dbInteraction.Warning("Could not scan shorten_mappings row: %s", err)
+			continue
+		}
+		result[field] = append(result[field], [2]string{original, shortened})
+	}
+	return result
 }
 
 // --- bib_entries / bib_groups / bib_comments tables ---
@@ -1789,10 +2667,10 @@ func repairDirtyMappingTables() (nameMappingsRepaired, entryFieldMappingsRepaire
 		}
 	}
 
-	// filter_cross_field_mappings: "source_field;source_value;target_field;target_value"
-	if repair("filter_cross_field_mappings", base+CrossFieldMappingsFilePath) {
+	// cross_field_mappings: "source_field;source_value;target_field;target_value"
+	if repair("cross_field_mappings", base+CrossFieldMappingsFilePath) {
 		rows, err := db.Query(
-			`SELECT source_field, source_value, target_field, target_value FROM filter_cross_field_mappings`)
+			`SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings`)
 		if err == nil {
 			var lines []string
 			for rows.Next() {
@@ -1803,35 +2681,35 @@ func repairDirtyMappingTables() (nameMappingsRepaired, entryFieldMappingsRepaire
 			}
 			rows.Close()
 			if writeRepairCSV(base+CrossFieldMappingsFilePath, lines) {
-				finishRepair("filter_cross_field_mappings", base+CrossFieldMappingsFilePath)
+				finishRepair("cross_field_mappings", base+CrossFieldMappingsFilePath)
 			}
 		}
 	}
 
-	// filter_entry_field_mappings: "entry_key;field;winner;challenger"
-	if repair("filter_entry_field_mappings", base+EntryFieldMappingsFilePath) {
+	// losing_field_values: "entry_key;field;loser_value"
+	if repair("losing_field_values", base+LosingFieldValuesFilePath) {
 		rows, err := db.Query(
-			`SELECT entry_key, field, winner, challenger FROM filter_entry_field_mappings`)
+			`SELECT entry_key, field, value FROM losing_field_values`)
 		if err == nil {
 			var lines []string
 			for rows.Next() {
-				var ek, field, winner, challenger string
-				if rows.Scan(&ek, &field, &winner, &challenger) == nil {
-					lines = append(lines, csvLine(ek, field, winner, challenger))
+				var ek, field, loser string
+				if rows.Scan(&ek, &field, &loser) == nil {
+					lines = append(lines, csvLine(ek, field, loser))
 				}
 			}
 			rows.Close()
-			if writeRepairCSV(base+EntryFieldMappingsFilePath, lines) {
-				finishRepair("filter_entry_field_mappings", base+EntryFieldMappingsFilePath)
+			if writeRepairCSV(base+LosingFieldValuesFilePath, lines) {
+				finishRepair("losing_field_values", base+LosingFieldValuesFilePath)
 				entryFieldMappingsRepaired = true
 			}
 		}
 	}
 
-	// filter_generic_field_mappings: "field;winner;challenger"
-	if repair("filter_generic_field_mappings", base+GenericFieldMappingsFilePath) {
+	// generic_field_mappings: "field;winner;challenger"
+	if repair("generic_field_mappings", base+GenericFieldMappingsFilePath) {
 		rows, err := db.Query(
-			`SELECT field, winner, challenger FROM filter_generic_field_mappings`)
+			`SELECT field, winner, challenger FROM generic_field_mappings`)
 		if err == nil {
 			var lines []string
 			for rows.Next() {
@@ -1842,7 +2720,7 @@ func repairDirtyMappingTables() (nameMappingsRepaired, entryFieldMappingsRepaire
 			}
 			rows.Close()
 			if writeRepairCSV(base+GenericFieldMappingsFilePath, lines) {
-				finishRepair("filter_generic_field_mappings", base+GenericFieldMappingsFilePath)
+				finishRepair("generic_field_mappings", base+GenericFieldMappingsFilePath)
 			}
 		}
 	}
@@ -2177,6 +3055,16 @@ func loadCommentsFromDb(l *TBibTeXLibrary) {
 // buildKeyAliasesFromDb rebuilds the in-memory key alias and hint maps from fields
 // stored in bib_entries that the parser would normally add via processPreferredAliasValue
 // and processDblpValue.  Must be called on the fast path where no parse takes place.
+// addDblpKeyHintTransient adds a DBLP-derived hint directly to HintToKey without
+// setting keyHintsModified. DBLP hints are filtered out by saveKeyHintsToDb
+// (source == KeyForDBLP(entry's dblp)), so persisting them would be wasted work.
+// They are regenerated from bib_entries on every run, so this is safe.
+func addDblpKeyHintTransient(l *TBibTeXLibrary, dblpHint, key string) {
+	if _, exists := l.HintToKey[dblpHint]; !exists {
+		l.HintToKey[dblpHint] = key
+	}
+}
+
 func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 	dbInteraction.Progress(ProgressBuildingKeyAliases)
 	if entryCache != nil {
@@ -2187,11 +3075,12 @@ func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 			}
 			if dblp := e.Fields[DBLPField]; dblp != "" {
 				l.AddKeyAlias(KeyForDBLP(dblp), key)
-				l.AddKeyHint(KeyForDBLP(dblp), key)
+				addDblpKeyHintTransient(l, KeyForDBLP(dblp), key)
 			}
 		}
 		l.keyOldiesModified = false
-		l.keyHintsModified = false
+		// keyHintsModified is NOT reset here: ReadKeyHintsFile owns that reset.
+		// Genuine new preferredalias hints found above must trigger a save.
 		return
 	}
 	rows, err := db.Query(
@@ -2214,11 +3103,11 @@ func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 			l.AddKeyHint(value, key)
 		case DBLPField:
 			l.AddKeyAlias(KeyForDBLP(value), key)
-			l.AddKeyHint(KeyForDBLP(value), key)
+			addDblpKeyHintTransient(l, KeyForDBLP(value), key)
 		}
 	}
 	l.keyOldiesModified = false
-	l.keyHintsModified = false
+	// keyHintsModified is NOT reset here (see cache path comment above).
 }
 
 // buildTitleIndexFromDb rebuilds l.TitleIndex from the title field in bib_entries.
@@ -2251,20 +3140,12 @@ func buildTitleIndexFromDb(l *TBibTeXLibrary) {
 
 // --- ValidBibDb / timestamp ---
 
-// ValidBibDb returns true when the bib_entries table is newer than the bib file
-// and all mapping tables whose content affects entry values.
+// ValidBibDb returns true when bib_entries has ever been populated.
+// In the DB-primary architecture the bib file and mapping tables are not checked
+// here: bib file changes reach the DB only via -sync; mapping changes propagate
+// via NormaliseEntryFields on every run (see ARCHITECTURE.md §4.5).
 func (l *TBibTeXLibrary) ValidBibDb() bool {
-	bibDbTime := tableModTime("bib_entries")
-	if bibDbTime == 0 {
-		return false
-	}
-	bibFile := l.FilesRoot + l.BaseName + BibFileExtension
-	return bibDbTime >= fileModTime(bibFile) &&
-		bibDbTime >= tableModTime("filter_cross_field_mappings") &&
-		bibDbTime >= tableModTime("filter_entry_field_mappings") &&
-		bibDbTime >= tableModTime("filter_generic_field_mappings") &&
-		bibDbTime >= tableModTime("name_mappings") &&
-		bibDbTime >= tableModTime("key_oldies")
+	return tableModTime("bib_entries") > 0
 }
 
 // refreshBibDbTimestamp marks bib_entries as current. Must be called AFTER WriteBibTeXFile
@@ -2273,11 +3154,11 @@ func refreshBibDbTimestamp() {
 	setTableDate("bib_entries", time.Now().UnixMicro())
 }
 
-// --- filter_state_names table ---
+// --- state_names table ---
 
 func ensureStateNamesTableExists() {
 	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS filter_state_names (
+		CREATE TABLE IF NOT EXISTS state_names (
 		  alias     TEXT PRIMARY KEY,
 		  canonical TEXT NOT NULL
 		);`)
@@ -2286,18 +3167,18 @@ func ensureStateNamesTableExists() {
 func maybeReloadStateNamesDb() bool {
 	fileName := bibTeXFolder + bibTeXBaseName + StateNamesFilePath
 
-	if fileModTime(fileName) <= tableModTime("filter_state_names") {
+	if fileModTime(fileName) <= tableModTime("state_names") {
 		return false
 	}
 
 	dbInteraction.Progress("Reloading state names from %s", fileName)
 
-	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_state_names;`); err != nil {
-		dbInteraction.Warning("Could not drop filter_state_names table: %s", err)
+	if _, err := db.Exec(`DROP TABLE IF EXISTS state_names;`); err != nil {
+		dbInteraction.Warning("Could not drop state_names table: %s", err)
 	}
 	ensureStateNamesTableExists()
 
-	upsert := `INSERT INTO filter_state_names (alias, canonical) VALUES (?, ?)
+	upsert := `INSERT INTO state_names (alias, canonical) VALUES (?, ?)
 	             ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical;`
 
 	processFile(fileName, func(line string) {
@@ -2311,14 +3192,14 @@ func maybeReloadStateNamesDb() bool {
 		}
 	})
 
-	setTableDate("filter_state_names", fileModTime(fileName))
+	setTableDate("state_names", fileModTime(fileName))
 	return true
 }
 
 func loadStateNamesFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT alias, canonical FROM filter_state_names`)
+	rows, err := db.Query(`SELECT alias, canonical FROM state_names`)
 	if err != nil {
-		dbInteraction.Warning("Could not query filter_state_names: %s", err)
+		dbInteraction.Warning("Could not query state_names: %s", err)
 		return
 	}
 	defer rows.Close()
@@ -2326,18 +3207,18 @@ func loadStateNamesFromDb(l *TBibTeXLibrary) {
 	for rows.Next() {
 		var alias, canonical string
 		if err := rows.Scan(&alias, &canonical); err != nil {
-			dbInteraction.Warning("Could not scan filter_state_names row: %s", err)
+			dbInteraction.Warning("Could not scan state_names row: %s", err)
 			continue
 		}
 		l.StateAliasToCanonical[alias] = canonical
 	}
 }
 
-// --- filter_state_countries table ---
+// --- state_countries table ---
 
 func ensureStateCountriesTableExists() {
 	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS filter_state_countries (
+		CREATE TABLE IF NOT EXISTS state_countries (
 		  state   TEXT PRIMARY KEY,
 		  country TEXT NOT NULL
 		);`)
@@ -2346,18 +3227,18 @@ func ensureStateCountriesTableExists() {
 func maybeReloadStateCountriesDb() bool {
 	fileName := bibTeXFolder + bibTeXBaseName + StateCountriesFilePath
 
-	if fileModTime(fileName) <= tableModTime("filter_state_countries") {
+	if fileModTime(fileName) <= tableModTime("state_countries") {
 		return false
 	}
 
 	dbInteraction.Progress("Reloading state countries from %s", fileName)
 
-	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_state_countries;`); err != nil {
-		dbInteraction.Warning("Could not drop filter_state_countries table: %s", err)
+	if _, err := db.Exec(`DROP TABLE IF EXISTS state_countries;`); err != nil {
+		dbInteraction.Warning("Could not drop state_countries table: %s", err)
 	}
 	ensureStateCountriesTableExists()
 
-	upsert := `INSERT INTO filter_state_countries (state, country) VALUES (?, ?)
+	upsert := `INSERT INTO state_countries (state, country) VALUES (?, ?)
 	             ON CONFLICT(state) DO UPDATE SET country = excluded.country;`
 
 	processFile(fileName, func(line string) {
@@ -2371,14 +3252,14 @@ func maybeReloadStateCountriesDb() bool {
 		}
 	})
 
-	setTableDate("filter_state_countries", fileModTime(fileName))
+	setTableDate("state_countries", fileModTime(fileName))
 	return true
 }
 
 func loadStateCountriesFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT state, country FROM filter_state_countries`)
+	rows, err := db.Query(`SELECT state, country FROM state_countries`)
 	if err != nil {
-		dbInteraction.Warning("Could not query filter_state_countries: %s", err)
+		dbInteraction.Warning("Could not query state_countries: %s", err)
 		return
 	}
 	defer rows.Close()
@@ -2386,18 +3267,18 @@ func loadStateCountriesFromDb(l *TBibTeXLibrary) {
 	for rows.Next() {
 		var state, country string
 		if err := rows.Scan(&state, &country); err != nil {
-			dbInteraction.Warning("Could not scan filter_state_countries row: %s", err)
+			dbInteraction.Warning("Could not scan state_countries row: %s", err)
 			continue
 		}
 		l.StateToCountry[state] = country
 	}
 }
 
-// --- filter_country_names table ---
+// --- country_names table ---
 
 func ensureCountryNamesTableExists() {
 	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS filter_country_names (
+		CREATE TABLE IF NOT EXISTS country_names (
 		  alias     TEXT PRIMARY KEY,
 		  canonical TEXT NOT NULL
 		);`)
@@ -2406,18 +3287,18 @@ func ensureCountryNamesTableExists() {
 func maybeReloadCountryNamesDb() bool {
 	fileName := bibTeXFolder + bibTeXBaseName + CountryNamesFilePath
 
-	if fileModTime(fileName) <= tableModTime("filter_country_names") {
+	if fileModTime(fileName) <= tableModTime("country_names") {
 		return false
 	}
 
 	dbInteraction.Progress("Reloading country names from %s", fileName)
 
-	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_country_names;`); err != nil {
-		dbInteraction.Warning("Could not drop filter_country_names table: %s", err)
+	if _, err := db.Exec(`DROP TABLE IF EXISTS country_names;`); err != nil {
+		dbInteraction.Warning("Could not drop country_names table: %s", err)
 	}
 	ensureCountryNamesTableExists()
 
-	upsert := `INSERT INTO filter_country_names (alias, canonical) VALUES (?, ?)
+	upsert := `INSERT INTO country_names (alias, canonical) VALUES (?, ?)
 	             ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical;`
 
 	processFile(fileName, func(line string) {
@@ -2431,14 +3312,14 @@ func maybeReloadCountryNamesDb() bool {
 		}
 	})
 
-	setTableDate("filter_country_names", fileModTime(fileName))
+	setTableDate("country_names", fileModTime(fileName))
 	return true
 }
 
 func loadCountryNamesFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT alias, canonical FROM filter_country_names`)
+	rows, err := db.Query(`SELECT alias, canonical FROM country_names`)
 	if err != nil {
-		dbInteraction.Warning("Could not query filter_country_names: %s", err)
+		dbInteraction.Warning("Could not query country_names: %s", err)
 		return
 	}
 	defer rows.Close()
@@ -2446,18 +3327,18 @@ func loadCountryNamesFromDb(l *TBibTeXLibrary) {
 	for rows.Next() {
 		var alias, canonical string
 		if err := rows.Scan(&alias, &canonical); err != nil {
-			dbInteraction.Warning("Could not scan filter_country_names row: %s", err)
+			dbInteraction.Warning("Could not scan country_names row: %s", err)
 			continue
 		}
 		l.CountryAliasToCanonical[alias] = canonical
 	}
 }
 
-// --- filter_booktitle_country_names table ---
+// --- booktitle_country_names table ---
 
 func ensureBooktitleCountryNamesTableExists() {
 	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS filter_booktitle_country_names (
+		CREATE TABLE IF NOT EXISTS booktitle_country_names (
 		  alias     TEXT PRIMARY KEY,
 		  canonical TEXT NOT NULL
 		);`)
@@ -2466,18 +3347,18 @@ func ensureBooktitleCountryNamesTableExists() {
 func maybeReloadBooktitleCountryNamesDb() bool {
 	fileName := bibTeXFolder + bibTeXBaseName + BooktitleCountryNamesFilePath
 
-	if fileModTime(fileName) <= tableModTime("filter_booktitle_country_names") {
+	if fileModTime(fileName) <= tableModTime("booktitle_country_names") {
 		return false
 	}
 
 	dbInteraction.Progress("Reloading booktitle country names from %s", fileName)
 
-	if _, err := db.Exec(`DROP TABLE IF EXISTS filter_booktitle_country_names;`); err != nil {
-		dbInteraction.Warning("Could not drop filter_booktitle_country_names table: %s", err)
+	if _, err := db.Exec(`DROP TABLE IF EXISTS booktitle_country_names;`); err != nil {
+		dbInteraction.Warning("Could not drop booktitle_country_names table: %s", err)
 	}
 	ensureBooktitleCountryNamesTableExists()
 
-	upsert := `INSERT INTO filter_booktitle_country_names (alias, canonical) VALUES (?, ?)
+	upsert := `INSERT INTO booktitle_country_names (alias, canonical) VALUES (?, ?)
 	             ON CONFLICT(alias) DO UPDATE SET canonical = excluded.canonical;`
 
 	processFile(fileName, func(line string) {
@@ -2491,14 +3372,14 @@ func maybeReloadBooktitleCountryNamesDb() bool {
 		}
 	})
 
-	setTableDate("filter_booktitle_country_names", fileModTime(fileName))
+	setTableDate("booktitle_country_names", fileModTime(fileName))
 	return true
 }
 
 func loadBooktitleCountryNamesFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT alias, canonical FROM filter_booktitle_country_names`)
+	rows, err := db.Query(`SELECT alias, canonical FROM booktitle_country_names`)
 	if err != nil {
-		dbInteraction.Warning("Could not query filter_booktitle_country_names: %s", err)
+		dbInteraction.Warning("Could not query booktitle_country_names: %s", err)
 		return
 	}
 	defer rows.Close()
@@ -2506,7 +3387,7 @@ func loadBooktitleCountryNamesFromDb(l *TBibTeXLibrary) {
 	for rows.Next() {
 		var alias, canonical string
 		if err := rows.Scan(&alias, &canonical); err != nil {
-			dbInteraction.Warning("Could not scan filter_booktitle_country_names row: %s", err)
+			dbInteraction.Warning("Could not scan booktitle_country_names row: %s", err)
 			continue
 		}
 		l.BooktitleCountryAliasToCanonical[alias] = canonical

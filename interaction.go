@@ -180,6 +180,22 @@ func (r *TInteraction) AskContinueOrQuit() bool {
 	}
 }
 
+// ConfirmAction always prompts the user for y/n confirmation, even when the
+// interaction is silenced. Use for safety gates that must not be skipped
+// by batch-mode callers.
+func (r *TInteraction) ConfirmAction(prompt string) bool {
+	fmt.Fprintf(os.Stderr, "CONFIRM:  %s (y/n): ", prompt)
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		answer, _ := reader.ReadString('\n')
+		answer = strings.TrimSpace(answer)
+		if answer == "y" || answer == "n" {
+			return answer == "y"
+		}
+		fmt.Fprint(os.Stderr, "(y/n): ")
+	}
+}
+
 // Disable any output to standard out.
 func (r *TInteraction) SetInteractionOff() {
 	r.silenced = true

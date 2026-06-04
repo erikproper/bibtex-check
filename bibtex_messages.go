@@ -86,6 +86,7 @@ const (
 	ProgressWritingKeyOldiesFile           = "Writing key aliases file %s"
 	ProgressWritingKeyHintsFile            = "Writing key hints file %s"
 	ProgressWritingGetBib                  = "Writing get bib file %s"
+	ProgressBuildingSyncBib               = "Building sync bib %s"
 	WarningGetBibFileModified              = "Get-bib file %s has been manually edited since last generation."
 	QuestionGetBibOverwrite                = "Overwrite anyway?"
 	ProgressWritingPDFConfirmedOkFile      = "Writing PDF confirmed-OK file %s"
@@ -102,8 +103,13 @@ const (
 
 	ProgressReadingBibFile    = "Reading bib file %s"
 	ProgressReparsingBibFile  = "Database out of date — re-parsing bib file into database"
-	ProgressBackingUpDatabase     = "Backing up database before re-parse"
-	ProgressCreatingLibraryBackup = "Creating library backup %s"
+	ProgressImportingBibFile  = "Importing bib file %s into database"
+	ProgressBackingUpDatabase       = "Backing up database before re-parse"
+	ProgressCreatingLibraryBackup   = "Creating library backup %s"
+	ProgressCopyingToWorkingDatabase = "Copying database to working location"
+	ProgressSavingDatabaseToHome    = "Saving database to home location"
+
+	WarningWorkingDbNewer = "Working database is newer than home (possible crash from previous run)"
 
 	ProgressReadingNonDoublesFile          = "Reading non_doubles file %s"
 	ProgressReadingGenericFieldMappingsFile = "Reading generic field mappings file %s"

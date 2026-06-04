@@ -15,15 +15,14 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Default CSV content written on first run when a file is absent.
 // Format: canonical;alias  (canonical name first, then the alias that maps to it).
 // Bare 2-letter abbreviations are included only where they do NOT conflict with
-// an ISO 3166-1 alpha-2 country code present in filter_country_names.csv.
+// an ISO 3166-1 alpha-2 country code present in country_names.csv.
 // Braced forms ({MA}, {CA}, …) are safe to include for ALL abbreviations because
 // NormaliseAddressNames runs before NormaliseLiteralString, so braces are still
 // intact at lookup time, and no country alias uses the braced form.
@@ -479,111 +478,161 @@ Vatican City;VA
 // Allemagne) are deliberately excluded: if a title uses a non-English country
 // name the title is likely in that language and should not be altered.
 // ISO two-letter codes are also excluded as they are ambiguous in title context.
-const defaultBooktitleCountryNames = `USA;USA
-USA;{USA}
-USA;U.S.A.
-USA;U.S.
-USA;United States
-USA;United States of America
-Canada;Canada
-Canada;{Canada}
-UK;UK
-UK;{UK}
-UK;U.K.
-UK;United Kingdom
-UK;Great Britain
-Australia;Australia
-Australia;{Australia}
-Germany;Germany
-Germany;{Germany}
-France;France
-France;{France}
-Italy;Italy
-Italy;{Italy}
-The Netherlands;The Netherlands
-The Netherlands;{The Netherlands}
-The Netherlands;Netherlands
-The Netherlands;Holland
-Switzerland;Switzerland
-Switzerland;{Switzerland}
-Austria;Austria
-Austria;{Austria}
-Belgium;Belgium
-Belgium;{Belgium}
-Sweden;Sweden
-Sweden;{Sweden}
-Norway;Norway
-Norway;{Norway}
-Denmark;Denmark
-Denmark;{Denmark}
-Finland;Finland
-Finland;{Finland}
-Spain;Spain
-Spain;{Spain}
-Portugal;Portugal
-Portugal;{Portugal}
-Poland;Poland
-Poland;{Poland}
-Czech Republic;Czech Republic
-Czech Republic;Czechia
-Hungary;Hungary
-Hungary;{Hungary}
-Romania;Romania
-Romania;{Romania}
-Greece;Greece
-Greece;{Greece}
-Turkey;Turkey
-Turkey;{Turkey}
-Japan;Japan
-Japan;{Japan}
-China;China
-China;{China}
-South Korea;South Korea
-South Korea;Korea
-India;India
-India;{India}
-Brazil;Brazil
-Brazil;{Brazil}
-Mexico;Mexico
-Mexico;{Mexico}
-Argentina;Argentina
-Argentina;{Argentina}
-New Zealand;New Zealand
-New Zealand;{New Zealand}
-South Africa;South Africa
-South Africa;{South Africa}
-Singapore;Singapore
-Singapore;{Singapore}
-Luxembourg;Luxembourg
-Luxembourg;{Luxembourg}
-Ireland;Ireland
-Ireland;{Ireland}
-Israel;Israel
-Israel;{Israel}
-Russia;Russia
-Russia;{Russia}
-Liechtenstein;Liechtenstein
-Albania;Albania
-Azerbaijan;Azerbaijan
-Colombia;Colombia
-Indonesia;Indonesia
-Malta;Malta
-Panama;Panama
-Slovakia;Slovakia
+// Each entry: canonical;alias.  The canonical is always the brace-protected form
+// so that NormaliseBooktitleLocationNames produces TeX-safe output.  Every
+// canonical also appears as its own alias (idempotency) plus its unbraced form
+// plus any common variants.
+const defaultBooktitleCountryNames = `{USA};USA
+{USA};{USA}
+{USA};U.S.A.
+{USA};U.S.
+{USA};United States
+{USA};United States of America
+{Canada};Canada
+{Canada};{Canada}
+{UK};UK
+{UK};{UK}
+{UK};U.K.
+{UK};United Kingdom
+{UK};Great Britain
+{Australia};Australia
+{Australia};{Australia}
+{Germany};Germany
+{Germany};{Germany}
+{France};France
+{France};{France}
+{Italy};Italy
+{Italy};{Italy}
+{The Netherlands};The Netherlands
+{The Netherlands};{The Netherlands}
+{The Netherlands};Netherlands
+{The Netherlands};Holland
+{Switzerland};Switzerland
+{Switzerland};{Switzerland}
+{Austria};Austria
+{Austria};{Austria}
+{Belgium};Belgium
+{Belgium};{Belgium}
+{Sweden};Sweden
+{Sweden};{Sweden}
+{Norway};Norway
+{Norway};{Norway}
+{Denmark};Denmark
+{Denmark};{Denmark}
+{Finland};Finland
+{Finland};{Finland}
+{Spain};Spain
+{Spain};{Spain}
+{Portugal};Portugal
+{Portugal};{Portugal}
+{Poland};Poland
+{Poland};{Poland}
+{Czech Republic};Czech Republic
+{Czech Republic};{Czech Republic}
+{Czech Republic};Czechia
+{Hungary};Hungary
+{Hungary};{Hungary}
+{Romania};Romania
+{Romania};{Romania}
+{Greece};Greece
+{Greece};{Greece}
+{Turkey};Turkey
+{Turkey};{Turkey}
+{Japan};Japan
+{Japan};{Japan}
+{China};China
+{China};{China}
+{South Korea};South Korea
+{South Korea};{South Korea}
+{South Korea};Korea
+{India};India
+{India};{India}
+{Brazil};Brazil
+{Brazil};{Brazil}
+{Mexico};Mexico
+{Mexico};{Mexico}
+{Argentina};Argentina
+{Argentina};{Argentina}
+{New Zealand};New Zealand
+{New Zealand};{New Zealand}
+{South Africa};South Africa
+{South Africa};{South Africa}
+{Singapore};Singapore
+{Singapore};{Singapore}
+{Luxembourg};Luxembourg
+{Luxembourg};{Luxembourg}
+{Ireland};Ireland
+{Ireland};{Ireland}
+{Israel};Israel
+{Israel};{Israel}
+{Russia};Russia
+{Russia};{Russia}
+{Liechtenstein};Liechtenstein
+{Liechtenstein};{Liechtenstein}
+{Albania};Albania
+{Albania};{Albania}
+{Azerbaijan};Azerbaijan
+{Azerbaijan};{Azerbaijan}
+{Colombia};Colombia
+{Colombia};{Colombia}
+{Indonesia};Indonesia
+{Indonesia};{Indonesia}
+{Malta};Malta
+{Malta};{Malta}
+{Panama};Panama
+{Panama};{Panama}
+{Slovakia};Slovakia
+{Slovakia};{Slovakia}
 `
 
-// maybeWriteDefaultCsv writes content to path when the file is absent.
-func maybeWriteDefaultCsv(path, content string) {
-	if _, err := os.Stat(path); err == nil {
+// maybeBootstrapTwoColTable seeds table from a CSV string when the table is empty.
+// csvContent uses semicolon-delimited lines; col0 and col1 name the two SQL columns.
+// insertOrder controls which CSV column maps to which SQL parameter:
+// true  = INSERT (col0=csv[0], col1=csv[1])
+// false = INSERT (col0=csv[1], col1=csv[0])  (alias tables where canonical is first)
+func maybeBootstrapTwoColTable(tableName, col0, col1, csvContent string, naturalOrder bool) {
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM ` + tableName).Scan(&count)
+	if count > 0 {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		dbInteraction.Warning("Could not create directory for %s: %s", path, err)
-		return
+	upsert := `INSERT OR IGNORE INTO ` + tableName + ` (` + col0 + `, ` + col1 + `) VALUES (?, ?)`
+	for _, line := range strings.Split(strings.TrimSpace(csvContent), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, csvDelimiter, 2)
+		if len(parts) < 2 {
+			continue
+		}
+		if naturalOrder {
+			db.Exec(upsert, parts[0], parts[1])
+		} else {
+			db.Exec(upsert, parts[1], parts[0])
+		}
 	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		dbInteraction.Warning("Could not write default CSV %s: %s", path, err)
-	}
+	setTableDate(tableName, time.Now().UnixMicro())
+}
+
+func maybeBootstrapStateNamesTable() {
+	ensureStateNamesTableExists()
+	maybeBootstrapTwoColTable("state_names", "alias", "canonical", defaultStateNames, false)
+}
+
+func maybeBootstrapStateCountriesTable() {
+	ensureStateCountriesTableExists()
+	maybeBootstrapTwoColTable("state_countries", "state", "country", defaultStateCountries, true)
+}
+
+func maybeBootstrapCountryNamesTable() {
+	ensureCountryNamesTableExists()
+	maybeBootstrapTwoColTable("country_names", "alias", "canonical", defaultCountryNames, false)
+}
+
+func maybeBootstrapBooktitleCountryNamesTable() {
+	ensureBooktitleCountryNamesTableExists()
+	maybeBootstrapTwoColTable("booktitle_country_names", "alias", "canonical", defaultBooktitleCountryNames, false)
 }
 
 // NormaliseAddressValue is the fieldNormalisers entry point for the address field.
@@ -600,6 +649,42 @@ func NormaliseBooktitleValue(l *TBibTeXLibrary, s string) string {
 	return NormaliseTitleString(l, l.NormaliseBooktitleLocationNames(s))
 }
 
+// stripOuterBraces removes a single enclosing {...} wrapper when the entire
+// string is enclosed by one matching brace pair, e.g. "{California}" → "California".
+// Returns s unchanged when s is not fully enclosed or has nested structure.
+func stripOuterBraces(s string) string {
+	if len(s) < 2 || s[0] != '{' || s[len(s)-1] != '}' {
+		return s
+	}
+	depth := 0
+	for i, c := range s {
+		switch c {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 && i < len(s)-1 {
+				return s
+			}
+		}
+	}
+	return s[1 : len(s)-1]
+}
+
+// lookupAlias tries key in m; if not found and key is brace-wrapped, retries
+// with outer braces stripped. Returns the canonical value and true on success.
+func lookupAlias(m map[string]string, key string) (string, bool) {
+	if v, ok := m[key]; ok {
+		return v, true
+	}
+	if unbraced := stripOuterBraces(key); unbraced != key {
+		if v, ok := m[unbraced]; ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
 // NormaliseAddressNames resolves state and country aliases within a
 // comma-separated address string and, when a canonical state is present
 // without a country, appends the canonical country for that state.
@@ -610,11 +695,14 @@ func (l *TBibTeXLibrary) NormaliseAddressNames(address string) string {
 	}
 
 	// Apply state and country alias normalisation to each address component.
+	// lookupAlias falls back to the brace-stripped form so that e.g.
+	// "{California}" and "{USA}" are resolved even when the alias table only
+	// lists the plain form.
 	for i, part := range parts {
-		if canonical, ok := l.StateAliasToCanonical[part]; ok {
+		if canonical, ok := lookupAlias(l.StateAliasToCanonical, part); ok {
 			parts[i] = canonical
 		}
-		if canonical, ok := l.CountryAliasToCanonical[part]; ok {
+		if canonical, ok := lookupAlias(l.CountryAliasToCanonical, part); ok {
 			parts[i] = canonical
 		}
 	}
@@ -622,7 +710,7 @@ func (l *TBibTeXLibrary) NormaliseAddressNames(address string) string {
 	// If no canonical country is present but a canonical state is, add its country.
 	hasCountry := false
 	for _, part := range parts {
-		if _, ok := l.CountryAliasToCanonical[part]; ok {
+		if _, ok := lookupAlias(l.CountryAliasToCanonical, part); ok {
 			hasCountry = true
 			break
 		}
@@ -649,10 +737,7 @@ func (l *TBibTeXLibrary) NormaliseBooktitleLocationNames(title string) string {
 	changed := false
 	for i, part := range parts {
 		trimmed := strings.TrimSpace(part)
-		var canonical string
-		if c, ok := l.BooktitleCountryAliasToCanonical[trimmed]; ok {
-			canonical = c
-		}
+		canonical, _ := lookupAlias(l.BooktitleCountryAliasToCanonical, trimmed)
 		if canonical == "" || canonical == trimmed {
 			continue
 		}

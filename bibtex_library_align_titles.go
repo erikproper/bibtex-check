@@ -198,23 +198,26 @@ func detectTitleEditions(l *TBibTeXLibrary, key string) []titleAlignHit {
 }
 
 // waiverPropForKind returns the metadata property key for the alignment waiver
-// of the given kind ("volume" or "edition").
+// of the given kind ("volume", "edition", or "country").
 func waiverPropForKind(kind string) string {
-	if kind == "volume" {
+	switch kind {
+	case "volume":
 		return MetaPropAlignVolumeWaived
+	case "edition":
+		return MetaPropAlignEditionWaived
+	default:
+		return MetaPropAlignCountryWaived
 	}
-	return MetaPropAlignEditionWaived
 }
 
-// applyAlignHit writes newTitle to every affected field and, when the target
-// field (volume or edition) is currently empty, sets it to the extracted value.
-// h.kind equals the BibTeX field name ("volume" or "edition").
+// applyAlignHit writes newTitle to every affected field and, for volume/edition
+// hits where the target field is currently empty, sets it to the extracted value.
 func (l *TBibTeXLibrary) applyAlignHit(key string, h titleAlignHit, newTitle string) {
 	for _, field := range h.fields {
 		l.SetEntryFieldValue(key, field, newTitle)
 		l.UpdateEntryFieldAlias(key, field, h.original, newTitle)
 	}
-	if h.targetField == "" {
+	if h.kind != "country" && h.targetField == "" {
 		l.SetEntryFieldValue(key, h.kind, h.extracted)
 		l.setLineage(key, h.kind, "dblp", false)
 	}
@@ -228,15 +231,17 @@ func (l *TBibTeXLibrary) handleAlignHit(key string, h titleAlignHit, autoAccept 
 		l.applyAlignHit(key, h, h.proposed)
 		return false
 	}
-	label := strings.ToUpper(h.kind[:1]) + h.kind[1:]
-	value := h.extracted
-	if h.targetField != "" && strings.Trim(h.targetField, "{}") != h.extracted {
-		value += fmt.Sprintf(" (%s field: %s)", h.kind, h.targetField)
-	}
 	fmt.Printf("Key:      %s\n", key)
 	fmt.Printf("Field(s): %s\n", strings.Join(h.fields, ", "))
 	fmt.Printf("Current:  %s\n", h.original)
-	fmt.Printf("%-9s %s\n", label+":", value)
+	if h.kind != "country" {
+		label := strings.ToUpper(h.kind[:1]) + h.kind[1:]
+		value := h.extracted
+		if h.targetField != "" && strings.Trim(h.targetField, "{}") != h.extracted {
+			value += fmt.Sprintf(" (%s field: %s)", h.kind, h.targetField)
+		}
+		fmt.Printf("%-9s %s\n", label+":", value)
+	}
 	fmt.Printf("Proposed: %s\n", h.proposed)
 	fmt.Println()
 
@@ -265,6 +270,103 @@ func (l *TBibTeXLibrary) handleAlignHit(key string, h titleAlignHit, autoAccept 
 			return true
 		default:
 			fmt.Fprint(os.Stderr, "(a/m/s/w/q): ")
+		}
+	}
+}
+
+// detectBooktitleCountryIssues scans a single entry's booktitle (and title, when
+// equal to booktitle for bookish entries) for country-name forms that would be
+// normalised to a different canonical by NormaliseBooktitleLocationNames — i.e.,
+// unbraced forms like "USA" whose canonical is the brace-protected "{USA}".
+// Waived entries are excluded by the caller (CheckAlignBooktitleCountries).
+func detectBooktitleCountryIssues(l *TBibTeXLibrary, key string) []titleAlignHit {
+	bt := l.EntryFieldValueity(key, "booktitle")
+	if bt == "" {
+		return nil
+	}
+	normalised := l.NormaliseBooktitleLocationNames(bt)
+	if normalised == bt {
+		return nil
+	}
+	// Determine which fields share this booktitle value.
+	fields := []string{"booktitle"}
+	if l.EntryFieldValueity(key, TitleField) == bt {
+		fields = []string{TitleField, "booktitle"}
+	}
+	return []titleAlignHit{{
+		fields:   fields,
+		kind:     "country",
+		original: bt,
+		proposed: normalised,
+	}}
+}
+
+// CheckAlignBooktitleCountries scans all entries for unbraced country names in
+// booktitle fields. It works in two phases:
+//  1. Collect all candidates and print a full report (current → proposed).
+//  2. Ask whether to accept all, fix interactively, or quit without changes.
+func (l *TBibTeXLibrary) CheckAlignBooktitleCountries() {
+	type keyedHit struct {
+		key string
+		hit titleAlignHit
+	}
+	var allHits []keyedHit
+
+	total := countBibEntries()
+	count := 0
+	spinner := l.NewSpinner("Scanning for booktitle country normalisation candidates")
+	forEachBibEntryKey(func(key string) bool {
+		count++
+		spinner.Update(count, total)
+		if l.HasMetadata(key, MetaPropAlignCountryWaived) {
+			return true
+		}
+		for _, h := range detectBooktitleCountryIssues(l, key) {
+			allHits = append(allHits, keyedHit{key, h})
+		}
+		return true
+	})
+	spinner.Stop()
+
+	if len(allHits) == 0 {
+		fmt.Fprintf(os.Stderr, "No booktitle country normalisation candidates found.\n")
+		return
+	}
+
+	// Phase 1: report.
+	for _, kh := range allHits {
+		fmt.Printf("Key:      %s\n", kh.key)
+		fmt.Printf("Field(s): %s\n", strings.Join(kh.hit.fields, ", "))
+		fmt.Printf("Current:  %s\n", kh.hit.original)
+		fmt.Printf("Proposed: %s\n", kh.hit.proposed)
+		fmt.Println()
+	}
+	fmt.Fprintf(os.Stderr, "Found %d candidate(s)\n", len(allHits))
+
+	// Phase 2: action.
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprint(os.Stderr, "QUESTION: Proceed? (a=accept all, i=interactive, q=quit): ")
+	for {
+		option, _ := reader.ReadString('\n')
+		option = strings.TrimSpace(option)
+		switch option {
+		case "a":
+			for _, kh := range allHits {
+				l.applyAlignHit(kh.key, kh.hit, kh.hit.proposed)
+			}
+			return
+		case "i":
+			for _, kh := range allHits {
+				SpinnerInterrupt()
+				if l.handleAlignHit(kh.key, kh.hit, false) {
+					return
+				}
+			}
+			return
+		case "q":
+			return
+		default:
+			fmt.Fprint(os.Stderr, "(a/i/q): ")
 		}
 	}
 }

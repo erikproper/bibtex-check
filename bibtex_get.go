@@ -1,14 +1,23 @@
 /*
  *
- * Module: bibtex_get
+ * Module:    bibtex_check_dev
+ * Package:   Main
+ * Component: Sync
  *
- * Implements the -get command: reads bib.config + <file_name>.map from the
- * current working directory, extracts matching entries from the library, and
- * writes <file_name>.bib.
+ * Implements -sync (primary) and the deprecated -get alias.
  *
- * Creator: Henderik A. Proper (erikproper@gmail.com)
+ * -sync dispatches on the "mode" field in the sync config:
+ *   "full"  — writes the entire library to the configured bib file
+ *   ""/"pull" — subset export: reads <file_name>.map and writes matching entries
  *
- * Version of: 10.05.2026
+ * Config is read from (in order):
+ *   <base>.exchange/<basename>.config
+ *   <base>.exchange/bib.config
+ *   CWD/bib.config   (backward compat for the deprecated -get invocation)
+ *
+ * Creator: Henderik A. Proper (e.proper@acm.org), Luxembourg, in collaboration with Claude.ai
+ *
+ * Version of: 01.06.2026
  *
  */
 
@@ -19,6 +28,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
+	"strconv"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,8 +36,9 @@ import (
 	"strings"
 )
 
-// TBibGetConfig mirrors the bib.config JSON file.
+// TBibGetConfig mirrors the sync config JSON file.
 type TBibGetConfig struct {
+	Mode          string `json:"mode"`           // "full", "pull", or "" (default = pull)
 	FileName      string `json:"file_name"`
 	IncludeDOI    bool   `json:"include_doi"`
 	IncludeISBN   bool   `json:"include_isbn"`
@@ -145,9 +156,11 @@ func readShortenMappingsFile(path string) TShortenMappings {
 	return result
 }
 
-// readShortenMappings reads shorten_mappings.csv from the global folder.
-func readShortenMappings(folder string) TShortenMappings {
-	return readShortenMappingsFile(folder + ShortenMappingsFilePath)
+// readShortenMappings loads shorten_mappings from the DB, reloading from the global
+// shorten_mappings.csv first if the file is newer than the cached table timestamp.
+func readShortenMappings() TShortenMappings {
+	maybeReloadShortenMappingsDb()
+	return loadShortenMappingsFromDb()
 }
 
 // applyShorten applies shorten_mappings substitutions to a field value.
@@ -320,21 +333,27 @@ func (l *TBibTeXLibrary) entryGetString(
 	return result
 }
 
-// doGet implements the -get command.
-func doGet() {
-	cfg, ok := readBibGetConfig()
-	if !ok {
-		os.Exit(1)
-	}
-
-	// Resolve the map file path relative to CWD.
-	mapFilePath := cfg.FileName
-	if !filepath.IsAbs(mapFilePath) {
+// doGetWithConfig implements the subset bib export with a pre-read config.
+// baseDir is the directory used to resolve relative file_name paths; pass ""
+// to resolve relative to the current working directory (deprecated -get behaviour).
+// writePullSync performs the subset bib export assuming the library is already open.
+func writePullSync(cfg TBibGetConfig, baseDir string) {
+	resolveRelative := func(path string) string {
+		if filepath.IsAbs(path) {
+			return path
+		}
+		if baseDir != "" {
+			return filepath.Join(baseDir, path)
+		}
 		cwd, err := os.Getwd()
 		if err == nil {
-			mapFilePath = filepath.Join(cwd, mapFilePath)
+			return filepath.Join(cwd, path)
 		}
+		return path
 	}
+
+	// Resolve the map file path.
+	mapFilePath := resolveRelative(cfg.FileName)
 
 	pairs, legacyFormat, ok := readBibGetMap(mapFilePath)
 	if !ok {
@@ -357,15 +376,9 @@ func doGet() {
 
 	var shorten TShortenMappings
 	if cfg.Shorten {
-		shorten = readShortenMappings(globalFolder)
+		shorten = readShortenMappings()
 		if cfg.ShortenFile != "" {
-			localPath := cfg.ShortenFile
-			if !filepath.IsAbs(localPath) {
-				cwd, err := os.Getwd()
-				if err == nil {
-					localPath = filepath.Join(cwd, localPath)
-				}
-			}
+			localPath := resolveRelative(cfg.ShortenFile)
 			shorten = mergeShortenMappings(shorten, readShortenMappingsFile(localPath))
 		}
 	}
@@ -426,13 +439,7 @@ func doGet() {
 	}
 
 	// Write output file.
-	outPath := cfg.FileName + BibFileExtension
-	if !filepath.IsAbs(outPath) {
-		cwd, err := os.Getwd()
-		if err == nil {
-			outPath = filepath.Join(cwd, outPath)
-		}
-	}
+	outPath := resolveRelative(cfg.FileName + BibFileExtension)
 
 	// Build new content into a buffer so we can MD5 it before touching the file.
 	var buf bytes.Buffer
@@ -520,6 +527,293 @@ func doGet() {
 
 	if err := os.WriteFile(md5Path, []byte(newMD5+"\n"), 0644); err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot write MD5 file:", err)
+	}
+}
+
+// doGetWithConfig opens the library and runs a pull sync.
+func doGetWithConfig(cfg TBibGetConfig, baseDir string) {
+	if !openLibraryToReport() {
+		return
+	}
+	writePullSync(cfg, baseDir)
+}
+
+// defaultSyncConfig returns a TBibGetConfig with sensible defaults.
+func defaultSyncConfig() TBibGetConfig {
+	return TBibGetConfig{IncludeDOI: true, IncludeISBN: true, IncludeURL: true}
+}
+
+// applyJSONOverlay unmarshals data into cfg, overriding only the fields present
+// in the JSON. Returns false and prints an error when the JSON is malformed.
+func applyJSONOverlay(cfg *TBibGetConfig, data []byte, path string) bool {
+	if err := json.Unmarshal(data, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot parse %s: %s\n", path, err)
+		return false
+	}
+	return true
+}
+
+
+// readFileConfig reads the per-file sync config for a single bib file and overlays
+// it on baseCfg. If the file exists but has no "mode" key, "pull" is written back.
+// If the file does not exist, baseCfg is returned with mode defaulting to "pull".
+func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig, bool) {
+	cfgPath := filepath.Join(baseDir, name+ConfigFileExtension)
+	cfg := baseCfg
+	cfg.FileName = name // default: file name matches config name
+
+	rawData, err := os.ReadFile(cfgPath)
+	if err != nil {
+		// No per-file config; default mode to "pull".
+		if cfg.Mode == "" {
+			cfg.Mode = "pull"
+		}
+		return cfg, true
+	}
+
+	// Parse raw JSON to detect absent keys before overlay.
+	var rawMap map[string]json.RawMessage
+	if jsonErr := json.Unmarshal(rawData, &rawMap); jsonErr != nil {
+		fmt.Fprintf(os.Stderr, "Cannot parse %s: %s\n", cfgPath, jsonErr)
+		return TBibGetConfig{}, false
+	}
+
+	if !applyJSONOverlay(&cfg, rawData, cfgPath) {
+		return TBibGetConfig{}, false
+	}
+
+	// The filename is always the config file's own name — file_name in a per-file
+	// config is meaningless and disallowed.
+	if _, hasFileName := rawMap["file_name"]; hasFileName {
+		fmt.Fprintf(os.Stderr, "WARNING: %s: file_name is not allowed in a per-file config (ignored; using %q)\n", cfgPath, name)
+	}
+	cfg.FileName = name
+
+	// Write "mode": "pull" back into the file when the key was absent.
+	if _, hasMode := rawMap["mode"]; !hasMode {
+		cfg.Mode = "pull"
+		rawMap["mode"] = json.RawMessage(`"pull"`)
+		if data, marshalErr := json.MarshalIndent(rawMap, "", "  "); marshalErr == nil {
+			os.WriteFile(cfgPath, append(data, '\n'), 0644)
+		}
+	}
+
+	return cfg, true
+}
+
+// buildSyncBibContent renders the full library to a byte slice with a progress spinner.
+// Non-bookish entries first (crossref-friendly), then bookish — same order as WriteBibTeXFile.
+// local-url values are written with the absolute FilesRoot prefix so consumers can locate PDFs.
+func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
+	Library.localURLBase = Library.FilesRoot
+	defer func() { Library.localURLBase = "" }()
+	total := len(entryTypes)
+	spinner := Library.NewSpinner(fmt.Sprintf(ProgressBuildingSyncBib, label))
+	done := 0
+
+	var buf bytes.Buffer
+	w := bufio.NewWriter(&buf)
+
+	for entry, entryType := range entryTypes {
+		if !BibTeXBookish.Contains(entryType) {
+			w.WriteString(Library.EntryString(entry, ""))
+			w.WriteString("\n")
+			done++
+			spinner.Update(done, total)
+		}
+	}
+	for entry, entryType := range entryTypes {
+		if BibTeXBookish.Contains(entryType) {
+			w.WriteString(Library.EntryString(entry, ""))
+			w.WriteString("\n")
+			done++
+			spinner.Update(done, total)
+		}
+	}
+	for _, comment := range Library.Comments {
+		w.WriteString("@" + CommentEntryType + "{" + comment + "}\n\n")
+	}
+	// BibDesk static groups — identical to WriteBibTeXFile.
+	if len(Library.GroupEntries) > 0 {
+		w.WriteString("@" + CommentEntryType + "{BibDesk Static Groups{")
+		w.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+		w.WriteString("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n")
+		w.WriteString("<plist version=\"1.0\">\n<array>\n")
+		for group, keys := range Library.GroupEntries {
+			w.WriteString("\t<dict>\n\t\t<key>group name</key>\n\t\t<string>" + group + "</string>\n")
+			w.WriteString("\t\t<key>keys</key>\n\t\t<string>")
+			comma := ""
+			for key := range keys.Elements() {
+				w.WriteString(comma + Library.MapEntryKey(key))
+				comma = ","
+			}
+			w.WriteString("</string>\n\t</dict>\n")
+		}
+		w.WriteString("</array>\n</plist>\n}}\n\n")
+	}
+
+	w.Flush()
+	spinner.Stop()
+	return buf.Bytes()
+}
+
+// writeFullSync writes the full library bib file assuming the library is already open.
+func writeFullSync(cfg TBibGetConfig, baseDir string) {
+	fileName := cfg.FileName
+	if fileName == "" {
+		fileName = bibTeXBaseName
+	}
+	outPath := fileName + BibFileExtension
+	if !filepath.IsAbs(outPath) {
+		outPath = filepath.Join(baseDir, outPath)
+	}
+
+	entryTypes := map[string]string{}
+	forEachBibEntryType(func(key, entryType string) {
+		entryTypes[key] = entryType
+	})
+
+	newContent := buildSyncBibContent(fileName, entryTypes)
+	mdatePath := outPath + ".mdate"
+
+	// Detect manual edits: compare stored write-time against current bib mtime.
+	// Two O(1) stat/read calls — no file read of the bib needed.
+	bibWasEdited := false
+	if bibInfo, errBib := os.Stat(outPath); errBib == nil {
+		if mdateData, errMD := os.ReadFile(mdatePath); errMD == nil {
+			if storedUnix, parseErr := strconv.ParseInt(strings.TrimSpace(string(mdateData)), 10, 64); parseErr == nil {
+				bibWasEdited = bibInfo.ModTime().Unix() != storedUnix
+			}
+		}
+	}
+
+	if bibWasEdited {
+		// The sync bib was edited externally (e.g. BibDesk): ask before re-importing,
+		// since BibDesk may have touched the file on open (e.g. local_url → bdsk field
+		// translation) without any meaningful content change, and a concurrent bib.merge
+		// would lose its work if we blindly re-imported.
+		doReimport := Reporting.ConfirmAction(fmt.Sprintf("Sync bib was edited externally — re-import %s?", outPath))
+		if doReimport {
+			Reporting.Progress("Re-importing edited sync bib: %s", outPath)
+			if !parseSyncBibFile(outPath) {
+				Reporting.Warning("Re-import failed for %s — skipping write", outPath)
+				return
+			}
+			// Re-collect entry types from the freshly-parsed DB and regenerate content.
+			entryTypes = map[string]string{}
+			forEachBibEntryType(func(key, entryType string) {
+				entryTypes[key] = entryType
+			})
+			newContent = buildSyncBibContent(fileName, entryTypes)
+		}
+	}
+
+	Reporting.Progress(ProgressWritingGetBib, outPath)
+	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+		fmt.Fprintln(os.Stderr, "Cannot create output directory:", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(outPath, newContent, 0644); err != nil {
+		fmt.Fprintln(os.Stderr, "Cannot write output file:", err)
+		os.Exit(1)
+	}
+	// Record the bib file's mtime so the next run can detect external edits cheaply.
+	if bibInfo, err := os.Stat(outPath); err == nil {
+		mdate := strconv.FormatInt(bibInfo.ModTime().Unix(), 10)
+		if err := os.WriteFile(mdatePath, []byte(mdate+"\n"), 0644); err != nil {
+			fmt.Fprintln(os.Stderr, "Cannot write mdate file:", err)
+		}
+	}
+}
+
+// doFullSync opens the library for update (needed for re-import on edit) and writes.
+func doFullSync(cfg TBibGetConfig, baseDir string) {
+	if !openLibraryToUpdate() {
+		return
+	}
+	writeFullSync(cfg, baseDir)
+}
+
+// doSync is the -sync entry point.
+//
+// bib.config is always read from the current working directory — the same
+// convention as the deprecated -get. Run -sync from whichever directory holds
+// the relevant bib.config (a project folder, the exchange folder, etc.).
+//
+// When file_name lists multiple files (";"-separated), all are synced unless
+// a filter argument narrows the run to one. Per-file configs (<name>.config)
+// are also read from CWD.
+//
+// Library access: read-only when all files are pull mode; read-write when any
+// file is full mode (full-mode sync may re-import an edited bib back into DB).
+func doSync(filter string) {
+	baseCfg, ok := readBibGetConfig()
+	if !ok {
+		os.Exit(1)
+	}
+
+	var fileNames []string
+	for _, name := range strings.Split(baseCfg.FileName, ";") {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			fileNames = append(fileNames, name)
+		}
+	}
+	if len(fileNames) == 0 {
+		fmt.Fprintln(os.Stderr, "sync: file_name is not set in bib.config")
+		os.Exit(1)
+	}
+
+	if filter != "" {
+		found := false
+		for _, name := range fileNames {
+			if name == filter {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Fprintf(os.Stderr, "sync: %q is not in the file_name list (%s)\n", filter, baseCfg.FileName)
+			os.Exit(1)
+		}
+		fileNames = []string{filter}
+	}
+
+	// Read all per-file configs first so we can determine the required library
+	// access level before opening the library.
+	type fileEntry struct {
+		cfg  TBibGetConfig
+	}
+	var files []fileEntry
+	needsWrite := false
+	for _, name := range fileNames {
+		cfg, ok := readFileConfig(baseCfg, name, "")
+		if !ok {
+			os.Exit(1)
+		}
+		files = append(files, fileEntry{cfg})
+		if cfg.Mode == "full" {
+			needsWrite = true
+		}
+	}
+
+	if needsWrite {
+		if !openLibraryToUpdate() {
+			return
+		}
+	} else {
+		if !openLibraryToReport() {
+			return
+		}
+	}
+
+	for _, f := range files {
+		switch f.cfg.Mode {
+		case "full":
+			writeFullSync(f.cfg, "")
+		default: // "pull"
+			writePullSync(f.cfg, "")
+		}
 	}
 }
 
