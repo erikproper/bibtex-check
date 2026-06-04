@@ -38,9 +38,10 @@ import (
 
 // TBibGetConfig mirrors the sync config JSON file.
 type TBibGetConfig struct {
-	Mode          string `json:"mode"`           // "full", "pull", or "" (default = pull)
-	FileName      string `json:"file_name"`
-	KeyMapping    bool   `json:"key_mapping"`    // true (default): use aliases from .keys; false: use canonical keys
+	Mode          string `json:"mode"`              // "full", "pull", or "" (default = pull)
+	FileNames     string `json:"file_names"`        // canonical: semicolon-separated list of file names
+	FileName      string `json:"file_name,omitempty"` // legacy alias for file_names (read-only); also used programmatically for single-file ops
+	KeyMapping    bool   `json:"key_mapping"`       // true (default): use aliases from .keys; false: use canonical keys
 	IncludeDOI    bool   `json:"include_doi"`
 	IncludeISBN   bool   `json:"include_isbn"`
 	IncludeDblp   bool   `json:"include_dblp"`
@@ -51,15 +52,50 @@ type TBibGetConfig struct {
 	UrldateAsNote bool   `json:"urldate_as_note"`
 }
 
+// migrateRawConfigFileNames migrates "file_name" → "file_names" in a raw JSON map.
+// When both keys are present their values are joined with ";".
+// Returns true when the map was modified (write-back needed).
+func migrateRawConfigFileNames(rawMap map[string]json.RawMessage) bool {
+	legacyVal, hasLegacy := rawMap["file_name"]
+	if !hasLegacy {
+		return false
+	}
+	var legacy string
+	json.Unmarshal(legacyVal, &legacy)
+	if newVal, hasNew := rawMap["file_names"]; hasNew {
+		var current string
+		json.Unmarshal(newVal, &current)
+		combined := strings.Trim(current+";"+legacy, ";")
+		rawMap["file_names"], _ = json.Marshal(combined)
+	} else {
+		rawMap["file_names"] = legacyVal
+	}
+	delete(rawMap, "file_name")
+	return true
+}
+
 // readBibGetConfig reads bib.config from the current working directory.
+// Migrates "file_name" → "file_names" on first use (writes back the updated file).
 // Fields absent from the JSON keep their defaults: include_doi=true,
-// include_isbn=true, include_url=true, biber_mode=false, shorten=false,
-// include_dblp=false, urldate_as_note=false.
+// include_isbn=true, include_url=true, key_mapping=true, biber_mode=false,
+// shorten=false, include_dblp=false, urldate_as_note=false.
 func readBibGetConfig() (TBibGetConfig, bool) {
-	data, err := os.ReadFile("bib.config")
+	const path = "bib.config"
+	data, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot read bib.config:", err)
 		return TBibGetConfig{}, false
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		fmt.Fprintln(os.Stderr, "Cannot parse bib.config:", err)
+		return TBibGetConfig{}, false
+	}
+	if migrateRawConfigFileNames(rawMap) {
+		if migrated, marshalErr := json.MarshalIndent(rawMap, "", "  "); marshalErr == nil {
+			os.WriteFile(path, append(migrated, '\n'), 0644)
+			data = migrated
+		}
 	}
 	cfg := TBibGetConfig{
 		KeyMapping:  true,
@@ -71,8 +107,8 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		fmt.Fprintln(os.Stderr, "Cannot parse bib.config:", err)
 		return TBibGetConfig{}, false
 	}
-	if cfg.FileName == "" {
-		fmt.Fprintln(os.Stderr, "bib.config: file_name is required")
+	if cfg.FileNames == "" {
+		fmt.Fprintln(os.Stderr, "bib.config: file_names is required")
 		return TBibGetConfig{}, false
 	}
 	return cfg, true
@@ -766,22 +802,39 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 		return TBibGetConfig{}, false
 	}
 
-	if !applyJSONOverlay(&cfg, rawData, cfgPath) {
-		return TBibGetConfig{}, false
+	// file_name and file_names are not meaningful in per-file configs — warn and strip.
+	for _, key := range []string{"file_name", "file_names"} {
+		if _, has := rawMap[key]; has {
+			fmt.Fprintf(os.Stderr, "WARNING: %s: %q is not allowed in a per-file config (ignored; using %q)\n", cfgPath, key, name)
+			delete(rawMap, key)
+		}
 	}
 
-	// The filename is always the config file's own name — file_name in a per-file
-	// config is meaningless and disallowed.
-	if _, hasFileName := rawMap["file_name"]; hasFileName {
-		fmt.Fprintf(os.Stderr, "WARNING: %s: file_name is not allowed in a per-file config (ignored; using %q)\n", cfgPath, name)
-	}
-	cfg.FileName = name
+	needsWriteBack := false
 
-	// Write "mode": "pull" back into the file when the key was absent.
+	// Write "mode": "pull" back when absent.
 	if _, hasMode := rawMap["mode"]; !hasMode {
 		cfg.Mode = "pull"
 		rawMap["mode"] = json.RawMessage(`"pull"`)
-		if data, marshalErr := json.MarshalIndent(rawMap, "", "  "); marshalErr == nil {
+		needsWriteBack = true
+	}
+
+	// Rebuild clean rawData for overlay (file_name/file_names already stripped).
+	cleanData, marshalErr := json.Marshal(rawMap)
+	if marshalErr != nil {
+		fmt.Fprintf(os.Stderr, "Cannot re-encode %s: %s\n", cfgPath, marshalErr)
+		return TBibGetConfig{}, false
+	}
+
+	if !applyJSONOverlay(&cfg, cleanData, cfgPath) {
+		return TBibGetConfig{}, false
+	}
+
+	// Per-file operations always use the config file's own name.
+	cfg.FileName = name
+
+	if needsWriteBack {
+		if data, marshalErr2 := json.MarshalIndent(rawMap, "", "  "); marshalErr2 == nil {
 			os.WriteFile(cfgPath, append(data, '\n'), 0644)
 		}
 	}
@@ -941,14 +994,14 @@ func doSync(filter string) {
 	}
 
 	var fileNames []string
-	for _, name := range strings.Split(baseCfg.FileName, ";") {
+	for _, name := range strings.Split(baseCfg.FileNames, ";") {
 		name = strings.TrimSpace(name)
 		if name != "" {
 			fileNames = append(fileNames, name)
 		}
 	}
 	if len(fileNames) == 0 {
-		fmt.Fprintln(os.Stderr, "sync: file_name is not set in bib.config")
+		fmt.Fprintln(os.Stderr, "sync: file_names is not set in bib.config")
 		os.Exit(1)
 	}
 
@@ -961,7 +1014,7 @@ func doSync(filter string) {
 			}
 		}
 		if !found {
-			fmt.Fprintf(os.Stderr, "sync: %q is not in the file_name list (%s)\n", filter, baseCfg.FileName)
+			fmt.Fprintf(os.Stderr, "sync: %q is not in the file_names list (%s)\n", filter, baseCfg.FileNames)
 			os.Exit(1)
 		}
 		fileNames = []string{filter}
@@ -1021,12 +1074,14 @@ func appendToKeysFile(alias, canonicalKey string) {
 		fmt.Fprintln(os.Stderr, "-map: cannot parse bib.config:", err)
 		return
 	}
-	if cfg.FileName == "" {
-		fmt.Fprintln(os.Stderr, "-map: bib.config has no file_name")
+	// Use the first file name from file_names (the most common case for -map).
+	firstName := strings.SplitN(strings.TrimSpace(cfg.FileNames), ";", 2)[0]
+	if firstName == "" {
+		fmt.Fprintln(os.Stderr, "-map: bib.config has no file_names")
 		return
 	}
-	pairs, _, _ := readKeysFile(cfg.FileName)
-	keysPath := cfg.FileName + KeysFileExtension
+	pairs, _, _ := readKeysFile(firstName)
+	keysPath := firstName + KeysFileExtension
 	for _, p := range pairs {
 		if p.canonicalKey == canonicalKey {
 			if p.localKey != alias {
