@@ -94,10 +94,23 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 	}
 	needsWriteBack := migrateRawConfigFileNames(rawMap)
 
-	// Seed absent default-true fields so bib.config is self-documenting.
-	for _, key := range []string{"key_mapping", "include_doi", "include_isbn", "include_url"} {
-		if _, present := rawMap[key]; !present {
-			rawMap[key] = json.RawMessage(`true`)
+	// Seed all absent option fields so bib.config is fully self-documenting.
+	for _, opt := range []struct {
+		key string
+		val json.RawMessage
+	}{
+		{"key_mapping", json.RawMessage(`true`)},
+		{"include_doi", json.RawMessage(`true`)},
+		{"include_isbn", json.RawMessage(`true`)},
+		{"include_url", json.RawMessage(`true`)},
+		{"include_dblp", json.RawMessage(`false`)},
+		{"biber_mode", json.RawMessage(`false`)},
+		{"shorten", json.RawMessage(`false`)},
+		{"urldate_as_note", json.RawMessage(`false`)},
+		{"hyphenations", json.RawMessage(`false`)},
+	} {
+		if _, present := rawMap[opt.key]; !present {
+			rawMap[opt.key] = opt.val
 			needsWriteBack = true
 		}
 	}
