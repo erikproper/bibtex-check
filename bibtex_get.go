@@ -40,6 +40,7 @@ import (
 type TBibGetConfig struct {
 	Mode          string `json:"mode"`           // "full", "pull", or "" (default = pull)
 	FileName      string `json:"file_name"`
+	KeyMapping    bool   `json:"key_mapping"`    // true (default): use aliases from .keys; false: use canonical keys
 	IncludeDOI    bool   `json:"include_doi"`
 	IncludeISBN   bool   `json:"include_isbn"`
 	IncludeDblp   bool   `json:"include_dblp"`
@@ -61,6 +62,7 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		return TBibGetConfig{}, false
 	}
 	cfg := TBibGetConfig{
+		KeyMapping:  true,
 		IncludeDOI:  true,
 		IncludeISBN: true,
 		IncludeURL:  true,
@@ -76,26 +78,51 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 	return cfg, true
 }
 
-// TBibGetPair holds one row from the .map file.
+// TBibGetPair holds one row from the .keys file.
+// When localKey is empty, the entry is a bare canonical key pending alias resolution.
 type TBibGetPair struct {
 	localKey     string
 	canonicalKey string
 }
 
-// readBibGetMap reads <fileName>.map (local_key;canonical_key CSV).
-// Legacy files using a space delimiter are also accepted; legacyFormat is
-// returned true when any line used space so the caller can rewrite the file.
-// First local key wins when a canonical key appears more than once.
-func readBibGetMap(fileName string) (pairs []TBibGetPair, legacyFormat bool, ok bool) {
-	canonicalSeen := map[string]bool{}
+// readKeysFile reads <fileName>.keys (local_key;canonical_key CSV).
+// Lines without a ';' are bare canonical keys; localKey is left empty and
+// the caller must resolve them against the open library.
+// modified is true when a bare-key line was found (requiring a write-back).
+// Migration from the legacy .map extension is handled externally by bib.sync.
+func readKeysFile(fileName string) (pairs []TBibGetPair, modified bool, ok bool) {
+	keysPath := fileName + KeysFileExtension
 
-	ok = processFile(fileName+".map", func(line string) {
-		delim := csvDelimiter
-		if !strings.Contains(line, delim) {
-			delim = " "
-			legacyFormat = true
+	rawCanonicalSeen := map[string]bool{}
+
+	ok = processFile(keysPath, func(line string) {
+		if !strings.Contains(line, csvDelimiter) {
+			// Legacy space delimiter
+			if strings.Contains(line, " ") {
+				parts := strings.SplitN(line, " ", 2)
+				local := strings.TrimSpace(parts[0])
+				canonical := strings.TrimSpace(parts[1])
+				if local == "" || canonical == "" {
+					return
+				}
+				if rawCanonicalSeen[canonical] {
+					fmt.Fprintf(os.Stderr, "WARNING: %s: %q appears more than once (first kept)\n", keysPath, canonical)
+					return
+				}
+				rawCanonicalSeen[canonical] = true
+				pairs = append(pairs, TBibGetPair{local, canonical})
+				modified = true
+				return
+			}
+			// Bare canonical key — will be resolved to alias;canonical by caller.
+			bare := strings.TrimSpace(line)
+			if bare != "" {
+				pairs = append(pairs, TBibGetPair{"", bare})
+				modified = true
+			}
+			return
 		}
-		parts := strings.SplitN(line, delim, 2)
+		parts := strings.SplitN(line, csvDelimiter, 2)
 		if len(parts) != 2 {
 			return
 		}
@@ -104,23 +131,24 @@ func readBibGetMap(fileName string) (pairs []TBibGetPair, legacyFormat bool, ok 
 		if local == "" || canonical == "" {
 			return
 		}
-		if !canonicalSeen[canonical] {
-			canonicalSeen[canonical] = true
-			pairs = append(pairs, TBibGetPair{local, canonical})
+		if rawCanonicalSeen[canonical] {
+			fmt.Fprintf(os.Stderr, "WARNING: %s: %q appears more than once (first kept)\n", keysPath, canonical)
+			return
 		}
+		rawCanonicalSeen[canonical] = true
+		pairs = append(pairs, TBibGetPair{local, canonical})
 	})
 
 	return
 }
 
-// rewriteBibGetMap writes pairs back to <fileName>.map using the canonical
-// semicolon delimiter, normalising legacy space-separated files in place.
-func rewriteBibGetMap(fileName string, pairs []TBibGetPair) {
-	path := fileName + ".map"
+// rewriteKeysFile writes pairs back to <fileName>.keys using the canonical semicolon delimiter.
+func rewriteKeysFile(fileName string, pairs []TBibGetPair) {
+	path := fileName + KeysFileExtension
 	FileRename(path, path+".old")
 	f, err := os.Create(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Cannot rewrite map file:", err)
+		fmt.Fprintln(os.Stderr, "Cannot rewrite keys file:", err)
 		return
 	}
 	defer f.Close()
@@ -129,6 +157,107 @@ func rewriteBibGetMap(fileName string, pairs []TBibGetPair) {
 		w.WriteString(p.localKey + csvDelimiter + p.canonicalKey + "\n")
 	}
 	w.Flush()
+}
+
+// TSelectStatement is one parsed statement from a .select file.
+type TSelectStatement struct {
+	Kind   string   // "group", "groups", "name", "orcid"
+	Values []string // one or more quoted values
+}
+
+// readSelectFile parses <fileName>.select. Each statement is:
+//   group   "name";
+//   groups  "name1" "name2";
+//   name    "Canonical Author Name";
+//   orcid   "0000-0001-2345-6789";
+// Blank lines and lines starting with # are ignored.
+func readSelectFile(fileName string) []TSelectStatement {
+	var stmts []TSelectStatement
+	processFile(fileName+".select", func(line string) {
+		line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ";"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			return
+		}
+		idx := strings.IndexByte(line, '"')
+		if idx < 0 {
+			return
+		}
+		kind := strings.TrimSpace(line[:idx])
+		rest := line[idx:]
+		var values []string
+		for {
+			start := strings.IndexByte(rest, '"')
+			if start < 0 {
+				break
+			}
+			rest = rest[start+1:]
+			end := strings.IndexByte(rest, '"')
+			if end < 0 {
+				break
+			}
+			v := rest[:end]
+			if v != "" {
+				values = append(values, v)
+			}
+			rest = rest[end+1:]
+		}
+		if kind != "" && len(values) > 0 {
+			stmts = append(stmts, TSelectStatement{kind, values})
+		}
+	})
+	return stmts
+}
+
+// expandSelectStmts resolves .select statements into a set of canonical library keys,
+// excluding any keys already present in the explicit keys set.
+func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool) []string {
+	seen := map[string]bool{}
+	var extra []string
+	add := func(key string) {
+		if !alreadyIncluded[key] && !seen[key] {
+			seen[key] = true
+			extra = append(extra, key)
+		}
+	}
+	for _, s := range stmts {
+		switch s.Kind {
+		case "group", "groups":
+			for _, grp := range s.Values {
+				grpSet := Library.GroupEntries[grp]
+				for key := range grpSet.Elements() {
+					resolved := Library.MapEntryKey(key)
+					if resolved == "" {
+						resolved = key
+					}
+					add(resolved)
+				}
+			}
+		case "name":
+			for _, name := range s.Values {
+				orcid := resolveNameToORCID(name)
+				var dblpKeys []string
+				if orcid != "" {
+					dblpKeys = readDblpORCIDEntries(orcid)
+				} else {
+					dblpKeys = readDblpPersonEntries(name)
+				}
+				for _, dk := range dblpKeys {
+					if libKey := Library.LookupDBLPKey(dk); libKey != "" {
+						add(libKey)
+					}
+				}
+			}
+		case "orcid":
+			for _, orcid := range s.Values {
+				for _, dk := range readDblpORCIDEntries(orcid) {
+					if libKey := Library.LookupDBLPKey(dk); libKey != "" {
+						add(libKey)
+					}
+				}
+			}
+		}
+	}
+	return extra
 }
 
 // TShortenMappings maps field name to an ordered list of (from, to) pairs.
@@ -352,27 +481,65 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 		return path
 	}
 
-	// Resolve the map file path.
+	// Resolve the keys file path (base name without extension).
 	mapFilePath := resolveRelative(cfg.FileName)
 
-	pairs, legacyFormat, ok := readBibGetMap(mapFilePath)
+	pairs, keysModified, ok := readKeysFile(mapFilePath)
 	if !ok {
-		fmt.Fprintln(os.Stderr, "Cannot read map file:", mapFilePath+".map")
+		fmt.Fprintln(os.Stderr, "Cannot read keys file:", mapFilePath+KeysFileExtension)
 		os.Exit(1)
 	}
 
-	// Resolve canonical keys through the key alias / oldies table.
-	mapModified := legacyFormat
+	// Resolve all canonical keys through the key alias / oldies table.
+	// Bare keys (localKey == "") are resolved to their preferred alias.
+	resolvedSeen := map[string]bool{}
 	for i, p := range pairs {
 		resolved := Library.MapEntryKey(p.canonicalKey)
-		if resolved != "" && resolved != p.canonicalKey {
-			pairs[i].canonicalKey = resolved
-			mapModified = true
+		if resolved == "" {
+			resolved = p.canonicalKey
+		}
+		pairs[i].canonicalKey = resolved
+		if p.localKey == "" {
+			// Bare key: assign preferred alias (or canonical if none exists).
+			preferred := Library.PreferredKey(resolved)
+			if preferred == "" {
+				preferred = resolved
+			}
+			pairs[i].localKey = preferred
+			keysModified = true
+		}
+		if pairs[i].localKey != p.localKey || pairs[i].canonicalKey != p.canonicalKey {
+			keysModified = true
+		}
+		// Homonym check: warn when the same canonical maps to a different local key.
+		if existing, seen := resolvedSeen[resolved]; seen {
+			_ = existing
+			fmt.Fprintf(os.Stderr, "WARNING: %s: canonical key %q appears more than once (first kept)\n", mapFilePath+KeysFileExtension, resolved)
+			pairs[i] = TBibGetPair{} // mark as skip
+			continue
+		}
+		resolvedSeen[resolved] = true
+	}
+	// Remove skip-marked entries.
+	filtered := pairs[:0]
+	for _, p := range pairs {
+		if p.canonicalKey != "" {
+			filtered = append(filtered, p)
 		}
 	}
-	if mapModified {
-		rewriteBibGetMap(mapFilePath, pairs)
+	pairs = filtered
+
+	if keysModified {
+		rewriteKeysFile(mapFilePath, pairs)
 	}
+
+	// Expand .select statements into additional canonical keys.
+	selectStmts := readSelectFile(mapFilePath)
+	explicitKeys := map[string]bool{}
+	for _, p := range pairs {
+		explicitKeys[p.canonicalKey] = true
+	}
+	extraCanonicals := expandSelectStmts(selectStmts, explicitKeys)
 
 	var shorten TShortenMappings
 	if cfg.Shorten {
@@ -383,28 +550,43 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 		}
 	}
 
-	// Build canonical->localKey index (first local key wins, already enforced by readBibGetMap).
+	// Build canonical->outputKey index from explicit .keys pairs.
+	// When key_mapping=false, canonical keys are used as output keys throughout.
 	canonicalToLocal := map[string]string{}
 	for _, p := range pairs {
-		resolved := Library.MapEntryKey(p.canonicalKey)
-		if resolved == "" {
-			resolved = p.canonicalKey
+		outputKey := p.localKey
+		if !cfg.KeyMapping {
+			outputKey = p.canonicalKey
 		}
-		if _, seen := canonicalToLocal[resolved]; !seen {
-			canonicalToLocal[resolved] = p.localKey
-		}
+		canonicalToLocal[p.canonicalKey] = outputKey
 	}
 
-	// Collect crossref parents not already in the map and add them.
-	// Use preferred alias (or canonical key) as local key for auto-added parents.
+	// Convert .select extras to TBibGetPair and register in canonicalToLocal.
+	var extraPairs []TBibGetPair
+	for _, canonical := range extraCanonicals {
+		outputKey := canonical
+		if cfg.KeyMapping {
+			if preferred := Library.PreferredKey(canonical); preferred != "" {
+				outputKey = preferred
+			}
+		}
+		extraPairs = append(extraPairs, TBibGetPair{outputKey, canonical})
+		canonicalToLocal[canonical] = outputKey
+	}
+
+	// Collect crossref parents not already covered and auto-add them.
 	type autoParent struct {
 		localKey     string
 		canonicalKey string
 	}
 	var autoParents []autoParent
-	autoParentLocal := map[string]string{} // canonical -> local key used
+	autoParentLocal := map[string]string{}
 
-	for resolved := range canonicalToLocal {
+	allCoveredCanonicalsIncludingExtras := make([]string, 0, len(canonicalToLocal))
+	for c := range canonicalToLocal {
+		allCoveredCanonicalsIncludingExtras = append(allCoveredCanonicalsIncludingExtras, c)
+	}
+	for _, resolved := range allCoveredCanonicalsIncludingExtras {
 		crossref := Library.EntryFieldValueity(resolved, "crossref")
 		if crossref == "" {
 			continue
@@ -419,15 +601,17 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 		if _, alreadyAuto := autoParentLocal[resolvedCrossref]; alreadyAuto {
 			continue
 		}
-		localKey := Library.PreferredKey(resolvedCrossref)
-		if localKey == "" {
-			localKey = resolvedCrossref
+		localKey := resolvedCrossref
+		if cfg.KeyMapping {
+			if preferred := Library.PreferredKey(resolvedCrossref); preferred != "" {
+				localKey = preferred
+			}
 		}
 		autoParentLocal[resolvedCrossref] = localKey
 		autoParents = append(autoParents, autoParent{localKey, resolvedCrossref})
 	}
 
-	// effectiveLocalKey returns the local key to use for a canonical in the crossref field.
+	// effectiveLocalKey returns the output key for a canonical used in a crossref field.
 	effectiveLocalKey := func(canonical string) string {
 		if lk, ok := canonicalToLocal[canonical]; ok {
 			return lk
@@ -447,17 +631,9 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 
 	w.WriteString("%\n% THIS FILE IS AUTOMATICALLY GENERATED.\n% THEREFORE, DO NOT EDIT THIS FILE!!\n%\n\n")
 
-	// Non-bookish entries first (children before parents).
-	for _, p := range pairs {
-		resolved := Library.MapEntryKey(p.canonicalKey)
-		if resolved == "" {
-			resolved = p.canonicalKey
-		}
-		entryType := Library.EntryType(resolved)
-		if BibTeXBookish.Contains(entryType) {
-			continue
-		}
-		crossref := Library.EntryFieldValueity(resolved, "crossref")
+	// writeEntry emits one entry, resolving its crossref to an output key.
+	writeEntry := func(canonical, outputKey string) {
+		crossref := Library.EntryFieldValueity(canonical, "crossref")
 		crossrefLocal := ""
 		if crossref != "" {
 			resolvedCrossref := Library.MapEntryKey(crossref)
@@ -466,22 +642,34 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 			}
 			crossrefLocal = effectiveLocalKey(resolvedCrossref)
 		}
-		w.WriteString(Library.entryGetString(resolved, p.localKey, crossrefLocal, cfg, shorten))
+		w.WriteString(Library.entryGetString(canonical, outputKey, crossrefLocal, cfg, shorten))
 		w.WriteString("\n")
 	}
 
-	// Bookish entries from map.
+	// Non-bookish entries first (children before parents): explicit .keys pairs then .select extras.
 	for _, p := range pairs {
-		resolved := Library.MapEntryKey(p.canonicalKey)
-		if resolved == "" {
-			resolved = p.canonicalKey
+		if !BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
+			writeEntry(p.canonicalKey, p.localKey)
 		}
-		entryType := Library.EntryType(resolved)
-		if !BibTeXBookish.Contains(entryType) {
-			continue
+	}
+	for _, p := range extraPairs {
+		if !BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
+			writeEntry(p.canonicalKey, p.localKey)
 		}
-		w.WriteString(Library.entryGetString(resolved, p.localKey, "", cfg, shorten))
-		w.WriteString("\n")
+	}
+
+	// Bookish entries: explicit .keys pairs then .select extras.
+	for _, p := range pairs {
+		if BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
+			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", cfg, shorten))
+			w.WriteString("\n")
+		}
+	}
+	for _, p := range extraPairs {
+		if BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
+			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", cfg, shorten))
+			w.WriteString("\n")
+		}
 	}
 
 	// Auto-added crossref parents.
@@ -540,7 +728,7 @@ func doGetWithConfig(cfg TBibGetConfig, baseDir string) {
 
 // defaultSyncConfig returns a TBibGetConfig with sensible defaults.
 func defaultSyncConfig() TBibGetConfig {
-	return TBibGetConfig{IncludeDOI: true, IncludeISBN: true, IncludeURL: true}
+	return TBibGetConfig{KeyMapping: true, IncludeDOI: true, IncludeISBN: true, IncludeURL: true}
 }
 
 // applyJSONOverlay unmarshals data into cfg, overriding only the fields present
@@ -817,10 +1005,10 @@ func doSync(filter string) {
 	}
 }
 
-// appendToMapFile appends alias;canonicalKey to the map file named in bib.config.
-func appendToMapFile(alias, canonicalKey string) {
+// appendToKeysFile appends alias;canonicalKey to the .keys file named in bib.config.
+func appendToKeysFile(alias, canonicalKey string) {
 	if canonicalKey == "" {
-		fmt.Fprintln(os.Stderr, "-map: key not found in library, cannot add to map")
+		fmt.Fprintln(os.Stderr, "-map: key not found in library, cannot add to keys file")
 		return
 	}
 	data, err := os.ReadFile("bib.config")
@@ -837,20 +1025,21 @@ func appendToMapFile(alias, canonicalKey string) {
 		fmt.Fprintln(os.Stderr, "-map: bib.config has no file_name")
 		return
 	}
-	pairs, _, _ := readBibGetMap(cfg.FileName)
+	pairs, _, _ := readKeysFile(cfg.FileName)
+	keysPath := cfg.FileName + KeysFileExtension
 	for _, p := range pairs {
 		if p.canonicalKey == canonicalKey {
 			if p.localKey != alias {
-				fmt.Fprintf(os.Stderr, "-map: %s is already in %s.map as %s\n", canonicalKey, cfg.FileName, p.localKey)
+				fmt.Fprintf(os.Stderr, "-map: %s is already in %s as %s\n", canonicalKey, keysPath, p.localKey)
 			} else {
-				fmt.Fprintf(os.Stderr, "-map: %s is already in %s.map\n", alias, cfg.FileName)
+				fmt.Fprintf(os.Stderr, "-map: %s is already in %s\n", alias, keysPath)
 			}
 			return
 		}
 	}
-	f, err := os.OpenFile(cfg.FileName+".map", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(keysPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "-map: cannot open map file:", err)
+		fmt.Fprintln(os.Stderr, "-map: cannot open keys file:", err)
 		return
 	}
 	defer f.Close()

@@ -51,7 +51,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "23.17"
+const AppVersion = "23.19"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -748,7 +748,7 @@ func doEntryKeyAlias(args []string, withMap bool) {
 		if alias != "" {
 			fmt.Println(alias)
 			if withMap {
-				appendToMapFile(alias, key)
+				appendToKeysFile(alias, key)
 			}
 		}
 	}
