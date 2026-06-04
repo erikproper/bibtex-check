@@ -91,10 +91,20 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		fmt.Fprintln(os.Stderr, "Cannot parse bib.config:", err)
 		return TBibGetConfig{}, false
 	}
-	if migrateRawConfigFileNames(rawMap) {
-		if migrated, marshalErr := json.MarshalIndent(rawMap, "", "  "); marshalErr == nil {
-			os.WriteFile(path, append(migrated, '\n'), 0644)
-			data = migrated
+	needsWriteBack := migrateRawConfigFileNames(rawMap)
+
+	// Seed absent default-true fields so bib.config is self-documenting.
+	for _, key := range []string{"key_mapping", "include_doi", "include_isbn", "include_url"} {
+		if _, present := rawMap[key]; !present {
+			rawMap[key] = json.RawMessage(`true`)
+			needsWriteBack = true
+		}
+	}
+
+	if needsWriteBack {
+		if written, marshalErr := json.MarshalIndent(rawMap, "", "  "); marshalErr == nil {
+			os.WriteFile(path, append(written, '\n'), 0644)
+			data = written
 		}
 	}
 	cfg := TBibGetConfig{
@@ -207,9 +217,14 @@ type TSelectStatement struct {
 //   name    "Canonical Author Name";
 //   orcid   "0000-0001-2345-6789";
 // Blank lines and lines starting with # are ignored.
-func readSelectFile(fileName string) []TSelectStatement {
+// Returns (statements, fileExists).
+func readSelectFile(fileName string) ([]TSelectStatement, bool) {
+	selectPath := fileName + ".select"
+	if !FileExists(selectPath) {
+		return nil, false
+	}
 	var stmts []TSelectStatement
-	processFile(fileName+".select", func(line string) {
+	processFile(selectPath, func(line string) {
 		line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ";"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			return
@@ -241,7 +256,7 @@ func readSelectFile(fileName string) []TSelectStatement {
 			stmts = append(stmts, TSelectStatement{kind, values})
 		}
 	})
-	return stmts
+	return stmts, true
 }
 
 // expandSelectStmts resolves .select statements into a set of canonical library keys,
@@ -570,12 +585,52 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 	}
 
 	// Expand .select statements into additional canonical keys.
-	selectStmts := readSelectFile(mapFilePath)
+	selectStmts, selectFileFound := readSelectFile(mapFilePath)
 	explicitKeys := map[string]bool{}
 	for _, p := range pairs {
 		explicitKeys[p.canonicalKey] = true
 	}
 	extraCanonicals := expandSelectStmts(selectStmts, explicitKeys)
+
+	// Progress: file name, active options, source counts.
+	{
+		var opts []string
+		if !cfg.KeyMapping {
+			opts = append(opts, "key_mapping=false")
+		}
+		if !cfg.IncludeDOI {
+			opts = append(opts, "no_doi")
+		}
+		if !cfg.IncludeISBN {
+			opts = append(opts, "no_isbn")
+		}
+		if !cfg.IncludeURL {
+			opts = append(opts, "no_url")
+		}
+		if cfg.IncludeDblp {
+			opts = append(opts, "include_dblp")
+		}
+		if cfg.BiberMode {
+			opts = append(opts, "biber")
+		}
+		if cfg.Shorten {
+			opts = append(opts, "shorten")
+		}
+		if cfg.UrldateAsNote {
+			opts = append(opts, "urldate_as_note")
+		}
+		optStr := ""
+		if len(opts) > 0 {
+			optStr = " [" + strings.Join(opts, ", ") + "]"
+		}
+		Library.Progress("Sync pull: %s%s", cfg.FileName, optStr)
+		Library.Progress("  Keys  : %d entr%s from %s", len(pairs), map[bool]string{true: "y", false: "ies"}[len(pairs) == 1], mapFilePath+KeysFileExtension)
+		if selectFileFound {
+			Library.Progress("  Select: %d statement(s) → %d extra entr%s from %s", len(selectStmts), len(extraCanonicals), map[bool]string{true: "y", false: "ies"}[len(extraCanonicals) == 1], mapFilePath+".select")
+		} else {
+			Library.Progress("  Select: %s not found (no .select file)", mapFilePath+".select")
+		}
+	}
 
 	var shorten TShortenMappings
 	if cfg.Shorten {
