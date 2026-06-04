@@ -399,31 +399,36 @@ func mergeShortenMappings(base, override TShortenMappings) TShortenMappings {
 type THyphenations map[string]string
 
 // readHyphenations loads hyphenations.csv from global_folder.
-// Each line: word;word\-with\-hints
-// Validation: stripping \- from the hinted form must reproduce the original word.
+// Each line contains only the hinted form with \- markers; the original word
+// is derived by stripping \- (e.g. "ma\-ni\-fe\-sto" → key "manifesto").
+// Blank lines and lines starting with # are ignored.
 func readHyphenations() THyphenations {
 	result := THyphenations{}
 	path := globalFolder + "hyphenations.csv"
+	if !FileExists(path) {
+		return result
+	}
+	var bad []string
 	processFile(path, func(line string) {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
 			return
 		}
-		parts := strings.SplitN(line, csvDelimiter, 2)
-		if len(parts) != 2 {
+		stripped := strings.ReplaceAll(line, `\-`, "")
+		if stripped == line {
+			bad = append(bad, line)
 			return
 		}
-		word := strings.TrimSpace(parts[0])
-		hinted := strings.TrimSpace(parts[1])
-		if word == "" || hinted == "" {
+		if stripped == "" {
+			bad = append(bad, line)
 			return
 		}
-		stripped := strings.ReplaceAll(hinted, `\-`, "")
-		if !strings.EqualFold(stripped, word) {
-			fmt.Fprintf(os.Stderr, "WARNING: hyphenations.csv: stripping \\- from %q yields %q, not %q — skipped\n", hinted, stripped, word)
-			return
-		}
-		result[strings.ToLower(word)] = hinted
+		result[strings.ToLower(stripped)] = line
 	})
+	for _, bl := range bad {
+		fmt.Fprintf(os.Stderr, "WARNING: %s: line has no \\- markers — skipped: %q\n", path, bl)
+	}
+	dbInteraction.Progress("Hyphenations: %d entr%s from %s", len(result), map[bool]string{true: "y", false: "ies"}[len(result) == 1], path)
 	return result
 }
 
