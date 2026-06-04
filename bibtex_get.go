@@ -682,38 +682,19 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 	}
 	extraCanonicals := expandSelectStmts(selectStmts, explicitKeys)
 
-	// Progress: file name, active options, source counts.
+	// Progress: file name, all options, source counts.
 	{
-		var opts []string
-		if !cfg.KeyMapping {
-			opts = append(opts, "key_mapping=false")
+		on := func(b bool) string {
+			if b {
+				return "on"
+			}
+			return "off"
 		}
-		if !cfg.IncludeDOI {
-			opts = append(opts, "no_doi")
-		}
-		if !cfg.IncludeISBN {
-			opts = append(opts, "no_isbn")
-		}
-		if !cfg.IncludeURL {
-			opts = append(opts, "no_url")
-		}
-		if cfg.IncludeDblp {
-			opts = append(opts, "include_dblp")
-		}
-		if cfg.BiberMode {
-			opts = append(opts, "biber")
-		}
-		if cfg.Shorten {
-			opts = append(opts, "shorten")
-		}
-		if cfg.UrldateAsNote {
-			opts = append(opts, "urldate_as_note")
-		}
-		optStr := ""
-		if len(opts) > 0 {
-			optStr = " [" + strings.Join(opts, ", ") + "]"
-		}
-		dbInteraction.Progress("Sync pull: %s%s", cfg.FileName, optStr)
+		dbInteraction.Progress("Sync pull: %s", cfg.FileName)
+		dbInteraction.Progress("  doi=%-3s  isbn=%-3s  url=%-3s  dblp=%-3s  key_mapping=%-3s",
+			on(cfg.IncludeDOI), on(cfg.IncludeISBN), on(cfg.IncludeURL), on(cfg.IncludeDblp), on(cfg.KeyMapping))
+		dbInteraction.Progress("  biber=%-3s  shorten=%-3s  urldate_as_note=%-3s  hyphenations=%-3s",
+			on(cfg.BiberMode), on(cfg.Shorten), on(cfg.UrldateAsNote), on(cfg.Hyphenations))
 		dbInteraction.Progress("  Keys  : %d entr%s from %s", len(pairs), map[bool]string{true: "y", false: "ies"}[len(pairs) == 1], mapFilePath+KeysFileExtension)
 		if selectFileFound {
 			dbInteraction.Progress("  Select: %d statement(s) → %d extra entr%s from %s", len(selectStmts), len(extraCanonicals), map[bool]string{true: "y", false: "ies"}[len(extraCanonicals) == 1], mapFilePath+".select")
