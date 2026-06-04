@@ -423,7 +423,12 @@ func readHyphenations() THyphenations {
 			bad = append(bad, line)
 			return
 		}
-		result[strings.ToLower(stripped)] = line
+		key := strings.ToLower(stripped)
+		if existing, dup := result[key]; dup {
+			fmt.Fprintf(os.Stderr, "WARNING: %s: duplicate entry for %q — keeping %q, ignoring %q\n", path, stripped, existing, line)
+			return
+		}
+		result[key] = line
 	})
 	for _, bl := range bad {
 		fmt.Fprintf(os.Stderr, "WARNING: %s: line has no \\- markers — skipped: %q\n", path, bl)
@@ -482,10 +487,10 @@ func applyHyphenation(h THyphenations, value string) string {
 }
 
 // hyphenateFields is the set of BibTeX fields where \- hints are applied.
+// Limited to title fields where long compound words may cause line overflow.
 var hyphenateFields = func() TStringSet {
 	s := TStringSetNew()
-	s.Add("title", "booktitle", "journal", "publisher", "series", "note",
-		"school", "institution", "organization", "howpublished", "type")
+	s.Add("title", "booktitle", "journal")
 	return s
 }()
 
