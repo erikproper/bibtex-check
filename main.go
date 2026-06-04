@@ -51,7 +51,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "23.14"
+const AppVersion = "23.15"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1208,8 +1208,10 @@ func doApplyScript() {
 }
 
 func doAddNameMapping(args []string) {
-	Library = TBibTeXLibrary{}
-	Library.Initialise(Reporting, bibTeXFolder, bibTeXBaseName)
+	if !prepareWorkingDatabase() {
+		return
+	}
+	initialiseLibrary()
 	Library.ReadNameMappingsFile()
 	Library.AddNameMapping(args[0], args[1])
 	skipBibDbRefresh = true
