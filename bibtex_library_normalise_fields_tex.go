@@ -359,7 +359,12 @@ func (l *TBibTeXLibrary) maybeAddSimpleName(parts int, firstName, lastName, full
 	if !l.harvestNameAliases {
 		return
 	}
-	if parts == 2 && !strings.Contains(firstName, ",") && !strings.Contains(lastName, ",") {
+	if parts == 2 &&
+		!strings.Contains(firstName, ",") &&
+		!strings.Contains(lastName, ",") &&
+		!strings.ContainsAny(fullName, "()") &&
+		!hasStrayBrace(fullName) &&
+		len(strings.TrimRight(lastName, ".")) > 1 {
 		if _, isMapped := l.NameAliasToName[fullName]; !isMapped {
 			canonical := lastName + ", " + firstName
 			// Follow any existing alias chain for the derived canonical so we
@@ -409,7 +414,7 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 					l.maybeAddSimpleName(namePartsCount, previousFirstName, previousLastName, name)
 
 					normalised := NormalisePersonNameValue(l.TBibTeXTeX.library, name)
-					if strings.Contains(normalised, ", ") {
+					if strings.Contains(normalised, ", ") && !hasGarbledName(normalised) && !hasSingleLetterSurname(normalised) {
 						if l.FindAliases(normalised, normalised) {
 							l.nameMappingsModified = true
 						}
@@ -439,7 +444,7 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 		l.maybeAddSimpleName(namePartsCount, previousFirstName, previousLastName, name)
 
 		normalised := NormalisePersonNameValue(l.TBibTeXTeX.library, name)
-		if strings.Contains(normalised, ", ") {
+		if strings.Contains(normalised, ", ") && !hasGarbledName(normalised) && !hasSingleLetterSurname(normalised) {
 			if l.FindAliases(normalised, normalised) {
 				l.nameMappingsModified = true
 			}

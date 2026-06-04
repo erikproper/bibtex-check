@@ -148,7 +148,6 @@ func (l *TBibTeXLibrary) ReadAddressMappings() {
 }
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {
-	repairCorruptNameMappings() // GO_REVISIT: remove after production deployment confirms blob corruption is gone
 	loadNameMappingsFromDb(l)
 	l.nameMappingsModified = false
 }

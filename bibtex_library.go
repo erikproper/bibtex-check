@@ -412,6 +412,9 @@ func (l *TBibTeXLibrary) maybeAddFoundAlias(canonical, alias string) bool {
 	if alias == "" || alias == canonical {
 		return false
 	}
+	if strings.ContainsAny(alias, "()") || hasStrayBrace(alias) {
+		return false // parentheticals or brace-wrapped/stray-brace tokens are not name variants
+	}
 	if _, exists := l.NameAliasToName[alias]; exists {
 		return false
 	}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -52,7 +51,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "23.13"
+const AppVersion = "23.14"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -755,33 +754,35 @@ func doEntryKeyAlias(args []string, withMap bool) {
 	}
 }
 
+func doRepairGarbledNames(repairBibPath string) {
+	if !openLibraryToUpdate() {
+		return
+	}
+	Library.Progress("Cleaning bad name mappings")
+	n := Library.cleanBadNameMappings()
+	Library.Progress("Cleaned %d bad name_mapping canonical(s)", n)
+
+	var bibMap map[string]map[string]string
+	if repairBibPath != "" {
+		Library.Progress("Parsing repair bib: %s", repairBibPath)
+		var err error
+		bibMap, err = parseBibForAuthorEditor(repairBibPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not parse repair bib %s: %s\n", repairBibPath, err)
+		} else {
+			Library.Progress("Loaded %d entries from repair bib", len(bibMap))
+		}
+	}
+	Library.Progress("Scanning entries for garbled names")
+	n = Library.RepairGarbledNames(bibMap)
+	Library.Progress("Repaired %d garbled author/editor field(s)", n)
+}
+
 func doShowEntry(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		fmt.Println(Library.EntryString(Library.MapEntryKey(cleanKey(args[0])), ""))
 	}
-}
-
-func doRepairGarbledNames(repairBasePath string) {
-	if !openLibraryToUpdate() {
-		return
-	}
-	if repairBasePath == "" {
-		repairBasePath = bibTeXFolder + "Repair"
-	}
-	var repairDb *sql.DB
-	if repairBasePath != "" {
-		repairDbPath := repairBasePath + cacheFileExtension
-		var err error
-		repairDb, err = sql.Open(sqliteDatabaseDriver, repairDbPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not open repair DB %s: %s\n", repairDbPath, err)
-			return
-		}
-		defer repairDb.Close()
-	}
-	n := Library.RepairGarbledNames(repairDb)
-	Library.Progress("Repaired %d garbled author/editor field(s)", n)
 }
 
 func doFixEntries(args []string) {
@@ -1260,8 +1261,8 @@ func main() {
 		cmdUpdateDblp               bool
 		cmdRepairDblpManifest       bool
 		cmdRebuildDblpCrossrefIndex bool
-		cmdRepairGarbledNames       bool
-		repairBase                  string
+		cmdRepairGarbledNames bool
+		repairBibPath         string
 		cmdDeleteGarbage            bool
 		cmdApplyScript              bool
 		// Unified table export/import (v23.0).
@@ -1308,9 +1309,9 @@ func main() {
 	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP file store")
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
 	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
-	flag.BoolVar(&cmdRepairGarbledNames, "repair_garbled_names", false, "repair garbled author/editor fields using DBLP data and an optional reference DB") // GO_REVISIT: remove after production repair confirmed complete
-	flag.StringVar(&repairBase, "repair_base", "", "path/basename of a reference SQLite DB for -repair_garbled_names (non-DBLP entries)") // GO_REVISIT: remove with repair_garbled_names
 	flag.BoolVar(&cmdRebuildDblpCrossrefIndex, "rebuild_dblp_crossref_index", false, "rebuild DBLP crossref children index from stored data.json files")
+	flag.BoolVar(&cmdRepairGarbledNames, "repair_garbled_names", false, "clean bad name_mappings and repair garbled author/editor fields")
+	flag.StringVar(&repairBibPath, "repair_bib", "", "path to a reference .bib file for -repair_garbled_names (non-DBLP entries)")
 	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
 	flag.BoolVar(&cmdNoGarbageCleaning, "no_garbage_cleaning", false, "skip background cleanup of the DBLP trash folder")
 	flag.BoolVar(&cmdApplyScript, "apply_script", false, "evaluate group assignment rules from <base>.script")
@@ -1503,7 +1504,7 @@ func main() {
 		doFixAllEntries()
 
 	case cmdRepairGarbledNames:
-		doRepairGarbledNames(repairBase)
+		doRepairGarbledNames(repairBibPath)
 
 	case cmdUpdateDblp:
 		doUpsertDblpEntries()

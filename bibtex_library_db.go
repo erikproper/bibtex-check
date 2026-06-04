@@ -986,74 +986,9 @@ func ensureNameMappingsTableExists() {
 		);`)
 }
 
-// repairCorruptNameMappings detects alias rows whose value contains embedded
-// newlines — a sign that encoding/csv with LazyQuotes=true consumed subsequent
-// CSV lines into a single quoted field during a prior importNameMappingsFromCSV call.
-// For each corrupt row it re-inserts the embedded individual alias pairs directly
-// into the DB (no CSV dependency) and then deletes the corrupt row.
-// Returns true when at least one corrupt row was found and repaired.
-func repairCorruptNameMappings() bool {
-	var maxAliasLen int
-	db.QueryRow(`SELECT COALESCE(MAX(LENGTH(alias)), 0) FROM name_mappings`).Scan(&maxAliasLen)
-	if maxAliasLen <= 500 {
-		return false
-	}
-
-	dbInteraction.Progress("Corrupt name_mappings data detected (max alias length %d) — repairing in-DB", maxAliasLen)
-
-	rows, err := db.Query(`SELECT alias, name FROM name_mappings WHERE LENGTH(alias) > 500`)
-	if err != nil {
-		dbInteraction.Warning("Could not query corrupt name_mappings rows: %s", err)
-		return false
-	}
-
-	type pair struct{ alias, name string }
-	var corrupt []pair
-	for rows.Next() {
-		var p pair
-		if err := rows.Scan(&p.alias, &p.name); err == nil {
-			corrupt = append(corrupt, p)
-		}
-	}
-	rows.Close()
-
-	upsert := `INSERT INTO name_mappings (alias, name) VALUES (?, ?)
-	             ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
-
-	for _, p := range corrupt {
-		// The blob is the content that encoding/csv read after the opening " of the
-		// problematic CSV line.  Split it on newlines to recover the individual entries
-		// that were swallowed.  Each embedded line is a complete "name;alias" pair from
-		// the original CSV.  The very first fragment is the alias of the blob's own name.
-		for i, line := range strings.Split(p.alias, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			elements := strings.SplitN(line, csvDelimiter, 2)
-			if i == 0 {
-				// First fragment: this is the alias portion of the triggering line;
-				// the canonical is p.name.
-				if line != "" {
-					db.Exec(upsert, ApplyLaTeXMap(csvUnquoteField(line)), ApplyLaTeXMap(p.name))
-				}
-			} else if len(elements) == 2 && elements[0] != "" && elements[1] != "" {
-				// Subsequent fragments: full "canonical;alias" CSV lines.
-				db.Exec(upsert, ApplyLaTeXMap(csvUnquoteField(elements[1])), ApplyLaTeXMap(csvUnquoteField(elements[0])))
-			}
-		}
-		db.Exec(`DELETE FROM name_mappings WHERE alias = ?`, p.alias)
-	}
-
-	dbInteraction.Progress("Repaired %d corrupt name_mappings row(s)", len(corrupt))
-	return true
-}
-
 // maybeReloadNameMappingsDb syncs the flat file into the DB when the file is newer.
 // Each line must have two non-empty fields: canonical name and alias.
 func maybeReloadNameMappingsDb() {
-	// Repair any corrupt rows left by encoding/csv before the timestamp check.
-	repairCorruptNameMappings()
 
 	nameMappingsFileName := bibTeXFolder + bibTeXBaseName + NameMappingsFilePath
 
