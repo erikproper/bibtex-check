@@ -902,7 +902,7 @@ func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) str
 		if field != EntryTypeField {
 			if value := entry.FieldValue(field); value != "" {
 				mapped := l.MapEntryFieldValue(key, field, value)
-				if field == LocalURLField && l.localURLBase != "" {
+				if field == LocalURLField && l.localURLBase != "" && !strings.HasPrefix(mapped, "/") {
 					mapped = l.localURLBase + mapped
 				}
 				result += FormatBibTeXFieldAssignment(linePrefix, field, mapped)
