@@ -236,8 +236,6 @@ var tableConstraintsMigrated bool
 // maybeMigrateTableConstraints detects mapping tables that were created without
 // their required UNIQUE / PRIMARY KEY constraint (due to CREATE TABLE IF NOT EXISTS
 // leaving an older schema in place) and recreates them with deduplication.
-// Also detects and clears bloated tables (e.g. key_hints accumulating transient
-// DBLP-derived hints over many runs).
 // Must be called after prepareWorkingDatabase() so the correct DB file is open.
 // Guarded by tableConstraintsMigrated so it runs at most once per process.
 func maybeMigrateTableConstraints() {
@@ -285,18 +283,6 @@ func maybeMigrateTableConstraints() {
 		}
 	}
 
-	// One-time bloat cleanup: key_hints accumulates transient DBLP-derived hints over
-	// many runs because buildKeyAliasesFromDb used to reset keyHintsModified=false,
-	// preventing the filter in saveKeyHintsToDb from ever running a clean save.
-	// If key_hints has more than 3× the number of bib entries, clear it — it will be
-	// rebuilt from preferredalias fields on this same run.
-	var hintCount, entryCount int
-	db.QueryRow(`SELECT COUNT(*) FROM key_hints`).Scan(&hintCount)
-	db.QueryRow(`SELECT COUNT(DISTINCT entry_key) FROM bib_entries WHERE field = ?`, EntryTypeField).Scan(&entryCount)
-	if entryCount > 0 && hintCount > entryCount*3 {
-		dbInteraction.Progress("Cleaning bloated key_hints: %d rows for %d entries — clearing for rebuild", hintCount, entryCount)
-		db.Exec(`DELETE FROM key_hints`)
-	}
 }
 
 func connectToDatabase() {
@@ -1579,7 +1565,7 @@ func saveDblpWaivedToDb(l *TBibTeXLibrary) {
 // those rows and leave unrelated metadata rows untouched.
 
 func knownEntryFlags() []string {
-	return []string{EntryFlagNoDBLPChildren}
+	return []string{EntryFlagNoDBLPChildren, FlagLoneProceedingsWaived}
 }
 
 // maybeConsolidateEntryFlags migrates the legacy entry_flags table into
@@ -2762,6 +2748,20 @@ func deleteBibEntry(key string) {
 		}
 	} else if activeTx == nil {
 		markBibEntryModified()
+	}
+}
+
+// deleteHintsByTarget removes all key_hints rows whose resolved target is canonicalKey.
+func deleteHintsByTarget(canonicalKey string) {
+	if _, err := db.Exec(`DELETE FROM key_hints WHERE key = ?`, canonicalKey); err != nil {
+		dbInteraction.Warning("key_hints delete-by-target failed for %s: %s", canonicalKey, err)
+	}
+}
+
+// deleteOldiesByTarget removes all key_oldies rows whose resolved target is canonicalKey.
+func deleteOldiesByTarget(canonicalKey string) {
+	if _, err := db.Exec(`DELETE FROM key_oldies WHERE key = ?`, canonicalKey); err != nil {
+		dbInteraction.Warning("key_oldies delete-by-target failed for %s: %s", canonicalKey, err)
 	}
 }
 

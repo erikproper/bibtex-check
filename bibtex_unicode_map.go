@@ -90,11 +90,11 @@ var defaultUnicodeMapSections = []unicodeMapSection{
 		"Symbols (Latin-1 Supplement)",
 		[][2]string{
 			{"163", `{\pounds}`}, {"167", `\S{}`}, {"169", `{\copyright}`},
-			{"171", `\guillemotleft{}`}, {"172", `\(\neg\)`}, {"174", `{\textregistered}`},
+			{"171", `{\guillemotleft}`}, {"172", `\(\neg\)`}, {"174", `{\textregistered}`},
 			{"176", `\(^\circ\)`}, {"177", `\(\pm\)`},
 			{"178", `\({}^{\mbox{2}}\)`}, {"179", `\({}^{\mbox{3}}\)`},
 			{"180", `\'{}` }, {"181", `\(\mu\)`}, {"183", `{\cdot}`},
-			{"187", `\guillemotright{}`}, {"188", `{\textonequarter}`}, {"189", `{\textonehalf}`},
+			{"187", `{\guillemotright}`}, {"188", `{\textonequarter}`}, {"189", `{\textonehalf}`},
 			{"190", `{\textthreequarters}`}, {"191", "?"}, {"215", `\(\times\)`},
 		},
 	},

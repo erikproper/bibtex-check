@@ -308,7 +308,7 @@ func (l *TBibTeXLibrary) AssociateDblpKey(key, dblpKey string) {
 // entry and asks the user to choose one (0 = none of them match).
 // Returns the chosen DBLP key, or "" when the user picks 0.
 func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) string {
-	fmt.Fprintf(os.Stderr, "\nLibrary entry:\n%s\n", l.EntryString(key, ""))
+	fmt.Fprintf(os.Stderr, "\nLibrary entry:\n%s\n", l.entryDisplayString(key))
 	for i, dblpKey := range candidates {
 		fmt.Fprintf(os.Stderr, "[%d] %s", i+1, dblpKey)
 		if entry := dblpEntryFromFile(dblpKey); entry != nil {
@@ -336,6 +336,17 @@ func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) st
 			sort.Strings(remaining)
 			for _, field := range remaining {
 				fmt.Fprintf(os.Stderr, "\n    %-12s: %s", field, entry.Fields[field])
+			}
+			// Show crossref parent for context (title, year, editor).
+			if crossref := entry.Fields["crossref"]; crossref != "" {
+				if parent := dblpEntryFromFile(crossref); parent != nil {
+					fmt.Fprintf(os.Stderr, "\n  Parent: %s", crossref)
+					for _, field := range []string{"title", "booktitle", "year", "editor", "publisher", "series"} {
+						if v := parent.Fields[field]; v != "" {
+							fmt.Fprintf(os.Stderr, "\n    %-12s: %s", field, v)
+						}
+					}
+				}
 			}
 		}
 		fmt.Fprintf(os.Stderr, "\n")

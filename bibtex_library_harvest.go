@@ -47,15 +47,7 @@ type THarvestLog []THarvestLogEntry
 
 // harvestContentFingerprint returns an MD5 of all non-empty field=value pairs, sorted.
 func harvestContentFingerprint(e TBibTeXEntry) string {
-	fields := make([]string, 0, len(e.Fields))
-	for f, v := range e.Fields {
-		if v != "" {
-			fields = append(fields, f+"="+v)
-		}
-	}
-	sort.Strings(fields)
-	h := md5.Sum([]byte(strings.Join(fields, ";")))
-	return hex.EncodeToString(h[:])
+	return bibContentFingerprint(e)
 }
 
 // harvestTitleHash returns MD5 of the TeXStringIndexer-normalised title.
@@ -142,15 +134,46 @@ func harvestShouldSkip(e TBibTeXEntry, log THarvestLog, l *TBibTeXLibrary) bool 
 
 // --- Parsing ---
 
+// countHarvestBibEntries does a fast line scan to count anticipated bib entries:
+// any line whose first non-space character is '@' followed by a letter, excluding
+// @string, @comment, and @preamble (which are not library entries).
+func countHarvestBibEntries(path string) int {
+	n := 0
+	processFile(path, func(line string) {
+		trimmed := strings.TrimLeft(line, " \t")
+		if len(trimmed) < 2 || trimmed[0] != '@' {
+			return
+		}
+		rest := strings.ToLower(trimmed[1:])
+		if strings.HasPrefix(rest, "string") ||
+			strings.HasPrefix(rest, "comment") ||
+			strings.HasPrefix(rest, "preamble") {
+			return
+		}
+		if len(rest) > 0 && rest[0] >= 'a' && rest[0] <= 'z' {
+			n++
+		}
+	})
+	return n
+}
+
 // parseHarvestBib parses a bib file using the existing streaming parser with the
 // capturedHarvestEntries mechanism: entries are collected in memory and never written
-// to the main DB.
+// to the main DB. Warns when the captured count is less than the anticipated count
+// (indicating the source file is malformed and parsing stopped early).
 func (l *TBibTeXLibrary) parseHarvestBib(path string) []TBibTeXEntry {
-	entries := make([]TBibTeXEntry, 0, 64)
+	anticipated := countHarvestBibEntries(path)
+
+	entries := make([]TBibTeXEntry, 0, anticipated)
 	l.capturedHarvestEntries = &entries
 	l.ParseRawBibFile(path)
 	l.capturedHarvestEntries = nil
 	l.capturedDBLPEntry = nil // guard: clean up if last entry was never finished
+
+	if len(entries) < anticipated {
+		l.Warning("Parsed %d of %d anticipated entries from %s — source file may be malformed (parsing stopped early)",
+			len(entries), anticipated, path)
+	}
 	return entries
 }
 
@@ -249,17 +272,36 @@ func (l *TBibTeXLibrary) harvestFindDblpCandidates(e TBibTeXEntry) string {
 
 // --- Display ---
 
-// printEntryFields prints the key fields of a TBibTeXEntry to stderr.
+// printEntryFields prints all non-empty fields of a TBibTeXEntry to stderr.
 func printEntryFields(entryType, key string, fields map[string]string) {
 	fmt.Fprintf(os.Stderr, "  @%s{%s,\n", entryType, key)
-	for _, field := range []string{"title", "author", "editor", "year", "booktitle", "journal", "publisher", "doi", "dblp"} {
+	sorted := make([]string, 0, len(fields))
+	for f := range fields {
+		if f != EntryTypeField {
+			sorted = append(sorted, f)
+		}
+	}
+	sort.Strings(sorted)
+	for _, field := range sorted {
 		if v := fields[field]; v != "" {
-			fmt.Fprintf(os.Stderr, "    %-12s = {%s},\n", field, v)
+			fmt.Fprintf(os.Stderr, "    %-16s = {%s},\n", field, v)
 		}
 	}
 	fmt.Fprintf(os.Stderr, "  }\n")
 }
 
+
+// maybeCollectKeyHint adds sourceKey → finalKey to the hints DB when -collect_keys
+// is active and the mapping is unambiguous (not already pointing elsewhere).
+func maybeCollectKeyHint(l *TBibTeXLibrary, sourceKey, finalKey string) {
+	if !cmdCollectKeys || sourceKey == "" || finalKey == "" {
+		return
+	}
+	if existing := l.HintToKey[sourceKey]; existing != "" && l.MapEntryKey(existing) != finalKey {
+		return
+	}
+	l.AddKeyHint(sourceKey, finalKey)
+}
 
 // --- Adding entries ---
 
@@ -293,19 +335,12 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 	mergeAndCheck := func(newKey, matchKey string) string {
 		l.MergeEntries(l.MapEntryKey(newKey), matchKey)
 		finalKey := l.MapEntryKey(matchKey)
+		l.Progress("Checking %s", finalKey)
 		doAllChecks(finalKey)
 		return l.MapEntryKey(finalKey)
 	}
-	// collectKey adds the source bib key to the hints DB when -collect_keys is set
-	// and the key is unambiguous (not already pointing to a different canonical entry).
 	collectKey := func(sourceKey, finalKey string) {
-		if !cmdCollectKeys || sourceKey == "" || finalKey == "" {
-			return
-		}
-		if existing := l.HintToKey[sourceKey]; existing != "" && l.MapEntryKey(existing) != finalKey {
-			return // ambiguous: source key already maps to a different entry
-		}
-		l.AddKeyHint(sourceKey, finalKey)
+		maybeCollectKeyHint(l, sourceKey, finalKey)
 	}
 
 	// Always show the source entry first.
@@ -343,6 +378,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			newKey := addHarvestEntry(l, e)
 			l.AssociateDblpKey(newKey, chosen)
 			finalKey := l.MapEntryKey(newKey)
+			l.Progress("Checking %s", finalKey)
 			doAllChecks(finalKey)
 			collectKey(e.Key, l.MapEntryKey(finalKey))
 			return appendLog(l.MapEntryKey(finalKey)), false
@@ -361,6 +397,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		return appendLog(harvestActionSkipContent), false
 	default: // "a"
 		newKey := addHarvestEntry(l, e)
+		l.Progress("Checking %s", l.MapEntryKey(newKey))
 		doAllChecks(newKey)
 		finalKey := l.MapEntryKey(newKey)
 		collectKey(e.Key, finalKey)
@@ -377,6 +414,13 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, log THarvestLog,
 
 	for _, e := range entries {
 		if withLog && harvestShouldSkip(e, log, l) {
+			// Retroactively collect key hints for already-processed entries in case
+			// -collect_keys was not active when they were first logged.
+			if entry := harvestLogLookup(e, log); entry != nil &&
+				entry.Action != harvestActionSkipContent &&
+				entry.Action != harvestActionSkipNever {
+				maybeCollectKeyHint(l, e.Key, entry.Action)
+			}
 			continue
 		}
 		var quit bool
@@ -464,26 +508,89 @@ func doHarvest(sourcePath string) {
 // runHarvestSync is called from doSync when mode == "harvest". The library is
 // already open. Maintains the .harvest delta log next to the source bib.
 func runHarvestSync(cfg TBibGetConfig, baseDir string) {
-	sourcePath := cfg.FileName
-	if !filepath.IsAbs(sourcePath) && baseDir != "" {
-		sourcePath = filepath.Join(baseDir, sourcePath)
+	// Config values are OR'd with CLI flags: either source enables the feature.
+	if cfg.TrustHints {
+		cmdTrustHints = true
 	}
-	// Source file uses the same .bib convention as pull-mode output.
+	if cfg.CollectKeys {
+		cmdCollectKeys = true
+	}
+
+	// Resolve source path to absolute using the same logic as writePullSync.
+	sourcePath := cfg.FileName
 	if filepath.Ext(sourcePath) == "" {
 		sourcePath += BibFileExtension
 	}
+	if !filepath.IsAbs(sourcePath) {
+		if baseDir != "" {
+			sourcePath = filepath.Join(baseDir, sourcePath)
+		} else if cwd, err := os.Getwd(); err == nil {
+			sourcePath = filepath.Join(cwd, sourcePath)
+		}
+	}
 	logPath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath)) + HarvestLogExtension
+
+	on := func(b bool) string {
+		if b {
+			return "on"
+		}
+		return "off"
+	}
+	Library.Progress("Sync harvest: %s", cfg.FileName)
+	Library.Progress("  trust_hints=%-3s  collect_keys=%-3s",
+		on(cmdTrustHints), on(cmdCollectKeys))
+	Library.Progress("  Source: %s", sourcePath)
+
 	entries := Library.parseHarvestBib(sourcePath)
 	if len(entries) == 0 {
-		Library.Progress(ProgressHarvestSkipped)
+		Library.Progress("  Source: no entries found")
 		return
 	}
-	plural := "ies"
-	if len(entries) == 1 {
-		plural = "y"
-	}
-	Library.Progress(ProgressHarvestParsed, len(entries), plural, sourcePath)
+
 	log := readHarvestLog(logPath)
+
+	// Count how many entries the log already covers (will be skipped).
+	skipped := 0
+	for _, e := range entries {
+		if harvestShouldSkip(e, log, &Library) {
+			skipped++
+		}
+	}
+	pending := len(entries) - skipped
+	Library.Progress("  Source: %d entr%s total; %d logged, %d pending",
+		len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1],
+		skipped, pending)
+
+	if pending == 0 {
+		Library.Progress("  All entries already logged — nothing to do")
+		return
+	}
+
 	log = Library.runHarvestLoop(entries, log, true)
 	writeHarvestLog(logPath, log)
+
+	// Final summary: count by outcome across the full log.
+	resolved, skippedContent, waived, stillPending := 0, 0, 0, 0
+	for _, e := range entries {
+		entry := harvestLogLookup(e, log)
+		if entry == nil {
+			stillPending++
+			continue
+		}
+		switch entry.Action {
+		case harvestActionSkipNever:
+			waived++
+		case harvestActionSkipContent:
+			skippedContent++
+		default:
+			resolved++
+		}
+	}
+	Library.Progress("Harvest result: %s", cfg.FileName)
+	Library.Progress("  Total  : %d source entr%s",
+		len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1])
+	Library.Progress("  Resolved (merged/added) : %d", resolved)
+	Library.Progress("  Skipped (skip-content)  : %d", skippedContent)
+	Library.Progress("  Waived  (skip-never)    : %d", waived)
+	Library.Progress("  Pending (not yet seen)  : %d", stillPending)
 }

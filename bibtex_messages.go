@@ -77,6 +77,13 @@ const (
 	ProgressHarvestParsed              = "harvest: %d entr%s parsed from %s"
 	ProgressHarvestSkipped             = "harvest: no entries found in source bib"
 
+	WarningLoneProceedings    = "Lone proceedings (no children): %s"
+	QuestionLoneProceedings   = "Waive, delete (+ hints/oldies), enter DBLP key, or skip? (w=waive, d=delete, k=dblp key, s=skip)"
+
+	QuestionSubsetBibChanged  = "Bib entry changed — merge into library? (field challenges will follow)"
+	QuestionSubsetDeleteEntry = "Entry removed from subset bib — delete from library?"
+	QuestionSubsetBothChanged = "Both bib and DB changed — apply bib changes to library? (y=yes, n=keep DB version)"
+
 	ProgressFixedParentType                 = "Auto-fixed parent type for %s: %s → %s (required by child %s)"
 	ProgressFixedChildYear                  = "Auto-fixed year for %s: %s → %s (aligned to parent)"
 

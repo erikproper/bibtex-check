@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -828,6 +829,13 @@ func (l *TBibTeXLibrary) CheckISBN(entry *TBibTeXEntry) {
 		return
 	}
 
+	if IsValidISSN(isbn) {
+		l.Progress("Moving ISSN-shaped isbn %q to issn field for %s", isbn, entry.Key)
+		l.setEntryField(entry, "issn", isbn)
+		l.deleteEntryField(entry, "isbn")
+		return
+	}
+
 	l.Warning(WarningBadISBN, isbn, entry.Key)
 }
 
@@ -996,6 +1004,8 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		if entryDBLP != "" {
 			forEachLibraryChildOf(key, func(childKey string) {
 				if l.EntryFieldValueity(childKey, DBLPField) == "" && !l.DblpWaived.Contains(childKey) {
+					fmt.Fprintf(os.Stderr, "\nChild entry:\n%s\nParent entry:\n%s\n",
+						l.entryDisplayString(childKey), l.entryDisplayString(key))
 					if l.WarningYesNoQuestion(QuestionAddToDblpWaived, WarningNoDblpKeyForChild, childKey, key, entryDBLP) {
 						l.DblpWaived.Add(childKey)
 						l.dblpWaivedModified = true
@@ -1098,5 +1108,126 @@ func (l *TBibTeXLibrary) RenormaliseNameFields() {
 		return true
 	})
 	spinner.Stop()
+}
+
+// CheckLoneProceedings finds @proceedings entries that have no children (no entry
+// has a crossref pointing to them) and are not waived. For each, it offers the user:
+//   w — waive: record FlagLoneProceedingsWaived in entry_flags, skip in future runs
+//   d — delete: remove the entry plus all hints and oldies pointing to it
+//   s/enter — skip for now
+func (l *TBibTeXLibrary) CheckLoneProceedings() {
+	// Build the set of canonical crossref targets used by any library entry.
+	crossrefTargets := TStringSetNew()
+	forEachBibEntryKey(func(key string) bool {
+		if cr := l.EntryFieldValueity(key, "crossref"); cr != "" {
+			crossrefTargets.Add(l.MapEntryKey(cr))
+		}
+		return true
+	})
+
+	// addDblpChildrenForKey imports all DBLP children of libraryKey whose proceedings
+	// has the given dblpKey. Returns true when at least one child was processed.
+	addDblpChildrenForKey := func(libraryKey, dblpKey string) bool {
+		children := readDblpCrossrefChildren(dblpKey)
+		if len(children) == 0 {
+			return false
+		}
+		spinner := l.NewSpinner(fmt.Sprintf("Adding %d children of %s", len(children), dblpKey))
+		for i, childDBLP := range children {
+			if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
+				l.SetEntryFieldValue(childKey, "crossref", libraryKey)
+			} else {
+				if added := l.MaybeAddDBLPChildEntry(childDBLP, libraryKey); added != "" {
+					doAllChecks(added)
+				}
+			}
+			spinner.Update(i+1, len(children))
+		}
+		spinner.Stop()
+		return true
+	}
+
+	validAnswers := TStringSetNew()
+	validAnswers.Add("w", "d", "k", "s")
+	stepN := Reporting.StepSize()
+	questionCounter := 0
+
+	forEachBibEntryKey(func(key string) bool {
+		if l.EntryFieldValueity(key, EntryTypeField) != "proceedings" {
+			return true
+		}
+		if crossrefTargets.Contains(key) {
+			return true
+		}
+		if l.EntryHasFlag(key, FlagLoneProceedingsWaived) {
+			return true
+		}
+
+		// If the entry is anchored to a DBLP key, it is not spurious.
+		// Try to add any known children, then skip the prompt regardless —
+		// we must never offer to delete a DBLP-backed proceedings entry.
+		if dblpKey := l.EntryFieldValueity(key, DBLPField); dblpKey != "" {
+			addDblpChildrenForKey(key, dblpKey)
+			return true
+		}
+
+		// No DBLP key yet — try the title-hash search before offering the prompt.
+		if l.EntryFieldValueity(key, DBLPField) == "" {
+			if maybeFindDBLPCandidates(key) {
+				if dblpKey := l.EntryFieldValueity(key, DBLPField); dblpKey != "" {
+					addDblpChildrenForKey(key, dblpKey)
+				}
+				return true
+			}
+		}
+
+		l.Warning(WarningLoneProceedings, key)
+		fmt.Fprint(os.Stderr, l.entryDisplayString(key))
+
+		switch l.WarningQuestion(QuestionLoneProceedings, validAnswers, "") {
+		case "k":
+			if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
+				if dblpEntryFromFile(dblpKey) == nil {
+					l.Warning("DBLP key %q not found in file store", dblpKey)
+				} else {
+					Library.AssociateDblpKey(key, dblpKey)
+					if newDblpKey := l.EntryFieldValueity(key, DBLPField); newDblpKey != "" {
+						addDblpChildrenForKey(key, newDblpKey)
+					}
+				}
+			}
+		case "w":
+			l.SetEntryFlag(key, FlagLoneProceedingsWaived)
+		case "d":
+			// Remove hints pointing to this canonical key from in-memory map.
+			for hint, target := range l.HintToKey {
+				if l.MapEntryKey(target) == key {
+					delete(l.HintToKey, hint)
+					l.keyHintsModified = true
+				}
+			}
+			// Remove oldies pointing to this canonical key from in-memory map.
+			for alias, target := range l.KeyToKey {
+				if l.MapEntryKey(target) == key {
+					delete(l.KeyToKey, alias)
+					l.keyOldiesModified = true
+				}
+			}
+			deleteHintsByTarget(key)
+			deleteOldiesByTarget(key)
+			deleteBibEntry(key)
+			l.TitleIndex.DeleteValueFromStringSetMap(
+				TeXStringIndexer(l.EntryFieldValueity(key, TitleField)), key)
+		}
+
+		questionCounter++
+		if stepN > 0 && questionCounter >= stepN {
+			if l.AskContinueOrQuit() {
+				return false
+			}
+			questionCounter = 0
+		}
+		return true
+	})
 }
 

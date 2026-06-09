@@ -21,19 +21,22 @@ import (
 // TWatchEntry is one entry from the watch script file describing a person or ORCID to watch.
 // EntryType is "name" (canonical DBLP author name) or "orcid".
 // Value is the name or ORCID string.
+// Comment holds any inline # annotation (e.g. the person's name for orcid entries).
 type TWatchEntry struct {
 	EntryType string
 	Value     string
 	Tag       string // unused in the new script format; kept for caller compatibility
+	Comment   string // inline annotation after #, e.g. "Proper, Henderik A."
 }
 
 // ReadWatchFile parses the watch script file (ErikProper.scripts/watch).
 // Format is the same script style as .select files:
 //
 //	name  "Canonical Author Name";
-//	orcid "0000-0001-2345-6789";
+//	orcid "0000-0001-2345-6789"; # Canonical Author Name
 //
 // Blank lines and lines starting with # are ignored.
+// Inline # comments are stripped before parsing and stored in TWatchEntry.Comment.
 func ReadWatchFile(path string) []TWatchEntry {
 	if !FileExists(path) {
 		return nil
@@ -41,10 +44,17 @@ func ReadWatchFile(path string) []TWatchEntry {
 	var entries []TWatchEntry
 	var badLines []string
 	processFile(path, func(line string) {
-		line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ";"))
+		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			return
 		}
+		// Strip inline comment, preserving it for the entry.
+		comment := ""
+		if ci := strings.Index(line, "#"); ci >= 0 {
+			comment = strings.TrimSpace(line[ci+1:])
+			line = strings.TrimSpace(line[:ci])
+		}
+		line = strings.TrimSuffix(line, ";")
 		idx := strings.IndexByte(line, '"')
 		if idx < 0 {
 			badLines = append(badLines, line)
@@ -68,7 +78,7 @@ func ReadWatchFile(path string) []TWatchEntry {
 			}
 			v := strings.TrimSpace(rest[:end])
 			if v != "" {
-				entries = append(entries, TWatchEntry{EntryType: kind, Value: v})
+				entries = append(entries, TWatchEntry{EntryType: kind, Value: v, Comment: comment})
 			}
 			rest = rest[end+1:]
 		}
@@ -77,6 +87,25 @@ func ReadWatchFile(path string) []TWatchEntry {
 		fmt.Fprintf(os.Stderr, "WARNING: %s: unrecognised line (expected: name/orcid \"value\";): %q\n", path, bl)
 	}
 	return entries
+}
+
+// WriteWatchFile writes entries back to the watch file, preserving inline name comments.
+func WriteWatchFile(path string, entries []TWatchEntry) {
+	var sb strings.Builder
+	for _, e := range entries {
+		sb.WriteString(e.EntryType)
+		sb.WriteString(` "`)
+		sb.WriteString(e.Value)
+		sb.WriteString(`";`)
+		if e.Comment != "" {
+			sb.WriteString(" # ")
+			sb.WriteString(e.Comment)
+		}
+		sb.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(sb.String()), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: could not write watch file %s: %s\n", path, err)
+	}
 }
 
 // Read bib files

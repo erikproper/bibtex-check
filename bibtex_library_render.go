@@ -342,20 +342,33 @@ func (l *TBibTeXLibrary) resolveParent(entry *TBibTeXEntry) (*TBibTeXEntry, stri
 // renderAsBibTeX produces a self-contained BibTeX string for the entry.
 // Inherited crossref fields are merged into the child; the crossref field itself is
 // omitted. The crossref parent entry is appended if present.
-func (l *TBibTeXLibrary) renderAsBibTeX(key string) string {
+// renderAsBibTeX renders entry key as BibTeX. When outputKey is non-empty and
+// different from key it is used as the @type{KEY} identifier and preferredalias
+// is suppressed (the alias is already the key).
+func (l *TBibTeXLibrary) renderAsBibTeX(key string, outputKey ...string) string {
 	entry := loadEntryFromDb(key)
 	if !entry.Exists() {
 		return ""
 	}
 
+	bibKey := key
+	suppressPreferredAlias := false
+	if len(outputKey) > 0 && outputKey[0] != "" && outputKey[0] != key {
+		bibKey = outputKey[0]
+		suppressPreferredAlias = true
+	}
+
 	parent, resolvedCrossref := l.resolveParent(entry)
 
-	result := "@" + entry.EntryType() + "{" + key + ",\n"
+	result := "@" + entry.EntryType() + "{" + bibKey + ",\n"
 	if parent != nil {
 		result += FormatBibTeXFieldAssignment("", "crossref", resolvedCrossref)
 	}
 	for _, field := range BibTeXAllowedEntryFields[entry.EntryType()].Set().ElementsSorted() {
 		if field == EntryTypeField || field == "crossref" || renderNonExportFields.Contains(field) {
+			continue
+		}
+		if suppressPreferredAlias && field == PreferredAliasField {
 			continue
 		}
 		if v := l.mergedField(entry, parent, field); v != "" {

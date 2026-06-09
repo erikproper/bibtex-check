@@ -51,7 +51,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.17"
+const AppVersion = "24.28"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -63,6 +63,7 @@ var (
 	cmdAutoFixAlignTitles bool
 	cmdTrustHints         bool // -trust_hints: auto-accept key-hint matches in harvest
 	cmdCollectKeys        bool // -collect_keys: add source keys to hints DB when unambiguous
+	cmdCheckLonely        bool // -check_lonely: interactively check lone proceedings
 )
 
 func reportCacheMode() {
@@ -107,6 +108,7 @@ func loadMappingFiles() {
 	Library.ReadAddressMappings()
 	Library.CheckAddressMappings()
 	Library.ReadKeyHintsFile()
+	Library.ReadKeyNonDoublesFile()
 	Library.ReadNameMappingsFile()
 	Library.ReadGenericFieldMappingsFile()
 	Library.ReadEntryFieldMappingsFile()
@@ -163,6 +165,11 @@ func parseSyncBibFile(path string) bool {
 	if !safeOk {
 		Library.Warning("Proceeding without safe-parse backup; database not protected during reparse.")
 	}
+	// Reset in-memory group and comment state before re-parsing so that the
+	// additive BibDesk XML reader does not carry over stale memberships from
+	// the previous in-memory state (clearBibTables only clears the DB tables).
+	Library.GroupEntries = TStringSetMap{}
+	Library.Comments = nil
 	clearBibTables()
 	beginBibTransaction()
 	if !Library.ParseBibFile(path) {
@@ -203,7 +210,8 @@ func parseBibIntoDb() bool {
 	if !safeOk {
 		Library.Warning("Proceeding without safe-parse backup; database not protected during reparse.")
 	}
-
+	Library.GroupEntries = TStringSetMap{}
+	Library.Comments = nil
 	clearBibTables()
 	beginBibTransaction()
 	if !Library.ReadBib(BibFile) {
@@ -397,6 +405,25 @@ func maybeFindDBLPCandidates(key string) bool {
 	if len(candidates) == 0 {
 		return false
 	}
+
+	// For bookish library entries, also offer the DBLP parent proceedings of each
+	// candidate as a direct association target (prepended so they appear first).
+	if BibTeXBookish.Contains(Library.EntryType(key)) {
+		parentsSeen := map[string]bool{}
+		var parentKeys []string
+		for _, c := range candidates {
+			if ce := dblpEntryFromFile(c); ce != nil {
+				if crossref := ce.Fields["crossref"]; crossref != "" &&
+					!existing.Contains(KeyForDBLP(crossref)) &&
+					!parentsSeen[crossref] {
+					parentsSeen[crossref] = true
+					parentKeys = append(parentKeys, crossref)
+				}
+			}
+		}
+		candidates = append(parentKeys, candidates...)
+	}
+
 	if len(candidates) > 9 {
 		candidates = candidates[:9]
 	}
@@ -488,19 +515,20 @@ func cleanKeys(args []string) []string {
 //   - number of entries without a dblp field that have at least one unresolved DBLP
 //     title-index candidate (not already in non_doubles)
 func reportHomework() {
-	// Groups with at least one unresolved potential duplicate pair.
+	// A title group is unresolved when it contains at least two canonical keys
+	// whose pair has neither a non_doubles declaration nor field-value evidence
+	// of being different entries (divergent DBLP key or DOI).
 	unresolvedGroups := 0
 	for _, keys := range Library.TitleIndex {
-		sorted := keys.ElementsSorted()
-		groupUnresolved := false
-		for i, a := range sorted {
-			if a != Library.MapEntryKey(a) {
-				continue
+		var canonicals []string
+		for _, k := range keys.ElementsSorted() {
+			if k == Library.MapEntryKey(k) {
+				canonicals = append(canonicals, k)
 			}
-			for _, b := range sorted[i+1:] {
-				if b != Library.MapEntryKey(b) {
-					continue
-				}
+		}
+		groupUnresolved := false
+		for i, a := range canonicals {
+			for _, b := range canonicals[i+1:] {
 				if Library.NonDoubles[a].Set().Contains(b) {
 					continue
 				}
@@ -539,7 +567,35 @@ func reportHomework() {
 		return true
 	})
 
-	Library.Progress("Homework: %d title group(s) with unresolved duplicate(s), %d entry/ies with unresolved DBLP candidate(s)", unresolvedGroups, dblpCandidates)
+	// Lone proceedings: proceedings with no library crossref children, no DBLP children
+	// in the file store, and no waive flag. Excludes DBLP-backed entries (they are safe).
+	loneProceedings := 0
+	crossrefTargets := TStringSetNew()
+	forEachBibEntryKey(func(key string) bool {
+		if cr := Library.EntryFieldValueity(key, "crossref"); cr != "" {
+			crossrefTargets.Add(Library.MapEntryKey(cr))
+		}
+		return true
+	})
+	forEachBibEntryKey(func(key string) bool {
+		if Library.EntryFieldValueity(key, EntryTypeField) != "proceedings" {
+			return true
+		}
+		if crossrefTargets.Contains(key) {
+			return true
+		}
+		if Library.EntryHasFlag(key, FlagLoneProceedingsWaived) {
+			return true
+		}
+		if dblpKey := Library.EntryFieldValueity(key, DBLPField); dblpKey != "" {
+			return true // DBLP-backed: not spurious
+		}
+		loneProceedings++
+		return true
+	})
+
+	Library.Progress("Homework: %d title group(s) with unresolved duplicate(s), %d entry/ies with unresolved DBLP candidate(s), %d lone proceedings",
+		unresolvedGroups, dblpCandidates, loneProceedings)
 }
 
 func doDefaultRun() {
@@ -547,6 +603,9 @@ func doDefaultRun() {
 		Library.CheckEntries()
 		Library.ReadKeyNonDoublesFile()
 		Library.CheckAlignTitles(false)
+		if cmdCheckLonely {
+			Library.CheckLoneProceedings()
+		}
 		reportHomework()
 	}
 }
@@ -632,7 +691,15 @@ func doRenderGroup(args []string, useAliases bool) {
 			if key == "" {
 				continue
 			}
-			bib := Library.renderAsBibTeX(key)
+
+			fileKey := key
+			if useAliases {
+				if alias := Library.PreferredKey(key); alias != "" {
+					fileKey = alias
+				}
+			}
+
+			bib := Library.renderAsBibTeX(key, fileKey)
 			if bib == "" {
 				continue
 			}
@@ -652,13 +719,6 @@ func doRenderGroup(args []string, useAliases bool) {
 					if rg == "" {
 						rg = parent.FieldValue("researchgate")
 					}
-				}
-			}
-
-			fileKey := key
-			if useAliases {
-				if alias := Library.PreferredKey(key); alias != "" {
-					fileKey = alias
 				}
 			}
 
@@ -716,6 +776,24 @@ func doRenderAsText(args []string) {
 	}
 }
 
+func doSetField(args []string) {
+	if openLibraryToUpdate() {
+		key := Library.MapEntryKey(cleanKey(args[0]))
+		if !Library.EntryExists(key) {
+			fmt.Fprintf(os.Stderr, "set_field: entry not found: %s\n", args[0])
+			return
+		}
+		field := args[1]
+		entry := loadEntryFromDb(key)
+		if len(args) >= 3 && args[2] != "" {
+			Library.setEntryField(entry, field, args[2])
+		} else {
+			Library.deleteEntryField(entry, field)
+		}
+		bibEntriesModified = true
+	}
+}
+
 func doRemoveFromGroup(args []string) {
 	if openLibraryToUpdate() {
 		key := Library.MapEntryKey(cleanKey(args[0]))
@@ -738,7 +816,7 @@ func doEntryKey(args []string) {
 
 func doEntryKeyAlias(args []string, withMap bool) {
 	Reporting.SetInteractionOff()
-	if openLibraryToReport() {
+	if openLibraryToUpdate() {
 		rawKey := cleanKey(args[0])
 		key := Library.MapEntryKey(rawKey)
 		alias := Library.PreferredKey(key)
@@ -746,6 +824,14 @@ func doEntryKeyAlias(args []string, withMap bool) {
 			// Input is a valid preferred-alias that resolved to a canonical key;
 			// use it directly so -map works before preferredalias is set on the entry.
 			alias = rawKey
+		}
+		if alias == "" {
+			// No preferred alias yet — try to generate one from author/year/title.
+			entry := Library.buildEntry(key)
+			if derived := Library.derivePreferredAlias(entry); derived != "" {
+				Library.setPreferredAlias(entry, derived)
+				alias = derived
+			}
 		}
 		if alias != "" {
 			fmt.Println(alias)
@@ -975,6 +1061,77 @@ func resolveNameToORCID(canonicalName string) string {
 	return ""
 }
 
+// resolveORCIDToName returns the canonical DBLP name for orcid.
+// Strategy 1: find a homepages/ entry in the ORCID index and read its first author.
+// Strategy 2: scan publication entries in the ORCID index for an author/editor
+// whose ORCID field matches — more reliable because homepages entries are often
+// not indexed under the ORCID.
+func resolveORCIDToName(orcid string) string {
+	keys := readDblpORCIDEntries(orcid)
+	// Strategy 1: homepage entry.
+	for _, key := range keys {
+		if !strings.HasPrefix(key, "homepages/") {
+			continue
+		}
+		je := readDblpJSONEntry(key)
+		if je != nil && len(je.Authors) > 0 && je.Authors[0].Name != "" {
+			return je.Authors[0].Name
+		}
+	}
+	// Strategy 2: match ORCID field on authors/editors in publication entries.
+	for _, key := range keys {
+		je := readDblpJSONEntry(key)
+		if je == nil {
+			continue
+		}
+		for _, p := range je.Authors {
+			if p.ORCID == orcid && p.Name != "" {
+				return p.Name
+			}
+		}
+		for _, p := range je.Editors {
+			if p.ORCID == orcid && p.Name != "" {
+				return p.Name
+			}
+		}
+	}
+	return ""
+}
+
+// upgradeWatchEntries resolves name→orcid upgrades and fills missing name comments
+// on orcid entries. Returns the (possibly modified) slice and whether any change occurred.
+func upgradeWatchEntries(entries []TWatchEntry) ([]TWatchEntry, bool) {
+	changed := false
+	for i, e := range entries {
+		switch e.EntryType {
+		case "name":
+			orcid := resolveNameToORCID(e.Value)
+			if orcid == "" {
+				continue
+			}
+			// Upgrade name → orcid, preserving the name as a comment.
+			comment := e.Value
+			if e.Comment != "" {
+				comment = e.Comment
+			}
+			entries[i] = TWatchEntry{EntryType: "orcid", Value: orcid, Comment: comment}
+			Library.Progress("Watch: upgraded %q → orcid %s", e.Value, orcid)
+			changed = true
+		case "orcid":
+			if e.Comment != "" {
+				continue
+			}
+			name := resolveORCIDToName(e.Value)
+			if name == "" {
+				continue
+			}
+			entries[i].Comment = name
+			changed = true
+		}
+	}
+	return entries, changed
+}
+
 // runWatchDblp processes the watch file, adding any missing publications.
 // Assumes the library is already open. Returns false (silently) if the watch
 // file is absent or contains no valid entries.
@@ -985,6 +1142,12 @@ func runWatchDblp() bool {
 	entries := ReadWatchFile(filePath)
 	if len(entries) == 0 {
 		return false
+	}
+
+	// Upgrade name→orcid and fill missing name comments; rewrite file if changed.
+	if upgraded, changed := upgradeWatchEntries(entries); changed {
+		entries = upgraded
+		WriteWatchFile(filePath, entries)
 	}
 
 	stepN := int(cmdStep)
@@ -1229,13 +1392,10 @@ func doApplyScript() {
 }
 
 func doAddNameMapping(args []string) {
-	if !prepareWorkingDatabase() {
-		return
+	if openLibraryToUpdate() {
+		Library.AddNameMapping(args[0], args[1])
+		Library.RenormaliseNameFields()
 	}
-	initialiseLibrary()
-	Library.ReadNameMappingsFile()
-	Library.AddNameMapping(args[0], args[1])
-	skipBibDbRefresh = true
 }
 
 func main() {
@@ -1274,6 +1434,7 @@ func main() {
 		cmdUseAliases         bool
 		cmdAddToGroup         bool
 		cmdRemoveFromGroup    bool
+		cmdSetField           bool
 		cmdRenderAsBibTeX     bool
 		cmdRenderGroup        bool
 		cmdListGroupAliases   bool
@@ -1308,6 +1469,7 @@ func main() {
 	flag.BoolVar(&cmdEntryKeyAlias, "entry_key_alias", false, "get preferred alias for a key")
 	flag.BoolVar(&cmdShowEntry, "show_entry", false, "print full entry content")
 	flag.BoolVar(&cmdFixEntries, "fix_entries", false, "fix/check specific entries")
+	flag.BoolVar(&cmdCheckLonely, "check_lonely", false, "interactively check proceedings with no children (add DBLP children, waive, or delete)")
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
 	flag.BoolVar(&cmdFixAllEntries, "fix_all_entries", false, "fix/check all entries")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
@@ -1324,6 +1486,7 @@ func main() {
 	flag.BoolVar(&cmdMap, "map", false, "also record alias→key in the project map file (with -entry_key_alias)")
 	flag.BoolVar(&cmdAddToGroup, "add_to_group", false, "add an entry to a group: -add_to_group <key> <group>")
 	flag.BoolVar(&cmdRemoveFromGroup, "remove_from_group", false, "remove an entry from a group")
+	flag.BoolVar(&cmdSetField, "set_field", false, "set a field on an entry: -set_field <key> <field> [<value>] (omit value to clear)")
 	flag.BoolVar(&cmdRenderGroup, "render_group", false, "render all entries in a group to pubs/citations folders")
 	flag.BoolVar(&cmdListGroupAliases, "list_group_aliases", false, "list canonical|alias pairs for all entries in a group")
 	flag.BoolVar(&cmdUseAliases, "use_aliases", false, "use preferred aliases as file names in -render_group")
@@ -1603,6 +1766,13 @@ func main() {
 		}
 		doSetPreferredAlias(args)
 
+	case cmdSetField:
+		if len(args) < 2 || len(args) > 3 {
+			fmt.Fprintln(os.Stderr, "Usage: -set_field <key> <field> [<value>]")
+			os.Exit(1)
+		}
+		doSetField(args)
+
 	case cmdAddToGroup:
 		if len(args) != 2 {
 			fmt.Fprintln(os.Stderr, "Usage: -add_to_group <key> <group>")
@@ -1733,18 +1903,23 @@ func main() {
 		refreshBibDbTimestamp()
 	}
 
-	if Library.keyOldiesModified {
-		saveKeyOldiesToDb(&Library)
+	saveToDB := func(modified bool, label string, fn func(*TBibTeXLibrary)) {
+		if modified {
+			Library.Progress("Saving %s", label)
+			fn(&Library)
+		}
 	}
-	if Library.keyHintsModified {
-		saveKeyHintsToDb(&Library)
-	}
-	if Library.nameMappingsModified {
-		saveNameMappingsToDb(&Library)
-	}
-	if Library.entryFieldMappingsModified {
-		saveEntryFieldMappingsToDb(&Library)
-	}
+	saveToDB(Library.keyOldiesModified, "key_oldies", saveKeyOldiesToDb)
+	saveToDB(Library.keyHintsModified, "key_hints", saveKeyHintsToDb)
+	saveToDB(Library.keyNonDoublesModified, "key_non_doubles", saveKeyNonDoublesToDb)
+	saveToDB(Library.nameMappingsModified, "name_mappings", saveNameMappingsToDb)
+	saveToDB(Library.entryFieldMappingsModified, "losing_field_values", saveEntryFieldMappingsToDb)
+	saveToDB(Library.genericFieldMappingsModified, "generic_field_mappings", saveGenericFieldMappingsToDb)
+	saveToDB(Library.crossFieldMappingsModified, "cross_field_mappings", saveCrossFieldMappingsToDb)
+	saveToDB(Library.dblpParentModified, "dblp_parent", saveDblpParentToDb)
+	saveToDB(Library.dblpWaivedModified, "dblp_waived", saveDblpWaivedToDb)
+	saveToDB(Library.entryFlagsModified, "entry_flags", saveEntryFlagsToDb)
+	saveToDB(Library.metadataModified, "entry_metadata", saveEntryMetadataToDb)
 
 	finaliseWorkingDatabase()
 }

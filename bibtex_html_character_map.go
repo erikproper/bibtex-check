@@ -95,7 +95,7 @@ var defaultHtmlCharSections = []htmlCharSection{
 			{"iexcl", "!"}, {"cent", `\textcent{}`}, {"pound", `{\pounds}`},
 			{"curren", `\textcurrency{}`}, {"yen", `\textyen{}`},
 			{"sect", `\S{}`}, {"copy", `{\copyright}`}, {"reg", `{\textregistered}`},
-			{"laquo", `\guillemotleft{}`}, {"raquo", `\guillemotright{}`},
+			{"laquo", `{\guillemotleft}`}, {"raquo", `{\guillemotright}`},
 			{"ordf", `\textordfeminine{}`}, {"ordm", `\textordmasculine{}`},
 			{"deg", `\(^\circ\)`}, {"micro", `\(\mu\)`}, {"para", `\P{}`},
 			{"middot", `{\cdot}`}, {"cedil", `{\c{}}`}, {"iquest", "?"},

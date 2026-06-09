@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -53,6 +54,10 @@ type TBibGetConfig struct {
 	IncludeURL    bool   `json:"include_url"`
 	UrldateAsNote bool   `json:"urldate_as_note"`
 	Hyphenations  bool   `json:"hyphenations"`   // insert \- hints from global_folder/hyphenations.csv
+	TrustHints    bool   `json:"trust_hints"`    // harvest: auto-accept key-hint matches without confirmation
+	CollectKeys   bool   `json:"collect_keys"`   // harvest: add source keys to hints DB when unambiguous
+	TrustedSubset bool   `json:"trusted_subset"` // subset: apply changes/adds/deletes without confirmation
+	PDFFiles      string `json:"pdf_files"`      // subset/full: "" | "global" | "local"
 }
 
 // migrateRawConfigFileNames migrates "file_name" → "file_names" in a raw JSON map.
@@ -110,6 +115,8 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		{"shorten", json.RawMessage(`false`)},
 		{"urldate_as_note", json.RawMessage(`false`)},
 		{"hyphenations", json.RawMessage(`false`)},
+		{"trust_hints", json.RawMessage(`false`)},
+		{"collect_keys", json.RawMessage(`false`)},
 	} {
 		if _, present := rawMap[opt.key]; !present {
 			rawMap[opt.key] = opt.val
@@ -154,6 +161,10 @@ type TBibGetPair struct {
 // Migration from the legacy .map extension is handled externally by bib.sync.
 func readKeysFile(fileName string) (pairs []TBibGetPair, modified bool, ok bool) {
 	keysPath := fileName + KeysFileExtension
+
+	if !FileExists(keysPath) {
+		return nil, false, true // absent is valid — treat as empty
+	}
 
 	rawCanonicalSeen := map[string]bool{}
 
@@ -531,6 +542,41 @@ func applyBiberMode(field, value string) string {
 	return value
 }
 
+// bibEditorNoiseFields is the set of fields that BibDesk, JabRef, and similar editors
+// inject automatically when a bib file is opened or saved. These fields carry no
+// bibliographic meaning and must not influence content fingerprints (harvest, subset sync).
+// Note: local-url is intentionally NOT in this set — adding a PDF is a real content change.
+var bibEditorNoiseFields = func() TStringSet {
+	s := TStringSetNew()
+	s.Add(
+		"date-added", "date-modified",
+		"owner", "creationdate", "modificationdate",
+		JabrefFileField,
+		"bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
+		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9",
+		"bdsk-file-1", "bdsk-file-2", "bdsk-file-3", "bdsk-file-4", "bdsk-file-5",
+		"bdsk-file-6", "bdsk-file-7", "bdsk-file-8", "bdsk-file-9",
+	)
+	return s
+}()
+
+// bibContentFingerprint returns an MD5 of all bibliographically meaningful field=value
+// pairs in e. Fields are sorted before hashing so the result is independent of Go's
+// random map iteration order. Editor-injected noise fields are excluded so that
+// BibDesk/JabRef housekeeping writes do not falsely register as content changes.
+// Used by both harvest and subset-sync change detection.
+func bibContentFingerprint(e TBibTeXEntry) string {
+	fields := make([]string, 0, len(e.Fields))
+	for f, v := range e.Fields {
+		if v != "" && !bibEditorNoiseFields.Contains(f) {
+			fields = append(fields, f+"="+v)
+		}
+	}
+	sort.Strings(fields)
+	h := md5.Sum([]byte(strings.Join(fields, ";")))
+	return hex.EncodeToString(h[:])
+}
+
 // bibGetNonExportFields is the set of fields never written to a get-output file.
 var bibGetNonExportFields = func() TStringSet {
 	s := TStringSetNew()
@@ -643,7 +689,9 @@ func (l *TBibTeXLibrary) entryGetString(
 // baseDir is the directory used to resolve relative file_name paths; pass ""
 // to resolve relative to the current working directory (deprecated -get behaviour).
 // writePullSync performs the subset bib export assuming the library is already open.
-func writePullSync(cfg TBibGetConfig, baseDir string) {
+// Returns the full list of (canonicalKey, outputKey) pairs written, including
+// .select extras and auto-added crossref parents, for use by subset-sync fingerprinting.
+func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	resolveRelative := func(path string) string {
 		if filepath.IsAbs(path) {
 			return path
@@ -664,7 +712,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 	pairs, keysModified, ok := readKeysFile(mapFilePath)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "Cannot read keys file:", mapFilePath+KeysFileExtension)
-		os.Exit(1)
+		return nil
 	}
 
 	// Resolve all canonical keys through the key alias / oldies table.
@@ -898,7 +946,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 			existingMD5 := hex.EncodeToString(hExisting.Sum(nil))
 			if existingMD5 != storedMD5 {
 				if !Reporting.WarningYesNoQuestion(QuestionGetBibOverwrite, WarningGetBibFileModified, outPath) {
-					return
+					return nil
 				}
 			}
 		}
@@ -919,6 +967,15 @@ func writePullSync(cfg TBibGetConfig, baseDir string) {
 	if err := os.WriteFile(md5Path, []byte(newMD5+"\n"), 0644); err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot write MD5 file:", err)
 	}
+
+	// Return all written (canonicalKey, outputKey) pairs for subset-sync fingerprinting.
+	allPairs := make([]TBibGetPair, 0, len(pairs)+len(extraPairs)+len(autoParents))
+	allPairs = append(allPairs, pairs...)
+	allPairs = append(allPairs, extraPairs...)
+	for _, ap := range autoParents {
+		allPairs = append(allPairs, TBibGetPair{ap.localKey, ap.canonicalKey})
+	}
+	return allPairs
 }
 
 // doGetWithConfig opens the library and runs a pull sync.
@@ -1100,6 +1157,15 @@ func writeFullSync(cfg TBibGetConfig, baseDir string) {
 		// in non-interactive mode (scripted / piped) skip re-import and just overwrite.
 		doReimport := false
 		if !Reporting.InteractionIsOff() {
+			// Warn when the DB has also been modified since the last export, so the
+			// user knows that re-importing may overwrite in-library changes.
+			if mdateData, errMD := os.ReadFile(mdatePath); errMD == nil {
+				if storedUnix, parseErr := strconv.ParseInt(strings.TrimSpace(string(mdateData)), 10, 64); parseErr == nil {
+					if tableModTime("bib_entries") > storedUnix*1_000_000 {
+						dbInteraction.Warning("DB has been modified since the last sync export — re-importing will overwrite those changes.")
+					}
+				}
+			}
 			doReimport = Reporting.ConfirmAction(fmt.Sprintf("Sync bib was edited externally — re-import %s?", outPath))
 		} else {
 			dbInteraction.Progress("Sync bib edited externally — overwriting without re-import: %s", outPath)
@@ -1224,6 +1290,8 @@ func doSync(filter string) {
 			writeFullSync(f.cfg, "")
 		case "harvest":
 			runHarvestSync(f.cfg, "")
+		case "subset":
+			runSubsetSync(f.cfg, "")
 		default: // "pull"
 			writePullSync(f.cfg, "")
 		}
