@@ -36,7 +36,7 @@ func KeyForDBLP(key string) string {
 func (l *TBibTeXLibrary) dblpEntryFromURL(DBLPKey string) *TBibTeXEntry {
 	l.Progress(ProgressFetchingDBLPEntry, DBLPKey)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := newBibCheckHTTPClient()
 	resp, err := client.Get("https://dblp.org/rec/" + DBLPKey + ".bib")
 	if err != nil {
 		return nil
@@ -352,12 +352,21 @@ func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) st
 		fmt.Fprintf(os.Stderr, "\n")
 	}
 	options := TStringSetNew()
-	options.Add("0")
+	options.Add("0", "k")
 	for i := range candidates {
 		options.Add(fmt.Sprintf("%d", i+1))
 	}
 	answer := l.WarningQuestion(QuestionExtendDblpCoverageChoose, options,
 		WarningExtendDblpCandidatesFound, key, len(candidates))
+	if answer == "k" {
+		if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
+			if dblpEntryFromFile(dblpKey) != nil {
+				return dblpKey
+			}
+			l.Warning("DBLP key %q not found in file store", dblpKey)
+		}
+		return ""
+	}
 	n, _ := strconv.Atoi(answer)
 	if n <= 0 || n > len(candidates) {
 		return ""

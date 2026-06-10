@@ -33,6 +33,9 @@ const (
 	MetaPropAlignVolumeWaived  = "align_volume_waived"
 	MetaPropAlignEditionWaived = "align_edition_waived"
 	MetaPropAlignCountryWaived = "align_country_waived"
+	MetaPropUrlCheckDate      = "url_check_date"   // ISO date of last URL plausibility check
+	MetaPropUrlCheckStatus    = "url_check_status" // "ok" or "dead"
+	MetaPropWaivedDoublePdf   = "waived_double_pdf" // MD5 of shared PDF content — waives duplicate-PDF warning
 )
 
 // lineageSourceKey returns the metadata property key for a lineage source record.

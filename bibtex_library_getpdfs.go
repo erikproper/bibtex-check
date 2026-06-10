@@ -28,16 +28,42 @@ import (
 	"time"
 )
 
+// bibCheckHTTPUserAgent is sent with every outbound HTTP request.
+const bibCheckHTTPUserAgent = "Mozilla/5.0 (compatible; bibtex_check)"
+
+// newBibCheckHTTPClient returns an http.Client configured for bibtex_check
+// network requests: 30-second timeout, up to 5 redirects.
+func newBibCheckHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+}
+
+// newBibCheckHTTPRequest returns a GET request with the shared user-agent set.
+func newBibCheckHTTPRequest(url string) (*http.Request, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", bibCheckHTTPUserAgent)
+	return req, nil
+}
+
 // downloadPDF fetches url and saves the result to destPath.
 // It verifies the downloaded content is a real PDF; HTML paywall redirects
 // and other non-PDF responses are rejected with a descriptive error.
 func downloadPDF(url, destPath string) error {
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("GET", url, nil)
+	client := newBibCheckHTTPClient()
+	req, err := newBibCheckHTTPRequest(url)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; bibtex_check)")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -133,6 +159,7 @@ func (l *TBibTeXLibrary) GetPDFs() {
 					if missingURLDate {
 						l.SetEntryFieldValue(key, "urldate", time.Now().Format("2006-01-02"))
 					}
+					flushWorkingDbToHome()
 				}
 			}
 		}

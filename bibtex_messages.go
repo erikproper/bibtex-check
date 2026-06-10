@@ -67,15 +67,18 @@ const (
 	WarningNoDblpKeyForChild                = "Child entry %s has no DBLP key while parent %s has DBLP key %s"
 	WarningDblpKeyNotInXML                  = "DBLP key %s for entry %s not in local XML (missing since %s)."
 	WarningExtendDblpCandidatesFound        = "Entry %s has no DBLP key — found %d candidate(s)"
-	QuestionExtendDblpCoverageChoose        = "Which DBLP entry matches? (0 = none)"
+	QuestionExtendDblpCoverageChoose        = "Which DBLP entry matches? (0 = none, k = enter key manually)"
 
 	QuestionHarvestKeyMatch            = "Merge with this library entry?"
 	QuestionHarvestLibraryChoice       = "Which library entry matches? (0 = none)"
 	QuestionHarvestAction              = "No match found — add to library or skip? (a=add, s=skip, w=waive, q=quit)"
-	QuestionHarvestDblpChoose          = "Which DBLP entry matches? (0 = none)"
+	QuestionHarvestDblpChoose          = "Which DBLP entry matches? (0 = none, k = enter key manually)"
 	WarningHarvestDblpCandidatesFound  = "No DBLP key on source entry '%s' — found %d candidate(s)"
 	ProgressHarvestParsed              = "harvest: %d entr%s parsed from %s"
 	ProgressHarvestSkipped             = "harvest: no entries found in source bib"
+
+	WarningURLDead              = "URL appears unreachable or lacks human content (%s): %s — setting urldate to %s"
+	QuestionDoublePdfWaive      = "PDF shared by multiple entries — waive, merge, or skip? (w=waive all, m=merge, s=skip)"
 
 	WarningLoneProceedings    = "Lone proceedings (no children): %s"
 	QuestionLoneProceedings   = "Waive, delete (+ hints/oldies), enter DBLP key, or skip? (w=waive, d=delete, k=dblp key, s=skip)"

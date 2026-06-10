@@ -256,12 +256,21 @@ func (l *TBibTeXLibrary) harvestFindDblpCandidates(e TBibTeXEntry) string {
 		fmt.Fprintln(os.Stderr)
 	}
 	options := TStringSetNew()
-	options.Add("0")
+	options.Add("0", "k")
 	for i := range candidates {
 		options.Add(fmt.Sprintf("%d", i+1))
 	}
 	answer := l.WarningQuestion(QuestionHarvestDblpChoose, options,
 		WarningHarvestDblpCandidatesFound, e.Fields[TitleField], len(candidates))
+	if answer == "k" {
+		if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
+			if dblpEntryFromFile(dblpKey) != nil {
+				return dblpKey
+			}
+			l.Warning("DBLP key %q not found in file store", dblpKey)
+		}
+		return ""
+	}
 	n := 0
 	fmt.Sscanf(answer, "%d", &n)
 	if n <= 0 || n > len(candidates) {

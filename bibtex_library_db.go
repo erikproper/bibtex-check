@@ -705,6 +705,20 @@ func prepareWorkingDatabase() bool {
 	return true
 }
 
+// flushWorkingDbToHome checkpoints the WAL and copies the working DB to the home
+// path mid-session so that Ctrl-C during long-running network operations (URL
+// checks, PDF downloads) does not lose changes already made.
+// No-op when isolation is not active (single-DB mode).
+func flushWorkingDbToHome() {
+	if !dbIsolationActive() {
+		return
+	}
+	db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	if err := copyFile(dbPath(), dbHomePath()); err != nil {
+		dbInteraction.Warning("Could not flush working database to home: %s", err)
+	}
+}
+
 // finaliseWorkingDatabase copies the working database back to the home path,
 // creates a timestamped backup of the previous home copy, and writes a SQL dump.
 // Called at the end of main after all writes are flushed.

@@ -51,7 +51,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.28"
+const AppVersion = "24.29"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -63,7 +63,6 @@ var (
 	cmdAutoFixAlignTitles bool
 	cmdTrustHints         bool // -trust_hints: auto-accept key-hint matches in harvest
 	cmdCollectKeys        bool // -collect_keys: add source keys to hints DB when unambiguous
-	cmdCheckLonely        bool // -check_lonely: interactively check lone proceedings
 )
 
 func reportCacheMode() {
@@ -594,8 +593,21 @@ func reportHomework() {
 		return true
 	})
 
-	Library.Progress("Homework: %d title group(s) with unresolved duplicate(s), %d entry/ies with unresolved DBLP candidate(s), %d lone proceedings",
-		unresolvedGroups, dblpCandidates, loneProceedings)
+	// Entries with url but no urldate/doi/isbn/issn that haven't been URL-checked yet.
+	urlUnchecked := 0
+	forEachBibEntryKey(func(key string) bool {
+		entry := Library.buildEntry(key)
+		if !URLCheckNeeded(&Library, entry) {
+			return true
+		}
+		if Library.GetMetadata(key, MetaPropUrlCheckStatus) == "" {
+			urlUnchecked++
+		}
+		return true
+	})
+
+	Library.Progress("Homework: %d title group(s) with unresolved duplicate(s), %d entry/ies with unresolved DBLP candidate(s), %d lone proceedings, %d url(s) not yet checked",
+		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked)
 }
 
 func doDefaultRun() {
@@ -603,9 +615,7 @@ func doDefaultRun() {
 		Library.CheckEntries()
 		Library.ReadKeyNonDoublesFile()
 		Library.CheckAlignTitles(false)
-		if cmdCheckLonely {
-			Library.CheckLoneProceedings()
-		}
+		Library.CheckLoneProceedings()
 		reportHomework()
 	}
 }
@@ -618,7 +628,7 @@ func doCheckPDFs() {
 }
 
 func doGetPdfs() {
-	if openLibraryToReport() {
+	if openLibraryToUpdate() {
 		Library.ReadURLsIgnoreFile()
 		Library.GetPDFs()
 	}
@@ -1442,6 +1452,7 @@ func main() {
 		cmdRenderAsHTML       bool
 		cmdRenderAsText       bool
 		cmdCheckPdfs                bool
+		cmdCheckURLs                bool
 		cmdAlignBooktitleCountries  bool
 		cmdLoadDblpXml              bool
 		cmdUpdateDblp               bool
@@ -1469,7 +1480,6 @@ func main() {
 	flag.BoolVar(&cmdEntryKeyAlias, "entry_key_alias", false, "get preferred alias for a key")
 	flag.BoolVar(&cmdShowEntry, "show_entry", false, "print full entry content")
 	flag.BoolVar(&cmdFixEntries, "fix_entries", false, "fix/check specific entries")
-	flag.BoolVar(&cmdCheckLonely, "check_lonely", false, "interactively check proceedings with no children (add DBLP children, waive, or delete)")
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
 	flag.BoolVar(&cmdFixAllEntries, "fix_all_entries", false, "fix/check all entries")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
@@ -1495,6 +1505,7 @@ func main() {
 	flag.BoolVar(&cmdRenderAsHTML, "render_as_html", false, "render entry as HTML bibliography reference")
 	flag.BoolVar(&cmdRenderAsText, "render_as_text", false, "render entry as plain-text bibliography reference")
 	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "check PDF health, orphan files, and duplicates in the files folder")
+	flag.BoolVar(&cmdCheckURLs, "check_urls", false, "check reachability of url fields that have no urldate (network requests)")
 	flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "detect and fix unbraced country names in booktitle fields")
 	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP file store")
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
@@ -1676,6 +1687,13 @@ func main() {
 		}
 		doEntryKeyAlias(args, cmdMap)
 
+	case cmdMap:
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -map <alias>... <canonical>")
+			os.Exit(1)
+		}
+		doAddKeyMapping(args)
+
 	case cmdShowEntry:
 		if len(args) == 0 {
 			fmt.Fprintln(os.Stderr, "Usage: -show_entry <key>")
@@ -1831,6 +1849,11 @@ func main() {
 
 	case cmdCheckPdfs:
 		doCheckPDFs()
+
+	case cmdCheckURLs:
+		if openLibraryToUpdate() {
+			Library.CheckAllURLs()
+		}
 
 	case cmdAlignBooktitleCountries:
 		if openLibraryToUpdate() {

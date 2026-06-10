@@ -1,0 +1,212 @@
+/*
+ *
+ * Module: bibtex_library_url_check
+ *
+ * Plausibility check for url fields: verifies that the URL is reachable and
+ * returns meaningful human-readable content. Only applies to entries that have
+ * a url field but no doi, isbn, issn, or urldate (those fields already anchor the entry).
+ *
+ * Results are cached in entry_metadata (url_check_date, url_check_status) and
+ * re-checked after urlCheckMaxAgeDays days.
+ *
+ * Creator: Henderik A. Proper (erikproper@gmail.com)
+ *
+ */
+
+package main
+
+import (
+	"fmt"
+	"io"
+	"strings"
+	"time"
+)
+
+const urlCheckMinBytes = 300
+
+// urlParkingPatterns are substrings that signal a parked/error domain rather
+// than genuine human content.
+var urlParkingPatterns = []string{
+	"domain for sale",
+	"this domain is for sale",
+	"buy this domain",
+	"domain parking",
+	"parked domain",
+	"godaddy.com/offers",
+	"sedoparking.com",
+	"hugedomains.com",
+	"sav.com",
+}
+
+// urlCheckPlausible fetches rawURL and returns (ok, reason).
+// ok is true when the URL is reachable and the page looks like genuine human content.
+func urlCheckPlausible(rawURL string) (bool, string) {
+	client := newBibCheckHTTPClient()
+
+	req, err := newBibCheckHTTPRequest(rawURL)
+	if err != nil {
+		return false, "invalid URL: " + err.Error()
+	}
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "unreachable: " + err.Error()
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.Contains(ct, "text/html") && !strings.Contains(ct, "application/xhtml") {
+		// Non-HTML is fine (e.g. a PDF download) — consider it plausible.
+		return true, "ok"
+	}
+
+	// Read up to 8 KB to check content.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8192))
+	if err != nil {
+		return false, "read error: " + err.Error()
+	}
+	if len(body) < urlCheckMinBytes {
+		return false, fmt.Sprintf("suspiciously small response (%d bytes)", len(body))
+	}
+
+	lower := strings.ToLower(string(body))
+	for _, pat := range urlParkingPatterns {
+		if strings.Contains(lower, pat) {
+			return false, "parking page detected"
+		}
+	}
+
+	return true, "ok"
+}
+
+// CheckURLPlausibility checks whether the url field of entry points to live
+// human-readable content. Only runs when:
+//   - url is set
+//   - doi, isbn, issn are absent (url is the primary identifier)
+//   - urldate is absent (entry already has an access date)
+//   - the cached check is absent or older than urlCheckMaxAgeDays
+//
+// On failure: warns and offers r=remove url / w=waive / s=skip.
+// On success: silently records the check date.
+func (l *TBibTeXLibrary) CheckURLPlausibility(entry *TBibTeXEntry) {
+	url := entry.FieldValue("url")
+	if url == "" {
+		return
+	}
+	if entry.FieldValue("doi") != "" || entry.FieldValue("isbn") != "" ||
+		entry.FieldValue("issn") != "" || entry.FieldValue("urldate") != "" {
+		return
+	}
+
+	key := entry.Key
+
+	// For PDF URLs: if the local file is absent, attempt to download it now
+	// (same logic as -check_pdfs) rather than just doing an HTTP plausibility check.
+	if strings.HasSuffix(strings.ToLower(url), ".pdf") && !l.URLsIgnore.Contains(url) {
+		filesDir := l.FilesRoot + l.FilesFolder
+		filePath := filesDir + key + ".pdf"
+		if !FileExists(filePath) {
+			l.Progress("Downloading PDF for %s: %s", key, url)
+			needsURLDate := entry.FieldValue("doi") == "" &&
+				entry.FieldValue(DBLPField) == "" &&
+				entry.FieldValue("isbn") == "" &&
+				entry.FieldValue("issn") == ""
+			if err := downloadPDF(url, filePath); err != nil {
+				l.Warning(WarningPDFDownloadFailed, key, url, err)
+			} else {
+				l.Progress(ProgressPDFDownloaded, key, filePath)
+				if needsURLDate {
+					l.SetEntryFieldValue(key, "urldate", time.Now().Format("2006-01-02"))
+				}
+			}
+			return // handled as a PDF download — skip the HTML plausibility check
+		}
+	}
+
+	// Skip if already checked — UNLESS the previous run left urldate unset because
+	// year was missing but a year is now resolvable via the entry or its crossref parent.
+	lastDate := l.GetMetadata(key, MetaPropUrlCheckDate)
+	if lastDate != "" {
+		prevDead := l.GetMetadata(key, MetaPropUrlCheckStatus) == "dead"
+		if !prevDead {
+			return
+		}
+		hasYear := entry.FieldValue("year") != ""
+		if !hasYear {
+			if crossref := entry.FieldValue("crossref"); crossref != "" {
+				hasYear = l.EntryFieldValueity(l.MapEntryKey(crossref), "year") != ""
+			}
+		}
+		if !hasYear {
+			return
+		}
+	}
+
+	l.Progress("Checking URL for %s: %s", key, url)
+	ok, reason := urlCheckPlausible(url)
+	today := time.Now().Format("2006-01-02")
+
+	l.SetMetadata(key, MetaPropUrlCheckDate, today)
+
+	if ok {
+		l.SetMetadata(key, MetaPropUrlCheckStatus, "ok")
+		return
+	}
+
+	// URL is dead — stamp urldate with <pub-year>-12-20 so the entry is no longer
+	// considered undated, and record the failure so we skip this URL in future runs.
+	l.SetMetadata(key, MetaPropUrlCheckStatus, "dead")
+
+	year := entry.FieldValue("year")
+	if year == "" {
+		// Fall back to crossref parent's year.
+		if crossref := entry.FieldValue("crossref"); crossref != "" {
+			year = l.EntryFieldValueity(l.MapEntryKey(crossref), "year")
+		}
+	}
+	if year == "" {
+		l.Warning("URL appears unreachable or lacks human content (%s): %s — year field missing, urldate not set", reason, url)
+		return
+	}
+	urldate := year + "-12-20"
+	l.Warning(WarningURLDead, reason, url, urldate)
+	l.setEntryField(entry, "urldate", urldate)
+}
+
+// URLCheckNeeded reports whether entry qualifies for a URL plausibility check.
+func URLCheckNeeded(l *TBibTeXLibrary, entry *TBibTeXEntry) bool {
+	if entry.FieldValue("url") == "" {
+		return false
+	}
+	if entry.FieldValue("doi") != "" || entry.FieldValue("isbn") != "" ||
+		entry.FieldValue("issn") != "" || entry.FieldValue("urldate") != "" {
+		return false
+	}
+	return true
+}
+
+// CheckAllURLs runs CheckURLPlausibility for every qualifying entry.
+// Called by the -check_urls command; respects -step N.
+func (l *TBibTeXLibrary) CheckAllURLs() {
+	stepN := Reporting.StepSize()
+	checked := 0
+	forEachBibEntryKey(func(key string) bool {
+		entry := l.buildEntry(key)
+		if !URLCheckNeeded(l, entry) {
+			return true
+		}
+		l.CheckURLPlausibility(entry)
+		flushWorkingDbToHome()
+		checked++
+		if stepN > 0 && checked >= stepN {
+			return false
+		}
+		return true
+	})
+	l.Progress("URL check complete: %d entries checked", checked)
+}

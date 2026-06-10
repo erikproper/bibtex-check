@@ -839,6 +839,30 @@ func (l *TBibTeXLibrary) CheckISBN(entry *TBibTeXEntry) {
 	l.Warning(WarningBadISBN, isbn, entry.Key)
 }
 
+// CheckYearFromURLDate derives the year from the urldate when the year field is absent,
+// but only for standalone entries. For crossref children, urldate is an access date —
+// publication year must come from the parent. If the child's year was previously
+// (incorrectly) derived from its urldate, that value is cleared here.
+func (l *TBibTeXLibrary) CheckYearFromURLDate(entry *TBibTeXEntry) {
+	urldate := entry.FieldValue("urldate")
+	year := entry.FieldValue("year")
+
+	if entry.FieldValue("crossref") != "" {
+		// Repair: if year looks like it was derived from urldate, clear it.
+		if year != "" && len(urldate) >= 4 && year == urldate[:4] {
+			l.deleteEntryField(entry, "year")
+		}
+		return
+	}
+
+	if year != "" {
+		return
+	}
+	if len(urldate) >= 4 && IsValidYear(urldate[:4]) {
+		l.setEntryField(entry, "year", urldate[:4])
+	}
+}
+
 func (l *TBibTeXLibrary) CheckYear(entry *TBibTeXEntry) {
 	year := entry.FieldValue("year")
 
@@ -1046,6 +1070,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckFileReference(entry)
 			l.CheckISSN(entry)
 			l.CheckISBN(entry)
+			l.CheckYearFromURLDate(entry)
 			l.CheckYear(entry)
 			l.CheckURLDate(entry)
 			l.CheckWithdrawn(entry)
@@ -1160,6 +1185,11 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 			return true
 		}
 		if l.EntryHasFlag(key, FlagLoneProceedingsWaived) {
+			return true
+		}
+
+		// A proceedings with a PDF file is not lone — it has real content.
+		if FileExists(l.FilesRoot + l.FilesFolder + key + ".pdf") {
 			return true
 		}
 

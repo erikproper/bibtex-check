@@ -18,6 +18,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -215,10 +216,11 @@ func (l *TBibTeXLibrary) CheckPDFHealth() {
 	total := len(pdfFiles)
 	count := 0
 	md5Index := TStringSetMap{}
+	spinner := l.NewSpinner(fmt.Sprintf(ProgressCheckingPDFHealth, filesDir))
 
 	for _, fileName := range pdfFiles {
 		count++
-		l.Progress(ProgressFileProgress, count, total, float64(count)*100/float64(total))
+		spinner.Update(count, total)
 		key := strings.TrimSuffix(fileName, ".pdf")
 		fullPath := filesDir + fileName
 
@@ -240,13 +242,39 @@ func (l *TBibTeXLibrary) CheckPDFHealth() {
 			continue
 		}
 		if l.handleBrokenPDF(key, fullPath, reason) {
+			spinner.Stop()
 			return
 		}
 	}
+	spinner.Stop()
 
-	for _, keys := range md5Index {
-		if keys.Size() > 1 {
-			l.Warning(WarningDuplicateFileContent, keys.String())
+	validAnswers := TStringSetNew()
+	validAnswers.Add("w", "m", "s")
+
+	for md5hash, keys := range md5Index {
+		if keys.Size() <= 1 {
+			continue
+		}
+
+		// Skip when every entry in the group has already waived this exact PDF.
+		allWaived := true
+		for key := range keys.Elements() {
+			if l.GetMetadata(key, MetaPropWaivedDoublePdf) != md5hash {
+				allWaived = false
+				break
+			}
+		}
+		if allWaived {
+			continue
+		}
+
+		l.Warning(WarningDuplicateFileContent, keys.String())
+		switch l.WarningQuestion(QuestionDoublePdfWaive, validAnswers, "") {
+		case "w":
+			for key := range keys.Elements() {
+				l.SetMetadata(key, MetaPropWaivedDoublePdf, md5hash)
+			}
+		case "m":
 			l.MaybeMergeEntrySet(keys)
 		}
 	}
