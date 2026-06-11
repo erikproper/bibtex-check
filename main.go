@@ -51,7 +51,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.41"
+const AppVersion = "24.43"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -274,6 +274,7 @@ func openLibraryToUpdate() bool {
 
 	Library.ReportLibrarySize()
 	Library.CheckKeyOldiesConsistency()
+	Library.CheckDblpWaivedConsistency()
 	Library.CheckEntryFieldMappingWinners()
 	return true
 }
@@ -381,6 +382,13 @@ func maybeFindDBLPCandidates(key string) bool {
 	if yearStr == "" {
 		if crossref := Library.EntryFieldValueity(key, "crossref"); crossref != "" {
 			yearStr = Library.EntryFieldValueity(crossref, "year")
+		}
+	}
+	// Last resort: extract year from preferredalias (format <surname><YYYY><keyword>).
+	if yearStr == "" {
+		alias := Library.EntryFieldValueity(key, PreferredAliasField)
+		if m := reYearInAlias.FindString(alias); m != "" {
+			yearStr = m
 		}
 	}
 	entryYear, entryHasYear := strconv.Atoi(yearStr)

@@ -222,6 +222,17 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 	}
 }
 
+// CheckDblpWaivedConsistency removes stale keys from DblpWaived: any key that is
+// now an alias (MapEntryKey(k) != k) or no longer exists as a library entry.
+func (l *TBibTeXLibrary) CheckDblpWaivedConsistency() {
+	for key := range l.DblpWaived.Elements() {
+		if l.MapEntryKey(key) != key || !l.EntryExists(key) {
+			l.DblpWaived.Delete(key)
+			l.dblpWaivedModified = true
+		}
+	}
+}
+
 func (l *TBibTeXLibrary) CheckURLRedundance(entry *TBibTeXEntry) {
 	url := entry.FieldValue("url")
 
@@ -250,6 +261,7 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 }
 
 var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z]([a-z0-9-]*[a-z0-9])?$`)
+var reYearInAlias = regexp.MustCompile(`[0-9][0-9][0-9][0-9]`)
 
 var stripNonAlpha = regexp.MustCompile(`[^a-z]`)
 var stripNonAlphaNum = regexp.MustCompile(`[^a-z0-9]`)
