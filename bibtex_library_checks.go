@@ -365,6 +365,13 @@ func (l *TBibTeXLibrary) deriveAliasBase(entry *TBibTeXEntry) string {
 			}
 		}
 	}
+	// Final last resort: use the first title keyword as the name component.
+	// derivePreferredAlias will then produce <keyword><year><keyword> (e.g. hello2002hello).
+	if nameField == "" {
+		if kws := titleKeywords(entry.FieldValue(TitleField)); len(kws) > 0 {
+			nameField = kws[0]
+		}
+	}
 	if nameField == "" {
 		l.Warning(WarningCannotDeriveAliasNoName, entry.Key)
 		return ""
@@ -506,11 +513,6 @@ func (l *TBibTeXLibrary) CheckAndEnforcePreferredAlias(entry *TBibTeXEntry) {
 			l.setPreferredAlias(entry, derived)
 			l.Progress(ProgressGeneratedPreferredAlias, derived, entry.Key)
 		}
-		return
-	}
-
-	// No alias yet. Only generate one for DBLP-linked entries (temporary until doubles are cleaned up).
-	if entry.FieldValue(DBLPField) == "" {
 		return
 	}
 
@@ -840,24 +842,18 @@ func (l *TBibTeXLibrary) CheckISBN(entry *TBibTeXEntry) {
 }
 
 // CheckYearFromURLDate derives the year from the urldate when the year field is absent,
-// but only for standalone entries. For crossref children, urldate is an access date —
-// publication year must come from the parent. If the child's year was previously
-// (incorrectly) derived from its urldate, that value is cleared here.
+// but only for standalone entries (no crossref). For crossref children, urldate is an
+// access date — publication year must come from the parent.
 func (l *TBibTeXLibrary) CheckYearFromURLDate(entry *TBibTeXEntry) {
-	urldate := entry.FieldValue("urldate")
-	year := entry.FieldValue("year")
-
 	if entry.FieldValue("crossref") != "" {
-		// Repair: if year looks like it was derived from urldate, clear it.
-		if year != "" && len(urldate) >= 4 && year == urldate[:4] {
-			l.deleteEntryField(entry, "year")
-		}
 		return
 	}
 
-	if year != "" {
+	if entry.FieldValue("year") != "" {
 		return
 	}
+
+	urldate := entry.FieldValue("urldate")
 	if len(urldate) >= 4 && IsValidYear(urldate[:4]) {
 		l.setEntryField(entry, "year", urldate[:4])
 	}
@@ -1060,6 +1056,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.NormaliseEntryFields(entry)
 			l.CheckDOIPresence(entry)
 			l.CheckEPrint(entry)
+			l.CheckYearFromURLDate(entry)
 			l.CheckCrossref(entry)
 			l.CheckAndEnforcePreferredAlias(entry)
 			l.CheckBookishTitles(entry)
@@ -1070,7 +1067,6 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckFileReference(entry)
 			l.CheckISSN(entry)
 			l.CheckISBN(entry)
-			l.CheckYearFromURLDate(entry)
 			l.CheckYear(entry)
 			l.CheckURLDate(entry)
 			l.CheckWithdrawn(entry)

@@ -2156,16 +2156,9 @@ func loadEntryMetadataFromDb(l *TBibTeXLibrary) {
 }
 
 func saveEntryMetadataToDb(l *TBibTeXLibrary) {
-	db.Exec(`DELETE FROM entry_metadata`)
-	upsert := `INSERT INTO entry_metadata (entry_key, property, value) VALUES (?, ?, ?)
-	             ON CONFLICT(entry_key, property) DO UPDATE SET value = excluded.value`
-	for key, props := range l.Metadata {
-		for prop, val := range props {
-			if _, err := db.Exec(upsert, key, prop, val); err != nil {
-				dbInteraction.Warning("entry_metadata insert failed: %s", err)
-			}
-		}
-	}
+	// All individual writes are already in the DB via write-through in SetMetadata
+	// and DeleteMetadata.  This call only needs to update the table timestamp so
+	// that the JSON re-import logic does not re-migrate old data on the next run.
 	setTableDate("entry_metadata", time.Now().UnixMicro())
 }
 

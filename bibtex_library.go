@@ -1253,6 +1253,11 @@ func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
 		l.NonDoubles[c] = s
 	}
 	l.keyNonDoublesModified = true
+
+	// Write-through so Ctrl-C or step-limit exits cannot lose a dismissal decision.
+	upsert := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
+	db.Exec(upsert, a, b)
+	db.Exec(upsert, b, a)
 }
 
 func init() {

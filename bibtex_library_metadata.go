@@ -57,16 +57,21 @@ func (l *TBibTeXLibrary) HasMetadata(key, prop string) bool {
 	return l.GetMetadata(key, prop) != ""
 }
 
-// SetMetadata sets property prop to value for entry key and marks metadata modified.
+// SetMetadata sets property prop to value for entry key, writes through to the DB,
+// and marks metadata modified (for the end-of-run JSON backup).
 func (l *TBibTeXLibrary) SetMetadata(key, prop, value string) {
 	if _, ok := l.Metadata[key]; !ok {
 		l.Metadata[key] = map[string]string{}
 	}
 	l.Metadata[key][prop] = value
 	l.metadataModified = true
+	db.Exec(`INSERT INTO entry_metadata (entry_key, property, value) VALUES (?, ?, ?)
+	          ON CONFLICT(entry_key, property) DO UPDATE SET value = excluded.value`,
+		key, prop, value)
 }
 
-// DeleteMetadata removes property prop from entry key's metadata.
+// DeleteMetadata removes property prop from entry key's metadata, writes through to
+// the DB, and marks metadata modified (for the end-of-run JSON backup).
 func (l *TBibTeXLibrary) DeleteMetadata(key, prop string) {
 	if m, ok := l.Metadata[key]; ok {
 		if _, exists := m[prop]; exists {
@@ -75,6 +80,7 @@ func (l *TBibTeXLibrary) DeleteMetadata(key, prop string) {
 				delete(l.Metadata, key)
 			}
 			l.metadataModified = true
+			db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, key, prop)
 		}
 	}
 }

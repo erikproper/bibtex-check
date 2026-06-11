@@ -24,6 +24,15 @@ import (
 
 const urlCheckMinBytes = 300
 
+// dateFromEntryKey extracts YYYY-MM-DD from a key of the form EP-YYYY-MM-DD-HH-MM-SS.
+// Returns "" when the key does not match that pattern.
+func dateFromEntryKey(key string) string {
+	if len(key) >= 13 && IsValidDate(key[3:13]) {
+		return key[3:13]
+	}
+	return ""
+}
+
 // urlParkingPatterns are substrings that signal a parked/error domain rather
 // than genuine human content.
 var urlParkingPatterns = []string{
@@ -87,7 +96,7 @@ func urlCheckPlausible(rawURL string) (bool, string) {
 // CheckURLPlausibility checks whether the url field of entry points to live
 // human-readable content. Only runs when:
 //   - url is set
-//   - doi, isbn, issn are absent (url is the primary identifier)
+//   - doi, dblp, isbn, issn are absent (url is the primary identifier)
 //   - urldate is absent (entry already has an access date)
 //   - the cached check is absent or older than urlCheckMaxAgeDays
 //
@@ -98,31 +107,51 @@ func (l *TBibTeXLibrary) CheckURLPlausibility(entry *TBibTeXEntry) {
 	if url == "" {
 		return
 	}
-	if entry.FieldValue("doi") != "" || entry.FieldValue("isbn") != "" ||
-		entry.FieldValue("issn") != "" || entry.FieldValue("urldate") != "" {
+	if entry.FieldValue("doi") != "" || entry.FieldValue(DBLPField) != "" ||
+		entry.FieldValue("isbn") != "" || entry.FieldValue("issn") != "" ||
+		entry.FieldValue("urldate") != "" {
 		return
 	}
 
 	key := entry.Key
 
+	// URL is in the ignore list: skip all HTTP work; just derive urldate from year
+	// (own or crossref parent, then key date as last resort) so the entry stops
+	// qualifying for future URL checks.
+	if l.URLsIgnore.Contains(url) {
+		year := entry.FieldValue("year")
+		if year == "" {
+			if crossref := entry.FieldValue("crossref"); crossref != "" {
+				year = l.EntryFieldValueity(l.MapEntryKey(crossref), "year")
+			}
+		}
+		var urldate string
+		if year != "" {
+			urldate = year + "-12-20"
+		} else if d := dateFromEntryKey(key); d != "" {
+			urldate = d
+		} else {
+			l.Warning("URL in ignore list but no year to derive urldate: %s — %s", key, url)
+			return
+		}
+		l.Warning(WarningURLDead, "in ignore list", url, urldate)
+		l.setEntryField(entry, "urldate", urldate)
+		return
+	}
+
 	// For PDF URLs: if the local file is absent, attempt to download it now
 	// (same logic as -check_pdfs) rather than just doing an HTTP plausibility check.
-	if strings.HasSuffix(strings.ToLower(url), ".pdf") && !l.URLsIgnore.Contains(url) {
+	// URLCheckNeeded already excludes doi/dblp/isbn/issn, so urldate is always needed here.
+	if strings.HasSuffix(strings.ToLower(url), ".pdf") {
 		filesDir := l.FilesRoot + l.FilesFolder
 		filePath := filesDir + key + ".pdf"
 		if !FileExists(filePath) {
 			l.Progress("Downloading PDF for %s: %s", key, url)
-			needsURLDate := entry.FieldValue("doi") == "" &&
-				entry.FieldValue(DBLPField) == "" &&
-				entry.FieldValue("isbn") == "" &&
-				entry.FieldValue("issn") == ""
 			if err := downloadPDF(url, filePath); err != nil {
 				l.Warning(WarningPDFDownloadFailed, key, url, err)
 			} else {
 				l.Progress(ProgressPDFDownloaded, key, filePath)
-				if needsURLDate {
-					l.SetEntryFieldValue(key, "urldate", time.Now().Format("2006-01-02"))
-				}
+				l.SetEntryFieldValue(key, "urldate", time.Now().Format("2006-01-02"))
 			}
 			return // handled as a PDF download — skip the HTML plausibility check
 		}
@@ -143,6 +172,9 @@ func (l *TBibTeXLibrary) CheckURLPlausibility(entry *TBibTeXEntry) {
 			}
 		}
 		if !hasYear {
+			hasYear = dateFromEntryKey(key) != ""
+		}
+		if !hasYear {
 			return
 		}
 	}
@@ -155,25 +187,28 @@ func (l *TBibTeXLibrary) CheckURLPlausibility(entry *TBibTeXEntry) {
 
 	if ok {
 		l.SetMetadata(key, MetaPropUrlCheckStatus, "ok")
+		l.setEntryField(entry, "urldate", today)
 		return
 	}
 
-	// URL is dead — stamp urldate with <pub-year>-12-20 so the entry is no longer
-	// considered undated, and record the failure so we skip this URL in future runs.
+	// URL is dead — stamp urldate so the entry is no longer considered undated.
 	l.SetMetadata(key, MetaPropUrlCheckStatus, "dead")
 
 	year := entry.FieldValue("year")
 	if year == "" {
-		// Fall back to crossref parent's year.
 		if crossref := entry.FieldValue("crossref"); crossref != "" {
 			year = l.EntryFieldValueity(l.MapEntryKey(crossref), "year")
 		}
 	}
-	if year == "" {
+	var urldate string
+	if year != "" {
+		urldate = year + "-12-20"
+	} else if d := dateFromEntryKey(key); d != "" {
+		urldate = d
+	} else {
 		l.Warning("URL appears unreachable or lacks human content (%s): %s — year field missing, urldate not set", reason, url)
 		return
 	}
-	urldate := year + "-12-20"
 	l.Warning(WarningURLDead, reason, url, urldate)
 	l.setEntryField(entry, "urldate", urldate)
 }
@@ -183,8 +218,9 @@ func URLCheckNeeded(l *TBibTeXLibrary, entry *TBibTeXEntry) bool {
 	if entry.FieldValue("url") == "" {
 		return false
 	}
-	if entry.FieldValue("doi") != "" || entry.FieldValue("isbn") != "" ||
-		entry.FieldValue("issn") != "" || entry.FieldValue("urldate") != "" {
+	if entry.FieldValue("doi") != "" || entry.FieldValue(DBLPField) != "" ||
+		entry.FieldValue("isbn") != "" || entry.FieldValue("issn") != "" ||
+		entry.FieldValue("urldate") != "" {
 		return false
 	}
 	return true
@@ -210,3 +246,4 @@ func (l *TBibTeXLibrary) CheckAllURLs() {
 	})
 	l.Progress("URL check complete: %d entries checked", checked)
 }
+

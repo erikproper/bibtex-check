@@ -51,7 +51,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.29"
+const AppVersion = "24.41"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -431,6 +431,7 @@ func maybeFindDBLPCandidates(key string) bool {
 		for _, c := range candidates {
 			Library.AddNonDoubles(key, KeyForDBLP(c))
 		}
+		flushWorkingDbToHome()
 		return false
 	}
 	Library.AssociateDblpKey(key, chosen)
@@ -568,6 +569,8 @@ func reportHomework() {
 
 	// Lone proceedings: proceedings with no library crossref children, no DBLP children
 	// in the file store, and no waive flag. Excludes DBLP-backed entries (they are safe).
+	// Also excludes proceedings that have a PDF file — CheckLoneProceedings silently skips
+	// those too, so they should not be counted as outstanding work.
 	loneProceedings := 0
 	crossrefTargets := TStringSetNew()
 	forEachBibEntryKey(func(key string) bool {
@@ -576,6 +579,7 @@ func reportHomework() {
 		}
 		return true
 	})
+	filesDir := Library.FilesRoot + Library.FilesFolder
 	forEachBibEntryKey(func(key string) bool {
 		if Library.EntryFieldValueity(key, EntryTypeField) != "proceedings" {
 			return true
@@ -586,8 +590,11 @@ func reportHomework() {
 		if Library.EntryHasFlag(key, FlagLoneProceedingsWaived) {
 			return true
 		}
-		if dblpKey := Library.EntryFieldValueity(key, DBLPField); dblpKey != "" {
+		if Library.EntryFieldValueity(key, DBLPField) != "" {
 			return true // DBLP-backed: not spurious
+		}
+		if FileExists(filesDir + key + ".pdf") {
+			return true // has PDF content — not a problem
 		}
 		loneProceedings++
 		return true
@@ -616,6 +623,8 @@ func doDefaultRun() {
 		Library.ReadKeyNonDoublesFile()
 		Library.CheckAlignTitles(false)
 		Library.CheckLoneProceedings()
+		Library.ReadURLsIgnoreFile()
+		Library.CheckAllURLs()
 		reportHomework()
 	}
 }
@@ -1452,7 +1461,6 @@ func main() {
 		cmdRenderAsHTML       bool
 		cmdRenderAsText       bool
 		cmdCheckPdfs                bool
-		cmdCheckURLs                bool
 		cmdAlignBooktitleCountries  bool
 		cmdLoadDblpXml              bool
 		cmdUpdateDblp               bool
@@ -1505,8 +1513,7 @@ func main() {
 	flag.BoolVar(&cmdRenderAsHTML, "render_as_html", false, "render entry as HTML bibliography reference")
 	flag.BoolVar(&cmdRenderAsText, "render_as_text", false, "render entry as plain-text bibliography reference")
 	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "check PDF health, orphan files, and duplicates in the files folder")
-	flag.BoolVar(&cmdCheckURLs, "check_urls", false, "check reachability of url fields that have no urldate (network requests)")
-	flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "detect and fix unbraced country names in booktitle fields")
+flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "detect and fix unbraced country names in booktitle fields")
 	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP file store")
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
 	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
@@ -1850,12 +1857,7 @@ func main() {
 	case cmdCheckPdfs:
 		doCheckPDFs()
 
-	case cmdCheckURLs:
-		if openLibraryToUpdate() {
-			Library.CheckAllURLs()
-		}
-
-	case cmdAlignBooktitleCountries:
+case cmdAlignBooktitleCountries:
 		if openLibraryToUpdate() {
 			Library.CheckAlignBooktitleCountries()
 		}
