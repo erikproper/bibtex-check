@@ -25,6 +25,14 @@ import (
 	"time"
 )
 
+// subsetSyncBailOut finalises the working database and exits cleanly.
+// Called when the user explicitly rejects a merge that would silently drop fields.
+func subsetSyncBailOut() {
+	Library.Progress("Bailing out — finalising database.")
+	finaliseWorkingDatabase()
+	os.Exit(0)
+}
+
 // --- Subset state file (.subset) ---
 
 // TSubsetEntry is one row of the .subset common-ancestor fingerprint file.
@@ -161,10 +169,10 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 		if len(illegalFields) > 0 {
 			sort.Strings(illegalFields)
 			for _, f := range illegalFields {
-				fmt.Fprintf(os.Stderr, "WARNING: field %q is not allowed for entry type %q — it will be ignored during merge.\n", f, entryType)
+				fmt.Fprintf(os.Stderr, "WARNING: entry %s has field %q which is not allowed for entry type %q — it will be ignored during merge.\n", canonicalKey, f, entryType)
 			}
 			if !Library.ConfirmAction("Proceed anyway (illegal fields will be dropped)") {
-				return canonicalKey
+				subsetSyncBailOut()
 			}
 		}
 	}
@@ -217,8 +225,9 @@ func resolveSubsetPaths(cfg TBibGetConfig, baseDir string) (sourcePath, keysBase
 }
 
 // runSubsetPhase1 is called from doSync phase 1: parses the subset bib and merges any
-// bib-side changes into the DB. Returns true when a fresh export was performed (the bib
-// was already written, so doSync must skip phase 2 for this file).
+// bib-side changes into the DB. Returns true when phase 2 must be skipped: either a
+// fresh export was performed (bib already written) or the up-sync was aborted (e.g.
+// parse error — bib must not be overwritten).
 func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
 	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
 
@@ -238,8 +247,8 @@ func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
 		return true
 	}
 
-	runSubsetUpSync(cfg, sourcePath, keysBasePath, statePath, existingState)
-	return false
+	aborted := runSubsetUpSync(cfg, sourcePath, keysBasePath, statePath, existingState)
+	return aborted
 }
 
 // buildSubsetState constructs the .subset state after a bib write. It re-parses the
@@ -286,7 +295,7 @@ func runSubsetPhase2(cfg TBibGetConfig, baseDir string) {
 	if writtenPairs == nil {
 		return
 	}
-	rewriteKeysFile(keysBasePath, writtenPairs)
+	rewriteKeysFile(keysBasePath, writtenPairs, cfg.KeyMapping)
 
 	newState := buildSubsetState(writtenPairs, sourcePath)
 	writeSubsetState(statePath, newState)
@@ -304,7 +313,7 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 
 	// Write all resolved pairs (explicit .keys + .select + auto-parents) back to the
 	// .keys file so it becomes the complete, stable record for subsequent syncs.
-	rewriteKeysFile(keysBasePath, writtenPairs)
+	rewriteKeysFile(keysBasePath, writtenPairs, cfg.KeyMapping)
 	Library.Progress("  Written .keys: %d entries", len(writtenPairs))
 
 	// Build initial state by re-parsing the written bib for accurate BibHash values.
@@ -315,7 +324,8 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 
 // runSubsetUpSync handles phase 1 of subsequent syncs: parses the bib, detects three-way
 // changes, and merges bib-side edits into the DB. Does not write back the bib or state.
-func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath string, existingState TSubsetState) {
+// Returns true if the sync was aborted (e.g. parse error) — caller must skip phase 2.
+func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath string, existingState TSubsetState) bool {
 	Library.Progress("  State  : %s (%d entries)", statePath, len(existingState))
 
 	// Parse the externally-edited bib. Abort if the parse is incomplete — a partial
@@ -324,7 +334,7 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 	Library.Progress("  Source : %d entries parsed", len(bibEntries))
 	if !parseOK {
 		Library.Progress("  Subset sync aborted: fix the bib file and re-run.")
-		return
+		return true
 	}
 
 	// Build reverse map: output key → state entry, for matching bib entries back to
@@ -488,4 +498,5 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		}
 	}
 
+	return false
 }

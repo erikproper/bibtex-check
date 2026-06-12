@@ -42,10 +42,11 @@ type (
 	// The actual TBibTeXStream type
 	TBibTeXStream struct {
 		TCharacterStream                 // The underlying stream of characters.
-		library          *TBibTeXLibrary // The BibTeX Library this parser will contribute to.
-		skippingEntry    bool            // Set to true if we need to be skipping things to the next entry.
-		stringMap        TStringMap      // The mapping of the defined strings.
-		succeeded        bool            // Set to false if we had a serious problem in parsing the stream.
+		library              *TBibTeXLibrary // The BibTeX Library this parser will contribute to.
+		skippingEntry        bool            // Set to true if we need to be skipping things to the next entry.
+		stringMap            TStringMap      // The mapping of the defined strings.
+		succeeded            bool            // Set to false if we had a serious problem in parsing the stream.
+		currentParsingEntryKey string        // Key of the entry currently being parsed; empty between entries.
 	}
 )
 
@@ -90,15 +91,25 @@ func (b *TBibTeXStream) AssignString(dummy, str, value string) bool {
 	return true
 }
 
+// setCurrentEntryKey records the key of the entry currently being parsed.
+// Always returns true so it can be used inline in the parser's && chain.
+func (b *TBibTeXStream) setCurrentEntryKey(key string) bool {
+	b.currentParsingEntryKey = key
+	return true
+}
+
 // If we're stuck in parsing an entry (due to syntax errors), we need to the next entry.
 func (b *TBibTeXStream) SkipToNextEntry(from string) bool {
 	b.skippingEntry = true
 
+	msg := WarningSkippingToNextEntry
 	if from != "" {
-		b.ReportWarning(WarningSkippingToNextEntry + " from " + from)
-	} else {
-		b.ReportWarning(WarningSkippingToNextEntry)
+		msg += " from " + from
 	}
+	if b.currentParsingEntryKey != "" {
+		msg += " [entry: " + b.currentParsingEntryKey + "]"
+	}
+	b.ReportWarning(msg)
 
 	for !b.ThisTokenIsCharacter(EntryStartCharacter) && !b.EndOfStream() {
 		b.NextCharacter()
@@ -146,7 +157,11 @@ func (b *TBibTeXStream) ReportParsingError(message string, context ...any) bool 
 	b.library.NoDBUpdating = true
 
 	if !b.skippingEntry {
-		b.ReportError(message, context...)
+		if b.currentParsingEntryKey != "" {
+			b.ReportError(message+" [entry: "+b.currentParsingEntryKey+"]", context...)
+		} else {
+			b.ReportError(message, context...)
+		}
 		b.succeeded = false
 	}
 
@@ -442,9 +457,10 @@ func (b *TBibTeXStream) EntryDefinitionBody(entryType string) bool {
 	default:
 		key := ""
 		return b.Key(&key) &&
-			/**/ b.library.StartRecordingLibraryEntry(key, entryType) &&
-			/*  */ b.FieldDefinitionsety(key, BibTeXFieldMap, b.library.AssignField) &&
-			/*    */ b.library.FinishRecordingLibraryEntry(key)
+			/**/ b.setCurrentEntryKey(key) &&
+			/*  */ b.library.StartRecordingLibraryEntry(key, entryType) &&
+			/*    */ b.FieldDefinitionsety(key, BibTeXFieldMap, b.library.AssignField) &&
+			/*      */ b.library.FinishRecordingLibraryEntry(key)
 	}
 }
 
@@ -469,8 +485,8 @@ func (b *TBibTeXStream) Entry() bool {
 // The possibly empty series of Entries included in tha BibTeX file.
 func (b *TBibTeXStream) Entriesety() bool {
 	for b.Entry() {
-		// Reset this to false after each (possibly skipped) entry
 		b.skippingEntry = false
+		b.currentParsingEntryKey = ""
 	}
 
 	return true

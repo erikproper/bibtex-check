@@ -215,8 +215,10 @@ func readKeysFile(fileName string) (pairs []TBibGetPair, modified bool, ok bool)
 	return
 }
 
-// rewriteKeysFile writes pairs back to <fileName>.keys using the canonical semicolon delimiter.
-func rewriteKeysFile(fileName string, pairs []TBibGetPair) {
+// rewriteKeysFile writes pairs back to <fileName>.keys.
+// When keyMapping is true, each line is localKey;canonicalKey.
+// When keyMapping is false, each line is canonicalKey only.
+func rewriteKeysFile(fileName string, pairs []TBibGetPair, keyMapping bool) {
 	path := fileName + KeysFileExtension
 	FileRename(path, path+".old")
 	f, err := os.Create(path)
@@ -227,7 +229,11 @@ func rewriteKeysFile(fileName string, pairs []TBibGetPair) {
 	defer f.Close()
 	w := bufio.NewWriter(f)
 	for _, p := range pairs {
-		w.WriteString(p.localKey + csvDelimiter + p.canonicalKey + "\n")
+		if keyMapping {
+			w.WriteString(p.localKey + csvDelimiter + p.canonicalKey + "\n")
+		} else {
+			w.WriteString(p.canonicalKey + "\n")
+		}
 	}
 	w.Flush()
 }
@@ -725,7 +731,8 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	}
 
 	// Resolve all canonical keys through the key alias / oldies table.
-	// Bare keys (localKey == "") are resolved to their preferred alias.
+	// Bare keys (localKey == "") are resolved to their preferred alias when
+	// key_mapping is on; in no-mapping mode bare keys stay as canonical keys.
 	resolvedSeen := map[string]bool{}
 	for i, p := range pairs {
 		resolved := Library.MapEntryKey(p.canonicalKey)
@@ -733,7 +740,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			resolved = p.canonicalKey
 		}
 		pairs[i].canonicalKey = resolved
-		if p.localKey == "" {
+		if p.localKey == "" && cfg.KeyMapping {
 			// Bare key: assign preferred alias (or canonical if none exists).
 			preferred := Library.PreferredKey(resolved)
 			if preferred == "" {
@@ -743,6 +750,10 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			keysModified = true
 		}
 		if pairs[i].localKey != p.localKey || pairs[i].canonicalKey != p.canonicalKey {
+			keysModified = true
+		}
+		// When key_mapping is off, any two-column pair must be rewritten as single-column.
+		if !cfg.KeyMapping && p.localKey != "" {
 			keysModified = true
 		}
 		// Homonym check: warn when the same canonical maps to a different local key.
@@ -764,7 +775,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	pairs = filtered
 
 	if keysModified {
-		rewriteKeysFile(mapFilePath, pairs)
+		rewriteKeysFile(mapFilePath, pairs, cfg.KeyMapping)
 	}
 
 	// Expand .select statements into additional canonical keys.
@@ -914,7 +925,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	// Non-bookish entries first (children before parents): explicit .keys pairs then .select extras.
 	for _, p := range pairs {
 		if !BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
-			writeEntry(p.canonicalKey, p.localKey)
+			writeEntry(p.canonicalKey, canonicalToLocal[p.canonicalKey])
 		}
 	}
 	for _, p := range extraPairs {
@@ -926,7 +937,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	// Bookish entries: explicit .keys pairs then .select extras.
 	for _, p := range pairs {
 		if BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
-			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", cfg, shorten, hyphenations))
+			w.WriteString(Library.entryGetString(p.canonicalKey, canonicalToLocal[p.canonicalKey], "", cfg, shorten, hyphenations))
 			w.WriteString("\n")
 		}
 	}
@@ -1287,8 +1298,8 @@ func doSync(filter string) {
 	// Read all per-file configs first so we can determine the required library
 	// access level before opening the library.
 	type fileEntry struct {
-		cfg           TBibGetConfig
-		freshExported bool // subset only: fresh export done in phase 1, skip phase 2
+		cfg        TBibGetConfig
+		skipPhase2 bool // subset only: skip phase 2 (fresh export done, or up-sync aborted)
 	}
 	var files []fileEntry
 	needsWrite := false
@@ -1319,7 +1330,7 @@ func doSync(filter string) {
 		case "harvest":
 			runHarvestSync(files[i].cfg, "")
 		case "subset":
-			files[i].freshExported = runSubsetPhase1(files[i].cfg, "")
+			files[i].skipPhase2 = runSubsetPhase1(files[i].cfg, "")
 		}
 	}
 
@@ -1331,7 +1342,7 @@ func doSync(filter string) {
 		case "harvest":
 			// harvest has no bib output
 		case "subset":
-			if !f.freshExported {
+			if !f.skipPhase2 {
 				runSubsetPhase2(f.cfg, "")
 			}
 		default: // "pull"
