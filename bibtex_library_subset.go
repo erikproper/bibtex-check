@@ -370,6 +370,19 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		}
 
 		bibSeenCanonicals[canonical] = true
+
+		// Entry is a known library entry but not yet in the subset state — it was
+		// auto-included as a crossref parent, not edited by the user. Accept silently;
+		// phase 2 will write it to the bib and add it to the state.
+		if _, inState := existingState[canonical]; !inState {
+			toProcess = append(toProcess, categorizedEntry{
+				bibEntry:     e,
+				canonicalKey: canonical,
+				status:       statusUnchanged,
+			})
+			continue
+		}
+
 		se := existingState[canonical]
 		currentBibHash := subsetBibFingerprint(e, outputToCanonical)
 		currentDBHash := subsetDBFingerprint(canonical)
