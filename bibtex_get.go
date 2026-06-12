@@ -958,6 +958,47 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		w.WriteString("\n")
 	}
 
+	// BibDesk static groups — subset mode only, restricted to entries written here.
+	if cfg.Mode == "subset" && len(Library.GroupEntries) > 0 {
+		// Map canonical key → output key for everything written (pairs, extras, auto-parents).
+		outputKeyFor := func(canonical string) string {
+			if k, ok := canonicalToLocal[canonical]; ok {
+				return k
+			}
+			if k, ok := autoParentLocal[canonical]; ok {
+				return k
+			}
+			return ""
+		}
+
+		type groupRow struct{ name, keys string }
+		var rows []groupRow
+		for group, members := range Library.GroupEntries {
+			var outputKeys []string
+			for key := range members.Elements() {
+				if outKey := outputKeyFor(Library.MapEntryKey(key)); outKey != "" {
+					outputKeys = append(outputKeys, outKey)
+				}
+			}
+			if len(outputKeys) > 0 {
+				sort.Strings(outputKeys)
+				rows = append(rows, groupRow{group, strings.Join(outputKeys, ",")})
+			}
+		}
+		if len(rows) > 0 {
+			sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
+			w.WriteString("@" + CommentEntryType + "{BibDesk Static Groups{\n")
+			w.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+			w.WriteString("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n")
+			w.WriteString("<plist version=\"1.0\">\n<array>\n")
+			for _, r := range rows {
+				w.WriteString("\t<dict>\n\t\t<key>group name</key>\n\t\t<string>" + r.name + "</string>\n")
+				w.WriteString("\t\t<key>keys</key>\n\t\t<string>" + r.keys + "</string>\n\t</dict>\n")
+			}
+			w.WriteString("</array>\n</plist>\n}}\n\n")
+		}
+	}
+
 	w.Flush()
 	newContent := buf.Bytes()
 	h := md5.New()

@@ -86,9 +86,18 @@ func writeSubsetState(statePath string, state TSubsetState) {
 	}
 }
 
+// subsetFingerprintExclude is the set of fields excluded from subset fingerprints.
+// local-url is excluded because the bib stores the absolute path while the DB stores
+// a relative path — they represent the same file but hash differently, causing
+// perpetual false-positive change detections.
+var subsetFingerprintExclude = func() TStringSet {
+	s := TStringSetNew()
+	s.Set().Unite(bibEditorNoiseFields)
+	s.Add(LocalURLField, EntryTypeField)
+	return s
+}()
+
 // subsetDBFingerprint computes the fingerprint of a DB entry for subset change detection.
-// Excludes editor-noise fields (same as bibEditorNoiseFields) but includes all content
-// fields — including preferredalias and local-url — to match what the subset bib writes.
 func subsetDBFingerprint(canonicalKey string) string {
 	e := loadEntryFromDb(canonicalKey)
 	if e == nil {
@@ -96,7 +105,7 @@ func subsetDBFingerprint(canonicalKey string) string {
 	}
 	fields := make([]string, 0, len(e.Fields))
 	for f, v := range e.Fields {
-		if v != "" && !bibEditorNoiseFields.Contains(f) {
+		if v != "" && !subsetFingerprintExclude.Set().Contains(f) {
 			fields = append(fields, f+"="+v)
 		}
 	}
@@ -111,7 +120,7 @@ func subsetDBFingerprint(canonicalKey string) string {
 func subsetBibFingerprint(e TBibTeXEntry, outputToCanonical map[string]string) string {
 	fields := make([]string, 0, len(e.Fields))
 	for f, v := range e.Fields {
-		if v == "" || bibEditorNoiseFields.Contains(f) {
+		if v == "" || subsetFingerprintExclude.Set().Contains(f) {
 			continue
 		}
 		if f == "crossref" {
@@ -415,6 +424,14 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 
 		bibChanged := currentBibHash != se.BibHash
 		dbChanged := currentDBHash != se.DBHash
+
+		// When the stored state is stale (e.g. bib output format changed between
+		// syncs), the fingerprints may differ even though bib and DB have identical
+		// content right now. Downgrade to unchanged when the two fresh fingerprints
+		// agree — no real edit has occurred.
+		if bibChanged && currentBibHash == currentDBHash {
+			bibChanged = false
+		}
 
 		var status subsetStatus
 		switch {
