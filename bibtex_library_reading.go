@@ -171,6 +171,7 @@ func (l *TBibTeXLibrary) ReadKeyHintsFile() {
 }
 
 func (l *TBibTeXLibrary) ReadKeyNonDoublesFile() {
+	l.Progress("Loading key non-doubles")
 	loadKeyNonDoublesFromDb(l)
 	l.keyNonDoublesModified = false
 }

@@ -285,6 +285,20 @@ func maybeMigrateTableConstraints() {
 
 }
 
+// configureDatabasePragmas sets WAL journal mode and a busy timeout on the
+// current db connection. WAL allows a writer to proceed concurrently with open
+// read cursors (eliminating SQLITE_BUSY when setTableDirty is called from
+// within a forEachBibEntryKey iteration). The busy timeout adds automatic
+// retry for any residual lock contention.
+func configureDatabasePragmas() {
+	if _, err := db.Exec(`PRAGMA journal_mode = WAL`); err != nil {
+		dbInteraction.Warning("Could not enable WAL journal mode: %s", err)
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		dbInteraction.Warning("Could not set busy_timeout: %s", err)
+	}
+}
+
 func connectToDatabase() {
 	dbName := dbPath()
 
@@ -293,6 +307,7 @@ func connectToDatabase() {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", dbName, err.Error())
 	}
+	configureDatabasePragmas()
 
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
@@ -354,6 +369,7 @@ func reopenDb(path string) {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", path, err)
 	}
+	configureDatabasePragmas()
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
 	ensureNameMappingsTableExists()
@@ -1373,6 +1389,9 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 		return
 	}
 	defer rows.Close()
+
+	nonDoublesLoadingFromDb = true
+	defer func() { nonDoublesLoadingFromDb = false }()
 
 	for rows.Next() {
 		var key1, key2 string

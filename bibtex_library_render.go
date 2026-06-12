@@ -968,10 +968,10 @@ func (l *TBibTeXLibrary) renderAsTeX(key string) string {
 	}
 
 	if url := get("url"); url != "" {
-		dots = append(dots, `\url{`+url+`}`)
+		dots = append(dots, `\\ \url{`+url+`}`)
 	}
 	if doi := get("doi"); doi != "" {
-		dots = append(dots, `\doi{`+doi+`}`)
+		dots = append(dots, `\\ \doi{`+doi+`}`)
 	}
 
 	return joinDots(dots)

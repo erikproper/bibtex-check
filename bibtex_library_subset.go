@@ -15,6 +15,8 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,7 +28,7 @@ import (
 // --- Subset state file (.subset) ---
 
 // TSubsetEntry is one row of the .subset common-ancestor fingerprint file.
-// Both db_hash and bib_hash are bibContentFingerprint values.
+// db_hash is computed by subsetDBFingerprint; bib_hash by subsetBibFingerprint.
 // On a fresh export they are equal; they diverge when either side is edited.
 type TSubsetEntry struct {
 	CanonicalKey string // canonical library key
@@ -76,13 +78,44 @@ func writeSubsetState(statePath string, state TSubsetState) {
 	}
 }
 
-// dbHashForEntry computes the bibContentFingerprint for a library entry from the DB.
-func dbHashForEntry(canonicalKey string) string {
+// subsetDBFingerprint computes the fingerprint of a DB entry for subset change detection.
+// Excludes editor-noise fields (same as bibEditorNoiseFields) but includes all content
+// fields — including preferredalias and local-url — to match what the subset bib writes.
+func subsetDBFingerprint(canonicalKey string) string {
 	e := loadEntryFromDb(canonicalKey)
 	if e == nil {
 		return ""
 	}
-	return bibContentFingerprint(*e)
+	fields := make([]string, 0, len(e.Fields))
+	for f, v := range e.Fields {
+		if v != "" && !bibEditorNoiseFields.Contains(f) {
+			fields = append(fields, f+"="+v)
+		}
+	}
+	sort.Strings(fields)
+	h := md5.Sum([]byte(strings.Join(fields, ";")))
+	return hex.EncodeToString(h[:])
+}
+
+// subsetBibFingerprint computes the fingerprint of a parsed bib entry for subset change
+// detection. Normalizes the crossref field from the local output key to the canonical key
+// using outputToCanonical, making it comparable with subsetDBFingerprint.
+func subsetBibFingerprint(e TBibTeXEntry, outputToCanonical map[string]string) string {
+	fields := make([]string, 0, len(e.Fields))
+	for f, v := range e.Fields {
+		if v == "" || bibEditorNoiseFields.Contains(f) {
+			continue
+		}
+		if f == "crossref" {
+			if canonical, ok := outputToCanonical[v]; ok {
+				v = canonical
+			}
+		}
+		fields = append(fields, f+"="+v)
+	}
+	sort.Strings(fields)
+	h := md5.Sum([]byte(strings.Join(fields, ";")))
+	return hex.EncodeToString(h[:])
 }
 
 // --- Update helpers ---
@@ -105,15 +138,46 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 	}
 
 	// Interactive: add bib entry as a temp library entry, merge via field challenges.
+	// Strip bibEditorNoiseFields (including local-url) before display and merge so
+	// that file-derived fields never appear as challenges against the DB entry.
+	cleanEntry := TBibTeXEntry{Key: bibEntry.Key, Fields: make(map[string]string, len(bibEntry.Fields))}
+	for f, v := range bibEntry.Fields {
+		if !bibEditorNoiseFields.Contains(f) {
+			cleanEntry.Fields[f] = v
+		}
+	}
+
+	// Check for fields in the bib entry that are not allowed for the entry type.
+	// MergeEntries only challenges fields in BibTeXAllowedEntryFields[entryType],
+	// so any others would be silently discarded. Offer a bail-out before proceeding.
+	entryType := cleanEntry.Fields[EntryTypeField]
+	if allowedFields, known := BibTeXAllowedEntryFields[entryType]; known {
+		var illegalFields []string
+		for f := range cleanEntry.Fields {
+			if f != EntryTypeField && !allowedFields.Set().Contains(f) {
+				illegalFields = append(illegalFields, f)
+			}
+		}
+		if len(illegalFields) > 0 {
+			sort.Strings(illegalFields)
+			for _, f := range illegalFields {
+				fmt.Fprintf(os.Stderr, "WARNING: field %q is not allowed for entry type %q — it will be ignored during merge.\n", f, entryType)
+			}
+			if !Library.ConfirmAction("Proceed anyway (illegal fields will be dropped)") {
+				return canonicalKey
+			}
+		}
+	}
+
 	fmt.Fprintf(os.Stderr, "\nSubset bib entry (changed):\n")
-	printEntryFields(bibEntry.Fields[EntryTypeField], bibEntry.Key, bibEntry.Fields)
+	printEntryFields(cleanEntry.Fields[EntryTypeField], cleanEntry.Key, cleanEntry.Fields)
 	fmt.Fprintf(os.Stderr, "Library entry:\n")
 	fmt.Fprint(os.Stderr, Library.entryDisplayString(canonicalKey))
 
 	if !Library.ConfirmAction(QuestionSubsetBibChanged) {
 		return canonicalKey
 	}
-	tempKey := addHarvestEntry(&Library, bibEntry)
+	tempKey := addHarvestEntry(&Library, cleanEntry)
 	Library.MergeEntries(tempKey, canonicalKey)
 	return Library.MapEntryKey(canonicalKey)
 }
@@ -134,10 +198,9 @@ func deleteSubsetEntry(canonicalKey string, trusted bool) bool {
 
 // --- Top-level subset sync ---
 
-// runSubsetSync is called from doSync when mode == "subset". The library is already open.
-// Maintains the .subset fingerprint file next to the source bib.
-func runSubsetSync(cfg TBibGetConfig, baseDir string) {
-	sourcePath := cfg.FileName
+// resolveSubsetPaths derives the bib source path, keys base, and state file path from cfg.
+func resolveSubsetPaths(cfg TBibGetConfig, baseDir string) (sourcePath, keysBasePath, statePath string) {
+	sourcePath = cfg.FileName
 	if filepath.Ext(sourcePath) == "" {
 		sourcePath += BibFileExtension
 	}
@@ -148,8 +211,16 @@ func runSubsetSync(cfg TBibGetConfig, baseDir string) {
 			sourcePath = filepath.Join(cwd, sourcePath)
 		}
 	}
-	keysBasePath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath))
-	statePath := keysBasePath + SubsetStateExtension
+	keysBasePath = strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath))
+	statePath = keysBasePath + SubsetStateExtension
+	return
+}
+
+// runSubsetPhase1 is called from doSync phase 1: parses the subset bib and merges any
+// bib-side changes into the DB. Returns true when a fresh export was performed (the bib
+// was already written, so doSync must skip phase 2 for this file).
+func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
+	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
 
 	on := func(b bool) string {
 		if b {
@@ -164,10 +235,38 @@ func runSubsetSync(cfg TBibGetConfig, baseDir string) {
 
 	if len(existingState) == 0 {
 		runSubsetFreshExport(cfg, baseDir, sourcePath, keysBasePath, statePath)
-		return
+		return true
 	}
 
-	runSubsetUpdate(cfg, sourcePath, keysBasePath, statePath, existingState)
+	runSubsetUpSync(cfg, sourcePath, keysBasePath, statePath, existingState)
+	return false
+}
+
+// runSubsetPhase2 is called from doSync phase 2: re-exports the subset bib from the
+// (now fully updated) DB and writes the new .subset state file.
+func runSubsetPhase2(cfg TBibGetConfig, baseDir string) {
+	_, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
+
+	writtenPairs := writePullSync(cfg, baseDir)
+	if writtenPairs == nil {
+		return
+	}
+	rewriteKeysFile(keysBasePath, writtenPairs)
+
+	now := time.Now().Format(time.RFC3339)
+	newState := TSubsetState{}
+	for _, p := range writtenPairs {
+		h := subsetDBFingerprint(p.canonicalKey)
+		newState[p.canonicalKey] = TSubsetEntry{
+			CanonicalKey: p.canonicalKey,
+			OutputKey:    p.localKey,
+			DBHash:       h,
+			BibHash:      h,
+			Timestamp:    now,
+		}
+	}
+	writeSubsetState(statePath, newState)
+	Library.Progress("  Updated .subset state: %d entries", len(newState))
 }
 
 // runSubsetFreshExport handles the first-run case: no prior .subset file.
@@ -188,7 +287,7 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	now := time.Now().Format(time.RFC3339)
 	newState := TSubsetState{}
 	for _, p := range writtenPairs {
-		h := dbHashForEntry(p.canonicalKey)
+		h := subsetDBFingerprint(p.canonicalKey)
 		newState[p.canonicalKey] = TSubsetEntry{
 			CanonicalKey: p.canonicalKey,
 			OutputKey:    p.localKey,
@@ -201,13 +300,19 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	Library.Progress("  Written .subset state: %d entries", len(newState))
 }
 
-// runSubsetUpdate handles subsequent syncs: .subset file exists, detect three-way changes.
-func runSubsetUpdate(cfg TBibGetConfig, sourcePath, keysBasePath, statePath string, existingState TSubsetState) {
+// runSubsetUpSync handles phase 1 of subsequent syncs: parses the bib, detects three-way
+// changes, and merges bib-side edits into the DB. Does not write back the bib or state.
+func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath string, existingState TSubsetState) {
 	Library.Progress("  State  : %s (%d entries)", statePath, len(existingState))
 
-	// Parse the externally-edited bib.
-	bibEntries := Library.parseHarvestBib(sourcePath)
+	// Parse the externally-edited bib. Abort if the parse is incomplete — a partial
+	// result would cause healthy entries to be misclassified as deleted.
+	bibEntries, parseOK := Library.parseHarvestBib(sourcePath)
 	Library.Progress("  Source : %d entries parsed", len(bibEntries))
+	if !parseOK {
+		Library.Progress("  Subset sync aborted: fix the bib file and re-run.")
+		return
+	}
 
 	// Build reverse map: output key → state entry, for matching bib entries back to
 	// canonical library keys.
@@ -253,8 +358,8 @@ func runSubsetUpdate(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 
 		bibSeenCanonicals[canonical] = true
 		se := existingState[canonical]
-		currentBibHash := bibContentFingerprint(e)
-		currentDBHash := dbHashForEntry(canonical)
+		currentBibHash := subsetBibFingerprint(e, outputToCanonical)
+		currentDBHash := subsetDBFingerprint(canonical)
 
 		bibChanged := currentBibHash != se.BibHash
 		dbChanged := currentDBHash != se.DBHash
@@ -357,28 +462,4 @@ func runSubsetUpdate(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		}
 	}
 
-	// Re-export the bib (reflects all DB changes made above) and update the state.
-	writtenPairs := writePullSync(cfg, "")
-	if writtenPairs == nil {
-		return
-	}
-
-	// Persist the updated keys list.
-	rewriteKeysFile(keysBasePath, writtenPairs)
-
-	// Recompute state from the freshly written pairs.
-	now := time.Now().Format(time.RFC3339)
-	newState := TSubsetState{}
-	for _, p := range writtenPairs {
-		h := dbHashForEntry(p.canonicalKey)
-		newState[p.canonicalKey] = TSubsetEntry{
-			CanonicalKey: p.canonicalKey,
-			OutputKey:    p.localKey,
-			DBHash:       h,
-			BibHash:      h, // bib was just regenerated from DB
-			Timestamp:    now,
-		}
-	}
-	writeSubsetState(statePath, newState)
-	Library.Progress("  Updated .subset state: %d entries", len(newState))
 }

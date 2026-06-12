@@ -159,9 +159,9 @@ func countHarvestBibEntries(path string) int {
 
 // parseHarvestBib parses a bib file using the existing streaming parser with the
 // capturedHarvestEntries mechanism: entries are collected in memory and never written
-// to the main DB. Warns when the captured count is less than the anticipated count
-// (indicating the source file is malformed and parsing stopped early).
-func (l *TBibTeXLibrary) parseHarvestBib(path string) []TBibTeXEntry {
+// to the main DB. Returns the entries and true on a complete parse; false when fewer
+// entries were captured than anticipated (malformed source, parsing stopped early).
+func (l *TBibTeXLibrary) parseHarvestBib(path string) ([]TBibTeXEntry, bool) {
 	anticipated := countHarvestBibEntries(path)
 
 	entries := make([]TBibTeXEntry, 0, anticipated)
@@ -173,8 +173,9 @@ func (l *TBibTeXLibrary) parseHarvestBib(path string) []TBibTeXEntry {
 	if len(entries) < anticipated {
 		l.Warning("Parsed %d of %d anticipated entries from %s — source file may be malformed (parsing stopped early)",
 			len(entries), anticipated, path)
+		return entries, false
 	}
-	return entries
+	return entries, true
 }
 
 // --- Entry matching pipeline ---
@@ -496,9 +497,9 @@ func doHarvest(sourcePath string) {
 
 	if tmpPath != "" {
 		defer os.Remove(tmpPath)
-		entries = Library.parseHarvestBib(tmpPath)
+		entries, _ = Library.parseHarvestBib(tmpPath)
 	} else {
-		entries = Library.parseHarvestBib(sourcePath)
+		entries, _ = Library.parseHarvestBib(sourcePath)
 	}
 
 	if len(entries) == 0 {
@@ -550,7 +551,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		on(cmdTrustHints), on(cmdCollectKeys))
 	Library.Progress("  Source: %s", sourcePath)
 
-	entries := Library.parseHarvestBib(sourcePath)
+	entries, _ := Library.parseHarvestBib(sourcePath)
 	if len(entries) == 0 {
 		Library.Progress("  Source: no entries found")
 		return

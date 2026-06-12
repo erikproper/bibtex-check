@@ -882,6 +882,15 @@ func FormatBibTeXFieldAssignment(prefix, field, value string) string {
 	return prefix + "   " + field + " = {" + value + "},\n"
 }
 
+// resolvedLocalURL prepends localURLBase to a relative local-url value when the base is set.
+// Used by both EntryString and entryGetString so both renderers produce identical paths.
+func (l *TBibTeXLibrary) resolvedLocalURL(value string) string {
+	if l.localURLBase != "" && !strings.HasPrefix(value, "/") {
+		return l.localURLBase + value
+	}
+	return value
+}
+
 func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) string {
 	entry := loadEntryFromDb(key)
 	if !entry.Exists() {
@@ -901,10 +910,13 @@ func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) str
 
 	for _, field := range BibTeXAllowedEntryFields[entry.EntryType()].Set().ElementsSorted() {
 		if field != EntryTypeField {
+			if field == LocalURLField && l.localURLBase == "" {
+				continue // omit local-url in non-export contexts (display, field challenges)
+			}
 			if value := entry.FieldValue(field); value != "" {
 				mapped := l.MapEntryFieldValue(key, field, value)
-				if field == LocalURLField && l.localURLBase != "" && !strings.HasPrefix(mapped, "/") {
-					mapped = l.localURLBase + mapped
+				if field == LocalURLField {
+					mapped = l.resolvedLocalURL(mapped)
 				}
 				result += FormatBibTeXFieldAssignment(linePrefix, field, mapped)
 			}
@@ -1132,9 +1144,14 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 	// Here we only need to take care of the normalisation and processing of field values.
 	// This includes the checking if e.g. files exist, and adding dblp keys as aliases.
 
-	currentValue := l.EntryFieldValueity(key, field)
-	if currentValue != "" {
-		l.Warning("Entry %s already has a value for field %s of \"%s\"", key, field, currentValue)
+	// In capture mode (harvest/DBLP parse), ProcessRawEntryFieldValue writes to the
+	// in-memory capturedDBLPEntry and never touches the DB, so the live-DB check would
+	// produce false "already has a value" warnings for every existing entry.
+	if l.capturedDBLPEntry == nil {
+		currentValue := l.EntryFieldValueity(key, field)
+		if currentValue != "" {
+			l.Warning("Entry %s already has a value for field %s of \"%s\"", key, field, currentValue)
+		}
 	}
 
 	l.ProcessRawEntryFieldValue(key, field, value)
@@ -1240,6 +1257,10 @@ func (l *TBibTeXLibrary) resolveNonDoubleKey(rawKey string) string {
 	return ""
 }
 
+// nonDoublesLoadingFromDb suppresses write-through in AddNonDoubles while
+// loadKeyNonDoublesFromDb is populating in-memory state from an already-current DB.
+var nonDoublesLoadingFromDb bool
+
 func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
 	existing := l.NonDoubles[a]
 	if existing.Contains(b) {
@@ -1255,9 +1276,18 @@ func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
 	l.keyNonDoublesModified = true
 
 	// Write-through so Ctrl-C or step-limit exits cannot lose a dismissal decision.
-	upsert := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
-	db.Exec(upsert, a, b)
-	db.Exec(upsert, b, a)
+	// Writes all pairs in the transitive set (not just the directly-added pair) so
+	// the DB stays consistent with the in-memory union. Suppressed during DB load.
+	if !nonDoublesLoadingFromDb {
+		upsert := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
+		for k1 := range s.Elements() {
+			for k2 := range s.Elements() {
+				if k1 != k2 {
+					db.Exec(upsert, k1, k2)
+				}
+			}
+		}
+	}
 }
 
 func init() {

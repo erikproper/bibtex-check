@@ -222,6 +222,29 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 	}
 }
 
+// CheckKeyHintsConsistency moves misplaced canonical-key hints to key_oldies.
+// When both the hint and its target match the canonical key pattern (EP-...), the
+// row belongs in key_oldies (old alias → canonical), not key_hints (shorthand → canonical).
+// This can happen after restoring key hints from a backup that mixed the two tables.
+func (l *TBibTeXLibrary) CheckKeyHintsConsistency() {
+	var toMigrate []struct{ hint, key string }
+	for hint, key := range l.HintToKey {
+		if IsValidKey(hint) {
+			toMigrate = append(toMigrate, struct{ hint, key string }{hint, key})
+		}
+	}
+	if len(toMigrate) == 0 {
+		return
+	}
+	for _, m := range toMigrate {
+		l.AddKeyAlias(m.hint, m.key)
+		delete(l.HintToKey, m.hint)
+		l.keyHintsModified = true
+		db.Exec(`DELETE FROM key_hints WHERE hint = ?`, m.hint)
+	}
+	l.Progress("Migrated %d canonical-key hint(s) from key_hints to key_oldies", len(toMigrate))
+}
+
 // CheckDblpWaivedConsistency removes stale keys from DblpWaived: any key that is
 // now an alias (MapEntryKey(k) != k) or no longer exists as a library entry.
 func (l *TBibTeXLibrary) CheckDblpWaivedConsistency() {
@@ -1009,7 +1032,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 			l.Warning("Crossref entry type without a crossref %s", key)
 		}
 
-		if entryDBLP != "" && crossrefDBLP == "" {
+		if entryDBLP != "" && crossrefDBLP == "" && !strings.HasPrefix(entryDBLP, "homepages/") {
 			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossrefKey, key, entryDBLP)
 		}
 

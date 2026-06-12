@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -51,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.43"
+const AppVersion = "24.63"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -274,6 +276,7 @@ func openLibraryToUpdate() bool {
 
 	Library.ReportLibrarySize()
 	Library.CheckKeyOldiesConsistency()
+	Library.CheckKeyHintsConsistency()
 	Library.CheckDblpWaivedConsistency()
 	Library.CheckEntryFieldMappingWinners()
 	return true
@@ -366,6 +369,45 @@ func findLibraryEqualWithDblp(key string) bool {
 // that has no dblp field and interactively offers the user numbered candidates.
 // Pick 0 → all candidates are recorded as non-doubles with the library entry.
 // Pick N → AssociateDblpKey is called and the function returns true so the
+// dblpFilterYear returns the year to use for DBLP candidate year-range filtering
+// and whether it is valid. Falls back through: year field → crossref parent year →
+// year embedded in preferredalias.
+func dblpFilterYear(key string) (int, bool) {
+	yearStr := Library.EntryFieldValueity(key, "year")
+	if yearStr == "" {
+		if crossref := Library.EntryFieldValueity(key, "crossref"); crossref != "" {
+			yearStr = Library.EntryFieldValueity(crossref, "year")
+		}
+	}
+	if yearStr == "" {
+		alias := Library.EntryFieldValueity(key, PreferredAliasField)
+		if m := reYearInAlias.FindString(alias); m != "" {
+			yearStr = m
+		}
+	}
+	y, err := strconv.Atoi(yearStr)
+	return y, err == nil
+}
+
+// dblpCandidateInYearRange reports whether the DBLP candidate c falls within
+// the ±3-year window of the library entry's year (from dblpFilterYear).
+// When the library entry has no resolvable year, all candidates are accepted.
+func dblpCandidateInYearRange(c string, entryYear int, hasYear bool) bool {
+	if !hasYear {
+		return true
+	}
+	ce := dblpEntryFromFile(c)
+	if ce == nil {
+		return true
+	}
+	candYear, err := strconv.Atoi(ce.Fields["year"])
+	if err != nil {
+		return true
+	}
+	diff := candYear - entryYear
+	return diff > -3 && diff < 3
+}
+
 // caller can re-run DBLP checks for the now-associated entry.
 func maybeFindDBLPCandidates(key string) bool {
 	if Library.EntryFieldValueity(key, DBLPField) != "" {
@@ -378,38 +420,28 @@ func maybeFindDBLPCandidates(key string) bool {
 	}
 	allCandidates := readDblpTitleLinks(hash)
 	existing := Library.NonDoubles[key]
-	yearStr := Library.EntryFieldValueity(key, "year")
-	if yearStr == "" {
-		if crossref := Library.EntryFieldValueity(key, "crossref"); crossref != "" {
-			yearStr = Library.EntryFieldValueity(crossref, "year")
-		}
-	}
-	// Last resort: extract year from preferredalias (format <surname><YYYY><keyword>).
-	if yearStr == "" {
-		alias := Library.EntryFieldValueity(key, PreferredAliasField)
-		if m := reYearInAlias.FindString(alias); m != "" {
-			yearStr = m
-		}
-	}
-	entryYear, entryHasYear := strconv.Atoi(yearStr)
+	entryYear, hasYear := dblpFilterYear(key)
 	var candidates []string
+	var yearFiltered []string
 	for _, c := range allCandidates {
 		if existing.Contains(KeyForDBLP(c)) {
 			continue
 		}
-		if entryHasYear == nil {
-			if ce := dblpEntryFromFile(c); ce != nil {
-				if candYear, err := strconv.Atoi(ce.Fields["year"]); err == nil {
-					diff := candYear - entryYear
-					if diff < -3 || diff > 3 {
-						continue
-					}
-				}
-			}
+		if !dblpCandidateInYearRange(c, entryYear, hasYear) {
+			yearFiltered = append(yearFiltered, c)
+			continue
 		}
 		candidates = append(candidates, c)
 	}
 	if len(candidates) == 0 {
+		// All remaining candidates were rejected by the year filter. Auto-dismiss
+		// them into non-doubles so the homework count stops counting this entry.
+		for _, c := range yearFiltered {
+			Library.AddNonDoubles(key, KeyForDBLP(c))
+		}
+		if len(yearFiltered) > 0 {
+			flushWorkingDbToHome()
+		}
 		return false
 	}
 
@@ -555,7 +587,9 @@ func reportHomework() {
 		}
 	}
 
-	// Entries with at least one unresolved DBLP candidate.
+	// Entries with at least one unresolved DBLP candidate not already in non-doubles.
+	// Year-range filtering is skipped here (it requires disk I/O per candidate); the
+	// count may be a slight overestimate but avoids file reads on every run.
 	dblpCandidates := 0
 	forEachBibEntryKey(func(key string) bool {
 		if Library.EntryFieldValueity(key, DBLPField) != "" {
@@ -629,10 +663,38 @@ func doDefaultRun() {
 	if openLibraryToUpdate() {
 		Library.CheckEntries()
 		Library.ReadKeyNonDoublesFile()
+		Library.FixDblpHierarchy()
 		Library.CheckAlignTitles(false)
 		Library.CheckLoneProceedings()
-		Library.ReadURLsIgnoreFile()
-		Library.CheckAllURLs()
+		stepN := Reporting.StepSize()
+		questionCounter := 0
+		forEachBibEntryKey(func(key string) bool {
+			if Library.EntryFieldValueity(key, DBLPField) != "" {
+				return true
+			}
+			Library.ResetQuestionFlag()
+			found := findLibraryEqualWithDblp(key)
+			if !found {
+				found = maybeFindDBLPCandidates(key)
+			}
+			if found {
+				doAllChecks(Library.MapEntryKey(key))
+			}
+			if stepN > 0 && Library.QuestionWasAsked() {
+				questionCounter++
+				if questionCounter >= stepN {
+					if Library.AskContinueOrQuit() {
+						return false
+					}
+					questionCounter = 0
+				}
+			}
+			return true
+		})
+		if stepN > 0 {
+			Library.ReadURLsIgnoreFile()
+			Library.CheckAllURLs()
+		}
 		reportHomework()
 	}
 }
@@ -867,6 +929,147 @@ func doEntryKeyAlias(args []string, withMap bool) {
 			}
 		}
 	}
+}
+
+// loadBackupKeyOldies reads a backup key_oldies CSV (format: canonical;alias)
+// and returns a map from alias → canonical for use as a secondary key remap source.
+func loadBackupKeyOldies(path string) map[string]string {
+	m := map[string]string{}
+	if !FileExists(path) {
+		return m
+	}
+	processFile(path, func(line string) {
+		parts := strings.SplitN(line, csvDelimiter, 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			m[parts[1]] = parts[0] // alias → canonical
+		}
+	})
+	return m
+}
+
+// doRestoreKeyHints reads a backup key_hints CSV (format: key;hint per line),
+// maps each old entry key to the current canonical key via MapEntryKey/EntryExists,
+// and inserts surviving hints into key_hints. When the current library does not
+// recognise an old key, it also tries the backup key_oldies (auto-derived from
+// the same directory) to chain through an extra level of remapping.
+// Processes in batches of 10 000 rows for performance.
+func doRestoreKeyHints(csvPath string) {
+	if csvPath == "" {
+		fmt.Fprintln(os.Stderr, "-restore_key_hints requires -hints_csv <path>")
+		return
+	}
+	if !openLibraryToUpdate() {
+		return
+	}
+
+	// Load the backup key_oldies from the same directory as the hints CSV.
+	oldiesPath := filepath.Join(filepath.Dir(csvPath), "key_oldies.csv")
+	backupOldies := loadBackupKeyOldies(oldiesPath)
+	if len(backupOldies) > 0 {
+		Library.Progress("Loaded %d backup key_oldies entries from %s", len(backupOldies), oldiesPath)
+	}
+
+	f, err := os.Open(csvPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not open %s: %s\n", csvPath, err)
+		return
+	}
+	defer f.Close()
+
+	// resolveKey tries to find a current canonical key for oldKey.
+	// First via the live library's alias chain, then via the backup key_oldies.
+	resolveKey := func(oldKey string) string {
+		canon := Library.MapEntryKey(oldKey)
+		if Library.EntryExists(canon) {
+			return canon
+		}
+		if backupCanon, ok := backupOldies[oldKey]; ok {
+			canon = Library.MapEntryKey(backupCanon)
+			if Library.EntryExists(canon) {
+				return canon
+			}
+		}
+		return ""
+	}
+
+	// Load the current key_hints table so we can detect ambiguities before inserting.
+	Library.Progress("Loading current key_hints for ambiguity check")
+	currentHints := map[string]string{} // hint → current canonical key
+	if rows, err2 := db.Query(`SELECT hint, key FROM key_hints`); err2 == nil {
+		for rows.Next() {
+			var h, k string
+			if rows.Scan(&h, &k) == nil {
+				currentHints[h] = Library.MapEntryKey(k)
+			}
+		}
+		rows.Close()
+	}
+
+	insertOnly := `INSERT INTO key_hints (hint, key) VALUES (?, ?) ON CONFLICT(hint) DO NOTHING`
+
+	const batchSize = 10000
+	total, imported, skipped, remapped, ambiguous := 0, 0, 0, 0, 0
+
+	commitBatch := func(tx *sql.Tx) {
+		if err := tx.Commit(); err != nil {
+			dbInteraction.Warning("key_hints restore commit failed: %s", err)
+		}
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not begin transaction: %s\n", err)
+		return
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, csvDelimiter, 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			continue
+		}
+		oldKey, hint := parts[0], parts[1]
+		total++
+
+		canon := resolveKey(oldKey)
+		if canon == "" {
+			skipped++
+		} else if existing, conflict := currentHints[hint]; conflict && existing != canon {
+			Library.Warning("Ambiguous key hint during restore: %s already maps to %s, refusing %s", hint, existing, canon)
+			ambiguous++
+		} else {
+			if canon != oldKey {
+				remapped++
+			}
+			if !conflict {
+				currentHints[hint] = canon // track newly inserted hints for intra-batch conflict detection
+				tx.Exec(insertOnly, hint, canon)
+			}
+			imported++
+		}
+
+		if total%batchSize == 0 {
+			commitBatch(tx)
+			Library.Progress("Restoring key hints: %d processed, %d imported, %d skipped, %d remapped, %d ambiguous", total, imported, skipped, remapped, ambiguous)
+			tx, err = db.Begin()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Could not begin transaction: %s\n", err)
+				return
+			}
+		}
+	}
+	commitBatch(tx)
+
+	if err := scanner.Err(); err != nil {
+		Library.Warning("Error reading %s: %s", csvPath, err)
+	}
+
+	Library.Progress("Key hints restore complete: %d total, %d imported, %d skipped (no entry), %d remapped via key_oldies, %d refused (ambiguous)", total, imported, skipped, remapped, ambiguous)
 }
 
 func doRepairGarbledNames(repairBibPath string) {
@@ -1284,47 +1487,6 @@ func runScript() bool {
 	return true
 }
 
-// doExtendDblpCoverage visits every entry without a dblp field and tries to
-// associate a DBLP key in two stages:
-//  1. Look for a title-equal library entry that already has a dblp field and
-//     offer an interactive merge (inheriting the DBLP key via the merge).
-//  2. If no intra-library peer is found, search the external DBLP title index
-//     and offer the user numbered candidates.
-//
-// Only when a DBLP key is successfully associated does the function run a full
-// doAllChecks on the resulting entry to absorb any other equal entries.
-func doExtendDblpCoverage() {
-	if !openLibraryToUpdate() {
-		return
-	}
-	Library.ReadKeyNonDoublesFile()
-	Library.FixDblpHierarchy()
-	stepN := int(cmdStep)
-	questionCounter := 0
-	forEachBibEntryKey(func(key string) bool {
-		if Library.EntryFieldValueity(key, DBLPField) != "" {
-			return true
-		}
-		Library.ResetQuestionFlag()
-		found := findLibraryEqualWithDblp(key)
-		if !found {
-			found = maybeFindDBLPCandidates(key)
-		}
-		if found {
-			doAllChecks(Library.MapEntryKey(key))
-		}
-		if stepN > 0 && Library.QuestionWasAsked() {
-			questionCounter++
-			if questionCounter >= stepN {
-				if Library.AskContinueOrQuit() {
-					return false
-				}
-				questionCounter = 0
-			}
-		}
-		return true
-	})
-}
 
 func doAddKeyMapping(args []string) {
 	if openLibraryToUpdate() {
@@ -1450,7 +1612,6 @@ func main() {
 		cmdFixAllEntries      bool
 		cmdAddDblpEntry    bool
 		cmdAddDblpEntries  bool
-		cmdExtendDblpCoverage    bool
 		cmdDblpWatch             bool
 		cmdAddKeyMapping         bool
 		cmdMergeEntries       bool
@@ -1474,8 +1635,10 @@ func main() {
 		cmdUpdateDblp               bool
 		cmdRepairDblpManifest       bool
 		cmdRebuildDblpCrossrefIndex bool
-		cmdRepairGarbledNames bool
-		repairBibPath         string
+		cmdRepairGarbledNames   bool
+		repairBibPath           string
+		cmdRestoreKeyHints      bool
+		restoreKeyHintsPath     string
 		cmdDeleteGarbage            bool
 		cmdApplyScript              bool
 		// Unified table export/import (v23.0).
@@ -1501,7 +1664,6 @@ func main() {
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "upsert DBLP data for one or more given entries (library or DBLP keys)")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
-	flag.BoolVar(&cmdExtendDblpCoverage, "extend_dblp_coverage", false, "interactively associate DBLP keys with entries that have none")
 	flag.BoolVar(&cmdDblpWatch, "dblp_watch", false, "check watched persons/ORCIDs in watch.csv for missing publications")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mapping", false, "add key alias(es) to a canonical key: -add_key_mapping <alias>... <canonical>")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mappings", false, "alias for -add_key_mapping")
@@ -1528,6 +1690,8 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	flag.BoolVar(&cmdRebuildDblpCrossrefIndex, "rebuild_dblp_crossref_index", false, "rebuild DBLP crossref children index from stored data.json files")
 	flag.BoolVar(&cmdRepairGarbledNames, "repair_garbled_names", false, "clean bad name_mappings and repair garbled author/editor fields")
 	flag.StringVar(&repairBibPath, "repair_bib", "", "path to a reference .bib file for -repair_garbled_names (non-DBLP entries)")
+	flag.BoolVar(&cmdRestoreKeyHints, "restore_key_hints", false, "restore key hints from a backup CSV, remapping old keys via key_oldies")
+	flag.StringVar(&restoreKeyHintsPath, "hints_csv", "", "path to the backup key_hints.csv for -restore_key_hints")
 	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
 	flag.BoolVar(&cmdNoGarbageCleaning, "no_garbage_cleaning", false, "skip background cleanup of the DBLP trash folder")
 	flag.BoolVar(&cmdApplyScript, "do_entry_actions", false, "evaluate group assignment rules from <base>.scripts/entry_actions")
@@ -1726,6 +1890,9 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	case cmdFixAllEntries:
 		doFixAllEntries()
 
+	case cmdRestoreKeyHints:
+		doRestoreKeyHints(restoreKeyHintsPath)
+
 	case cmdRepairGarbledNames:
 		doRepairGarbledNames(repairBibPath)
 
@@ -1763,11 +1930,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 			doUpsertDblpEntryFromDblpKeys(dblpKeys)
 		}
 
-	case cmdExtendDblpCoverage:
-		requireNoDblpImport()
-		doExtendDblpCoverage()
-
-	case cmdDblpWatch:
+case cmdDblpWatch:
 		requireNoDblpImport()
 		doWatchDblp()
 
