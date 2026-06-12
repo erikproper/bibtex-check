@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -673,12 +674,39 @@ func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string)
 	// || l.EvidencedUnequalEntryFields(source, target, "crossref")
 }
 
-// entryDisplayString returns the entry's BibTeX string, appending the parent
-// entry when a crossref is present to give full context for merge decisions.
+// entryDisplayLines renders one entry for human display with aligned field names.
+// All stored fields are shown (sorted), field names padded to 16 chars.
+// local-url is suppressed: the DB stores a relative path that cannot be compared
+// fairly to the absolute path shown in the bib entry.
+func (l *TBibTeXLibrary) entryDisplayLines(key string) string {
+	entry := loadEntryFromDb(key)
+	if !entry.Exists() {
+		return ""
+	}
+	sorted := make([]string, 0, len(entry.Fields))
+	for f := range entry.Fields {
+		if f != EntryTypeField && f != LocalURLField {
+			sorted = append(sorted, f)
+		}
+	}
+	sort.Strings(sorted)
+	result := "  @" + entry.EntryType() + "{" + key + ",\n"
+	for _, field := range sorted {
+		if value := entry.Fields[field]; value != "" {
+			mapped := l.MapEntryFieldValue(key, field, value)
+			result += fmt.Sprintf("    %-16s = {%s},\n", field, mapped)
+		}
+	}
+	result += "  }\n"
+	return result
+}
+
+// entryDisplayString returns the entry's BibTeX string with aligned field names,
+// appending the parent entry when a crossref is present.
 func (l *TBibTeXLibrary) entryDisplayString(key string) string {
-	s := l.EntryString(key, "", "  ")
+	s := l.entryDisplayLines(key)
 	if crossref := l.EntryFieldValueity(key, "crossref"); crossref != "" {
-		if parentStr := l.EntryString(crossref, "", "  "); parentStr != "" {
+		if parentStr := l.entryDisplayLines(crossref); parentStr != "" {
 			s += "  Parent entry:\n" + parentStr
 		}
 	}
