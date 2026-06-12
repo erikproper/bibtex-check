@@ -374,17 +374,35 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 			canonical = Library.harvestKeyMatch(e)
 		}
 
+		// The canonical from state may have become an alias since the last sync
+		// (key added to key_oldies). Resolve to the current canonical so the entry
+		// is not misclassified as new/deleted.
+		stateKey := canonical
+		if canonical != "" && !Library.EntryExists(canonical) {
+			if resolved := Library.MapEntryKey(canonical); Library.EntryExists(resolved) {
+				canonical = resolved
+			}
+		}
+
 		if canonical == "" || !Library.EntryExists(canonical) {
 			toProcess = append(toProcess, categorizedEntry{bibEntry: e, status: statusNew})
 			continue
 		}
 
+		// Mark the original state key as seen so it isn't treated as deleted.
+		if stateKey != "" {
+			bibSeenCanonicals[stateKey] = true
+		}
 		bibSeenCanonicals[canonical] = true
 
 		// Entry is a known library entry but not yet in the subset state — it was
 		// auto-included as a crossref parent, not edited by the user. Accept silently;
 		// phase 2 will write it to the bib and add it to the state.
-		if _, inState := existingState[canonical]; !inState {
+		se, inState := existingState[stateKey]
+		if !inState {
+			se, inState = existingState[canonical]
+		}
+		if !inState {
 			toProcess = append(toProcess, categorizedEntry{
 				bibEntry:     e,
 				canonicalKey: canonical,
@@ -392,8 +410,6 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 			})
 			continue
 		}
-
-		se := existingState[canonical]
 		currentBibHash := subsetBibFingerprint(e, outputToCanonical)
 		currentDBHash := subsetDBFingerprint(canonical)
 

@@ -629,24 +629,28 @@ func (l *TBibTeXLibrary) entryGetString(
 		}
 	}
 
+	isSubset := cfg.Mode == "subset"
+
 	for _, field := range BibTeXAllowedEntryFields[entry.EntryType()].Set().ElementsSorted() {
-		if bibGetNonExportFields.Contains(field) {
-			continue
-		}
 		if field == EntryTypeField {
 			continue
 		}
-		if (field == LocalURLField || field == PreferredAliasField) && cfg.Mode != "subset" {
-			continue
-		}
-		if !cfg.IncludeDOI && field == "doi" {
-			continue
-		}
-		if !cfg.IncludeISBN && (field == "isbn" || field == "issn") {
-			continue
-		}
-		if !cfg.IncludeDblp && field == DBLPField {
-			continue
+		if !isSubset {
+			if bibGetNonExportFields.Contains(field) {
+				continue
+			}
+			if field == LocalURLField || field == PreferredAliasField {
+				continue
+			}
+			if !cfg.IncludeDOI && field == "doi" {
+				continue
+			}
+			if !cfg.IncludeISBN && (field == "isbn" || field == "issn") {
+				continue
+			}
+			if !cfg.IncludeDblp && field == DBLPField {
+				continue
+			}
 		}
 
 		value := entry.FieldValue(field)
@@ -655,7 +659,7 @@ func (l *TBibTeXLibrary) entryGetString(
 		}
 
 		// URL handling: when include_url is false, skip url unless urldate is present.
-		if field == "url" && !cfg.IncludeURL {
+		if !isSubset && field == "url" && !cfg.IncludeURL {
 			if entry.FieldValue("urldate") == "" {
 				continue
 			}
