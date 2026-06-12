@@ -135,6 +135,45 @@ func subsetBibFingerprint(e TBibTeXEntry, outputToCanonical map[string]string) s
 	return hex.EncodeToString(h[:])
 }
 
+// bibReflectsDB returns true when the parsed bib entry's content matches what
+// entryGetString would produce from the current DB — i.e. the bib was faithfully
+// generated from the DB and no user edit has occurred. Used to suppress "bib changed"
+// prompts caused by stale state fingerprints (e.g. after a bib output format change).
+//
+// The DB side applies MapEntryFieldValue (same mapping entryGetString uses) so that
+// both sides are in the same normalised form.
+func bibReflectsDB(bibEntry TBibTeXEntry, canonicalKey string, outputToCanonical map[string]string) bool {
+	dbEntry := loadEntryFromDb(canonicalKey)
+	if dbEntry == nil {
+		return false
+	}
+
+	bibFields := make([]string, 0, len(bibEntry.Fields))
+	for f, v := range bibEntry.Fields {
+		if v == "" || subsetFingerprintExclude.Set().Contains(f) {
+			continue
+		}
+		if f == "crossref" {
+			if canon, ok := outputToCanonical[v]; ok {
+				v = canon
+			}
+		}
+		bibFields = append(bibFields, f+"="+v)
+	}
+	sort.Strings(bibFields)
+
+	dbFields := make([]string, 0, len(dbEntry.Fields))
+	for f, v := range dbEntry.Fields {
+		if v == "" || subsetFingerprintExclude.Set().Contains(f) {
+			continue
+		}
+		dbFields = append(dbFields, f+"="+Library.MapEntryFieldValue(canonicalKey, f, v))
+	}
+	sort.Strings(dbFields)
+
+	return strings.Join(bibFields, ";") == strings.Join(dbFields, ";")
+}
+
 // --- Update helpers ---
 
 // applySubsetBibToDb merges bibEntry fields into the canonical library entry, either
@@ -426,10 +465,10 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		dbChanged := currentDBHash != se.DBHash
 
 		// When the stored state is stale (e.g. bib output format changed between
-		// syncs), the fingerprints may differ even though bib and DB have identical
-		// content right now. Downgrade to unchanged when the two fresh fingerprints
-		// agree — no real edit has occurred.
-		if bibChanged && currentBibHash == currentDBHash {
+		// syncs), bibChanged may fire even though the bib accurately reflects the
+		// current DB. Downgrade to unchanged when the bib content matches what
+		// entryGetString would produce from the DB right now.
+		if bibChanged && bibReflectsDB(e, canonical, outputToCanonical) {
 			bibChanged = false
 		}
 
