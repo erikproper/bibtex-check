@@ -951,16 +951,19 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 
 	md5Path := outPath + ".md5"
 
-	// If both the bib file and its MD5 record exist, check for manual edits.
-	if existingData, errRead := os.ReadFile(outPath); errRead == nil {
-		if storedMD5bytes, errMD5 := os.ReadFile(md5Path); errMD5 == nil {
-			storedMD5 := strings.TrimSpace(string(storedMD5bytes))
-			hExisting := md5.New()
-			hExisting.Write(existingData)
-			existingMD5 := hex.EncodeToString(hExisting.Sum(nil))
-			if existingMD5 != storedMD5 {
-				if !Reporting.WarningYesNoQuestion(QuestionGetBibOverwrite, WarningGetBibFileModified, outPath) {
-					return nil
+	// For pull mode: warn if the bib was manually edited since last generation.
+	// Subset mode owns its bib and always overwrites — MD5 check skipped.
+	if cfg.Mode != "subset" {
+		if existingData, errRead := os.ReadFile(outPath); errRead == nil {
+			if storedMD5bytes, errMD5 := os.ReadFile(md5Path); errMD5 == nil {
+				storedMD5 := strings.TrimSpace(string(storedMD5bytes))
+				hExisting := md5.New()
+				hExisting.Write(existingData)
+				existingMD5 := hex.EncodeToString(hExisting.Sum(nil))
+				if existingMD5 != storedMD5 {
+					if !Reporting.WarningYesNoQuestion(QuestionGetBibOverwrite, WarningGetBibFileModified, outPath) {
+						return nil
+					}
 				}
 			}
 		}
@@ -982,12 +985,23 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		fmt.Fprintln(os.Stderr, "Cannot write MD5 file:", err)
 	}
 
-	// Return all written (canonicalKey, outputKey) pairs for subset-sync fingerprinting.
+	// Return only pairs that were actually written (entry exists in library).
+	// Entries deleted during subset phase 1 must not appear in the keys file or state.
 	allPairs := make([]TBibGetPair, 0, len(pairs)+len(extraPairs)+len(autoParents))
-	allPairs = append(allPairs, pairs...)
-	allPairs = append(allPairs, extraPairs...)
+	for _, p := range pairs {
+		if bibEntryExists(p.canonicalKey) {
+			allPairs = append(allPairs, p)
+		}
+	}
+	for _, p := range extraPairs {
+		if bibEntryExists(p.canonicalKey) {
+			allPairs = append(allPairs, p)
+		}
+	}
 	for _, ap := range autoParents {
-		allPairs = append(allPairs, TBibGetPair{ap.localKey, ap.canonicalKey})
+		if bibEntryExists(ap.canonicalKey) {
+			allPairs = append(allPairs, TBibGetPair{ap.localKey, ap.canonicalKey})
+		}
 	}
 	return allPairs
 }

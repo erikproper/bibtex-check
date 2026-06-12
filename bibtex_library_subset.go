@@ -242,10 +242,45 @@ func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
 	return false
 }
 
+// buildSubsetState constructs the .subset state after a bib write. It re-parses the
+// written bib to compute BibHash from the actual file content, so field exclusions
+// in entryGetString (dblp, repositum, etc.) don't cause spurious bib-changed detections
+// on subsequent syncs.
+func buildSubsetState(writtenPairs []TBibGetPair, sourcePath string) TSubsetState {
+	outputToCanonical := map[string]string{}
+	for _, p := range writtenPairs {
+		outputToCanonical[p.localKey] = p.canonicalKey
+	}
+
+	bibEntries, _ := Library.parseHarvestBib(sourcePath)
+	bibHashByLocalKey := map[string]string{}
+	for _, e := range bibEntries {
+		bibHashByLocalKey[e.Key] = subsetBibFingerprint(e, outputToCanonical)
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	state := TSubsetState{}
+	for _, p := range writtenPairs {
+		dbHash := subsetDBFingerprint(p.canonicalKey)
+		bibHash := bibHashByLocalKey[p.localKey]
+		if bibHash == "" {
+			bibHash = dbHash
+		}
+		state[p.canonicalKey] = TSubsetEntry{
+			CanonicalKey: p.canonicalKey,
+			OutputKey:    p.localKey,
+			DBHash:       dbHash,
+			BibHash:      bibHash,
+			Timestamp:    now,
+		}
+	}
+	return state
+}
+
 // runSubsetPhase2 is called from doSync phase 2: re-exports the subset bib from the
 // (now fully updated) DB and writes the new .subset state file.
 func runSubsetPhase2(cfg TBibGetConfig, baseDir string) {
-	_, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
+	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
 
 	writtenPairs := writePullSync(cfg, baseDir)
 	if writtenPairs == nil {
@@ -253,18 +288,7 @@ func runSubsetPhase2(cfg TBibGetConfig, baseDir string) {
 	}
 	rewriteKeysFile(keysBasePath, writtenPairs)
 
-	now := time.Now().Format(time.RFC3339)
-	newState := TSubsetState{}
-	for _, p := range writtenPairs {
-		h := subsetDBFingerprint(p.canonicalKey)
-		newState[p.canonicalKey] = TSubsetEntry{
-			CanonicalKey: p.canonicalKey,
-			OutputKey:    p.localKey,
-			DBHash:       h,
-			BibHash:      h,
-			Timestamp:    now,
-		}
-	}
+	newState := buildSubsetState(writtenPairs, sourcePath)
 	writeSubsetState(statePath, newState)
 	Library.Progress("  Updated .subset state: %d entries", len(newState))
 }
@@ -283,19 +307,8 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	rewriteKeysFile(keysBasePath, writtenPairs)
 	Library.Progress("  Written .keys: %d entries", len(writtenPairs))
 
-	// Build initial state: bib_hash == db_hash on a clean export.
-	now := time.Now().Format(time.RFC3339)
-	newState := TSubsetState{}
-	for _, p := range writtenPairs {
-		h := subsetDBFingerprint(p.canonicalKey)
-		newState[p.canonicalKey] = TSubsetEntry{
-			CanonicalKey: p.canonicalKey,
-			OutputKey:    p.localKey,
-			DBHash:       h,
-			BibHash:      h,
-			Timestamp:    now,
-		}
-	}
+	// Build initial state by re-parsing the written bib for accurate BibHash values.
+	newState := buildSubsetState(writtenPairs, sourcePath)
 	writeSubsetState(statePath, newState)
 	Library.Progress("  Written .subset state: %d entries", len(newState))
 }
