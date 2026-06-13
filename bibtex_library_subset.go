@@ -176,8 +176,34 @@ func bibReflectsDB(bibEntry TBibTeXEntry, canonicalKey string, outputToCanonical
 
 // --- Update helpers ---
 
+// subsetFieldsToClear returns the sorted list of fields that are non-empty in the DB
+// entry but absent or empty in the bib entry. These are fields the user intentionally
+// removed from the bib; they should be cleared from the DB as part of the merge.
+// Noise fields and structural fields (EntryType, LocalURL) are excluded.
+func subsetFieldsToClear(cleanFields map[string]string, dbEntry *TBibTeXEntry) []string {
+	var clear []string
+	for field, dbValue := range dbEntry.Fields {
+		if dbValue == "" {
+			continue
+		}
+		if field == EntryTypeField || field == LocalURLField {
+			continue
+		}
+		if bibEditorNoiseFields.Contains(field) {
+			continue
+		}
+		if cleanFields[field] == "" {
+			clear = append(clear, field)
+		}
+	}
+	sort.Strings(clear)
+	return clear
+}
+
 // applySubsetBibToDb merges bibEntry fields into the canonical library entry, either
 // interactively (via MergeEntries field challenges) or silently (trusted_subset).
+// Fields absent from the bib but present in the DB are cleared — they were intentionally
+// removed by the user.
 // Returns the final canonical key after the merge.
 func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool) string {
 	if trusted {
@@ -185,10 +211,15 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 		if dbEntry == nil {
 			return canonicalKey
 		}
+		cleanFields := map[string]string{}
 		for field, value := range bibEntry.Fields {
 			if !bibEditorNoiseFields.Contains(field) && field != EntryTypeField {
 				Library.setEntryField(dbEntry, field, value)
+				cleanFields[field] = value
 			}
+		}
+		for _, field := range subsetFieldsToClear(cleanFields, dbEntry) {
+			Library.deleteEntryField(dbEntry, field)
 		}
 		return canonicalKey
 	}
@@ -202,6 +233,8 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 			cleanEntry.Fields[f] = v
 		}
 	}
+
+	dbEntry := loadEntryFromDb(canonicalKey)
 
 	// Check for fields in the bib entry that are not allowed for the entry type.
 	// MergeEntries only challenges fields in BibTeXAllowedEntryFields[entryType],
@@ -225,17 +258,29 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 		}
 	}
 
+	toClear := subsetFieldsToClear(cleanEntry.Fields, dbEntry)
+
 	fmt.Fprintf(os.Stderr, "\nSubset bib entry (changed):\n")
 	printEntryFields(cleanEntry.Fields[EntryTypeField], cleanEntry.Key, cleanEntry.Fields)
 	fmt.Fprintf(os.Stderr, "Library entry:\n")
 	fmt.Fprint(os.Stderr, Library.entryDisplayString(canonicalKey))
+	if len(toClear) > 0 {
+		fmt.Fprintf(os.Stderr, "Fields to clear: %s\n", strings.Join(toClear, ", "))
+	}
 
 	if !Library.ConfirmAction(QuestionSubsetBibChanged) {
 		return canonicalKey
 	}
 	tempKey := addHarvestEntry(&Library, cleanEntry)
 	Library.MergeEntries(tempKey, canonicalKey)
-	return Library.MapEntryKey(canonicalKey)
+	finalKey := Library.MapEntryKey(canonicalKey)
+	if len(toClear) > 0 && dbEntry != nil {
+		for _, field := range toClear {
+			Library.Progress("Clearing field %q from %s (removed from subset bib)", field, finalKey)
+			deleteBibEntryField(finalKey, field)
+		}
+	}
+	return finalKey
 }
 
 // deleteSubsetEntry removes a library entry that was deleted from the subset bib.
