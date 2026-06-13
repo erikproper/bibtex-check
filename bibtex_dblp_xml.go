@@ -30,6 +30,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -282,6 +283,58 @@ func pct(n, total int) int {
 		return 0
 	}
 	return 100 * n / total
+}
+
+// doRebuildDblpTitleIndex walks every data.json in the file store and rebuilds the
+// title index in place. Much faster than a full XML re-import; no XML file required.
+// Useful when the title index is incomplete (e.g. after entries were fetched on-demand
+// without being indexed, or after -repair_dblp_manifest cleared the index).
+func doRebuildDblpTitleIndex() {
+	entriesRoot := dblpFolder() + "entries/"
+
+	// Trash the existing title index so we start clean.
+	titlesDir := dblpFolder() + "titles/"
+	if _, err := os.Stat(titlesDir); err == nil {
+		if err := moveToDblpTrash(titlesDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not move old title index to trash: %s\n", err)
+		}
+	}
+
+	var count, errors int
+	start := time.Now()
+
+	err := filepath.WalkDir(entriesRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Name() != "data.json" {
+			return err
+		}
+		// Derive the DBLP key from the path: strip <entriesRoot> prefix and "/data.json" suffix.
+		rel := strings.TrimPrefix(path, entriesRoot)
+		dblpKey := strings.TrimSuffix(rel, "/data.json")
+
+		je := readDblpJSONEntry(dblpKey)
+		if je == nil {
+			errors++
+			return nil
+		}
+		for _, fieldName := range []string{"title", "booktitle"} {
+			if je.Fields != nil {
+				if value := je.Fields[fieldName]; value != "" {
+					if hash := dblpTitleHash(value); hash != "" {
+						writeDblpTitleLink(hash, dblpKey) //nolint:errcheck
+					}
+				}
+			}
+		}
+		count++
+		return nil
+	})
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error walking file store: %s\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Title index rebuilt from %d entries (%d unreadable) in %.0fs.\n",
+		count, errors, time.Since(start).Seconds())
 }
 
 // doRepairDblpManifest rebuilds the entries.manifest from a DBLP XML export and

@@ -1670,6 +1670,7 @@ func main() {
 		cmdUpdateDblp               bool
 		cmdRepairDblpManifest       bool
 		cmdRebuildDblpCrossrefIndex bool
+		cmdRebuildDblpTitleIndex    bool
 		cmdRepairGarbledNames   bool
 		repairBibPath           string
 		cmdRestoreKeyHints      bool
@@ -1723,6 +1724,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
 	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
 	flag.BoolVar(&cmdRebuildDblpCrossrefIndex, "rebuild_dblp_crossref_index", false, "rebuild DBLP crossref children index from stored data.json files")
+	flag.BoolVar(&cmdRebuildDblpTitleIndex, "rebuild_dblp_title_index", false, "rebuild DBLP title index from stored data.json files (no XML needed)")
 	flag.BoolVar(&cmdRepairGarbledNames, "repair_garbled_names", false, "clean bad name_mappings and repair garbled author/editor fields")
 	flag.StringVar(&repairBibPath, "repair_bib", "", "path to a reference .bib file for -repair_garbled_names (non-DBLP entries)")
 	flag.BoolVar(&cmdRestoreKeyHints, "restore_key_hints", false, "restore key hints from a backup CSV, remapping old keys via key_oldies")
@@ -1837,6 +1839,11 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 
 	if cmdRebuildDblpCrossrefIndex {
 		doRebuildDblpCrossrefIndex()
+		os.Exit(0)
+	}
+
+	if cmdRebuildDblpTitleIndex {
+		doRebuildDblpTitleIndex()
 		os.Exit(0)
 	}
 
