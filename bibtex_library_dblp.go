@@ -140,21 +140,24 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 		}
 		if rawCrossref != "" {
 			if parent := dblpEntryFromFile(rawCrossref); parent != nil && parent.Fields[EntryTypeField] == "proceedings" {
-				l.Progress("DBLP: corrected article→inproceedings for %s (parent: %s)", key, rawCrossref)
 				dblpEntry.Fields[EntryTypeField] = "inproceedings"
-				delete(dblpEntry.Fields, "journal")
-				if parent.Fields["volume"] != "" {
-					delete(dblpEntry.Fields, "volume")
+				// Strip all inheritable fields from the in-memory DBLP entry — the child
+				// must inherit these from the proceedings parent, not carry its own values.
+				// Also drop journal, which is article-only and invalid for inproceedings.
+				for field := range BibTeXMustInheritFields.Elements() {
+					delete(dblpEntry.Fields, field)
 				}
+				delete(dblpEntry.Fields, "journal")
 				// Pre-set the library entry so MergeInMemoryDBLPEntry sees no conflicts
 				// and does not prompt — this is a rule-based structural correction, not a
-				// content dispute requiring user input.
+				// content dispute requiring user input. Only runs once (on the repair pass).
 				if l.EntryFieldValueity(key, EntryTypeField) == "article" {
+					l.Progress("DBLP: corrected article→inproceedings for %s (parent: %s)", key, rawCrossref)
 					l.SetEntryFieldValue(key, EntryTypeField, "inproceedings")
-					deleteBibEntryField(key, "journal")
-					if parent.Fields["volume"] != "" {
-						deleteBibEntryField(key, "volume")
+					for field := range BibTeXMustInheritFields.Elements() {
+						deleteBibEntryField(key, field)
 					}
+					deleteBibEntryField(key, "journal")
 				}
 			}
 		}
