@@ -128,6 +128,28 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 		}
 	}
 
+	// DBLP occasionally uses @article + crossref-to-proceedings to model journal articles
+	// published within an LNCS sub-series (e.g. TAOSD). This is a DBLP data hack that does
+	// not map to valid BibTeX: articles should not have crossrefs to proceedings. Correct it:
+	// convert the child to @inproceedings, drop the journal field, and drop the child's volume
+	// when the parent already carries the volume (so it is not inherited redundantly).
+	if dblpEntry.Fields[EntryTypeField] == "article" {
+		rawCrossref := l.DblpParentOverrides[DBLPKey]
+		if rawCrossref == "" {
+			rawCrossref = dblpEntry.Fields["crossref"]
+		}
+		if rawCrossref != "" {
+			if parent := dblpEntryFromFile(rawCrossref); parent != nil && parent.Fields[EntryTypeField] == "proceedings" {
+				l.Progress("DBLP: corrected article→inproceedings for %s (parent: %s)", key, rawCrossref)
+				dblpEntry.Fields[EntryTypeField] = "inproceedings"
+				delete(dblpEntry.Fields, "journal")
+				if parent.Fields["volume"] != "" {
+					delete(dblpEntry.Fields, "volume")
+				}
+			}
+		}
+	}
+
 	// Only entry types in BibTeXCrossreffer (inproceedings, incollection, inbook, misc)
 	// participate in the crossref hierarchy. For all others (e.g. article), DBLP may
 	// carry an internal crossref to its journal volume, but that has no meaning in the
