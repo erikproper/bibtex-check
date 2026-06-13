@@ -143,9 +143,10 @@ func (l *TBibTeXLibrary) ScanOrphanPDFs() {
 			continue
 		}
 		fullPath := filesDir + e.Name()
-		l.Warning("Orphaned PDF (no library entry): %s — moving to trash", e.Name())
+		trashName := l.BaseName + ".trash"
+		l.Warning("Orphaned PDF (no library entry): %s — moving to %s", e.Name(), trashName)
 		if !l.moveToLibraryTrash(fullPath) {
-			l.Warning("Could not move %s to library trash", e.Name())
+			l.Warning("Could not move %s to %s", e.Name(), trashName)
 		} else {
 			moved++
 		}

@@ -240,8 +240,8 @@ func rewriteKeysFile(fileName string, pairs []TBibGetPair, keyMapping bool) {
 
 // TSelectStatement is one parsed statement from a .select file.
 type TSelectStatement struct {
-	Kind   string   // "group", "groups", "name", "orcid"
-	Values []string // one or more quoted values
+	Kind   string   // "group", "groups", "name", "orcid", "has_pdf", "only_these"
+	Values []string // one or more quoted values (empty for bare-keyword operators)
 }
 
 // readSelectFile parses <fileName>.select. Each statement is:
@@ -249,6 +249,8 @@ type TSelectStatement struct {
 //   groups  "name1" "name2";
 //   name    "Canonical Author Name";
 //   orcid   "0000-0001-2345-6789";
+//   has_pdf;          (bare keyword — no values)
+//   only_these;       (bare keyword — no values)
 // Blank lines and lines starting with # are ignored.
 // Returns (statements, fileExists).
 func readSelectFile(fileName string) ([]TSelectStatement, bool) {
@@ -265,7 +267,13 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 		}
 		idx := strings.IndexByte(line, '"')
 		if idx < 0 {
-			badLines = append(badLines, line)
+			// Bare-keyword operators (no quoted values).
+			switch line {
+			case "has_pdf", "only_these":
+				stmts = append(stmts, TSelectStatement{line, nil})
+			default:
+				badLines = append(badLines, line)
+			}
 			return
 		}
 		kind := strings.TrimSpace(line[:idx])
@@ -301,6 +309,9 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 
 // expandSelectStmts resolves .select statements into a set of canonical library keys,
 // excluding any keys already present in the explicit keys set.
+// only_these and has_pdf (bare-keyword operators) are handled as follows:
+//   - only_these: no-op here; caller uses selectOnlyThese to detect it.
+//   - has_pdf: adds all library entries that have a non-empty local-url field.
 func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool) []string {
 	seen := map[string]bool{}
 	var extra []string
@@ -346,9 +357,28 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 					}
 				}
 			}
+		case "has_pdf":
+			forEachBibEntryKey(func(key string) bool {
+				entry := Library.buildEntry(key)
+				if entry.FieldValue(LocalURLField) != "" {
+					add(Library.MapEntryKey(key))
+				}
+				return true
+			})
 		}
 	}
 	return extra
+}
+
+// selectOnlyThese reports whether the select statements include the only_these operator,
+// meaning the select file defines the complete output set (the .keys file is ignored).
+func selectOnlyThese(stmts []TSelectStatement) bool {
+	for _, s := range stmts {
+		if s.Kind == "only_these" {
+			return true
+		}
+	}
+	return false
 }
 
 // TShortenMappings maps field name to an ordered list of (from, to) pairs.
@@ -784,6 +814,14 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 
 	// Expand .select statements into additional canonical keys.
 	selectStmts, selectFileFound := readSelectFile(mapFilePath)
+
+	// When only_these is present, the select file defines the complete output set.
+	// The .keys file is ignored — clear pairs so all entries come from the select expansion.
+	if selectOnlyThese(selectStmts) {
+		pairs = nil
+		keysModified = false
+	}
+
 	explicitKeys := map[string]bool{}
 	for _, p := range pairs {
 		explicitKeys[p.canonicalKey] = true
