@@ -101,6 +101,23 @@ func pdfHasContent(path string) (hasContent, determined bool) {
 	return len(strings.TrimSpace(string(ocrOut))) > 0, true
 }
 
+// LoadPDFFiles scans FilesRoot+FilesFolder and populates PDFFiles with the key stem of
+// every <key>.pdf file found. Called once at library open time; must be refreshed whenever
+// files are added or removed during a run (e.g. after ScanOrphanPDFs moves a file).
+func (l *TBibTeXLibrary) LoadPDFFiles() {
+	l.PDFFiles = map[string]bool{}
+	entries, err := os.ReadDir(l.FilesRoot + l.FilesFolder)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".pdf") {
+			continue
+		}
+		l.PDFFiles[strings.TrimSuffix(e.Name(), ".pdf")] = true
+	}
+}
+
 // libraryTrashFolder returns the path to the library-local trash folder
 // (<FilesRoot><BaseName>.trash/), creating it if necessary.
 func (l *TBibTeXLibrary) libraryTrashFolder() string {
@@ -124,35 +141,37 @@ func (l *TBibTeXLibrary) moveToLibraryTrash(path string) bool {
 	return os.Rename(path, dest) == nil
 }
 
-// ScanOrphanPDFs does a quick scan of the library files folder and moves any
-// PDF file whose key has no matching library entry to the library trash folder.
-// Intended for the normal check run (lightweight — no PDF parsing).
+// ScanOrphanPDFs does a quick scan of the library files folder.
+// Any <key>.pdf file whose key has no matching library entry is moved to library trash.
+// After the scan, PDFFiles is refreshed from disk.
+// Intended for the normal check run and sync writes (lightweight — no PDF parsing).
 func (l *TBibTeXLibrary) ScanOrphanPDFs() {
 	filesDir := l.FilesRoot + l.FilesFolder
 	entries, err := os.ReadDir(filesDir)
 	if err != nil {
 		return
 	}
+	trashName := l.BaseName + ".trash"
 	moved := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".pdf") {
 			continue
 		}
 		key := strings.TrimSuffix(e.Name(), ".pdf")
-		if l.EntryExists(key) {
-			continue
-		}
 		fullPath := filesDir + e.Name()
-		trashName := l.BaseName + ".trash"
-		l.Warning("Orphaned PDF (no library entry): %s — moving to %s", e.Name(), trashName)
-		if !l.moveToLibraryTrash(fullPath) {
-			l.Warning("Could not move %s to %s", e.Name(), trashName)
-		} else {
-			moved++
+
+		if !l.EntryExists(key) {
+			l.Warning("Orphaned PDF (no library entry): %s — moving to %s", e.Name(), trashName)
+			if !l.moveToLibraryTrash(fullPath) {
+				l.Warning("Could not move %s to %s", e.Name(), trashName)
+			} else {
+				moved++
+			}
 		}
 	}
 	if moved > 0 {
 		l.Progress("Orphaned PDFs moved to trash: %d", moved)
+		l.LoadPDFFiles() // refresh after moves
 	}
 }
 

@@ -2230,6 +2230,22 @@ func maybeMigrateToLosingFieldValues() {
 	dbInteraction.Progress("Migrated entry field mappings to losing_field_values")
 }
 
+// maybeMigrateStripLocalURL deletes all local-url rows from bib_entries on the first
+// run after the PDFFiles migration. PDF presence is now derived from the filesystem
+// (Library.PDFFiles) so these rows are stale and would never be read again.
+func maybeMigrateStripLocalURL() {
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = 'local-url'`).Scan(&count)
+	if count == 0 {
+		return
+	}
+	if _, err := db.Exec(`DELETE FROM bib_entries WHERE field = 'local-url'`); err != nil {
+		dbInteraction.Warning("Could not strip local-url rows from bib_entries: %s", err)
+		return
+	}
+	dbInteraction.Progress("Migrated: stripped %d local-url rows from bib_entries (PDF presence now tracked via filesystem)", count)
+}
+
 // --- shorten_mappings table ---
 
 func ensureShortenMappingsTableExists() {

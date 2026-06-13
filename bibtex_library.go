@@ -84,7 +84,7 @@ type (
 		genericFieldMappingsModified      bool
 		entryFieldMappingsModified        bool
 		harvestNameAliases                bool
-		localURLBase                      string // when non-empty, prepended to local-url values in EntryString
+		PDFFiles                          map[string]bool // keys with a <key>.pdf in FilesFolder; populated by LoadPDFFiles
 		capturedDBLPEntry                 *TBibTeXEntry
 		capturedHarvestEntries            *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB
 		NoCrossFieldMappingsFileWriting   bool
@@ -113,6 +113,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.FilesRoot = filesRoot
 	l.BaseName = baseName
 	l.FilesFolder = baseName + ".files/"
+	l.PDFFiles = map[string]bool{}
 
 	l.Comments = []string{}
 	l.FieldMappings = TStringStringStringMap{}
@@ -546,9 +547,11 @@ func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
 	}
 }
 
-// Really needed?
 func (l *TBibTeXLibrary) FileReferencety(key string) string {
-	return l.EntryFieldValueity(key, LocalURLField)
+	if l.PDFFiles[key] {
+		return l.FilesFolder + key + ".pdf"
+	}
+	return ""
 }
 
 // /// SPLIT??
@@ -910,24 +913,6 @@ func FormatBibTeXFieldAssignment(prefix, field, value string) string {
 	return fmt.Sprintf("%s   %-*s = {%s},\n", prefix, BibTeXFieldColumnWidth, field, value)
 }
 
-// resolvedLocalURL resolves a local-url value for export contexts (localURLBase set).
-// Returns "" when the referenced file does not exist — callers' value != "" guards then
-// suppress the field so broken local-url entries are never written to exported bib files.
-// In display contexts (localURLBase empty) the stored value is returned unchanged.
-func (l *TBibTeXLibrary) resolvedLocalURL(value string) string {
-	if l.localURLBase == "" {
-		return value
-	}
-	fullPath := value
-	if !strings.HasPrefix(value, "/") {
-		fullPath = l.localURLBase + value
-	}
-	if !FileExists(fullPath) {
-		return ""
-	}
-	return fullPath
-}
-
 func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) string {
 	entry := loadEntryFromDb(key)
 	if !entry.Exists() {
@@ -946,17 +931,18 @@ func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) str
 	}
 
 	for _, field := range BibTeXAllowedEntryFields[entry.EntryType()].Set().ElementsSorted() {
-		if field != EntryTypeField {
-			if field == LocalURLField && l.localURLBase == "" {
-				continue // omit local-url in non-export contexts (display, field challenges)
+		if field == EntryTypeField {
+			continue
+		}
+		if field == LocalURLField {
+			if l.PDFFiles[key] {
+				result += FormatBibTeXFieldAssignment(linePrefix, field, l.FilesRoot+l.FilesFolder+key+".pdf")
 			}
-			if value := entry.FieldValue(field); value != "" {
-				mapped := l.MapEntryFieldValue(key, field, value)
-				if field == LocalURLField {
-					mapped = l.resolvedLocalURL(mapped)
-				}
-				result += FormatBibTeXFieldAssignment(linePrefix, field, mapped)
-			}
+			continue
+		}
+		if value := entry.FieldValue(field); value != "" {
+			mapped := l.MapEntryFieldValue(key, field, value)
+			result += FormatBibTeXFieldAssignment(linePrefix, field, mapped)
 		}
 	}
 

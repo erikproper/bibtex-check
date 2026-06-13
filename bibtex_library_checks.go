@@ -823,7 +823,7 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
 		if crossrefety != "" {
 			if CrossrefType := l.EntryType(crossrefety); CrossrefType != "" {
-				if allowedCrossrefType == CrossrefType || CrossrefType == "incollection" { // MAKE THIS CLEANER
+				if allowedCrossrefType == CrossrefType {
 					crossrefEntry := l.buildEntry(crossrefety)
 					for field := range BibTeXInheritableFields.Elements() {
 						l.CheckCrossrefInheritableField(crossrefEntry, entry, field)
@@ -838,6 +838,8 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 				l.Warning("Target %s of crossref from %s does not exist.", crossrefety, entry.Key)
 			}
 		}
+	} else if crossrefety != "" {
+		l.Warning("Entry type %s does not support crossref: %s → %s", entryType, entry.Key, crossrefety)
 	}
 }
 
@@ -1099,7 +1101,6 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckTitlePresence(entry)
 			l.CheckURLRedundance(entry)
 			l.CheckURLDateNeed(entry)
-			l.CheckFileReference(entry)
 			l.CheckISSN(entry)
 			l.CheckISBN(entry)
 			l.CheckYear(entry)
@@ -1182,24 +1183,31 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 	})
 
 	// addDblpChildrenForKey imports all DBLP children of libraryKey whose proceedings
-	// has the given dblpKey. Returns true when at least one child was processed.
+	// has the given dblpKey. Only reports progress when something actually changes.
+	// Returns true when at least one child was found in the DBLP file store.
 	addDblpChildrenForKey := func(libraryKey, dblpKey string) bool {
 		children := readDblpCrossrefChildren(dblpKey)
 		if len(children) == 0 {
 			return false
 		}
-		spinner := l.NewSpinner(fmt.Sprintf("Adding %d children of %s", len(children), dblpKey))
-		for i, childDBLP := range children {
+		added := 0
+		crossrefSet := 0
+		for _, childDBLP := range children {
 			if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
-				l.SetEntryFieldValue(childKey, "crossref", libraryKey)
+				if l.EntryFieldValueity(childKey, "crossref") != libraryKey {
+					l.SetEntryFieldValue(childKey, "crossref", libraryKey)
+					crossrefSet++
+				}
 			} else {
-				if added := l.MaybeAddDBLPChildEntry(childDBLP, libraryKey); added != "" {
-					doAllChecks(added)
+				if newKey := l.MaybeAddDBLPChildEntry(childDBLP, libraryKey); newKey != "" {
+					doAllChecks(newKey)
+					added++
 				}
 			}
-			spinner.Update(i+1, len(children))
 		}
-		spinner.Stop()
+		if added > 0 || crossrefSet > 0 {
+			l.Progress("Children of %s: %d added, %d crossref(s) updated", dblpKey, added, crossrefSet)
+		}
 		return true
 	}
 

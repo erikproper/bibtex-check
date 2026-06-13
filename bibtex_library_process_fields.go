@@ -12,11 +12,6 @@
 
 package main
 
-import (
-	"encoding/base64"
-	"regexp"
-	"strings"
-)
 
 // Definition of the map for field processors
 type TFieldProcessors = map[string]func(*TBibTeXLibrary, string, string) (string, string)
@@ -44,47 +39,6 @@ func processTitleValue(l *TBibTeXLibrary, key, value string) (string, string) {
 }
 
 
-func processJabrefFileValue(l *TBibTeXLibrary, key, value string) (string, string) {
-	var (
-		trimFileReferenceStart = regexp.MustCompile(`^[~:]*:`)
-		trimFileReferenceEnd   = regexp.MustCompile(`:[^:]*$`)
-	)
-
-	// Remove leading/trailing stuff
-	value = trimFileReferenceStart.ReplaceAllString(value, "")
-	value = trimFileReferenceEnd.ReplaceAllString(value, "")
-
-	return LocalURLField, value
-}
-
-func processBDSKFileValue(l *TBibTeXLibrary, key, value string) (string, string) {
-	if value != "" {
-		// Decode the provided value, and get the payload as a string.
-		data, _ := base64.StdEncoding.DecodeString(value)
-		payload := string(data)
-
-		// Find start of filename.
-		valueStart := strings.Index(payload, "relativePathXbookmark") + len("relativePathXbookmark") + 3
-		// Find the end of the filename
-		valueEnd := strings.Index(payload, ".pdf") + 4
-
-		// If we cannot find the ".pdf", there is not really a file.
-		if valueEnd <= 4 {
-			return LocalURLField, ""
-		}
-
-		// We use the raw payload as the default filename
-		value := payload
-		// But if we have a correct "cutout" of the filename we will use that:
-		if 0 <= valueStart && valueStart < valueEnd && valueEnd <= len(payload) {
-			value = payload[valueStart:valueEnd]
-		}
-
-		return LocalURLField, value
-	} else {
-		return LocalURLField, ""
-	}
-}
 
 func processFieldToIgnoreValue(l *TBibTeXLibrary, key, value string) (string, string) {
 	return IgnoreField, ""
@@ -144,22 +98,24 @@ func init() {
 	fieldProcessors["keywords"] = processFieldToIgnoreValue
 
 	// Jabref
-	fieldProcessors[JabrefFileField] = processJabrefFileValue
+	fieldProcessors[JabrefFileField] = processFieldToIgnoreValue // PDF path derived from PDFFiles map
 	fieldProcessors["owner"] = processFieldToIgnoreValue
 	fieldProcessors["creationdate"] = processFieldToIgnoreValue
 	fieldProcessors["modificationdate"] = processFieldToIgnoreValue
 	fieldProcessors["groups"] = processFieldToIgnoreValue
 
 	// BibDesk
-	fieldProcessors["bdsk-file-1"] = processBDSKFileValue
-	fieldProcessors["bdsk-file-2"] = processBDSKFileValue
-	fieldProcessors["bdsk-file-3"] = processBDSKFileValue
-	fieldProcessors["bdsk-file-4"] = processBDSKFileValue
-	fieldProcessors["bdsk-file-5"] = processBDSKFileValue
-	fieldProcessors["bdsk-file-6"] = processBDSKFileValue
-	fieldProcessors["bdsk-file-7"] = processBDSKFileValue
-	fieldProcessors["bdsk-file-8"] = processBDSKFileValue
-	fieldProcessors["bdsk-file-9"] = processBDSKFileValue
+	// bdsk-file-* are ignored; PDF presence is tracked via PDFFiles, not DB.
+	fieldProcessors["bdsk-file-1"] = processFieldToIgnoreValue
+	fieldProcessors["bdsk-file-2"] = processFieldToIgnoreValue
+	fieldProcessors["bdsk-file-3"] = processFieldToIgnoreValue
+	fieldProcessors["bdsk-file-4"] = processFieldToIgnoreValue
+	fieldProcessors["bdsk-file-5"] = processFieldToIgnoreValue
+	fieldProcessors["bdsk-file-6"] = processFieldToIgnoreValue
+	fieldProcessors["bdsk-file-7"] = processFieldToIgnoreValue
+	fieldProcessors["bdsk-file-8"] = processFieldToIgnoreValue
+	fieldProcessors["bdsk-file-9"] = processFieldToIgnoreValue
+	fieldProcessors[LocalURLField] = processFieldToIgnoreValue // PDF presence tracked via PDFFiles, not DB
 	fieldProcessors["bdsk-url-1"] = processFieldToIgnoreValue
 	fieldProcessors["bdsk-url-2"] = processFieldToIgnoreValue
 	fieldProcessors["bdsk-url-3"] = processFieldToIgnoreValue

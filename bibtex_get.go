@@ -363,13 +363,13 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 				}
 			}
 		case "has_pdf":
-			forEachBibEntryKey(func(key string) bool {
-				entry := Library.buildEntry(key)
-				if entry.FieldValue(LocalURLField) != "" {
-					add(Library.MapEntryKey(key))
+			for key := range Library.PDFFiles {
+				if resolved := Library.MapEntryKey(key); resolved != "" {
+					add(resolved)
+				} else {
+					add(key)
 				}
-				return true
-			})
+			}
 		case "watched":
 			// Select all library entries whose DBLP key belongs to a watched person.
 			// Uses watchEntryDblpKeys which unions ORCID index + person-name index.
@@ -701,6 +701,14 @@ func (l *TBibTeXLibrary) entryGetString(
 			}
 		}
 
+		// local-url: derived from PDFFiles map, never stored in DB.
+		if field == LocalURLField {
+			if isSubset && l.PDFFiles[canonicalKey] {
+				result += FormatBibTeXFieldAssignment("", field, l.FilesRoot+l.FilesFolder+canonicalKey+".pdf")
+			}
+			continue
+		}
+
 		value := entry.FieldValue(field)
 		if value == "" {
 			continue
@@ -738,9 +746,6 @@ func (l *TBibTeXLibrary) entryGetString(
 		}
 
 		mapped := l.MapEntryFieldValue(canonicalKey, field, value)
-		if field == LocalURLField {
-			mapped = l.resolvedLocalURL(mapped)
-		}
 		result += FormatBibTeXFieldAssignment("", field, mapped)
 	}
 
@@ -955,9 +960,6 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 
 	// Write output file.
 	outPath := resolveRelative(cfg.FileName + BibFileExtension)
-
-	Library.localURLBase = Library.FilesRoot
-	defer func() { Library.localURLBase = "" }()
 
 	// Build new content into a buffer so we can MD5 it before touching the file.
 	var buf bytes.Buffer
@@ -1208,10 +1210,8 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 
 // buildSyncBibContent renders the full library to a byte slice with a progress spinner.
 // Non-bookish entries first (crossref-friendly), then bookish — same order as WriteBibTeXFile.
-// local-url values are written with the absolute FilesRoot prefix so consumers can locate PDFs.
+// local-url is derived from Library.PDFFiles; absolute paths are emitted for each key that has a PDF.
 func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
-	Library.localURLBase = Library.FilesRoot
-	defer func() { Library.localURLBase = "" }()
 	total := len(entryTypes)
 	spinner := Library.NewSpinner(fmt.Sprintf(ProgressBuildingSyncBib, label))
 	done := 0
@@ -1425,6 +1425,12 @@ func doSync(filter string) {
 		}
 	}
 
+	// Scan for orphaned PDFs and auto-associate missing local-url fields before
+	// generating any bib output, so the results are reflected in this run's output.
+	if needsWrite {
+		Library.ScanOrphanPDFs()
+	}
+
 	// Phase 1: merge all bib-side changes into the DB before writing any output.
 	for i := range files {
 		switch files[i].cfg.Mode {
@@ -1451,11 +1457,6 @@ func doSync(filter string) {
 		}
 	}
 
-	// After all bib files are written, scan for orphaned PDFs (files with no
-	// matching library entry) and move them to the library trash folder.
-	if needsWrite {
-		Library.ScanOrphanPDFs()
-	}
 }
 
 // appendToKeysFile appends alias;canonicalKey to the .keys file named in bib.config.
