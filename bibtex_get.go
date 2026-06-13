@@ -372,23 +372,12 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 			})
 		case "watch":
 			// Select all library entries whose DBLP key belongs to a watched person.
+			// Uses watchEntryDblpKeys which unions ORCID index + person-name index.
 			// NOTE: when non-DBLP sources (ORCID direct, other databases) are added,
-			// revisit this together with the watch script commands — all sources should
-			// be queried here (see CHECKPOINT).
+			// revisit this together with the watch script commands (see CHECKPOINT).
 			watchPath := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix + "/watch"
 			for _, w := range ReadWatchFile(watchPath) {
-				var dblpKeys []string
-				switch w.EntryType {
-				case "name":
-					if orcid := resolveNameToORCID(w.Value); orcid != "" {
-						dblpKeys = readDblpORCIDEntries(orcid)
-					} else {
-						dblpKeys = readDblpPersonEntries(w.Value)
-					}
-				case "orcid":
-					dblpKeys = readDblpORCIDEntries(w.Value)
-				}
-				for _, dk := range dblpKeys {
+				for _, dk := range watchEntryDblpKeys(w) {
 					if libKey := Library.LookupDBLPKey(dk); libKey != "" {
 						add(libKey)
 					}

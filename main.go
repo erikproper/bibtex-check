@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.82"
+const AppVersion = "24.83"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1361,6 +1361,48 @@ func upgradeWatchEntries(entries []TWatchEntry) ([]TWatchEntry, bool) {
 	return entries, changed
 }
 
+// watchEntryDblpKeys returns the complete set of DBLP entry keys for a watch entry,
+// unioning the ORCID index and the person-name index.
+//
+// The ORCID index only contains entries where DBLP explicitly recorded the ORCID —
+// typically only recent publications. The person-name index (keyed by the DBLP
+// first-last name stored in w.Comment) covers all entries regardless of ORCID
+// annotation. Both are needed for complete coverage.
+func watchEntryDblpKeys(w TWatchEntry) []string {
+	seen := map[string]bool{}
+	var keys []string
+	add := func(k string) {
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	switch w.EntryType {
+	case "name":
+		for _, k := range readDblpPersonEntries(w.Value) {
+			add(k)
+		}
+		if orcid := resolveNameToORCID(w.Value); orcid != "" {
+			for _, k := range readDblpORCIDEntries(orcid) {
+				add(k)
+			}
+		}
+	case "orcid":
+		for _, k := range readDblpORCIDEntries(w.Value) {
+			add(k)
+		}
+		// w.Comment holds the DBLP first-last name (e.g. "Sjaak Brinkkemper").
+		// The person-name index is keyed by this format and is more complete than
+		// the ORCID index, which only covers papers where DBLP recorded the ORCID.
+		if w.Comment != "" {
+			for _, k := range readDblpPersonEntries(w.Comment) {
+				add(k)
+			}
+		}
+	}
+	return keys
+}
+
 // runWatch processes the watch file, adding any missing publications.
 // Assumes the library is already open. Returns false (silently) if the watch
 // file is absent or contains no valid entries.
@@ -1387,18 +1429,7 @@ func runWatch() bool {
 		if stopped {
 			break
 		}
-		var keys []string
-		switch w.EntryType {
-		case "name":
-			if orcid := resolveNameToORCID(w.Value); orcid != "" {
-				Library.Progress("Resolved %q to ORCID %s", w.Value, orcid)
-				keys = readDblpORCIDEntries(orcid)
-			} else {
-				keys = readDblpPersonEntries(w.Value)
-			}
-		case "orcid":
-			keys = readDblpORCIDEntries(w.Value)
-		}
+		keys := watchEntryDblpKeys(w)
 
 		label := w.Tag
 		if label == "" {
