@@ -1394,6 +1394,12 @@ func doSync(filter string) {
 			writePullSync(f.cfg, "")
 		}
 	}
+
+	// After all bib files are written, scan for orphaned PDFs (files with no
+	// matching library entry) and move them to the library trash folder.
+	if needsWrite {
+		Library.ScanOrphanPDFs()
+	}
 }
 
 // appendToKeysFile appends alias;canonicalKey to the .keys file named in bib.config.

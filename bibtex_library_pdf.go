@@ -101,6 +101,60 @@ func pdfHasContent(path string) (hasContent, determined bool) {
 	return len(strings.TrimSpace(string(ocrOut))) > 0, true
 }
 
+// libraryTrashFolder returns the path to the library-local trash folder
+// (<FilesRoot><BaseName>.trash/), creating it if necessary.
+func (l *TBibTeXLibrary) libraryTrashFolder() string {
+	dir := l.FilesRoot + l.BaseName + ".trash/"
+	_ = os.MkdirAll(dir, 0755)
+	return dir
+}
+
+// moveToLibraryTrash moves a file into the library's own .trash/ folder.
+// If a file with the same name already exists, a timestamp suffix is added.
+// Returns false if the move fails.
+func (l *TBibTeXLibrary) moveToLibraryTrash(path string) bool {
+	trashDir := l.libraryTrashFolder()
+	base := filepath.Base(path)
+	dest := trashDir + base
+	if FileExists(dest) {
+		ts := time.Now().Format("20060102-150405")
+		ext := filepath.Ext(base)
+		dest = trashDir + strings.TrimSuffix(base, ext) + "-" + ts + ext
+	}
+	return os.Rename(path, dest) == nil
+}
+
+// ScanOrphanPDFs does a quick scan of the library files folder and moves any
+// PDF file whose key has no matching library entry to the library trash folder.
+// Intended for the normal check run (lightweight — no PDF parsing).
+func (l *TBibTeXLibrary) ScanOrphanPDFs() {
+	filesDir := l.FilesRoot + l.FilesFolder
+	entries, err := os.ReadDir(filesDir)
+	if err != nil {
+		return
+	}
+	moved := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".pdf") {
+			continue
+		}
+		key := strings.TrimSuffix(e.Name(), ".pdf")
+		if l.EntryExists(key) {
+			continue
+		}
+		fullPath := filesDir + e.Name()
+		l.Warning("Orphaned PDF (no library entry): %s — moving to trash", e.Name())
+		if !l.moveToLibraryTrash(fullPath) {
+			l.Warning("Could not move %s to library trash", e.Name())
+		} else {
+			moved++
+		}
+	}
+	if moved > 0 {
+		l.Progress("Orphaned PDFs moved to trash: %d", moved)
+	}
+}
+
 // trashPDF moves the file at path to the macOS Trash folder (~/.Trash/).
 // If a file with the same name already exists in Trash, a timestamp suffix is added.
 // Returns false if the move fails.
