@@ -200,6 +200,22 @@ func subsetFieldsToClear(cleanFields map[string]string, dbEntry *TBibTeXEntry) [
 	return clear
 }
 
+// applySubsetEntryType applies a type change from the subset bib directly to the DB
+// entry, bypassing MergeEntries priority logic. The lineage for EntryTypeField is
+// cleared so a subsequent DBLP sync presents the type as a normal challenge rather
+// than silently winning on priority.
+func applySubsetEntryType(bibType, canonicalKey string, dbEntry *TBibTeXEntry) {
+	if bibType == "" || bibType == Library.EntryType(canonicalKey) {
+		return
+	}
+	Library.Progress("Entry type changed: %s → %s for %s (subset bib edit)", Library.EntryType(canonicalKey), bibType, canonicalKey)
+	Library.SetEntryFieldValue(canonicalKey, EntryTypeField, bibType)
+	Library.setLineage(canonicalKey, EntryTypeField, "", false) // clear lineage
+	if dbEntry != nil {
+		dbEntry.Fields[EntryTypeField] = bibType
+	}
+}
+
 // applySubsetBibToDb merges bibEntry fields into the canonical library entry, either
 // interactively (via MergeEntries field challenges) or silently (trusted_subset).
 // Fields absent from the bib but present in the DB are cleared — they were intentionally
@@ -211,6 +227,8 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 		if dbEntry == nil {
 			return canonicalKey
 		}
+		// Apply entry type directly (excluded from the field loop below).
+		applySubsetEntryType(bibEntry.Fields[EntryTypeField], canonicalKey, dbEntry)
 		cleanFields := map[string]string{}
 		for field, value := range bibEntry.Fields {
 			if !bibEditorNoiseFields.Contains(field) && field != EntryTypeField {
@@ -259,6 +277,7 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 	}
 
 	toClear := subsetFieldsToClear(cleanEntry.Fields, dbEntry)
+	newType := cleanEntry.Fields[EntryTypeField]
 
 	fmt.Fprintf(os.Stderr, "\nSubset bib entry (changed):\n")
 	printEntryFields(cleanEntry.Fields[EntryTypeField], cleanEntry.Key, cleanEntry.Fields)
@@ -271,6 +290,9 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 	if !Library.ConfirmAction(QuestionSubsetBibChanged) {
 		return canonicalKey
 	}
+	// Apply type change before MergeEntries — otherwise priority logic silently
+	// keeps a higher-priority (e.g. DBLP) type and never asks the user.
+	applySubsetEntryType(newType, canonicalKey, dbEntry)
 	tempKey := addHarvestEntry(&Library, cleanEntry)
 	Library.MergeEntries(tempKey, canonicalKey)
 	finalKey := Library.MapEntryKey(canonicalKey)
