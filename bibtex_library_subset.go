@@ -87,13 +87,14 @@ func writeSubsetState(statePath string, state TSubsetState) {
 }
 
 // subsetFingerprintExclude is the set of fields excluded from subset fingerprints.
-// local-url is excluded because the bib stores the absolute path while the DB stores
-// a relative path — they represent the same file but hash differently, causing
-// perpetual false-positive change detections.
+// local-url is excluded because it is derived from the filesystem (PDFFiles map),
+// not stored in the DB, so it never contributes to a genuine content change.
+// EntryTypeField is intentionally included so that changing e.g. @inproceedings to
+// @incollection in the subset bib is detected as a real edit.
 var subsetFingerprintExclude = func() TStringSet {
 	s := TStringSetNew()
 	s.Set().Unite(bibEditorNoiseFields)
-	s.Add(LocalURLField, EntryTypeField)
+	s.Add(LocalURLField)
 	return s
 }()
 

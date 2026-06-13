@@ -54,8 +54,7 @@ var dblpKnownFields TStringSet
 func init() {
 	dblpAutoAcceptFields = TStringSetNew()
 	dblpAutoAcceptFields.Add(
-		// EntryTypeField is intentionally excluded: entry type is structural and user
-		// edits (e.g. incollection vs inproceedings) must not be silently overridden.
+		EntryTypeField,
 		"year", "pages", "doi", "number",
 		"publisher", "series", "isbn", "issn", "month",
 	)
