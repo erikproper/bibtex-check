@@ -669,6 +669,7 @@ func doDefaultRun() {
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
 		Library.CheckAlignTitles(false)
+		Library.CheckDuplicateDBLPKeys()
 		Library.CheckLoneProceedings()
 		stepN := Reporting.StepSize()
 		questionCounter := 0

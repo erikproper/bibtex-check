@@ -423,7 +423,7 @@ func (l *TBibTeXLibrary) deriveAliasBase(entry *TBibTeXEntry) string {
 		}
 	}
 	if nameField == "" {
-		l.Warning(WarningCannotDeriveAliasNoName, entry.Key)
+		l.ReportEntryWarning(entry.Key, WarningCannotDeriveAliasNoName)
 		return ""
 	}
 
@@ -442,12 +442,12 @@ func (l *TBibTeXLibrary) deriveAliasBase(entry *TBibTeXEntry) string {
 	}
 
 	if strings.Contains(surnameRaw, `\unicode{`) {
-		l.Warning(WarningCannotDeriveAliasEmptySurname, entry.Key, surnameRaw)
+		l.ReportEntryWarning(entry.Key, WarningCannotDeriveAliasEmptySurname, surnameRaw)
 		return ""
 	}
 	surname := stripNonAlpha.ReplaceAllString(TeXStringIndexer(surnameRaw), "")
 	if surname == "" {
-		l.Warning(WarningCannotDeriveAliasEmptySurname, entry.Key, surnameRaw)
+		l.ReportEntryWarning(entry.Key, WarningCannotDeriveAliasEmptySurname, surnameRaw)
 		return ""
 	}
 
@@ -456,7 +456,7 @@ func (l *TBibTeXLibrary) deriveAliasBase(entry *TBibTeXEntry) string {
 		year = parent.FieldValue("year")
 	}
 	if !IsValidYear(year) {
-		l.Warning(WarningCannotDeriveAliasNoYear, entry.Key)
+		l.ReportEntryWarning(entry.Key, WarningCannotDeriveAliasNoYear)
 		return ""
 	}
 
@@ -526,9 +526,9 @@ func (l *TBibTeXLibrary) derivePreferredAlias(entry *TBibTeXEntry) string {
 	}
 
 	if len(keywords) == 0 {
-		l.Warning(WarningNoTitleKeywordsForPreferredAlias, entry.Key, base)
+		l.ReportEntryWarning(entry.Key, WarningNoTitleKeywordsForPreferredAlias, base)
 	} else {
-		l.Warning(WarningCannotDeriveUniquePreferredAlias, entry.Key, base)
+		l.ReportEntryWarning(entry.Key, WarningCannotDeriveUniquePreferredAlias, base)
 	}
 	return ""
 }
@@ -557,7 +557,7 @@ func (l *TBibTeXLibrary) CheckAndEnforcePreferredAlias(entry *TBibTeXEntry) {
 		}
 
 		// Non-compliant alias: warn, try to derive a valid replacement.
-		l.Warning(WarningInvalidPreferredKeyAlias, alias, entry.Key)
+		l.ReportEntryWarning(entry.Key, WarningInvalidPreferredKeyAlias, alias)
 		if derived := l.derivePreferredAlias(entry); derived != "" {
 			// Keep old non-compliant alias as a hint; set the derived one.
 			l.setPreferredAlias(entry, derived)
@@ -574,7 +574,7 @@ func (l *TBibTeXLibrary) CheckAndEnforcePreferredAlias(entry *TBibTeXEntry) {
 
 func (l *TBibTeXLibrary) CheckTitlePresence(entry *TBibTeXEntry) {
 	if entry.FieldValue(TitleField) == "" {
-		l.Warning(WarningEmptyTitle, entry.Key)
+		l.ReportEntryWarning(entry.Key, WarningEmptyTitle)
 	}
 }
 
@@ -584,7 +584,7 @@ func (l *TBibTeXLibrary) CheckDOIPresence(entry *TBibTeXEntry) {
 
 	if foundDOI == "" {
 		if l.tryGetDOIFromURL(entry.Key, "url", &foundDOI) {
-			l.Warning("Found DOI in URL %s for %s", foundDOI, entry.Key)
+			l.ReportEntryWarning(entry.Key, "Found DOI in URL: %s", foundDOI)
 			l.setEntryField(entry, "doi", foundDOI)
 		}
 	}
@@ -682,7 +682,7 @@ func (l *TBibTeXLibrary) CheckEPrint(entry *TBibTeXEntry) {
 		}
 
 		if EPrintValue == "" {
-			l.Warning("Not able to find eprint data for %s", entry.Key)
+			l.ReportEntryWarning(entry.Key, "Not able to find eprint data.")
 		} else {
 			if DOIValueity == "" {
 				DOIValueity = "10.48550/arXiv." + EPrintValue
@@ -710,7 +710,7 @@ func (l *TBibTeXLibrary) CheckEPrint(entry *TBibTeXEntry) {
 						EPrintValue = strings.ReplaceAll(EPrintValue, "https://www.jstor.org/stable/", "")
 
 						if EPrintValue == "" {
-							l.Warning("Not able to find eprint data for %s", entry.Key)
+							l.ReportEntryWarning(entry.Key, "Not able to find eprint data.")
 						}
 					}
 				}
@@ -764,7 +764,8 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(entry *TBibTeXEntry) {
 	case parentISBN == ISBNCandidate:
 		// doi already accounted for on parent; child doi will be cleaned by CheckCrossrefDOI
 	default:
-		l.Warning(WarningISBNMismatchFromCrossrefDOI, entry.Key, crossrefKey, ISBNCandidate, parentISBN)
+		l.ReportEntryWarning(entry.Key, WarningISBNMismatchFromCrossrefDOI, crossrefKey, ISBNCandidate, parentISBN)
+		l.EntryInvolvedInWarning(crossrefKey)
 	}
 }
 
@@ -831,7 +832,7 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 	}
 
 	if crossrefety == entry.Key {
-		l.Warning("Found self referencing crossref for %s. Cleaning this up.", entry.Key)
+		l.ReportEntryWarning(entry.Key, "Found self-referencing crossref; cleaned up.")
 		l.setEntryField(entry, "crossref", "")
 	}
 
@@ -847,14 +848,16 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 					l.CheckCrossrefDOI(crossrefEntry, entry)
 					l.CheckBookishTitles(crossrefEntry)
 				} else {
-					l.Warning("Crossref from %s %s to %s %s does not comply to the typing rules.", entryType, entry.Key, CrossrefType, crossrefety)
+					l.ReportEntryWarning(entry.Key, "Crossref to %s (%s) does not comply to typing rules.", crossrefety, CrossrefType)
+				l.EntryInvolvedInWarning(crossrefety)
 				}
 			} else {
-				l.Warning("Target %s of crossref from %s does not exist.", crossrefety, entry.Key)
+				l.ReportEntryWarning(entry.Key, "Crossref target %s does not exist.", crossrefety)
 			}
 		}
 	} else if crossrefety != "" {
-		l.Warning("Entry type %s does not support crossref: %s → %s", entryType, entry.Key, crossrefety)
+		l.ReportEntryWarning(entry.Key, "Entry type %s does not support crossref (pointing to %s).", entryType, crossrefety)
+		l.EntryInvolvedInWarning(crossrefety)
 	}
 }
 
@@ -873,7 +876,7 @@ func (l *TBibTeXLibrary) CheckISSN(entry *TBibTeXEntry) {
 		return
 	}
 
-	l.Warning(WarningBadISSN, issn, entry.Key)
+	l.ReportEntryWarning(entry.Key, WarningBadISSN, issn)
 }
 
 func (l *TBibTeXLibrary) CheckISBN(entry *TBibTeXEntry) {
@@ -890,7 +893,7 @@ func (l *TBibTeXLibrary) CheckISBN(entry *TBibTeXEntry) {
 		return
 	}
 
-	l.Warning(WarningBadISBN, isbn, entry.Key)
+	l.ReportEntryWarning(entry.Key, WarningBadISBN, isbn)
 }
 
 func (l *TBibTeXLibrary) CheckChapter(entry *TBibTeXEntry) {
@@ -926,7 +929,7 @@ func (l *TBibTeXLibrary) CheckYear(entry *TBibTeXEntry) {
 		return
 	}
 
-	l.Warning(WarningBadYear, year, entry.Key)
+	l.ReportEntryWarning(entry.Key, WarningBadYear, year)
 }
 
 
@@ -937,7 +940,7 @@ func (l *TBibTeXLibrary) CheckURLDate(entry *TBibTeXEntry) {
 		return
 	}
 
-	l.Warning(WarningBadDate, date, entry.Key)
+	l.ReportEntryWarning(entry.Key, WarningBadDate, date)
 }
 
 func (l *TBibTeXLibrary) CheckWithdrawn(entry *TBibTeXEntry) {
@@ -947,7 +950,7 @@ func (l *TBibTeXLibrary) CheckWithdrawn(entry *TBibTeXEntry) {
 	}
 
 	if !IsValidDate(date) {
-		l.Warning("Invalid date %q in withdrawn field for entry %s", date, entry.Key)
+		l.ReportEntryWarning(entry.Key, "Invalid date %q in withdrawn field.", date)
 		return
 	}
 
@@ -1017,7 +1020,7 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 
 func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {
 	if !IsValidKey(entry.Key) {
-		l.Warning(WarningInvalidKey, entry.Key)
+		l.ReportEntryWarning(entry.Key, WarningInvalidKey)
 	}
 	if entryType := entry.EntryType(); entryType != "" {
 		if _, known := BibTeXAllowedEntryFields[entryType]; !known {
@@ -1189,6 +1192,38 @@ func (l *TBibTeXLibrary) RenormaliseNameFields() {
 		return true
 	})
 	spinner.Stop()
+}
+
+// CheckDuplicateDBLPKeys detects library entries that share the same DBLP key and
+// offers to merge each duplicate set. Both entries are recorded in entry_warnings so
+// they appear in warnings; select results.
+func (l *TBibTeXLibrary) CheckDuplicateDBLPKeys() {
+	forEachDuplicateDBLPKey(func(dblpKey string, keys []string) {
+		keySet := TStringSetNew()
+		for _, k := range keys {
+			resolved := l.MapEntryKey(k)
+			if resolved == "" {
+				resolved = k
+			}
+			keySet.Add(resolved)
+		}
+		if keySet.Size() < 2 {
+			return // already merged or aliased
+		}
+		for key := range keySet.Elements() {
+			l.ReportEntryWarning(key, "Duplicate DBLP key %s (also on: %s).", dblpKey,
+				strings.Join(func() []string {
+					var others []string
+					for k := range keySet.Elements() {
+						if k != key {
+							others = append(others, k)
+						}
+					}
+					return others
+				}(), ", "))
+		}
+		l.MaybeMergeEntrySet(keySet)
+	})
 }
 
 // CheckLoneProceedings finds @proceedings entries that have no children (no entry

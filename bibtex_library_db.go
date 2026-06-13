@@ -2284,6 +2284,28 @@ func entryWarningTexts(key string) []string {
 	return ws
 }
 
+// forEachDuplicateDBLPKey calls fn for every DBLP value shared by two or more library entries,
+// passing the DBLP key and the slice of affected library entry keys.
+func forEachDuplicateDBLPKey(fn func(dblpKey string, keys []string)) {
+	rows, err := db.Query(`
+		SELECT value, GROUP_CONCAT(key, '|')
+		FROM bib_entries
+		WHERE field = 'dblp'
+		GROUP BY value
+		HAVING COUNT(*) > 1
+	`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var dblpKey, concat string
+		if rows.Scan(&dblpKey, &concat) == nil {
+			fn(dblpKey, strings.Split(concat, "|"))
+		}
+	}
+}
+
 // allEntryWarningKeys returns all distinct keys present in entry_warnings (any warning text).
 func allEntryWarningKeys() []string {
 	rows, err := db.Query(`SELECT DISTINCT key FROM entry_warnings ORDER BY key`)
