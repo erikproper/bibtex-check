@@ -146,6 +146,16 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 				if parent.Fields["volume"] != "" {
 					delete(dblpEntry.Fields, "volume")
 				}
+				// Pre-set the library entry so MergeInMemoryDBLPEntry sees no conflicts
+				// and does not prompt — this is a rule-based structural correction, not a
+				// content dispute requiring user input.
+				if l.EntryFieldValueity(key, EntryTypeField) == "article" {
+					l.SetEntryFieldValue(key, EntryTypeField, "inproceedings")
+					deleteBibEntryField(key, "journal")
+					if parent.Fields["volume"] != "" {
+						deleteBibEntryField(key, "volume")
+					}
+				}
 			}
 		}
 	}
