@@ -240,7 +240,7 @@ func rewriteKeysFile(fileName string, pairs []TBibGetPair, keyMapping bool) {
 
 // TSelectStatement is one parsed statement from a .select file.
 type TSelectStatement struct {
-	Kind   string   // "group", "groups", "name", "orcid", "has_pdf", "only_these"
+	Kind   string   // "group", "groups", "name", "orcid", "has_pdf", "only_these", "watch"
 	Values []string // one or more quoted values (empty for bare-keyword operators)
 }
 
@@ -269,7 +269,7 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 		if idx < 0 {
 			// Bare-keyword operators (no quoted values).
 			switch line {
-			case "has_pdf", "only_these":
+			case "has_pdf", "only_these", "watch":
 				stmts = append(stmts, TSelectStatement{line, nil})
 			default:
 				badLines = append(badLines, line)
@@ -365,6 +365,30 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 				}
 				return true
 			})
+		case "watch":
+			// Select all library entries whose DBLP key belongs to a watched person.
+			// NOTE: when non-DBLP sources (ORCID direct, other databases) are added,
+			// revisit this together with the watch script commands — all sources should
+			// be queried here (see CHECKPOINT).
+			watchPath := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix + "/watch"
+			for _, w := range ReadWatchFile(watchPath) {
+				var dblpKeys []string
+				switch w.EntryType {
+				case "name":
+					if orcid := resolveNameToORCID(w.Value); orcid != "" {
+						dblpKeys = readDblpORCIDEntries(orcid)
+					} else {
+						dblpKeys = readDblpPersonEntries(w.Value)
+					}
+				case "orcid":
+					dblpKeys = readDblpORCIDEntries(w.Value)
+				}
+				for _, dk := range dblpKeys {
+					if libKey := Library.LookupDBLPKey(dk); libKey != "" {
+						add(libKey)
+					}
+				}
+			}
 		}
 	}
 	return extra
