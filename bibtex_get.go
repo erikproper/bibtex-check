@@ -240,7 +240,7 @@ func rewriteKeysFile(fileName string, pairs []TBibGetPair, keyMapping bool) {
 
 // TSelectStatement is one parsed statement from a .select file.
 type TSelectStatement struct {
-	Kind   string   // "group", "groups", "name", "orcid", "has_pdf", "only_these", "watch"
+	Kind   string   // "group", "groups", "name", "orcid", "has_pdf", "only_these", "watched"
 	Values []string // one or more quoted values (empty for bare-keyword operators)
 }
 
@@ -269,7 +269,7 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 		if idx < 0 {
 			// Bare-keyword operators (no quoted values).
 			switch line {
-			case "has_pdf", "only_these", "watch":
+			case "has_pdf", "only_these", "watched":
 				stmts = append(stmts, TSelectStatement{line, nil})
 			default:
 				badLines = append(badLines, line)
@@ -370,7 +370,7 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 				}
 				return true
 			})
-		case "watch":
+		case "watched":
 			// Select all library entries whose DBLP key belongs to a watched person.
 			// Uses watchEntryDblpKeys which unions ORCID index + person-name index.
 			// NOTE: when non-DBLP sources (ORCID direct, other databases) are added,
