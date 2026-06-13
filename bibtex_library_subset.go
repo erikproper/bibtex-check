@@ -392,6 +392,19 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		outputToCanonical[se.OutputKey] = canonical
 	}
 
+	// Build a second reverse map: current canonical → stale state key.
+	// Covers the case where the bib was already regenerated to the new canonical key
+	// (phase 2 ran after a merge) but the state file still has the old key. Without
+	// this map, the new canonical isn't found in outputToCanonical and harvestKeyMatch
+	// returns it directly — but the old state key is never marked as seen, so it fires
+	// a spurious deletion prompt.
+	resolvedToStateKey := map[string]string{}
+	for stateCanonical := range existingState {
+		if resolved := Library.MapEntryKey(stateCanonical); resolved != stateCanonical && Library.EntryExists(resolved) {
+			resolvedToStateKey[resolved] = stateCanonical
+		}
+	}
+
 	type subsetStatus int
 	const (
 		statusUnchanged  subsetStatus = iota
@@ -442,6 +455,12 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 			bibSeenCanonicals[stateKey] = true
 		}
 		bibSeenCanonicals[canonical] = true
+		// Also mark any stale state entry whose canonical has since been resolved to
+		// this one (covers the case where phase 2 already updated the bib to the new
+		// canonical but the state file still holds the old key from before the merge).
+		if oldKey, ok := resolvedToStateKey[canonical]; ok {
+			bibSeenCanonicals[oldKey] = true
+		}
 
 		// Entry is a known library entry but not yet in the subset state — it was
 		// auto-included as a crossref parent, not edited by the user. Accept silently;
@@ -449,6 +468,11 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		se, inState := existingState[stateKey]
 		if !inState {
 			se, inState = existingState[canonical]
+		}
+		if !inState {
+			if oldKey, ok := resolvedToStateKey[canonical]; ok {
+				se, inState = existingState[oldKey]
+			}
 		}
 		if !inState {
 			toProcess = append(toProcess, categorizedEntry{

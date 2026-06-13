@@ -910,13 +910,22 @@ func FormatBibTeXFieldAssignment(prefix, field, value string) string {
 	return fmt.Sprintf("%s   %-*s = {%s},\n", prefix, BibTeXFieldColumnWidth, field, value)
 }
 
-// resolvedLocalURL prepends localURLBase to a relative local-url value when the base is set.
-// Used by both EntryString and entryGetString so both renderers produce identical paths.
+// resolvedLocalURL resolves a local-url value for export contexts (localURLBase set).
+// Returns "" when the referenced file does not exist — callers' value != "" guards then
+// suppress the field so broken local-url entries are never written to exported bib files.
+// In display contexts (localURLBase empty) the stored value is returned unchanged.
 func (l *TBibTeXLibrary) resolvedLocalURL(value string) string {
-	if l.localURLBase != "" && !strings.HasPrefix(value, "/") {
-		return l.localURLBase + value
+	if l.localURLBase == "" {
+		return value
 	}
-	return value
+	fullPath := value
+	if !strings.HasPrefix(value, "/") {
+		fullPath = l.localURLBase + value
+	}
+	if !FileExists(fullPath) {
+		return ""
+	}
+	return fullPath
 }
 
 func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) string {
