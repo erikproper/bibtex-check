@@ -67,6 +67,21 @@ func IsValidDate(date string) bool {
 	return validDate.MatchString(date)
 }
 
+var (
+	validChapterArabic = regexp.MustCompile(`^[0-9]+$`)
+	// Standard Roman numerals I–MMMCMXCIX (case-insensitive); empty string excluded by
+	// the outer chapter == "" guard in IsValidChapter.
+	validChapterRoman = regexp.MustCompile(`(?i)^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$`)
+)
+
+// IsValidChapter reports whether chapter is an Arabic or Roman numeral.
+func IsValidChapter(chapter string) bool {
+	if chapter == "" {
+		return false
+	}
+	return validChapterArabic.MatchString(chapter) || validChapterRoman.MatchString(chapter)
+}
+
 /*
  *
  * Check if a field is allowed for a given entry.
@@ -878,6 +893,14 @@ func (l *TBibTeXLibrary) CheckISBN(entry *TBibTeXEntry) {
 	l.Warning(WarningBadISBN, isbn, entry.Key)
 }
 
+func (l *TBibTeXLibrary) CheckChapter(entry *TBibTeXEntry) {
+	chapter := entry.FieldValue("chapter")
+	if chapter == "" || IsValidChapter(chapter) {
+		return
+	}
+	l.ReportEntryWarning(entry.Key, "Non-numeric chapter %q (must be Arabic or Roman numeral)", chapter)
+}
+
 // CheckYearFromURLDate derives the year from the urldate when the year field is absent,
 // but only for standalone entries (no crossref). For crossref children, urldate is an
 // access date — publication year must come from the parent.
@@ -1103,6 +1126,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckURLDateNeed(entry)
 			l.CheckISSN(entry)
 			l.CheckISBN(entry)
+			l.CheckChapter(entry)
 			l.CheckYear(entry)
 			l.CheckURLDate(entry)
 			l.CheckWithdrawn(entry)

@@ -324,6 +324,7 @@ func connectToDatabase() {
 	ensureURLsIgnoreTableExists()
 	ensureEntryMetadataTableExists()
 	ensureLosingFieldValuesTableExists()
+	ensureEntryWarningsTableExists()
 	ensureConfigTableExists()
 	maybeBootstrapConfigFromFile()
 	loadBibTeXSettings()
@@ -2244,6 +2245,59 @@ func maybeMigrateStripLocalURL() {
 		return
 	}
 	dbInteraction.Progress("Migrated: stripped %d local-url rows from bib_entries (PDF presence now tracked via filesystem)", count)
+}
+
+// --- entry_warnings table ---
+
+func ensureEntryWarningsTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS entry_warnings (
+		  key     TEXT NOT NULL,
+		  warning TEXT NOT NULL DEFAULT '',
+		  UNIQUE(key, warning)
+		);`)
+}
+
+// clearEntryWarnings deletes all rows — called once at the start of each normal check run.
+func clearEntryWarnings() {
+	db.Exec(`DELETE FROM entry_warnings`) //nolint:errcheck
+}
+
+// insertEntryWarning records key+warning, silently ignoring exact duplicates.
+func insertEntryWarning(key, warning string) {
+	db.Exec(`INSERT OR IGNORE INTO entry_warnings (key, warning) VALUES (?, ?)`, key, warning) //nolint:errcheck
+}
+
+// entryWarningTexts returns all non-empty warning strings for key, sorted alphabetically.
+func entryWarningTexts(key string) []string {
+	rows, err := db.Query(`SELECT warning FROM entry_warnings WHERE key = ? AND warning != '' ORDER BY warning`, key)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ws []string
+	for rows.Next() {
+		var w string
+		rows.Scan(&w) //nolint:errcheck
+		ws = append(ws, w)
+	}
+	return ws
+}
+
+// allEntryWarningKeys returns all distinct keys present in entry_warnings (any warning text).
+func allEntryWarningKeys() []string {
+	rows, err := db.Query(`SELECT DISTINCT key FROM entry_warnings ORDER BY key`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var k string
+		rows.Scan(&k) //nolint:errcheck
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // --- shorten_mappings table ---

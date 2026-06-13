@@ -139,25 +139,28 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 			rawCrossref = dblpEntry.Fields["crossref"]
 		}
 		if rawCrossref != "" {
-			if parent := dblpEntryFromFile(rawCrossref); parent != nil && parent.Fields[EntryTypeField] == "proceedings" {
-				dblpEntry.Fields[EntryTypeField] = "inproceedings"
-				// Strip all inheritable fields from the in-memory DBLP entry — the child
-				// must inherit these from the proceedings parent, not carry its own values.
-				// Also drop journal, which is article-only and invalid for inproceedings.
-				for field := range BibTeXMustInheritFields.Elements() {
-					delete(dblpEntry.Fields, field)
+			if parent := dblpEntryFromFile(rawCrossref); parent != nil {
+				// DBLP sometimes uses @article + crossref to model contributions within a
+				// bookish parent (LNCS sub-series, edited volumes, …). Correct the type:
+				//   article + proceedings parent → inproceedings
+				//   article + book parent       → inbook (not incollection: that implies
+				//                                  a named chapter contribution)
+				var correctedType string
+				switch parent.Fields[EntryTypeField] {
+				case "proceedings":
+					correctedType = "inproceedings"
+				case "book":
+					correctedType = "inbook"
 				}
-				delete(dblpEntry.Fields, "journal")
-				// Pre-set the library entry so MergeInMemoryDBLPEntry sees no conflicts
-				// and does not prompt — this is a rule-based structural correction, not a
-				// content dispute requiring user input. Only runs once (on the repair pass).
-				if l.EntryFieldValueity(key, EntryTypeField) == "article" {
-					l.Progress("DBLP: corrected article→inproceedings for %s (parent: %s)", key, rawCrossref)
-					l.SetEntryFieldValue(key, EntryTypeField, "inproceedings")
+				if correctedType != "" {
+					dblpEntry.Fields[EntryTypeField] = correctedType
+					// Strip all inheritable fields — the child must inherit these from the
+					// parent, not carry its own values. Also drop journal, which is
+					// article-only and invalid for inproceedings/inbook.
 					for field := range BibTeXMustInheritFields.Elements() {
-						deleteBibEntryField(key, field)
+						delete(dblpEntry.Fields, field)
 					}
-					deleteBibEntryField(key, "journal")
+					delete(dblpEntry.Fields, "journal")
 				}
 			}
 		}

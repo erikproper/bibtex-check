@@ -166,6 +166,22 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
  *
  */
 
+// ReportEntryWarning prints a warning about a specific entry and records it in
+// entry_warnings so it can be queried by the "warnings;" select operator and emitted
+// as a % WARNING: comment in bib output.
+func (l *TBibTeXLibrary) ReportEntryWarning(key, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	l.Warning("Entry %s: %s", key, msg)
+	insertEntryWarning(key, msg)
+}
+
+// EntryInvolvedInWarning marks key as a secondary participant in a warning (e.g. the
+// "other" entry in a conflict). An empty-text row is inserted so the entry appears in
+// "warnings;" select results and in the repair bib, but no % WARNING: comment is emitted.
+func (l *TBibTeXLibrary) EntryInvolvedInWarning(key string) {
+	insertEntryWarning(key, "")
+}
+
 // SetEntryFieldValue writes a field value to the DB for the given entry.
 func (l *TBibTeXLibrary) SetEntryFieldValue(entry, field, value string) {
 	upsertBibEntryField(entry, field, value)

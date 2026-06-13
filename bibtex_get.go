@@ -269,7 +269,7 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 		if idx < 0 {
 			// Bare-keyword operators (no quoted values).
 			switch line {
-			case "has_pdf", "only_these", "watched":
+			case "has_pdf", "only_these", "watched", "warnings":
 				stmts = append(stmts, TSelectStatement{line, nil})
 			default:
 				badLines = append(badLines, line)
@@ -364,6 +364,16 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 			}
 		case "has_pdf":
 			for key := range Library.PDFFiles {
+				if resolved := Library.MapEntryKey(key); resolved != "" {
+					add(resolved)
+				} else {
+					add(key)
+				}
+			}
+		case "warnings":
+			// Include all entries recorded in entry_warnings (primary and involved),
+			// resolving through the key alias table.
+			for _, key := range allEntryWarningKeys() {
 				if resolved := Library.MapEntryKey(key); resolved != "" {
 					add(resolved)
 				} else {
@@ -663,7 +673,13 @@ func (l *TBibTeXLibrary) entryGetString(
 		return ""
 	}
 
-	result := "@" + entry.EntryType() + "{" + outputKey + ",\n"
+	// Emit % WARNING: comment lines above the entry for each non-empty recorded warning.
+	// Empty-warning rows (involved entries) produce no comment.
+	result := ""
+	for _, w := range entryWarningTexts(canonicalKey) {
+		result += "% WARNING: " + w + "\n"
+	}
+	result += "@" + entry.EntryType() + "{" + outputKey + ",\n"
 
 	// When urldate_as_note is set, fold urldate into the note field.
 	var urldateNote string

@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.85"
+const AppVersion = "24.86"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -664,6 +664,7 @@ func reportHomework() {
 
 func doDefaultRun() {
 	if openLibraryToUpdate() {
+		clearEntryWarnings()
 		Library.CheckEntries()
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
