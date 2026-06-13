@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.80"
+const AppVersion = "24.82"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1361,10 +1361,10 @@ func upgradeWatchEntries(entries []TWatchEntry) ([]TWatchEntry, bool) {
 	return entries, changed
 }
 
-// runWatchDblp processes the watch file, adding any missing publications.
+// runWatch processes the watch file, adding any missing publications.
 // Assumes the library is already open. Returns false (silently) if the watch
 // file is absent or contains no valid entries.
-func runWatchDblp() bool {
+func runWatch() bool {
 	Library.ReadKeyNonDoublesFile()
 
 	filePath := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix + "/watch"
@@ -1464,12 +1464,12 @@ func runWatchDblp() bool {
 	return true
 }
 
-// doWatchDblp is the -dblp_watch entry point.
-func doWatchDblp() {
+// doWatch is the -watch entry point.
+func doWatch() {
 	if !openLibraryToUpdate() {
 		return
 	}
-	if !runWatchDblp() {
+	if !runWatch() {
 		filePath := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix + "/watch"
 		Library.Progress("No watch entries found in %s", filePath)
 	}
@@ -1611,7 +1611,7 @@ func main() {
 		cmdFixAllEntries      bool
 		cmdAddDblpEntry    bool
 		cmdAddDblpEntries  bool
-		cmdDblpWatch             bool
+		cmdWatch             bool
 		cmdAddKeyMapping         bool
 		cmdMergeEntries       bool
 		cmdAddNameMapping     bool
@@ -1663,7 +1663,7 @@ func main() {
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "upsert DBLP data for one or more given entries (library or DBLP keys)")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
-	flag.BoolVar(&cmdDblpWatch, "dblp_watch", false, "check watched persons/ORCIDs in watch.csv for missing publications")
+	flag.BoolVar(&cmdWatch, "watch", false, "check watched persons/ORCIDs for missing publications")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mapping", false, "add key alias(es) to a canonical key: -add_key_mapping <alias>... <canonical>")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mappings", false, "alias for -add_key_mapping")
 	flag.BoolVar(&cmdMergeEntries, "merge_entries", false, "merge entries into target: -merge_entries <key>... <target>")
@@ -1898,7 +1898,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	case cmdUpdateDblp:
 		doUpsertDblpEntries()
 		if dbWriteSessionActive {
-			runWatchDblp()
+			runWatch()
 			runScript()
 		}
 
@@ -1929,9 +1929,9 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 			doUpsertDblpEntryFromDblpKeys(dblpKeys)
 		}
 
-case cmdDblpWatch:
+case cmdWatch:
 		requireNoDblpImport()
-		doWatchDblp()
+		doWatch()
 
 	case cmdAddKeyMapping:
 		if len(args) < 2 {

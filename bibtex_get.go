@@ -324,14 +324,19 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 	for _, s := range stmts {
 		switch s.Kind {
 		case "group", "groups":
-			for _, grp := range s.Values {
-				grpSet := Library.GroupEntries[grp]
-				for key := range grpSet.Elements() {
-					resolved := Library.MapEntryKey(key)
-					if resolved == "" {
-						resolved = key
+			for _, pattern := range s.Values {
+				for grp, grpSet := range Library.GroupEntries {
+					matched, err := filepath.Match(pattern, grp)
+					if err != nil || !matched {
+						continue
 					}
-					add(resolved)
+					for key := range grpSet.Elements() {
+						resolved := Library.MapEntryKey(key)
+						if resolved == "" {
+							resolved = key
+						}
+						add(resolved)
+					}
 				}
 			}
 		case "name":
