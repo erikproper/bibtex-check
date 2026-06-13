@@ -294,7 +294,7 @@ func printEntryFields(entryType, key string, fields map[string]string) {
 	sort.Strings(sorted)
 	for _, field := range sorted {
 		if v := fields[field]; v != "" {
-			fmt.Fprintf(os.Stderr, "    %-16s = {%s},\n", field, v)
+			fmt.Fprintf(os.Stderr, "    %-*s = {%s},\n", BibTeXFieldColumnWidth, field, v)
 		}
 	}
 	fmt.Fprintf(os.Stderr, "  }\n")

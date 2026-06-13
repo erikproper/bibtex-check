@@ -694,7 +694,7 @@ func (l *TBibTeXLibrary) entryDisplayLines(key string) string {
 	for _, field := range sorted {
 		if value := entry.Fields[field]; value != "" {
 			mapped := l.MapEntryFieldValue(key, field, value)
-			result += fmt.Sprintf("    %-16s = {%s},\n", field, mapped)
+			result += fmt.Sprintf("    %-*s = {%s},\n", BibTeXFieldColumnWidth, field, mapped)
 		}
 	}
 	result += "  }\n"
@@ -907,7 +907,7 @@ func (l *TBibTeXLibrary) LookupDBLPKey(DBLPkey string) string {
 
 // Create a string (with newlines) with a BibTeX based representation of the provided key, while using an optional prefix for each line.
 func FormatBibTeXFieldAssignment(prefix, field, value string) string {
-	return prefix + "   " + field + " = {" + value + "},\n"
+	return fmt.Sprintf("%s   %-*s = {%s},\n", prefix, BibTeXFieldColumnWidth, field, value)
 }
 
 // resolvedLocalURL prepends localURLBase to a relative local-url value when the base is set.

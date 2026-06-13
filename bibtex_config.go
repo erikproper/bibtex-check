@@ -28,6 +28,8 @@ var (
 	BibTeXEntryMap          TStringMap // Mapping of entry names, to enable automatic corrections
 	BibTeXDefaultStrings    TStringMap // The default string definitions that will be used when opening a BibTeX file
 	BibTeXCrossrefType      TStringMap // Entry type mapping for crossrefs
+
+	BibTeXFieldColumnWidth int // Computed at init: longest non-noise allowed field name length
 )
 
 const (
@@ -247,4 +249,14 @@ func init() {
 	BibTeXFieldMap["contributors"] = "author"
 	BibTeXFieldMap["ee"] = "url"
 	BibTeXFieldMap["language"] = "langid"
+
+	// Compute field column width: longest non-noise allowed field name, plus 2 spaces gap.
+	for _, fields := range BibTeXAllowedEntryFields {
+		for _, f := range fields.Set().ElementsSorted() {
+			if !bibEditorNoiseFields.Contains(f) && len(f) > BibTeXFieldColumnWidth {
+				BibTeXFieldColumnWidth = len(f)
+			}
+		}
+	}
+	BibTeXFieldColumnWidth += 2
 }
