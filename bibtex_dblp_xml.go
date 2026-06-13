@@ -295,19 +295,22 @@ func doRebuildDblpTitleIndex() {
 	// Trash the existing title index so we start clean.
 	titlesDir := dblpFolder() + "titles/"
 	if _, err := os.Stat(titlesDir); err == nil {
+		fmt.Fprintf(os.Stderr, "Moving old title index to trash...\n")
 		if err := moveToDblpTrash(titlesDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not move old title index to trash: %s\n", err)
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "Rebuilding title index from %s...\n", entriesRoot)
+
 	var count, errors int
 	start := time.Now()
+	lastReport := start
 
 	err := filepath.WalkDir(entriesRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Name() != "data.json" {
 			return err
 		}
-		// Derive the DBLP key from the path: strip <entriesRoot> prefix and "/data.json" suffix.
 		rel := strings.TrimPrefix(path, entriesRoot)
 		dblpKey := strings.TrimSuffix(rel, "/data.json")
 
@@ -326,6 +329,10 @@ func doRebuildDblpTitleIndex() {
 			}
 		}
 		count++
+		if now := time.Now(); now.Sub(lastReport) >= 5*time.Second {
+			fmt.Fprintf(os.Stderr, "  %d entries indexed (%.0fs)...\n", count, now.Sub(start).Seconds())
+			lastReport = now
+		}
 		return nil
 	})
 

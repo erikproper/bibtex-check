@@ -141,6 +141,31 @@ func (l *TBibTeXLibrary) moveToLibraryTrash(path string) bool {
 	return os.Rename(path, dest) == nil
 }
 
+// mergePDFFile transfers the PDF for sourceKey to targetKey as part of a merge.
+// If source has a PDF and target does not, the file is renamed in place and PDFFiles
+// is updated. If target already has a PDF, the source file is moved to library trash.
+// No-op when source has no PDF.
+func (l *TBibTeXLibrary) mergePDFFile(sourceKey, targetKey string) {
+	if !l.PDFFiles[sourceKey] {
+		return
+	}
+	srcPath := l.FilesRoot + l.FilesFolder + sourceKey + ".pdf"
+	dstPath := l.FilesRoot + l.FilesFolder + targetKey + ".pdf"
+	if l.PDFFiles[targetKey] || FileExists(dstPath) {
+		// Target already has a PDF — source copy is redundant.
+		l.moveToLibraryTrash(srcPath) //nolint:errcheck
+		delete(l.PDFFiles, sourceKey)
+		return
+	}
+	if err := os.Rename(srcPath, dstPath); err != nil {
+		l.Warning("Could not rename PDF %s.pdf → %s.pdf: %s", sourceKey, targetKey, err)
+		return
+	}
+	delete(l.PDFFiles, sourceKey)
+	l.PDFFiles[targetKey] = true
+	l.Progress("Renamed PDF: %s.pdf → %s.pdf", sourceKey, targetKey)
+}
+
 // ScanOrphanPDFs does a quick scan of the library files folder.
 // For each <key>.pdf:
 //   - If key is a live canonical entry → keep (nothing to do).

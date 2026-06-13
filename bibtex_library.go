@@ -611,6 +611,8 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			if !l.KeyIsTemporary.Contains(source) {
 				l.AddKeyAlias(source, target)
 				l.AddNonDoubles(source, target)
+				// Rename source PDF to target name so the file stays associated.
+				l.mergePDFFile(source, target)
 			}
 			l.ReassignEntryFieldMappings(source, target)
 
