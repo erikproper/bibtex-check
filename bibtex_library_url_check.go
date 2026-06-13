@@ -227,7 +227,7 @@ func URLCheckNeeded(l *TBibTeXLibrary, entry *TBibTeXEntry) bool {
 }
 
 // CheckAllURLs runs CheckURLPlausibility for every qualifying entry.
-// Called by the -check_urls command; respects -step N.
+// Runs as part of the normal check routine; respects -step N.
 func (l *TBibTeXLibrary) CheckAllURLs() {
 	stepN := Reporting.StepSize()
 	checked := 0

@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.74"
+const AppVersion = "24.75"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -691,10 +691,8 @@ func doDefaultRun() {
 			}
 			return true
 		})
-		if stepN > 0 {
-			Library.ReadURLsIgnoreFile()
-			Library.CheckAllURLs()
-		}
+		Library.ReadURLsIgnoreFile()
+		Library.CheckAllURLs()
 		reportHomework()
 	}
 }
