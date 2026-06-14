@@ -482,47 +482,64 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	Library.Progress("  Written .subset state: %d entries", len(newState))
 }
 
-// syncGroupMembershipsFromBib diffs the bib's groups fields against bib_groups for each
-// group in cfg.SyncGroups, updating the DB and in-memory GroupEntries as needed.
-// Only entries that are IN the current subset (present in outputToCanonical) are considered
-// for removal, so non-subset entries in bib_groups are never disturbed.
-func syncGroupMembershipsFromBib(syncGroups []string, bibEntries []TBibTeXEntry, outputToCanonical map[string]string) {
-	if len(syncGroups) == 0 {
-		return
-	}
-	syncSet := TStringSetNew()
-	for _, g := range syncGroups {
-		syncSet.Add(g)
+// syncGroupMembershipsFromBib diffs the bib's groups fields against bib_groups and
+// adds new memberships to the DB. Subset sync is add-only — no removals, since the
+// subset does not represent the full picture of group membership.
+//
+// For BibDesk format (or default): ALL groups found in the bib are synced — the
+// BibDesk XML block is the authoritative record and all its groups are library groups.
+// For JabRef format: only groups listed in cfg.SyncGroups are synced; others are
+// study-local and should not pollute the main bib_groups table.
+func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanonical map[string]string) {
+	jabrefMode := cfg.Format == "jabref"
+
+	// In JabRef mode, build the allowlist from cfg.SyncGroups.
+	// In BibDesk mode, syncSet is left nil to indicate "sync all".
+	var syncSet *TStringSet
+	if jabrefMode {
+		if len(cfg.SyncGroups) == 0 {
+			return
+		}
+		s := TStringSetNew()
+		for _, g := range cfg.SyncGroups {
+			s.Add(g)
+		}
+		syncSet = &s
 	}
 
-	// Collect bib-side membership per synced group.
+	// Collect bib-side membership: group → set of canonical keys.
 	bibMembers := TStringSetMap{}
 	for _, e := range bibEntries {
 		canon, ok := outputToCanonical[e.Key]
-		if !ok {
-			continue
+		if !ok || canon == "" {
+			// Bare-key mode: output key IS the canonical key (no key_mapping).
+			resolved := Library.MapEntryKey(e.Key)
+			if !Library.EntryExists(resolved) {
+				continue
+			}
+			canon = resolved
+		} else {
+			canon = Library.MapEntryKey(canon)
 		}
-		canon = Library.MapEntryKey(canon)
 		raw := e.Fields["groups"]
 		if raw == "" {
 			continue
 		}
 		for _, g := range strings.Split(raw, ",") {
 			g = strings.TrimSpace(g)
-			if syncSet.Contains(g) {
+			if g == "" {
+				continue
+			}
+			if syncSet == nil || syncSet.Contains(g) {
 				bibMembers.AddValueToStringSetMap(g, canon)
 			}
 		}
 	}
 
-	for _, group := range syncGroups {
-		dbSet := Library.GroupEntries[group] // canonical keys from bib_groups
-		bibSet := bibMembers[group]          // canonical keys from bib (may be zero-value)
-
-		// Add: in bib but not in DB. Subset sync is add-only — no removals,
-		// since the subset does not represent the full picture of group membership.
-		bibSetCopy := bibSet // value copy for safe iteration
-		for key := range bibSetCopy.Elements() {
+	for group, bibSet := range bibMembers {
+		dbSet := Library.GroupEntries[group]
+		setToAdd := bibSet // value copy for safe iteration
+		for key := range setToAdd.Elements() {
 			if !dbSet.Contains(key) {
 				Library.GroupEntries.AddValueToStringSetMap(group, key)
 				if err := bibExec(
@@ -559,8 +576,8 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		outputToCanonical[se.OutputKey] = canonical
 	}
 
-	// Sync group memberships for groups listed in cfg.SyncGroups.
-	syncGroupMembershipsFromBib(cfg.SyncGroups, bibEntries, outputToCanonical)
+	// Sync group memberships: all groups for BibDesk format; cfg.SyncGroups for JabRef.
+	syncGroupMembershipsFromBib(cfg, bibEntries, outputToCanonical)
 
 	// Build a second reverse map: current canonical → stale state key.
 	// Covers the case where the bib was already regenerated to the new canonical key
