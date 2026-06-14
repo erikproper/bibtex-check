@@ -89,7 +89,9 @@ type (
 		harvestSyncGroups                 TStringSet    // groups to sync to main DB during harvest (from config)
 		harvestLocalGroups                TStringSetMap // groups to store locally during harvest
 		subsetLocalGroups                 TStringSetMap // local groups loaded for current subset write pass
-		jabrefGroupingBlock               string        // verbatim @Comment{jabref-meta: grouping:...} from source bib
+		jabrefGroupingBlock               string   // verbatim @Comment{jabref-meta: grouping:...} from source bib
+		jabrefMetaBlocks                  []string // other @Comment{jabref-meta: ...} blocks carried verbatim
+		bibdeskMetaBlocks                 []string // @Comment{BibDesk ...} blocks (not Static Groups) carried verbatim
 		PDFFiles                          map[string]bool // keys with a <key>.pdf in FilesFolder; populated by LoadPDFFiles
 		capturedDBLPEntry                 *TBibTeXEntry
 		capturedHarvestEntries            *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB
@@ -205,13 +207,25 @@ func (l *TBibTeXLibrary) SetEntryType(entry, value string) {
 
 // Add a comment to the current library.
 func (l *TBibTeXLibrary) ProcessComment(comment string) bool {
-	// When parsing a harvest/subset bib: capture the jabref-meta grouping block
-	// verbatim so it can be replayed unchanged in the subset output.
+	// When parsing a harvest/subset source bib: route each comment block to the
+	// appropriate bucket for verbatim replay in the output. Never add source-bib
+	// comments to the main library's Comments list.
 	if l.capturedHarvestEntries != nil {
-		if strings.HasPrefix(strings.TrimSpace(comment), "jabref-meta: grouping:") {
-			l.jabrefGroupingBlock = "@" + CommentEntryType + "{" + comment + "}"
+		trimmed := strings.TrimSpace(comment)
+		block := "@" + CommentEntryType + "{" + comment + "}"
+		switch {
+		case strings.HasPrefix(trimmed, "jabref-meta: grouping:"):
+			l.jabrefGroupingBlock = block
+		case strings.HasPrefix(trimmed, "jabref-meta: databaseType:"):
+			// always emitted by us; drop
+		case strings.HasPrefix(trimmed, "jabref-meta: "):
+			l.jabrefMetaBlocks = append(l.jabrefMetaBlocks, block)
+		case strings.HasPrefix(trimmed, "BibDesk Static Groups{"):
+			// handled via GroupEntries; drop
+		case strings.HasPrefix(trimmed, "BibDesk"):
+			l.bibdeskMetaBlocks = append(l.bibdeskMetaBlocks, block)
 		}
-		return true // do not add harvest-source comments to main library
+		return true
 	}
 	l.Comments = append(l.Comments, comment)
 	return true

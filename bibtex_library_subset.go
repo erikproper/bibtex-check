@@ -384,7 +384,10 @@ func resolveSubsetPaths(cfg TBibGetConfig, baseDir string) (sourcePath, keysBase
 // parse error — bib must not be overwritten).
 func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
 	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
-	Library.jabrefGroupingBlock = "" // reset per-file; populated by parseHarvestBib or transition
+	// Reset per-file metadata blocks; populated by parseHarvestBib or transition parse.
+	Library.jabrefGroupingBlock = ""
+	Library.jabrefMetaBlocks = nil
+	Library.bibdeskMetaBlocks = nil
 	logPath := keysBasePath + HarvestLogExtension
 	maybeMigrateHarvestToSubset(&cfg, keysBasePath, statePath, logPath)
 

@@ -41,22 +41,20 @@ func XMLSplit(s, tag string) []string {
 }
 
 func (b *TBibTeXStream) BibDeskStaticGroupDefinition(comment string) bool {
-	if strings.HasPrefix(comment, "BibDesk Static Groups{") {
-		groups := XMLIsolate(XMLCleanLayout(comment), "array")
+	if !strings.HasPrefix(comment, "BibDesk Static Groups{") {
+		return false
+	}
 
-		for _, group := range XMLSplit(groups, "dict") {
-			propertyKeys := XMLSplit(group, "string")
-
-			if len(propertyKeys) == 3 {
-				group := propertyKeys[0]
-				entries := propertyKeys[1]
-
-				for _, key := range strings.Split(XMLCleanGroupList(entries), ",") {
-					b.library.GroupEntries.AddValueToStringSetMap(strings.TrimSpace(group), key)
-				}
+	groups := XMLIsolate(XMLCleanLayout(comment), "array")
+	for _, group := range XMLSplit(groups, "dict") {
+		propertyKeys := XMLSplit(group, "string")
+		if len(propertyKeys) == 3 {
+			group := propertyKeys[0]
+			entries := propertyKeys[1]
+			for _, key := range strings.Split(XMLCleanGroupList(entries), ",") {
+				b.library.GroupEntries.AddValueToStringSetMap(strings.TrimSpace(group), key)
 			}
 		}
 	}
-
 	return true
 }
