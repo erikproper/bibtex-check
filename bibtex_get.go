@@ -889,8 +889,8 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		dbInteraction.Progress("Sync pull: %s", cfg.FileName)
 		dbInteraction.Progress("  doi=%-3s  isbn=%-3s  url=%-3s  dblp=%-3s  key_mapping=%-3s",
 			on(cfg.IncludeDOI), on(cfg.IncludeISBN), on(cfg.IncludeURL), on(cfg.IncludeDblp), on(cfg.KeyMapping))
-		dbInteraction.Progress("  biber=%-3s  shorten=%-3s  urldate_as_note=%-3s  hyphenations=%-3s",
-			on(cfg.BiberMode), on(cfg.Shorten), on(cfg.UrldateAsNote), on(cfg.Hyphenations))
+		dbInteraction.Progress("  biber=%-3s  shorten=%-3s  urldate_as_note=%-3s  hyphenations=%-3s  fix=%-3s",
+			on(cfg.BiberMode), on(cfg.Shorten), on(cfg.UrldateAsNote), on(cfg.Hyphenations), on(cmdFix))
 		dbInteraction.Progress("  Keys  : %d entr%s from %s", len(pairs), map[bool]string{true: "y", false: "ies"}[len(pairs) == 1], mapFilePath+KeysFileExtension)
 		if selectFileFound {
 			dbInteraction.Progress("  Select: %d statement(s) → %d extra entr%s from %s", len(selectStmts), len(extraCanonicals), map[bool]string{true: "y", false: "ies"}[len(extraCanonicals) == 1], mapFilePath+".select")
