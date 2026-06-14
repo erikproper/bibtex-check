@@ -63,8 +63,10 @@ func (b *TBibTeXStream) BibDeskStaticGroupDefinition(comment string) bool {
 			entries := propertyKeys[1]
 			for _, key := range strings.Split(XMLCleanGroupList(entries), ",") {
 				key = strings.TrimSpace(key)
-				b.library.GroupEntries.AddValueToStringSetMap(groupName, key)
 				if keyToIdx != nil {
+					// Harvest-capture mode: write group onto the entry only.
+					// Do NOT update GroupEntries here — syncGroupMembershipsFromBib
+					// must see the pre-parse DB state to detect new additions.
 					if idx, ok := keyToIdx[key]; ok {
 						e := &(*b.library.capturedHarvestEntries)[idx]
 						if e.Fields["groups"] == "" {
@@ -73,6 +75,8 @@ func (b *TBibTeXStream) BibDeskStaticGroupDefinition(comment string) bool {
 							e.Fields["groups"] += ", " + groupName
 						}
 					}
+				} else {
+					b.library.GroupEntries.AddValueToStringSetMap(groupName, key)
 				}
 			}
 		}
