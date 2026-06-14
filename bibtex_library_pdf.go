@@ -141,6 +141,49 @@ func (l *TBibTeXLibrary) moveToLibraryTrash(path string) bool {
 	return os.Rename(path, dest) == nil
 }
 
+// syncLocalPDFs copies global PDFs to a local .files/ folder for pdf_files="local" mode.
+// For each pair: if the global PDF exists and the local copy is absent or has different MD5,
+// it copies (or overwrites) the local copy. When trusted is true and both files exist with
+// different content, the newer file wins — if local is newer it is kept as-is (the local edit
+// takes precedence until the global copy is updated externally). When trusted is false, any
+// conflict is reported as a warning (interactive resolution is not yet implemented).
+func (l *TBibTeXLibrary) syncLocalPDFs(localFilesDir string, pairs []TBibGetPair, trusted bool) {
+	if err := os.MkdirAll(localFilesDir, 0755); err != nil {
+		l.Warning("Cannot create local files dir %s: %s", localFilesDir, err)
+		return
+	}
+	for _, p := range pairs {
+		if !l.PDFFiles[p.canonicalKey] {
+			continue
+		}
+		srcPath := l.FilesRoot + l.FilesFolder + p.canonicalKey + ".pdf"
+		dstPath := localFilesDir + p.localKey + ".pdf"
+		if !FileExists(dstPath) {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				l.Warning("Cannot copy PDF %s → %s: %s", p.canonicalKey+".pdf", p.localKey+".pdf", err)
+			}
+			continue
+		}
+		// Both exist: compare MD5.
+		if MD5ForFile(srcPath) == MD5ForFile(dstPath) {
+			continue
+		}
+		// Content differs. In trusted mode, keep the newer file.
+		if trusted {
+			srcInfo, srcErr := os.Stat(srcPath)
+			dstInfo, dstErr := os.Stat(dstPath)
+			if srcErr == nil && dstErr == nil && srcInfo.ModTime().After(dstInfo.ModTime()) {
+				if err := copyFile(srcPath, dstPath); err != nil {
+					l.Warning("Cannot overwrite local PDF %s: %s", p.localKey+".pdf", err)
+				}
+			}
+			// If local is newer or stat failed, keep local as-is.
+		} else {
+			l.Warning("PDF conflict for %s: global and local copies differ (manual resolution needed)", p.canonicalKey)
+		}
+	}
+}
+
 // mergePDFFile transfers the PDF for sourceKey to targetKey as part of a merge.
 // If source has a PDF and target does not, the file is renamed in place and PDFFiles
 // is updated. If target already has a PDF, the source file is moved to library trash.

@@ -330,7 +330,9 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 
 // deleteSubsetEntry removes a library entry that was deleted from the subset bib.
 // With trusted_subset, deletes silently; otherwise prompts.
-func deleteSubsetEntry(canonicalKey string, trusted bool) bool {
+// When localFilesDir and outputKey are non-empty, the local PDF copy (if any) is
+// moved to <stem>.trash/ alongside the local .files/ folder.
+func deleteSubsetEntry(canonicalKey, localFilesDir, outputKey string, trusted bool) bool {
 	if !trusted {
 		fmt.Fprintf(os.Stderr, "\nEntry deleted from subset bib:\n")
 		fmt.Fprint(os.Stderr, Library.entryDisplayString(canonicalKey))
@@ -339,6 +341,20 @@ func deleteSubsetEntry(canonicalKey string, trusted bool) bool {
 		}
 	}
 	deleteBibEntry(canonicalKey)
+	if localFilesDir != "" && outputKey != "" {
+		pdfPath := localFilesDir + outputKey + ".pdf"
+		if FileExists(pdfPath) {
+			trashDir := strings.TrimSuffix(strings.TrimSuffix(localFilesDir, "/"), ".files") + ".trash/"
+			_ = os.MkdirAll(trashDir, 0755)
+			dest := trashDir + outputKey + ".pdf"
+			if FileExists(dest) {
+				dest = trashDir + outputKey + "-" + time.Now().Format("20060102-150405") + ".pdf"
+			}
+			if err := os.Rename(pdfPath, dest); err != nil {
+				Library.Warning("Could not move local PDF %s.pdf to trash: %s", outputKey, err)
+			}
+		}
+	}
 	return true
 }
 
@@ -685,13 +701,20 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		}
 	}
 
+	// Compute local files dir for pdf_files="local" (used when trashing deleted entries' PDFs).
+	localFilesDir := ""
+	if cfg.PDFFiles == "local" {
+		localFilesDir = strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath)) + ".files/"
+	}
+
 	// Process deleted entries.
 	if !quit {
 		for _, canonical := range deletedCanonicals {
 			if quit || (stepN > 0 && questions >= stepN) {
 				break
 			}
-			if deleteSubsetEntry(canonical, cfg.TrustedSubset) {
+			outputKey := existingState[canonical].OutputKey
+			if deleteSubsetEntry(canonical, localFilesDir, outputKey, cfg.TrustedSubset) {
 				delete(existingState, canonical)
 			}
 			if !cfg.TrustedSubset {

@@ -662,8 +662,10 @@ var bibGetNonExportFields = func() TStringSet {
 // entryGetString produces the BibTeX export string for one entry.
 // outputKey is the local key used as the @Type{key} identifier.
 // crossrefLocalKey is the local key of the crossref parent (empty if none).
+// localFilesDir is the absolute path to the local .files/ folder for pdf_files="local"
+// (empty string when local mode is not active).
 func (l *TBibTeXLibrary) entryGetString(
-	canonicalKey, outputKey, crossrefLocalKey string,
+	canonicalKey, outputKey, crossrefLocalKey, localFilesDir string,
 	cfg TBibGetConfig,
 	shorten TShortenMappings,
 	hyphenations THyphenations,
@@ -703,7 +705,10 @@ func (l *TBibTeXLibrary) entryGetString(
 			if bibGetNonExportFields.Contains(field) {
 				continue
 			}
-			if field == LocalURLField || field == PreferredAliasField {
+			if field == LocalURLField && cfg.PDFFiles == "" {
+				continue
+			}
+			if field == PreferredAliasField {
 				continue
 			}
 			if !cfg.IncludeDOI && field == "doi" {
@@ -717,10 +722,17 @@ func (l *TBibTeXLibrary) entryGetString(
 			}
 		}
 
-		// local-url: derived from PDFFiles map, never stored in DB.
+		// local-url: derived from PDFFiles map (global) or local copy; never stored in DB.
 		if field == LocalURLField {
-			if isSubset && l.PDFFiles[canonicalKey] {
-				result += FormatBibTeXFieldAssignment("", field, l.FilesRoot+l.FilesFolder+canonicalKey+".pdf")
+			switch cfg.PDFFiles {
+			case "global":
+				if l.PDFFiles[canonicalKey] {
+					result += FormatBibTeXFieldAssignment("", field, l.FilesRoot+l.FilesFolder+canonicalKey+".pdf")
+				}
+			case "local":
+				if localFilesDir != "" && l.PDFFiles[canonicalKey] {
+					result += FormatBibTeXFieldAssignment("", field, localFilesDir+outputKey+".pdf")
+				}
 			}
 			continue
 		}
@@ -975,6 +987,23 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	// Write output file.
 	outPath := resolveRelative(cfg.FileName + BibFileExtension)
 
+	// Compute local files dir and sync PDFs before writing (pdf_files="local").
+	localFilesDir := ""
+	if cfg.PDFFiles == "local" {
+		localFilesDir = strings.TrimSuffix(outPath, BibFileExtension) + ".files/"
+		allOutputPairs := make([]TBibGetPair, 0, len(pairs)+len(extraPairs)+len(autoParents))
+		for _, p := range pairs {
+			allOutputPairs = append(allOutputPairs, TBibGetPair{canonicalToLocal[p.canonicalKey], p.canonicalKey})
+		}
+		for _, p := range extraPairs {
+			allOutputPairs = append(allOutputPairs, p)
+		}
+		for _, ap := range autoParents {
+			allOutputPairs = append(allOutputPairs, TBibGetPair{ap.localKey, ap.canonicalKey})
+		}
+		Library.syncLocalPDFs(localFilesDir, allOutputPairs, cfg.TrustedSubset)
+	}
+
 	// Build new content into a buffer so we can MD5 it before touching the file.
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
@@ -994,7 +1023,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			}
 			crossrefLocal = effectiveLocalKey(resolvedCrossref)
 		}
-		w.WriteString(Library.entryGetString(canonical, outputKey, crossrefLocal, cfg, shorten, hyphenations))
+		w.WriteString(Library.entryGetString(canonical, outputKey, crossrefLocal, localFilesDir, cfg, shorten, hyphenations))
 		w.WriteString("\n")
 	}
 
@@ -1013,20 +1042,20 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	// Bookish entries: explicit .keys pairs then .select extras.
 	for _, p := range pairs {
 		if BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
-			w.WriteString(Library.entryGetString(p.canonicalKey, canonicalToLocal[p.canonicalKey], "", cfg, shorten, hyphenations))
+			w.WriteString(Library.entryGetString(p.canonicalKey, canonicalToLocal[p.canonicalKey], "", localFilesDir, cfg, shorten, hyphenations))
 			w.WriteString("\n")
 		}
 	}
 	for _, p := range extraPairs {
 		if BibTeXBookish.Contains(Library.EntryType(p.canonicalKey)) {
-			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", cfg, shorten, hyphenations))
+			w.WriteString(Library.entryGetString(p.canonicalKey, p.localKey, "", localFilesDir, cfg, shorten, hyphenations))
 			w.WriteString("\n")
 		}
 	}
 
 	// Auto-added crossref parents.
 	for _, ap := range autoParents {
-		w.WriteString(Library.entryGetString(ap.canonicalKey, ap.localKey, "", cfg, shorten, hyphenations))
+		w.WriteString(Library.entryGetString(ap.canonicalKey, ap.localKey, "", localFilesDir, cfg, shorten, hyphenations))
 		w.WriteString("\n")
 	}
 
@@ -1197,6 +1226,18 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 		cfg.Mode = "pull"
 		rawMap["mode"] = json.RawMessage(`"pull"`)
 		needsWriteBack = true
+	}
+
+	// Seed pdf_files="global" for subset configs that predate this field.
+	if _, hasPDFFiles := rawMap["pdf_files"]; !hasPDFFiles {
+		var modeStr string
+		if modeRaw, hasMode := rawMap["mode"]; hasMode {
+			json.Unmarshal(modeRaw, &modeStr) //nolint:errcheck
+		}
+		if modeStr == "subset" {
+			rawMap["pdf_files"] = json.RawMessage(`"global"`)
+			needsWriteBack = true
+		}
 	}
 
 	// Rebuild clean rawData for overlay (file_name/file_names already stripped).
