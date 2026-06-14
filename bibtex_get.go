@@ -58,6 +58,7 @@ type TBibGetConfig struct {
 	CollectKeys   bool   `json:"collect_keys"`   // harvest: add source keys to hints DB when unambiguous
 	TrustedSubset bool   `json:"trusted_subset"` // subset: apply changes/adds/deletes without confirmation
 	PDFFiles      string `json:"pdf_files"`      // subset/full: "" | "global" | "local"
+	Format        string `json:"format"`         // output dialect: "bibdesk" (default) | "jabref"
 }
 
 // migrateRawConfigFileNames migrates "file_name" → "file_names" in a raw JSON map.
@@ -591,6 +592,15 @@ var biberEditionOrdinals = map[string]string{
 }
 
 // applyBiberMode converts month and edition values to biber-friendly form.
+// jabrefEscapePath escapes a file path for use inside a JabRef file = {:path:type} field.
+// Backslash, colon and semicolon must be escaped with a preceding backslash.
+func jabrefEscapePath(path string) string {
+	path = strings.ReplaceAll(path, `\`, `\\`)
+	path = strings.ReplaceAll(path, `:`, `\:`)
+	path = strings.ReplaceAll(path, `;`, `\;`)
+	return path
+}
+
 func applyBiberMode(field, value string) string {
 	switch field {
 	case "month":
@@ -721,16 +731,34 @@ func (l *TBibTeXLibrary) entryGetString(
 			}
 		}
 
-		// local-url: derived from PDFFiles map (global) or local copy; never stored in DB.
+		// local-url / file: derived from PDFFiles map, never stored in DB.
+		// BibDesk format emits local-url; JabRef format emits file = {:path:PDF}.
 		if field == LocalURLField {
-			switch cfg.PDFFiles {
-			case "global":
-				if l.PDFFiles[canonicalKey] {
-					result += FormatBibTeXFieldAssignment("", field, l.FilesRoot+l.FilesFolder+canonicalKey+".pdf")
-				}
-			case "local":
-				if localFilesDir != "" && l.PDFFiles[canonicalKey] {
-					result += FormatBibTeXFieldAssignment("", field, localFilesDir+outputKey+".pdf")
+			if cfg.PDFFiles != "" && l.PDFFiles[canonicalKey] {
+				if cfg.Format == "jabref" {
+					var pdfPath string
+					switch cfg.PDFFiles {
+					case "global":
+						pdfPath = l.FilesRoot + l.FilesFolder + canonicalKey + ".pdf"
+					case "local":
+						if localFilesDir != "" {
+							// Relative path from bib directory: <stem>.files/<outputKey>.pdf
+							pdfPath = filepath.Base(strings.TrimSuffix(localFilesDir, string(filepath.Separator))) +
+								string(filepath.Separator) + outputKey + ".pdf"
+						}
+					}
+					if pdfPath != "" {
+						result += FormatBibTeXFieldAssignment("", "file", ":"+jabrefEscapePath(pdfPath)+":PDF")
+					}
+				} else {
+					switch cfg.PDFFiles {
+					case "global":
+						result += FormatBibTeXFieldAssignment("", field, l.FilesRoot+l.FilesFolder+canonicalKey+".pdf")
+					case "local":
+						if localFilesDir != "" {
+							result += FormatBibTeXFieldAssignment("", field, localFilesDir+outputKey+".pdf")
+						}
+					}
 				}
 			}
 			continue
@@ -778,6 +806,20 @@ func (l *TBibTeXLibrary) entryGetString(
 
 	if urldateNote != "" {
 		result += FormatBibTeXFieldAssignment("", "note", urldateNote)
+	}
+
+	// JabRef format: emit groups = {Group A, Group B} for each group this entry belongs to.
+	if cfg.Format == "jabref" {
+		var entryGroups []string
+		for group, members := range l.GroupEntries {
+			if members.Set().Contains(canonicalKey) {
+				entryGroups = append(entryGroups, group)
+			}
+		}
+		if len(entryGroups) > 0 {
+			sort.Strings(entryGroups)
+			result += FormatBibTeXFieldAssignment("", "groups", strings.Join(entryGroups, ", "))
+		}
 	}
 
 	result += "}\n"
