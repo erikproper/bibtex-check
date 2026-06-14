@@ -664,6 +664,7 @@ func reportHomework() {
 
 func doDefaultRun() {
 	if openLibraryToUpdate() {
+		defer reportHomework()
 		clearEntryWarnings()
 		Library.CheckEntries()
 		if Library.QuitWasRequested() {
@@ -714,7 +715,6 @@ func doDefaultRun() {
 		Library.ScanOrphanPDFs()
 		Library.ReadURLsIgnoreFile()
 		Library.CheckAllURLs()
-		reportHomework()
 	}
 }
 
