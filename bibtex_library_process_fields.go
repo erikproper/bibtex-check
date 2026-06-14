@@ -44,6 +44,16 @@ func processFieldToIgnoreValue(l *TBibTeXLibrary, key, value string) (string, st
 	return IgnoreField, ""
 }
 
+// processFieldCapturePDFRef passes the value through when harvestCapturePDFFields is
+// active (so harvest can copy the referenced PDF), otherwise ignores it like
+// processFieldToIgnoreValue.
+func processFieldCapturePDFRef(l *TBibTeXLibrary, key, value string) (string, string) {
+	if l.harvestCapturePDFFields {
+		return key, value
+	}
+	return IgnoreField, ""
+}
+
 // The general function call to process field values.
 // It always, first, conducts a normalisation of the field value.
 // If a field specific process function exists, then it is applied on the normalised value.
@@ -98,7 +108,7 @@ func init() {
 	fieldProcessors["keywords"] = processFieldToIgnoreValue
 
 	// Jabref
-	fieldProcessors[JabrefFileField] = processFieldToIgnoreValue // PDF path derived from PDFFiles map
+	fieldProcessors[JabrefFileField] = processFieldCapturePDFRef // captured during harvest; otherwise ignored
 	fieldProcessors["owner"] = processFieldToIgnoreValue
 	fieldProcessors["creationdate"] = processFieldToIgnoreValue
 	fieldProcessors["modificationdate"] = processFieldToIgnoreValue
@@ -115,7 +125,7 @@ func init() {
 	fieldProcessors["bdsk-file-7"] = processFieldToIgnoreValue
 	fieldProcessors["bdsk-file-8"] = processFieldToIgnoreValue
 	fieldProcessors["bdsk-file-9"] = processFieldToIgnoreValue
-	fieldProcessors[LocalURLField] = processFieldToIgnoreValue // PDF presence tracked via PDFFiles, not DB
+	fieldProcessors[LocalURLField] = processFieldCapturePDFRef // captured during harvest; otherwise ignored
 	fieldProcessors["bdsk-url-1"] = processFieldToIgnoreValue
 	fieldProcessors["bdsk-url-2"] = processFieldToIgnoreValue
 	fieldProcessors["bdsk-url-3"] = processFieldToIgnoreValue

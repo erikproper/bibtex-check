@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -169,7 +170,12 @@ func (l *TBibTeXLibrary) parseHarvestBib(path string) ([]TBibTeXEntry, bool) {
 
 	entries := make([]TBibTeXEntry, 0, anticipated)
 	l.capturedHarvestEntries = &entries
+	l.harvestCapturePDFFields = true
+	l.harvestSourceDir = filepath.Dir(path)
 	l.ParseRawBibFile(path)
+	l.harvestCapturePDFFields = false
+	// harvestSourceDir is kept set so maybeHarvestPDF can resolve relative paths
+	// during the harvest loop that follows. Overwritten on the next parseHarvestBib call.
 	l.capturedHarvestEntries = nil
 	l.capturedDBLPEntry = nil // guard: clean up if last entry was never finished
 
@@ -316,6 +322,79 @@ func maybeCollectKeyHint(l *TBibTeXLibrary, sourceKey, finalKey string) {
 	l.AddKeyHint(sourceKey, finalKey)
 }
 
+// --- PDF harvesting ---
+
+// jabrefPDFPath extracts the path to the first PDF-typed file from a JabRef file
+// field value. Returns "" when no PDF entry is found. Format:
+//
+//	description:path:type[;description:path:type…]
+//
+// with ':', ';', and '\' each escaped by '\'.
+func jabrefPDFPath(ref string) string {
+	// Temporarily replace escape sequences so we can split on bare delimiters.
+	safe := strings.ReplaceAll(ref, `\\`, "\x01")  // protect escaped backslash
+	safe = strings.ReplaceAll(safe, `\:`, "\x02")  // protect escaped colon
+	safe = strings.ReplaceAll(safe, `\;`, "\x03")  // protect escaped semicolon
+
+	restore := func(s string) string {
+		s = strings.ReplaceAll(s, "\x03", ";")
+		s = strings.ReplaceAll(s, "\x02", ":")
+		s = strings.ReplaceAll(s, "\x01", `\`)
+		return s
+	}
+
+	for _, entry := range strings.Split(safe, ";") {
+		parts := strings.SplitN(entry, ":", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		if !strings.EqualFold(restore(parts[2]), "pdf") {
+			continue
+		}
+		if p := restore(parts[1]); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+// maybeHarvestPDF copies a PDF referenced by a harvested entry into the library files
+// folder under canonicalKey.pdf. Handles both JabRef (file = {:path:PDF}) and
+// BibDesk (local-url = {/abs/path}) formats. Relative JabRef paths are resolved
+// against l.harvestSourceDir (set during parseHarvestBib, kept through the loop).
+func (l *TBibTeXLibrary) maybeHarvestPDF(e TBibTeXEntry, canonicalKey string) {
+	if l.PDFFiles[canonicalKey] {
+		return // library already has a PDF for this entry
+	}
+	destPath := l.FilesRoot + l.FilesFolder + canonicalKey + ".pdf"
+
+	var srcPath string
+	if ref := e.Fields[JabrefFileField]; ref != "" {
+		if raw := jabrefPDFPath(ref); raw != "" {
+			if !filepath.IsAbs(raw) && l.harvestSourceDir != "" {
+				raw = filepath.Join(l.harvestSourceDir, raw)
+			}
+			srcPath = raw
+		}
+	} else if ref := e.Fields[LocalURLField]; ref != "" {
+		srcPath = ref
+	}
+
+	if srcPath == "" || !FileExists(srcPath) {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0750); err != nil {
+		l.Warning("Could not create PDF directory %s: %s", filepath.Dir(destPath), err)
+		return
+	}
+	if err := copyFile(srcPath, destPath); err != nil {
+		l.Warning("Could not copy PDF %s → %s: %s", srcPath, destPath, err)
+		return
+	}
+	l.PDFFiles[canonicalKey] = true
+	l.Progress("Harvested PDF: %s → %s", filepath.Base(srcPath), canonicalKey+".pdf")
+}
+
 // --- Adding entries ---
 
 // addHarvestEntry inserts a harvested TBibTeXEntry as a new library entry and returns
@@ -383,6 +462,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		if cmdTrustHints || l.ConfirmAction(QuestionHarvestKeyMatch) {
 			finalKey := mergeAndCheck(addHarvestEntry(l, e), keyMatch)
 			collectKey(e.Key, finalKey)
+			l.maybeHarvestPDF(e, finalKey)
 			return appendLog(finalKey), false
 		}
 	}
@@ -397,6 +477,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		if pick := l.askHarvestLibraryChoice(len(titleMatches)); pick > 0 {
 			finalKey := mergeAndCheck(addHarvestEntry(l, e), titleMatches[pick-1])
 			collectKey(e.Key, finalKey)
+			l.maybeHarvestPDF(e, finalKey)
 			return appendLog(finalKey), false
 		}
 	}
@@ -411,6 +492,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			doAllChecks(finalKey)
 			fixEntry(finalKey)
 			collectKey(e.Key, l.MapEntryKey(finalKey))
+			l.maybeHarvestPDF(e, l.MapEntryKey(finalKey))
 			return appendLog(l.MapEntryKey(finalKey)), false
 		}
 	}
@@ -432,6 +514,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		finalKey := l.MapEntryKey(newKey)
 		fixEntry(finalKey)
 		collectKey(e.Key, finalKey)
+		l.maybeHarvestPDF(e, finalKey)
 		return appendLog(finalKey), false
 	}
 }
@@ -559,7 +642,10 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 			sourcePath = filepath.Join(cwd, sourcePath)
 		}
 	}
-	logPath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath)) + HarvestLogExtension
+	keysBasePath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath))
+	logPath := keysBasePath + HarvestLogExtension
+
+	maybeMigrateSubsetToHarvest(sourcePath, keysBasePath, logPath)
 
 	on := func(b bool) string {
 		if b {
@@ -624,4 +710,101 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	Library.Progress("  Skipped (skip-content)  : %d", skippedContent)
 	Library.Progress("  Waived  (skip-never)    : %d", waived)
 	Library.Progress("  Pending (not yet seen)  : %d", stillPending)
+}
+
+// --- Mode transitions ---
+
+// patchConfigField reads the JSON config at cfgPath, sets rawKey to rawVal, and writes back.
+func patchConfigField(cfgPath, rawKey string, rawVal json.RawMessage) {
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(data, &m) != nil {
+		return
+	}
+	m[rawKey] = rawVal
+	if out, err := json.MarshalIndent(m, "", "  "); err == nil {
+		os.WriteFile(cfgPath, append(out, '\n'), 0644) //nolint:errcheck
+	}
+}
+
+// maybeMigrateHarvestToSubset handles a harvest→subset mode transition. When the
+// user changes the config from mode="harvest" to mode="subset", the existing harvest
+// log is used to seed the initial .keys file so the subset bib keeps the source
+// keys as output keys. key_mapping is enabled in the config and in cfg so that the
+// current sync run uses local keys immediately.
+//
+// Detection: subset state file absent + harvest log file present + no .keys file yet.
+func maybeMigrateHarvestToSubset(cfg *TBibGetConfig, keysBasePath, statePath, logPath string) {
+	keysPath := keysBasePath + KeysFileExtension
+	if FileExists(statePath) || !FileExists(logPath) || FileExists(keysPath) {
+		return
+	}
+	log := readHarvestLog(logPath)
+	if len(log) == 0 {
+		return
+	}
+	var pairs []TBibGetPair
+	for _, e := range log {
+		if e.OriginalKey == "" || e.Action == harvestActionSkipContent || e.Action == harvestActionSkipNever {
+			continue
+		}
+		canon := Library.MapEntryKey(e.Action)
+		if !Library.EntryExists(canon) {
+			continue
+		}
+		pairs = append(pairs, TBibGetPair{localKey: e.OriginalKey, canonicalKey: canon})
+	}
+	if len(pairs) == 0 {
+		Library.Progress("Harvest→subset: no resolved entries in harvest log — skipping .keys creation")
+		return
+	}
+	cfg.KeyMapping = true
+	rewriteKeysFile(keysBasePath, pairs, true)
+	patchConfigField(keysBasePath+ConfigFileExtension, "key_mapping", json.RawMessage("true"))
+	Library.Progress("Harvest→subset transition: wrote %d key pairs from harvest log", len(pairs))
+}
+
+// maybeMigrateSubsetToHarvest handles a subset→harvest mode transition. When the
+// user changes the config from mode="subset" to mode="harvest", the existing .keys
+// file is used to pre-populate the harvest log so previously absorbed entries are
+// not presented again. The .keys file is archived to .keys.bak.
+//
+// Detection: harvest log absent + .keys file present.
+func maybeMigrateSubsetToHarvest(sourcePath, keysBasePath, logPath string) {
+	keysPath := keysBasePath + KeysFileExtension
+	if FileExists(logPath) || !FileExists(keysPath) {
+		return
+	}
+	pairs, _, ok := readKeysFile(keysBasePath)
+	if !ok || len(pairs) == 0 {
+		return
+	}
+	localToCanon := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		localToCanon[p.localKey] = p.canonicalKey
+	}
+	entries, _ := Library.parseHarvestBib(sourcePath)
+	var log THarvestLog
+	for _, e := range entries {
+		canon, found := localToCanon[e.Key]
+		if !found {
+			continue
+		}
+		canon = Library.MapEntryKey(canon)
+		if !Library.EntryExists(canon) {
+			continue
+		}
+		log = append(log, THarvestLogEntry{
+			OriginalKey:        e.Key,
+			TitleHash:          harvestTitleHash(e),
+			ContentFingerprint: harvestContentFingerprint(e),
+			Action:             canon,
+		})
+	}
+	writeHarvestLog(logPath, log)
+	os.Rename(keysPath, keysPath+".bak") //nolint:errcheck
+	Library.Progress("Subset→harvest transition: pre-logged %d entries from .keys file", len(log))
 }

@@ -108,6 +108,7 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		key string
 		val json.RawMessage
 	}{
+		{"mode", json.RawMessage(`"harvest"`)},
 		{"key_mapping", json.RawMessage(`true`)},
 		{"include_doi", json.RawMessage(`true`)},
 		{"include_isbn", json.RawMessage(`true`)},
@@ -1279,7 +1280,7 @@ func applyJSONOverlay(cfg *TBibGetConfig, data []byte, path string) bool {
 
 
 // readFileConfig reads the per-file sync config for a single bib file and overlays
-// it on baseCfg. If the file exists but has no "mode" key, "pull" is written back.
+// it on baseCfg. If the file exists but has no "mode" key, "harvest" is written back.
 // If the file does not exist, baseCfg is returned with mode defaulting to "pull".
 func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig, bool) {
 	cfgPath := filepath.Join(baseDir, name+ConfigFileExtension)
@@ -1312,10 +1313,10 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 
 	needsWriteBack := false
 
-	// Write "mode": "pull" back when absent.
+	// Write "mode": "harvest" back when absent (inherits bib.config default).
 	if _, hasMode := rawMap["mode"]; !hasMode {
-		cfg.Mode = "pull"
-		rawMap["mode"] = json.RawMessage(`"pull"`)
+		cfg.Mode = "harvest"
+		rawMap["mode"] = json.RawMessage(`"harvest"`)
 		needsWriteBack = true
 	}
 
@@ -1339,7 +1340,7 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 	json.Unmarshal(defaultsData, &defaultsMap) //nolint:errcheck
 	for key, val := range rawMap {
 		if key == "mode" {
-			continue
+			continue // always kept: mode is the primary per-file identifier
 		}
 		if defVal, inDefaults := defaultsMap[key]; inDefaults {
 			if string(val) == string(defVal) {

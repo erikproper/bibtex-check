@@ -384,6 +384,8 @@ func resolveSubsetPaths(cfg TBibGetConfig, baseDir string) (sourcePath, keysBase
 // parse error — bib must not be overwritten).
 func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
 	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
+	logPath := keysBasePath + HarvestLogExtension
+	maybeMigrateHarvestToSubset(&cfg, keysBasePath, statePath, logPath)
 
 	on := func(b bool) string {
 		if b {
