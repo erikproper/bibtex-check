@@ -307,6 +307,7 @@ func connectToDatabase() {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", dbName, err.Error())
 	}
+	db.SetMaxOpenConns(1) // SQLite supports only one write at a time; single connection avoids SQLITE_BUSY
 	configureDatabasePragmas()
 
 	ensureTableDatesTableExists()
@@ -371,6 +372,7 @@ func reopenDb(path string) {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", path, err)
 	}
+	db.SetMaxOpenConns(1)
 	configureDatabasePragmas()
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
@@ -861,7 +863,7 @@ func maybeMigrateFilterTableNames() {
 }
 
 func setTableDate(tableName string, date int64) {
-	_, err := db.Exec(`
+	err := bibExec(`
 		INSERT INTO table_modification_times (table_name, modification_time)
 		  VALUES (?, ?)
 		  ON CONFLICT(table_name)
@@ -873,12 +875,10 @@ func setTableDate(tableName string, date int64) {
 }
 
 func tableModTime(tableName string) int64 {
-	row := db.QueryRow(
-		`SELECT modification_time FROM table_modification_times WHERE table_name = ?`,
-		tableName)
-
 	var date int64
-	if err := row.Scan(&date); err != nil {
+	if err := bibQueryRow(
+		`SELECT modification_time FROM table_modification_times WHERE table_name = ?`,
+		tableName).Scan(&date); err != nil {
 		date = 0
 	}
 	return date
@@ -925,7 +925,7 @@ func writeSessionIsCrashed() bool {
 }
 
 func setTableDirty(tableName string) {
-	_, err := db.Exec(`
+	err := bibExec(`
 		INSERT INTO table_modification_times (table_name, modification_time, dirty)
 		  VALUES (?, 0, 1)
 		  ON CONFLICT(table_name) DO UPDATE SET dirty = 1;`,
@@ -936,7 +936,7 @@ func setTableDirty(tableName string) {
 }
 
 func clearTableDirty(tableName string) {
-	if _, err := db.Exec(
+	if err := bibExec(
 		`UPDATE table_modification_times SET dirty = 0 WHERE table_name = ?`, tableName); err != nil {
 		dbInteraction.Error("Clearing dirty bit for %s failed: %s", tableName, err)
 	}
@@ -944,7 +944,7 @@ func clearTableDirty(tableName string) {
 
 func isTableDirty(tableName string) bool {
 	var dirty int
-	if err := db.QueryRow(
+	if err := bibQueryRow(
 		`SELECT dirty FROM table_modification_times WHERE table_name = ?`, tableName).Scan(&dirty); err != nil {
 		return false
 	}
@@ -953,7 +953,7 @@ func isTableDirty(tableName string) bool {
 
 func setTableLastWritten(tableName string) {
 	now := time.Now().UnixMicro()
-	_, err := db.Exec(`
+	err := bibExec(`
 		INSERT INTO table_modification_times (table_name, modification_time, last_written_time)
 		  VALUES (?, 0, ?)
 		  ON CONFLICT(table_name) DO UPDATE SET last_written_time = excluded.last_written_time;`,
