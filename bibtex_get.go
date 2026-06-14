@@ -883,8 +883,6 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		dbInteraction.Progress("  Keys  : %d entr%s from %s", len(pairs), map[bool]string{true: "y", false: "ies"}[len(pairs) == 1], mapFilePath+KeysFileExtension)
 		if selectFileFound {
 			dbInteraction.Progress("  Select: %d statement(s) → %d extra entr%s from %s", len(selectStmts), len(extraCanonicals), map[bool]string{true: "y", false: "ies"}[len(extraCanonicals) == 1], mapFilePath+".select")
-		} else {
-			dbInteraction.Progress("  Select: %s not found (no .select file)", mapFilePath+".select")
 		}
 	}
 

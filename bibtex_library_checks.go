@@ -232,7 +232,12 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 		}
 
 		if bibEntryExists(oldie) {
-			l.Warning(WarningOldieIsKey, oldie)
+			// Ghost: the oldie key still has rows in bib_entries even though it is
+			// recorded as an alias for key. Merge its fields into the canonical first
+			// (in case the ghost holds data that was never reconciled), then the merge
+			// will delete the ghost row as part of normal cleanup.
+			l.Progress("Auto-repairing ghost entry %s (alias for %s)", oldie, key)
+			l.MergeEntries(oldie, key)
 		}
 	}
 }

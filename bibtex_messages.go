@@ -47,7 +47,6 @@ const (
 	WarningTargetAlreadyUsedAsSource       = "Mapping target %s is already used as a source"
 	WarningMappingForKey                   = " for "
 	WarningTargetOfOldieNotExists          = "Target %s of oldie %s does not exist."
-	WarningOldieIsKey                      = "Oldie %s is currently still a key."
 	ProgressCheckingConsistencyOfEntries   = "Checking consistency and completeness of the library entries."
 	ProgressCheckingConsistencyOfKeyOldies = "Checking consistency and completeness of key oldies."
 
