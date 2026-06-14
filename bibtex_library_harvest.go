@@ -342,11 +342,27 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		}
 		return log
 	}
+	// fixEntry runs the full per-entry fix when -fix is set: DBLP update for
+	// entries that already have a DBLP key, peer+candidate search for those that don't.
+	fixEntry := func(key string) {
+		if !cmdFix {
+			return
+		}
+		key = l.MapEntryKey(key)
+		if dblpKey := l.EntryFieldValueity(key, DBLPField); dblpKey != "" {
+			l.MaybeMergeDBLPEntry(dblpKey, key, true)
+		} else {
+			if !findLibraryEqualWithDblp(key) {
+				maybeFindDBLPCandidates(key)
+			}
+		}
+	}
 	mergeAndCheck := func(newKey, matchKey string) string {
 		l.MergeEntries(l.MapEntryKey(newKey), matchKey)
 		finalKey := l.MapEntryKey(matchKey)
 		l.Progress("Checking %s", finalKey)
 		doAllChecks(finalKey)
+		fixEntry(finalKey)
 		return l.MapEntryKey(finalKey)
 	}
 	collectKey := func(sourceKey, finalKey string) {
@@ -390,6 +406,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			finalKey := l.MapEntryKey(newKey)
 			l.Progress("Checking %s", finalKey)
 			doAllChecks(finalKey)
+			fixEntry(finalKey)
 			collectKey(e.Key, l.MapEntryKey(finalKey))
 			return appendLog(l.MapEntryKey(finalKey)), false
 		}
@@ -410,6 +427,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		l.Progress("Checking %s", l.MapEntryKey(newKey))
 		doAllChecks(newKey)
 		finalKey := l.MapEntryKey(newKey)
+		fixEntry(finalKey)
 		collectKey(e.Key, finalKey)
 		return appendLog(finalKey), false
 	}

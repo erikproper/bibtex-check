@@ -1085,6 +1085,14 @@ func (l *TBibTeXLibrary) DeleteEntry(key string) {
 		l.moveToLibraryTrash(l.FilesRoot + l.FilesFolder + key + ".pdf") //nolint:errcheck
 		delete(l.PDFFiles, key)
 	}
+	// Clean up entry_metadata so no orphan rows accumulate after deletion.
+	if props, ok := l.Metadata[key]; ok {
+		for prop := range props {
+			db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, key, prop) //nolint:errcheck
+		}
+		delete(l.Metadata, key)
+		l.metadataModified = true
+	}
 	deleteBibEntry(key)
 }
 

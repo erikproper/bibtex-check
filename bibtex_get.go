@@ -434,10 +434,9 @@ func readShortenMappingsFile(path string) TShortenMappings {
 	return result
 }
 
-// readShortenMappings loads shorten_mappings from the DB, reloading from the global
-// shorten_mappings.csv first if the file is newer than the cached table timestamp.
+// readShortenMappings loads shorten_mappings from the DB.
+// Update via -import shorten_mappings; the DB is the primary source.
 func readShortenMappings() TShortenMappings {
-	maybeReloadShortenMappingsDb()
 	return loadShortenMappingsFromDb()
 }
 

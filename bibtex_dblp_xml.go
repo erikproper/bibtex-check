@@ -301,7 +301,15 @@ func doRebuildDblpTitleIndex() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Rebuilding title index from %s...\n", entriesRoot)
+	total := 0
+	if meta := readDblpMeta(); meta != nil {
+		total = meta.EntryCount
+	}
+	if total > 0 {
+		fmt.Fprintf(os.Stderr, "Rebuilding title index from %s (%d entries)...\n", entriesRoot, total)
+	} else {
+		fmt.Fprintf(os.Stderr, "Rebuilding title index from %s...\n", entriesRoot)
+	}
 
 	// Accumulate hash→keys in memory to avoid per-entry read-before-write in
 	// appendToIndexFile. Writing all link files in one batch at the end eliminates
@@ -335,7 +343,11 @@ func doRebuildDblpTitleIndex() {
 		}
 		count++
 		if now := time.Now(); now.Sub(lastReport) >= 5*time.Second {
-			fmt.Fprintf(os.Stderr, "  %d entries indexed (%.0fs)...\n", count, now.Sub(start).Seconds())
+			if total > 0 {
+				fmt.Fprintf(os.Stderr, "  %d / %d entries indexed (%.0fs)...\n", count, total, now.Sub(start).Seconds())
+			} else {
+				fmt.Fprintf(os.Stderr, "  %d entries indexed (%.0fs)...\n", count, now.Sub(start).Seconds())
+			}
 			lastReport = now
 		}
 		return nil
@@ -344,8 +356,11 @@ func doRebuildDblpTitleIndex() {
 	// Write all accumulated title links — one file per hash, no read needed since
 	// the old index was moved to trash before this run.
 	if err == nil && len(titleLinks) > 0 {
-		fmt.Fprintf(os.Stderr, "Writing %d title link files...\n", len(titleLinks))
+		nHashes := len(titleLinks)
+		fmt.Fprintf(os.Stderr, "Writing %d title link files...\n", nHashes)
 		written := 0
+		writeStart := time.Now()
+		lastWriteReport := writeStart
 		for hash, keys := range titleLinks {
 			path := dblpTitleLinkPath(hash)
 			if mkErr := os.MkdirAll(filepath.Dir(path), 0755); mkErr != nil {
@@ -357,6 +372,11 @@ func doRebuildDblpTitleIndex() {
 				errors++
 			} else {
 				written++
+			}
+			if now := time.Now(); now.Sub(lastWriteReport) >= 5*time.Second {
+				fmt.Fprintf(os.Stderr, "  %d / %d link files written (%.0fs)...\n",
+					written, nHashes, now.Sub(writeStart).Seconds())
+				lastWriteReport = now
 			}
 		}
 		fmt.Fprintf(os.Stderr, "  %d link files written.\n", written)

@@ -144,11 +144,8 @@ func (l *TBibTeXLibrary) WriteMetadataFile() {
 	if writeErr := os.WriteFile(path, data, 0644); writeErr != nil {
 		l.Warning("Could not write %s: %s", path, writeErr)
 	}
-	// Stamp the DB table timestamp AFTER writing the JSON file so that
-	// maybeReloadEntryMetadataDb sees tableModTime > fileModTime on the
-	// next startup and skips the JSON re-import. Stamping before the write
-	// causes the JSON mtime to always exceed the stored timestamp, which
-	// makes every startup reload the JSON — overwriting any manual DB cleanup.
+	// Stamp the DB table timestamp after writing so that future -export / -import
+	// cycles can detect whether the on-disk backup is current.
 	saveEntryMetadataToDb(l)
 	l.metadataModified = false
 }

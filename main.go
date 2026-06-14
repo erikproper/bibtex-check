@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -65,6 +66,7 @@ var (
 	cmdAutoFixAlignTitles bool
 	cmdTrustHints         bool // -trust_hints: auto-accept key-hint matches in harvest
 	cmdCollectKeys        bool // -collect_keys: add source keys to hints DB when unambiguous
+	cmdFix                bool // -fix: apply full per-entry checks when combined with -sync or -harvest
 )
 
 func reportCacheMode() {
@@ -95,14 +97,7 @@ func initialiseLibrary() {
 		refreshBibDbTimestamp()
 	}
 
-	nameMappingsRepaired, _ := repairDirtyMappingTables()
-
-	// If name_mappings was repaired, the normalisation pass for cross-field and
-	// generic-field mappings may have used stale aliases — force a fresh reload.
-	if nameMappingsRepaired {
-		setTableDate("cross_field_mappings", 0)
-		setTableDate("generic_field_mappings", 0)
-	}
+	repairDirtyMappingTables()
 }
 
 func loadMappingFiles() {
@@ -662,11 +657,9 @@ func reportHomework() {
 		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked)
 }
 
-// doExtendDblpCoverage interactively finds DBLP matches for library entries that have
-// no DBLP key yet, by title-index lookup and same-title peer detection.
-// Separated from doDefaultRun so the main check loop stays fast when there are many
-// unmatched entries.
-func doExtendDblpCoverage() {
+// doFixCandidates interactively links library entries that have no DBLP key yet to
+// DBLP records, using peer detection and title-index lookup.
+func doFixCandidates() {
 	if openLibraryToUpdate() {
 		defer reportHomework()
 		stepN := Reporting.StepSize()
@@ -1149,30 +1142,76 @@ func doFixEntries(args []string) {
 	}
 }
 
-func doFixAllEntries() {
+// unresolvedDuplicateKeys returns all canonical keys that appear in a title group
+// with at least one unresolved potential-duplicate pair (not in non-doubles, no
+// divergent DBLP/DOI evidence).
+func unresolvedDuplicateKeys() []string {
+	seen := map[string]bool{}
+	for _, keySet := range Library.TitleIndex {
+		var canonicals []string
+		for _, k := range keySet.ElementsSorted() {
+			if k == Library.MapEntryKey(k) {
+				canonicals = append(canonicals, k)
+			}
+		}
+		groupUnresolved := false
+		for i, a := range canonicals {
+			for _, b := range canonicals[i+1:] {
+				if Library.NonDoubles[a].Set().Contains(b) {
+					continue
+				}
+				if Library.EvidenceForBeingDifferentEntries(a, b) {
+					continue
+				}
+				groupUnresolved = true
+				break
+			}
+			if groupUnresolved {
+				break
+			}
+		}
+		if groupUnresolved {
+			for _, k := range canonicals {
+				seen[k] = true
+			}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for k := range seen {
+		result = append(result, k)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// doFixDuplicates interactively resolves title-duplicate pairs. Only entries that
+// appear in at least one unresolved title group are processed, making the loop
+// much faster than a full -fix_all_entries pass over the entire library.
+func doFixDuplicates() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
-		total := countBibEntries()
-		count := 0
+		keys := unresolvedDuplicateKeys()
+		total := len(keys)
 		stepN := int(cmdStep)
 		questionCounter := 0
-		forEachBibEntryKey(func(key string) bool {
-			count++
-			Library.Progress(ProgressEntryProgress, count, total, float64(count)*100/float64(total))
+		for i, key := range keys {
+			Library.Progress(ProgressEntryProgress, i+1, total, float64(i+1)*100/float64(total))
 			Library.ResetQuestionFlag()
-			doAllChecks(key)
+			if Library.EntryFieldValueity(key, DBLPField) == "" {
+				findLibraryEqualWithDblp(key)
+			}
+			doAllChecks(Library.MapEntryKey(key))
 			if stepN > 0 && Library.QuestionWasAsked() {
 				questionCounter++
 				if questionCounter >= stepN {
 					if Library.AskContinueOrQuit() {
-						return false
+						break
 					}
 					questionCounter = 0
 				}
 			}
-			return true
-		})
+		}
 	}
 }
 
@@ -1692,10 +1731,10 @@ func main() {
 		cmdEntryKeyAlias      bool
 		cmdShowEntry          bool
 		cmdFixEntries         bool
-		cmdFixAllEntries      bool
-		cmdAddDblpEntry    bool
-		cmdAddDblpEntries        bool
-		cmdExtendDblpCoverage    bool
+		cmdFixDuplicates  bool // -fix_duplicates: fix entries in unresolved title groups
+		cmdFixCandidates  bool // -fix_candidates: link unmatched entries to DBLP
+		cmdAddDblpEntry   bool
+		cmdAddDblpEntries bool
 		cmdWatch             bool
 		cmdAddKeyMapping         bool
 		cmdMergeEntries       bool
@@ -1746,9 +1785,12 @@ func main() {
 	flag.BoolVar(&cmdShowEntry, "show_entry", false, "print full entry content")
 	flag.BoolVar(&cmdFixEntries, "fix_entries", false, "fix/check specific entries")
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
-	flag.BoolVar(&cmdFixAllEntries, "fix_all_entries", false, "fix/check all entries")
+	flag.BoolVar(&cmdFixDuplicates, "fix_duplicates", false, "interactively resolve title-duplicate pairs in the library")
+	flag.BoolVar(&cmdFixDuplicates, "fix_all_entries", false, "alias for -fix_duplicates")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
-	flag.BoolVar(&cmdExtendDblpCoverage, "extend_dblp_coverage", false, "interactively find DBLP matches for library entries without a DBLP key")
+	flag.BoolVar(&cmdFixCandidates, "fix_candidates", false, "interactively link library entries without a DBLP key to DBLP records")
+	flag.BoolVar(&cmdFixCandidates, "extend_dblp_coverage", false, "alias for -fix_candidates")
+	flag.BoolVar(&cmdFix, "fix", false, "apply full per-entry checks when combined with -sync or -harvest")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "upsert DBLP data for one or more given entries (library or DBLP keys)")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
 	flag.BoolVar(&cmdWatch, "watch", false, "check watched persons/ORCIDs for missing publications")
@@ -1981,8 +2023,8 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 		}
 		doFixEntries(args)
 
-	case cmdFixAllEntries:
-		doFixAllEntries()
+	case cmdFixDuplicates:
+		doFixDuplicates()
 
 	case cmdRestoreKeyHints:
 		doRestoreKeyHints(restoreKeyHintsPath)
@@ -1997,8 +2039,8 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 			runScript()
 		}
 
-	case cmdExtendDblpCoverage:
-		doExtendDblpCoverage()
+	case cmdFixCandidates:
+		doFixCandidates()
 
 	case cmdAddDblpEntries:
 		requireNoDblpImport()
