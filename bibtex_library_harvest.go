@@ -395,6 +395,28 @@ func (l *TBibTeXLibrary) maybeHarvestPDF(e TBibTeXEntry, canonicalKey string) {
 	l.Progress("Harvested PDF: %s → %s", filepath.Base(srcPath), canonicalKey+".pdf")
 }
 
+// maybeHarvestGroups imports the JabRef per-entry groups field into the library's
+// GroupEntries and persists each membership to bib_groups. The field value is a
+// comma-separated list of group names. Idempotent: re-runs add nothing new.
+func (l *TBibTeXLibrary) maybeHarvestGroups(e TBibTeXEntry, canonicalKey string) {
+	raw := e.Fields["groups"]
+	if raw == "" {
+		return
+	}
+	for _, group := range strings.Split(raw, ",") {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		l.GroupEntries.AddValueToStringSetMap(group, canonicalKey)
+		if err := bibExec(
+			`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`,
+			group, canonicalKey); err != nil {
+			l.Warning("Could not persist group %q for %s: %s", group, canonicalKey, err)
+		}
+	}
+}
+
 // --- Adding entries ---
 
 // addHarvestEntry inserts a harvested TBibTeXEntry as a new library entry and returns
@@ -472,6 +494,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			finalKey := mergeAndCheck(addHarvestEntry(l, e), keyMatch)
 			collectKey(e.Key, finalKey)
 			l.maybeHarvestPDF(e, finalKey)
+			l.maybeHarvestGroups(e, finalKey)
 			return appendLog(finalKey), false
 		}
 	}
@@ -487,6 +510,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			finalKey := mergeAndCheck(addHarvestEntry(l, e), titleMatches[pick-1])
 			collectKey(e.Key, finalKey)
 			l.maybeHarvestPDF(e, finalKey)
+			l.maybeHarvestGroups(e, finalKey)
 			return appendLog(finalKey), false
 		}
 	}
@@ -537,13 +561,16 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, log THarvestLog,
 
 	for _, e := range entries {
 		if withLog && harvestShouldSkip(e, log, l) {
-			// Always register confirmed log entries as key hints — the harvest log
-			// is a curated record of approved mappings, not gated on -collect_keys.
+			// Always register confirmed log entries as key hints and group memberships —
+			// both are curated approved data, not gated on -collect_keys.
 			if entry := harvestLogLookup(e, log); entry != nil &&
 				entry.Action != harvestActionSkipContent &&
-				entry.Action != harvestActionSkipNever &&
-				e.Key != "" {
-				l.AddKeyHint(e.Key, entry.Action)
+				entry.Action != harvestActionSkipNever {
+				canon := l.MapEntryKey(entry.Action)
+				if e.Key != "" {
+					l.AddKeyHint(e.Key, entry.Action)
+				}
+				l.maybeHarvestGroups(e, canon)
 			}
 			continue
 		}
@@ -702,6 +729,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 			}
 			canon := Library.MapEntryKey(entry.Action)
 			Library.maybeHarvestPDF(e, canon)
+			Library.maybeHarvestGroups(e, canon)
 			if e.Key != "" {
 				Library.AddKeyHint(e.Key, entry.Action)
 			}
@@ -803,7 +831,8 @@ func maybeMigrateHarvestToSubset(cfg *TBibGetConfig, keysBasePath, statePath, lo
 	cfg.KeyMapping = true
 	rewriteKeysFile(keysBasePath, pairs, true)
 	patchConfigField(keysBasePath+ConfigFileExtension, "key_mapping", json.RawMessage("true"))
-	Library.Progress("Harvest→subset transition: wrote %d key pairs from harvest log", len(pairs))
+	os.Rename(logPath, logPath+".bak") //nolint:errcheck
+	Library.Progress("Harvest→subset transition: wrote %d key pairs from harvest log; harvest log archived", len(pairs))
 }
 
 // maybeMigrateSubsetToHarvest handles a subset→harvest mode transition. When the
