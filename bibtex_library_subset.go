@@ -482,6 +482,61 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	Library.Progress("  Written .subset state: %d entries", len(newState))
 }
 
+// syncGroupMembershipsFromBib diffs the bib's groups fields against bib_groups for each
+// group in cfg.SyncGroups, updating the DB and in-memory GroupEntries as needed.
+// Only entries that are IN the current subset (present in outputToCanonical) are considered
+// for removal, so non-subset entries in bib_groups are never disturbed.
+func syncGroupMembershipsFromBib(syncGroups []string, bibEntries []TBibTeXEntry, outputToCanonical map[string]string) {
+	if len(syncGroups) == 0 {
+		return
+	}
+	syncSet := TStringSetNew()
+	for _, g := range syncGroups {
+		syncSet.Add(g)
+	}
+
+	// Collect bib-side membership per synced group.
+	bibMembers := TStringSetMap{}
+	for _, e := range bibEntries {
+		canon, ok := outputToCanonical[e.Key]
+		if !ok {
+			continue
+		}
+		canon = Library.MapEntryKey(canon)
+		raw := e.Fields["groups"]
+		if raw == "" {
+			continue
+		}
+		for _, g := range strings.Split(raw, ",") {
+			g = strings.TrimSpace(g)
+			if syncSet.Contains(g) {
+				bibMembers.AddValueToStringSetMap(g, canon)
+			}
+		}
+	}
+
+	for _, group := range syncGroups {
+		dbSet := Library.GroupEntries[group] // canonical keys from bib_groups
+		bibSet := bibMembers[group]          // canonical keys from bib (may be zero-value)
+
+		// Add: in bib but not in DB. Subset sync is add-only — no removals,
+		// since the subset does not represent the full picture of group membership.
+		bibSetCopy := bibSet // value copy for safe iteration
+		for key := range bibSetCopy.Elements() {
+			if !dbSet.Contains(key) {
+				Library.GroupEntries.AddValueToStringSetMap(group, key)
+				if err := bibExec(
+					`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`,
+					group, key); err != nil {
+					Library.Warning("Group sync insert failed (%s → %q): %s", key, group, err)
+				} else {
+					Library.Progress("Group sync: +%s → %q", key, group)
+				}
+			}
+		}
+	}
+}
+
 // runSubsetUpSync handles phase 1 of subsequent syncs: parses the bib, detects three-way
 // changes, and merges bib-side edits into the DB. Does not write back the bib or state.
 // Returns true if the sync was aborted (e.g. parse error) — caller must skip phase 2.
@@ -503,6 +558,9 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 	for canonical, se := range existingState {
 		outputToCanonical[se.OutputKey] = canonical
 	}
+
+	// Sync group memberships for groups listed in cfg.SyncGroups.
+	syncGroupMembershipsFromBib(cfg.SyncGroups, bibEntries, outputToCanonical)
 
 	// Build a second reverse map: current canonical → stale state key.
 	// Covers the case where the bib was already regenerated to the new canonical key
