@@ -927,7 +927,15 @@ func doRemoveFromGroup(args []string) {
 func doEntryKey(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
-		fmt.Println(Library.MapEntryKey(cleanKey(args[0])))
+		raw := cleanKey(args[0])
+		resolved := Library.MapEntryKey(raw)
+		if resolved == raw {
+			// Not a canonical alias — check key hints (harvest source keys, preferred aliases).
+			if hint, ok := Library.HintToKey[raw]; ok {
+				resolved = Library.MapEntryKey(hint)
+			}
+		}
+		fmt.Println(resolved)
 	}
 }
 
