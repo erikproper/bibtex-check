@@ -45,14 +45,35 @@ func (b *TBibTeXStream) BibDeskStaticGroupDefinition(comment string) bool {
 		return false
 	}
 
+	// Build a key→index map for captured entries so we can write the groups field
+	// back onto each entry (making BibDesk and JabRef group handling uniform).
+	var keyToIdx map[string]int
+	if b.library.capturedHarvestEntries != nil {
+		keyToIdx = make(map[string]int, len(*b.library.capturedHarvestEntries))
+		for i, e := range *b.library.capturedHarvestEntries {
+			keyToIdx[e.Key] = i
+		}
+	}
+
 	groups := XMLIsolate(XMLCleanLayout(comment), "array")
 	for _, group := range XMLSplit(groups, "dict") {
 		propertyKeys := XMLSplit(group, "string")
 		if len(propertyKeys) == 3 {
-			group := propertyKeys[0]
+			groupName := strings.TrimSpace(propertyKeys[0])
 			entries := propertyKeys[1]
 			for _, key := range strings.Split(XMLCleanGroupList(entries), ",") {
-				b.library.GroupEntries.AddValueToStringSetMap(strings.TrimSpace(group), key)
+				key = strings.TrimSpace(key)
+				b.library.GroupEntries.AddValueToStringSetMap(groupName, key)
+				if keyToIdx != nil {
+					if idx, ok := keyToIdx[key]; ok {
+						e := &(*b.library.capturedHarvestEntries)[idx]
+						if e.Fields["groups"] == "" {
+							e.Fields["groups"] = groupName
+						} else {
+							e.Fields["groups"] += ", " + groupName
+						}
+					}
+				}
 			}
 		}
 	}
