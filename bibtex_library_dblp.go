@@ -427,7 +427,8 @@ func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) st
 			for _, field := range remaining {
 				fmt.Fprintf(os.Stderr, "\n    %-12s: %s", field, entry.Fields[field])
 			}
-			// Show crossref parent for context (title, year, editor).
+			// Show crossref parent for context (title, year, editor) and
+			// children count to let the user estimate cascading work.
 			if crossref := entry.Fields["crossref"]; crossref != "" {
 				if parent := dblpEntryFromFile(crossref); parent != nil {
 					fmt.Fprintf(os.Stderr, "\n  Parent: %s", crossref)
@@ -435,6 +436,19 @@ func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) st
 						if v := parent.Fields[field]; v != "" {
 							fmt.Fprintf(os.Stderr, "\n    %-12s: %s", field, v)
 						}
+					}
+					// Show how many children the parent has and how many are new.
+					children := readDblpCrossrefChildren(crossref)
+					if len(children) > 0 {
+						alreadyIn := 0
+						for _, child := range children {
+							if l.LookupDBLPKey(child) != "" {
+								alreadyIn++
+							}
+						}
+						newChildren := len(children) - alreadyIn
+						fmt.Fprintf(os.Stderr, "\n    %-12s: %d total, %d already in library, %d new",
+							"children", len(children), alreadyIn, newChildren)
 					}
 				}
 			}

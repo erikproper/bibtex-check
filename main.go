@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.95"
+const AppVersion = "24.96"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -671,6 +671,7 @@ func doExtendDblpCoverage() {
 		defer reportHomework()
 		stepN := Reporting.StepSize()
 		questionCounter := 0
+		entryCountAtStepStart := countBibEntries()
 		forEachBibEntryKey(func(key string) bool {
 			if Library.EntryFieldValueity(key, DBLPField) != "" {
 				return true
@@ -686,9 +687,15 @@ func doExtendDblpCoverage() {
 			if stepN > 0 && Library.QuestionWasAsked() {
 				questionCounter++
 				if questionCounter >= stepN {
+					now := countBibEntries()
+					if added := now - entryCountAtStepStart; added > 0 {
+						Library.Progress("Step added %d new entr%s to the library.", added,
+							map[bool]string{true: "y", false: "ies"}[added == 1])
+					}
 					if Library.AskContinueOrQuit() {
 						return false
 					}
+					entryCountAtStepStart = countBibEntries()
 					questionCounter = 0
 				}
 			}
