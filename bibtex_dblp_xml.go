@@ -301,7 +301,20 @@ func doRebuildDblpTitleIndex() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Rebuilding title index from %s...\n", entriesRoot)
+	fmt.Fprintf(os.Stderr, "Counting entries in %s...\n", entriesRoot)
+	var total int
+	filepath.WalkDir(entriesRoot, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck
+		if err == nil && !d.IsDir() && d.Name() == "data.json" {
+			total++
+		}
+		return err
+	})
+	fmt.Fprintf(os.Stderr, "Rebuilding title index from %d entries...\n", total)
+
+	// Accumulate hash→keys in memory to avoid per-entry read-before-write in
+	// appendToIndexFile. Writing all link files in one batch at the end eliminates
+	// the duplicate-check read on each entry and avoids cache-thrashing on large stores.
+	titleLinks := make(map[string][]string, 1<<20)
 
 	var count, errors int
 	start := time.Now()
@@ -323,18 +336,44 @@ func doRebuildDblpTitleIndex() {
 			if je.Fields != nil {
 				if value := je.Fields[fieldName]; value != "" {
 					if hash := dblpTitleHash(value); hash != "" {
-						writeDblpTitleLink(hash, dblpKey) //nolint:errcheck
+						titleLinks[hash] = append(titleLinks[hash], dblpKey)
 					}
 				}
 			}
 		}
 		count++
 		if now := time.Now(); now.Sub(lastReport) >= 5*time.Second {
-			fmt.Fprintf(os.Stderr, "  %d entries indexed (%.0fs)...\n", count, now.Sub(start).Seconds())
+			pct := 0.0
+			if total > 0 {
+				pct = float64(count) * 100.0 / float64(total)
+			}
+			fmt.Fprintf(os.Stderr, "  %d / %d entries indexed (%.1f%%, %.0fs)...\n",
+				count, total, pct, now.Sub(start).Seconds())
 			lastReport = now
 		}
 		return nil
 	})
+
+	// Write all accumulated title links — one file per hash, no read needed since
+	// the old index was moved to trash before this run.
+	if err == nil && len(titleLinks) > 0 {
+		fmt.Fprintf(os.Stderr, "Writing %d title link files...\n", len(titleLinks))
+		written := 0
+		for hash, keys := range titleLinks {
+			path := dblpTitleLinkPath(hash)
+			if mkErr := os.MkdirAll(filepath.Dir(path), 0755); mkErr != nil {
+				errors++
+				continue
+			}
+			data := strings.Join(keys, "\n") + "\n"
+			if wErr := os.WriteFile(path, []byte(data), 0644); wErr != nil {
+				errors++
+			} else {
+				written++
+			}
+		}
+		fmt.Fprintf(os.Stderr, "  %d link files written.\n", written)
+	}
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error walking file store: %s\n", err)

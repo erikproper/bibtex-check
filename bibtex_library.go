@@ -608,6 +608,18 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 				l.setEntryField(targetEntry, regularField, merged)
 			}
 
+			// Inherit lineage records from source for fields where target has none.
+			// MaybeResolveFieldValue only writes lineage when challengeKey is a
+			// known-source key (e.g. "DBLP:…"); library-key merges don't set it,
+			// so DBLP provenance would be silently lost on the surviving entry.
+			for regularField := range regularFields.Elements() {
+				if l.getLineage(target, regularField).Source == "" {
+					if srcLin := l.getLineage(source, regularField); srcLin.Source != "" {
+						l.setLineage(target, regularField, srcLin.Source, srcLin.Edited)
+					}
+				}
+			}
+
 			if !l.KeyIsTemporary.Contains(source) {
 				l.AddKeyAlias(source, target)
 				l.AddNonDoubles(source, target)
@@ -615,6 +627,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 				l.mergePDFFile(source, target)
 			}
 			l.ReassignEntryFieldMappings(source, target)
+			l.transferMetadata(source, target)
 
 			deleteBibEntry(source)
 

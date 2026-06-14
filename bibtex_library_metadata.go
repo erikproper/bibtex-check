@@ -85,6 +85,32 @@ func (l *TBibTeXLibrary) DeleteMetadata(key, prop string) {
 	}
 }
 
+// transferMetadata copies useful per-entry metadata from source to target (when the
+// target doesn't already have that property) and then removes all metadata for source.
+// Called from MergeEntries before deleteBibEntry so that URL-check status, PDF flags,
+// and alignment waivers survive a merge. Lineage properties are intentionally not
+// transferred — they describe the old entry's field-value history, not the merged one.
+func (l *TBibTeXLibrary) transferMetadata(source, target string) {
+	for _, prop := range []string{
+		MetaPropPdfConfirmedOk,
+		MetaPropAlignVolumeWaived, MetaPropAlignEditionWaived, MetaPropAlignCountryWaived,
+		MetaPropUrlCheckDate, MetaPropUrlCheckStatus,
+		MetaPropWaivedDoublePdf,
+	} {
+		if val := l.GetMetadata(source, prop); val != "" && l.GetMetadata(target, prop) == "" {
+			l.SetMetadata(target, prop, val)
+		}
+	}
+	// Wipe all remaining metadata for source (lineage rows + any untransferred props).
+	if props, ok := l.Metadata[source]; ok {
+		for prop := range props {
+			db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, source, prop) //nolint:errcheck
+		}
+		delete(l.Metadata, source)
+		l.metadataModified = true
+	}
+}
+
 // AllEntriesWithProp returns a snapshot map of entry key → value for all entries
 // that have property prop set.
 func (l *TBibTeXLibrary) AllEntriesWithProp(prop string) map[string]string {
