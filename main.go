@@ -1587,6 +1587,7 @@ func doMergeEntries(args []string) {
 		Library.ReadKeyNonDoublesFile()
 		importedCount := 0
 		resolvedKeys := make([]string, 0, len(keys))
+		rawKeys := make([]string, 0, len(keys))
 		for _, rawKey := range keys {
 			resolved := resolveOrImportKey(rawKey, &importedCount)
 			if resolved == "" {
@@ -1594,13 +1595,28 @@ func doMergeEntries(args []string) {
 				return
 			}
 			resolvedKeys = append(resolvedKeys, resolved)
+			rawKeys = append(rawKeys, rawKey)
 		}
 		if importedCount > 1 {
 			fmt.Fprintln(os.Stderr, "Error: -merge_entries accepts at most one not-yet-imported DBLP entry")
 			return
 		}
 		target := resolvedKeys[len(resolvedKeys)-1]
-		for _, alias := range resolvedKeys[:len(resolvedKeys)-1] {
+		for i, alias := range resolvedKeys[:len(resolvedKeys)-1] {
+			if alias == target {
+				// Both keys resolve to the same canonical. Check for a ghost bib_entries
+				// row under the raw key (entry still exists in bib_entries even though
+				// key_oldies already records it as an alias). Merge its fields into the
+				// canonical first — don't just delete, in case the ghost has un-merged data.
+				rawKey := rawKeys[i]
+				if rawKey != target && bibEntryExists(rawKey) {
+					Library.Progress("Ghost entry %s found (alias for %s) — merging fields before cleanup", rawKey, target)
+					Library.MergeEntries(rawKey, target)
+				} else {
+					fmt.Fprintf(os.Stderr, "%s is already an alias for %s — nothing to merge.\n", rawKey, target)
+				}
+				continue
+			}
 			Library.MergeEntries(alias, target)
 		}
 		doAllChecks(target)

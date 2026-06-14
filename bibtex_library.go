@@ -1044,17 +1044,22 @@ func (l *TBibTeXLibrary) deleteEntryField(entry *TBibTeXEntry, field string) {
 
 // DeleteEntry removes a canonical entry and all associated index data:
 // key hints, key oldies, bib_entries rows, title index, and PDF file (→ library trash).
+// The canonical key and all current aliases are recorded in deleted_entries so that
+// subsequent subset syncs do not offer to re-add stale bib entries.
 // The caller is responsible for resolving aliases to the canonical key beforehand.
 func (l *TBibTeXLibrary) DeleteEntry(key string) {
-	// Remove hints and oldies from in-memory maps.
+	// Record the canonical key and every alias so sync bibs can be silently skipped.
+	recordDeletedKey(key)
 	for hint, target := range l.HintToKey {
 		if l.MapEntryKey(target) == key {
+			recordDeletedKey(hint)
 			delete(l.HintToKey, hint)
 			l.keyHintsModified = true
 		}
 	}
 	for alias, target := range l.KeyToKey {
 		if l.MapEntryKey(target) == key {
+			recordDeletedKey(alias)
 			delete(l.KeyToKey, alias)
 			l.keyOldiesModified = true
 		}

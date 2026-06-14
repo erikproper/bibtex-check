@@ -325,6 +325,7 @@ func connectToDatabase() {
 	ensureEntryMetadataTableExists()
 	ensureLosingFieldValuesTableExists()
 	ensureEntryWarningsTableExists()
+	ensureDeletedEntriesTableExists()
 	ensureConfigTableExists()
 	maybeBootstrapConfigFromFile()
 	loadBibTeXSettings()
@@ -2855,6 +2856,28 @@ func deleteBibEntryField(key, field string) {
 	} else if activeTx == nil {
 		markBibEntryModified()
 	}
+}
+
+// --- deleted_entries table ---
+
+func ensureDeletedEntriesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS deleted_entries (
+		  key TEXT PRIMARY KEY
+		);`)
+}
+
+// recordDeletedKey adds key to deleted_entries so sync operations know not to
+// offer re-adding it from stale bib files.
+func recordDeletedKey(key string) {
+	db.Exec(`INSERT OR IGNORE INTO deleted_entries (key) VALUES (?)`, key) //nolint:errcheck
+}
+
+// isDeletedEntry reports whether key was explicitly deleted from the library.
+func isDeletedEntry(key string) bool {
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM deleted_entries WHERE key = ?`, key).Scan(&n) //nolint:errcheck
+	return n > 0
 }
 
 // deleteBibEntry removes all rows for a given entry key from bib_entries.

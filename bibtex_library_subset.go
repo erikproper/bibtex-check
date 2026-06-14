@@ -536,6 +536,18 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		}
 
 		if canonical == "" || !Library.EntryExists(canonical) {
+			// Silently skip entries that were explicitly deleted from the library.
+			// Mark the state key as seen so it doesn't also fire a deletion prompt.
+			if isDeletedEntry(e.Key) || (canonical != "" && isDeletedEntry(canonical)) {
+				if stateKey != "" {
+					bibSeenCanonicals[stateKey] = true
+				}
+				bibSeenCanonicals[e.Key] = true
+				if canonical != "" {
+					bibSeenCanonicals[canonical] = true
+				}
+				continue
+			}
 			toProcess = append(toProcess, categorizedEntry{bibEntry: e, status: statusNew})
 			continue
 		}
@@ -609,10 +621,14 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 	}
 
 	// Identify deleted entries: in state but not seen in parsed bib.
+	// Entries that were explicitly deleted from the library (recorded in deleted_entries)
+	// are silently accepted — no prompt needed, phase 2 will drop them from the state.
 	var deletedCanonicals []string
 	for canonical := range existingState {
 		if !bibSeenCanonicals[canonical] {
-			deletedCanonicals = append(deletedCanonicals, canonical)
+			if !isDeletedEntry(canonical) {
+				deletedCanonicals = append(deletedCanonicals, canonical)
+			}
 		}
 	}
 	sort.Strings(deletedCanonicals)
