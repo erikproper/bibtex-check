@@ -98,7 +98,23 @@ var subsetFingerprintExclude = func() TStringSet {
 	return s
 }()
 
+// dealiasCanonical resolves a crossref value to its current canonical key.
+// Tries outputToCanonical first (covers keys in the current subset state), then
+// falls back to MapEntryKey (covers crossref targets whose canonical changed after
+// the state was written, e.g. due to a merge between syncs).
+func dealiasCanonical(v string, outputToCanonical map[string]string) string {
+	if canonical, ok := outputToCanonical[v]; ok {
+		return canonical
+	}
+	if resolved := Library.MapEntryKey(v); resolved != "" && Library.EntryExists(resolved) {
+		return resolved
+	}
+	return v
+}
+
 // subsetDBFingerprint computes the fingerprint of a DB entry for subset change detection.
+// The crossref field is de-aliased to the current canonical key so that a crossref
+// parent being merged does not spuriously diverge the DB fingerprint.
 func subsetDBFingerprint(canonicalKey string) string {
 	e := loadEntryFromDb(canonicalKey)
 	if e == nil {
@@ -106,9 +122,13 @@ func subsetDBFingerprint(canonicalKey string) string {
 	}
 	fields := make([]string, 0, len(e.Fields))
 	for f, v := range e.Fields {
-		if v != "" && !subsetFingerprintExclude.Set().Contains(f) {
-			fields = append(fields, f+"="+v)
+		if v == "" || subsetFingerprintExclude.Set().Contains(f) {
+			continue
 		}
+		if f == "crossref" {
+			v = dealiasCanonical(v, nil)
+		}
+		fields = append(fields, f+"="+v)
 	}
 	sort.Strings(fields)
 	h := md5.Sum([]byte(strings.Join(fields, ";")))
@@ -116,8 +136,9 @@ func subsetDBFingerprint(canonicalKey string) string {
 }
 
 // subsetBibFingerprint computes the fingerprint of a parsed bib entry for subset change
-// detection. Normalizes the crossref field from the local output key to the canonical key
-// using outputToCanonical, making it comparable with subsetDBFingerprint.
+// detection. The crossref field is de-aliased to the current canonical key using both
+// outputToCanonical (state-based) and MapEntryKey (covers post-state merges), making it
+// directly comparable with subsetDBFingerprint.
 func subsetBibFingerprint(e TBibTeXEntry, outputToCanonical map[string]string) string {
 	fields := make([]string, 0, len(e.Fields))
 	for f, v := range e.Fields {
@@ -125,9 +146,7 @@ func subsetBibFingerprint(e TBibTeXEntry, outputToCanonical map[string]string) s
 			continue
 		}
 		if f == "crossref" {
-			if canonical, ok := outputToCanonical[v]; ok {
-				v = canonical
-			}
+			v = dealiasCanonical(v, outputToCanonical)
 		}
 		fields = append(fields, f+"="+v)
 	}
@@ -155,9 +174,7 @@ func bibReflectsDB(bibEntry TBibTeXEntry, canonicalKey string, outputToCanonical
 			continue
 		}
 		if f == "crossref" {
-			if canon, ok := outputToCanonical[v]; ok {
-				v = canon
-			}
+			v = dealiasCanonical(v, outputToCanonical)
 		}
 		bibFields = append(bibFields, f+"="+v)
 	}
@@ -168,7 +185,12 @@ func bibReflectsDB(bibEntry TBibTeXEntry, canonicalKey string, outputToCanonical
 		if v == "" || subsetFingerprintExclude.Set().Contains(f) {
 			continue
 		}
-		dbFields = append(dbFields, f+"="+Library.MapEntryFieldValue(canonicalKey, f, v))
+		if f == "crossref" {
+			v = dealiasCanonical(v, nil)
+		} else {
+			v = Library.MapEntryFieldValue(canonicalKey, f, v)
+		}
+		dbFields = append(dbFields, f+"="+v)
 	}
 	sort.Strings(dbFields)
 
