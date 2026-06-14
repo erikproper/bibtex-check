@@ -86,8 +86,10 @@ type (
 		harvestNameAliases                bool
 		harvestCapturePDFFields           bool         // when true: file/local-url pass through for harvest PDF copy
 		harvestSourceDir                  string       // directory of the source bib file; used for relative PDF paths
-		harvestSyncGroups                 TStringSet   // groups to sync to main DB during harvest (from config)
+		harvestSyncGroups                 TStringSet    // groups to sync to main DB during harvest (from config)
 		harvestLocalGroups                TStringSetMap // groups to store locally during harvest
+		subsetLocalGroups                 TStringSetMap // local groups loaded for current subset write pass
+		jabrefGroupingBlock               string        // verbatim @Comment{jabref-meta: grouping:...} from source bib
 		PDFFiles                          map[string]bool // keys with a <key>.pdf in FilesFolder; populated by LoadPDFFiles
 		capturedDBLPEntry                 *TBibTeXEntry
 		capturedHarvestEntries            *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB
@@ -203,13 +205,15 @@ func (l *TBibTeXLibrary) SetEntryType(entry, value string) {
 
 // Add a comment to the current library.
 func (l *TBibTeXLibrary) ProcessComment(comment string) bool {
-	// if ! l.BibDeskStaticGroupDefinition(comment) {
-	//   l.Comments = append(l.Comments, comment)
-	// } else {
-	// Should go, once we can write such group fields
+	// When parsing a harvest/subset bib: capture the jabref-meta grouping block
+	// verbatim so it can be replayed unchanged in the subset output.
+	if l.capturedHarvestEntries != nil {
+		if strings.HasPrefix(strings.TrimSpace(comment), "jabref-meta: grouping:") {
+			l.jabrefGroupingBlock = "@" + CommentEntryType + "{" + comment + "}"
+		}
+		return true // do not add harvest-source comments to main library
+	}
 	l.Comments = append(l.Comments, comment)
-	// }
-
 	return true
 }
 

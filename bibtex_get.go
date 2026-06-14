@@ -1121,9 +1121,12 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		// Always emit the database type declaration.
 		w.WriteString("@" + CommentEntryType + "{jabref-meta: databaseType:bibtex;}\n\n")
 
-		// Emit the grouping block when there are groups that have at least one member
-		// in this output file.
-		if len(Library.GroupEntries) > 0 {
+		// Emit the grouping block: verbatim from source bib when available (preserves
+		// hierarchy and ordering), otherwise generate a flat block from GroupEntries.
+		if Library.jabrefGroupingBlock != "" {
+			w.WriteString(Library.jabrefGroupingBlock)
+			w.WriteString("\n\n")
+		} else if len(Library.GroupEntries) > 0 {
 			type groupLine struct{ name string }
 			var groupLines []groupLine
 			for group, members := range Library.GroupEntries {
@@ -1147,7 +1150,6 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 				w.WriteString("@" + CommentEntryType + "{jabref-meta: grouping:\n")
 				w.WriteString("0 AllEntriesGroup:;\n")
 				for _, g := range groupLines {
-					// name\;hierarchy\;expand\;color\;icon\;description\;
 					escaped := strings.ReplaceAll(strings.ReplaceAll(g.name, `\`, `\\`), `;`, `\;`)
 					w.WriteString("1 StaticGroup:" + escaped + `\;0\;1\;\;\;\;` + "\n")
 				}

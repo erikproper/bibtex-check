@@ -879,6 +879,36 @@ func maybeMigrateHarvestToSubset(cfg *TBibGetConfig, keysBasePath, statePath, lo
 		Library.Progress("Harvest→subset: no resolved entries in harvest log — skipping .keys creation")
 		return
 	}
+	// Build a source-key → entry map from the source bib so we can harvest groups
+	// and capture the verbatim jabref-meta grouping block before the bib is overwritten.
+	sourcePath := keysBasePath + BibFileExtension
+	Library.jabrefGroupingBlock = "" // reset before parse
+	sourceEntries, _ := Library.parseHarvestBib(sourcePath)
+	sourceByKey := make(map[string]TBibTeXEntry, len(sourceEntries))
+	for _, e := range sourceEntries {
+		if e.Key != "" {
+			sourceByKey[e.Key] = e
+		}
+	}
+
+	// Populate local groups from source bib (syncGroups empty at transition → all local).
+	Library.harvestSyncGroups = TStringSetNew()
+	for _, g := range cfg.SyncGroups {
+		Library.harvestSyncGroups.Add(g)
+	}
+	Library.harvestLocalGroups = TStringSetMap{}
+	for _, p := range pairs {
+		if e, ok := sourceByKey[p.localKey]; ok {
+			Library.maybeHarvestGroups(e, p.canonicalKey)
+		}
+	}
+	localGroupsPath := keysBasePath + LocalGroupsExtension
+	if len(Library.harvestLocalGroups) > 0 {
+		writeLocalGroups(localGroupsPath, Library.harvestLocalGroups)
+	}
+	Library.harvestSyncGroups = TStringSetNew()
+	Library.harvestLocalGroups = TStringSetMap{}
+
 	cfg.KeyMapping = true
 	rewriteKeysFile(keysBasePath, pairs, true)
 	patchConfigField(keysBasePath+ConfigFileExtension, "key_mapping", json.RawMessage("true"))
