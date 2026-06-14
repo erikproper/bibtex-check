@@ -1333,25 +1333,7 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 		case "w":
 			l.SetEntryFlag(key, FlagLoneProceedingsWaived)
 		case "d":
-			// Remove hints pointing to this canonical key from in-memory map.
-			for hint, target := range l.HintToKey {
-				if l.MapEntryKey(target) == key {
-					delete(l.HintToKey, hint)
-					l.keyHintsModified = true
-				}
-			}
-			// Remove oldies pointing to this canonical key from in-memory map.
-			for alias, target := range l.KeyToKey {
-				if l.MapEntryKey(target) == key {
-					delete(l.KeyToKey, alias)
-					l.keyOldiesModified = true
-				}
-			}
-			deleteHintsByTarget(key)
-			deleteOldiesByTarget(key)
-			deleteBibEntry(key)
-			l.TitleIndex.DeleteValueFromStringSetMap(
-				TeXStringIndexer(l.EntryFieldValueity(key, TitleField)), key)
+			l.DeleteEntry(key)
 		}
 
 		questionCounter++

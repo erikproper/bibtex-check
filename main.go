@@ -1679,6 +1679,7 @@ func main() {
 		cmdAddNameMapping     bool
 		cmdSetPreferredAlias  bool
 		cmdNewKey             bool
+		cmdDeleteEntry        bool
 		cmdMap                bool
 		cmdUseAliases         bool
 		cmdAddToGroup         bool
@@ -1734,6 +1735,7 @@ func main() {
 	flag.BoolVar(&cmdAddNameMapping, "add_name_mapping", false, "add a name alias mapping: -add_name_mapping <canonical> <alias>")
 	flag.BoolVar(&cmdSetPreferredAlias, "set_preferred_alias", false, "set preferred alias for a key: -set_preferred_alias <key> <alias>")
 	flag.BoolVar(&cmdNewKey, "new_key", false, "print a fresh canonical key and exit")
+	flag.BoolVar(&cmdDeleteEntry, "delete_entry", false, "delete one or more library entries: -delete_entry <key>...")
 	flag.BoolVar(&cmdMap, "map", false, "also record alias→key in the project map file (with -entry_key_alias)")
 	flag.BoolVar(&cmdAddToGroup, "add_to_group", false, "add an entry to a group: -add_to_group <key> <group>")
 	flag.BoolVar(&cmdRemoveFromGroup, "remove_from_group", false, "remove an entry from a group")
@@ -2026,6 +2028,31 @@ case cmdWatch:
 			os.Exit(1)
 		}
 		doAddNameMapping(args)
+
+	case cmdDeleteEntry:
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -delete_entry <key>...")
+			os.Exit(1)
+		}
+		if !openLibraryToUpdate() {
+			os.Exit(1)
+		}
+		for _, rawKey := range args {
+			key := Library.MapEntryKey(rawKey)
+			if key == "" {
+				key = rawKey
+			}
+			if !Library.EntryExists(key) {
+				fmt.Fprintf(os.Stderr, "Entry not found: %s\n", rawKey)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "\nEntry to delete:\n%s\n", Library.entryDisplayString(key))
+			if !Library.ConfirmAction(fmt.Sprintf("Delete %s?", key)) {
+				continue
+			}
+			Library.DeleteEntry(key)
+			Library.Progress("Deleted: %s", key)
+		}
 
 	case cmdSetPreferredAlias:
 		if len(args) != 2 {
