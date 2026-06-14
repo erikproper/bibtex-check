@@ -2263,6 +2263,12 @@ func clearEntryWarnings() {
 	db.Exec(`DELETE FROM entry_warnings`) //nolint:errcheck
 }
 
+// deleteEntryWarning removes a specific (key, warning) row, e.g. when a warning
+// is subsequently waived and should not appear in repair.bib or warnings; selects.
+func deleteEntryWarning(key, warning string) {
+	db.Exec(`DELETE FROM entry_warnings WHERE key = ? AND warning = ?`, key, warning) //nolint:errcheck
+}
+
 // insertEntryWarning records key+warning, silently ignoring exact duplicates.
 func insertEntryWarning(key, warning string) {
 	db.Exec(`INSERT OR IGNORE INTO entry_warnings (key, warning) VALUES (?, ?)`, key, warning) //nolint:errcheck

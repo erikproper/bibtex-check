@@ -83,6 +83,12 @@ type TInteraction struct {
 	outputWasProduced bool
 	stepMode          bool
 	stepSize          int
+	quitRequested     bool // set when user answers "q" to AskContinueOrQuit
+}
+
+// QuitWasRequested reports whether the user asked to stop in any AskContinueOrQuit prompt.
+func (r *TInteraction) QuitWasRequested() bool {
+	return r.quitRequested
 }
 
 // ResetQuestionFlag clears the per-entry trackers before processing each entry
@@ -174,6 +180,9 @@ func (r *TInteraction) AskContinueOrQuit() bool {
 		answer, _ := reader.ReadString('\n')
 		answer = strings.TrimSpace(answer)
 		if answer == "c" || answer == "q" {
+			if answer == "q" {
+				r.quitRequested = true
+			}
 			return answer == "q"
 		}
 		fmt.Fprint(os.Stderr, "(c/q): ")
@@ -234,7 +243,7 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 	if !r.silenced {
 		SpinnerInterrupt()
 		r.outputWasProduced = true
-		fmt.Fprintf(os.Stderr, "WARNING:  "+warning+"\n", context...)
+		fmt.Fprintf(os.Stderr, "WARNING: "+warning+"\n", context...)
 	}
 
 	return true

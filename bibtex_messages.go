@@ -64,7 +64,7 @@ const (
 	WarningKeyAliasesLineTooShort           = "Line in key aliases file is too short: %s"
 	WarningKeyHintsLineTooShort             = "Line in key hints file is too short: %s"
 	WarningNonDoublesLineTooShort           = "Line in non doubles file is too short: %s"
-	WarningNoDblpKeyForChild                = "Child entry %s has no DBLP key while parent %s has DBLP key %s"
+	WarningNoDblpKeyForChild                = "No DBLP key (parent %s has DBLP key %s)."
 	WarningDblpKeyNotInXML                  = "DBLP key %s for entry %s not in local XML (missing since %s)."
 	WarningExtendDblpCandidatesFound        = "Entry %s has no DBLP key — found %d candidate(s)"
 	QuestionExtendDblpCoverageChoose        = "Which DBLP entry matches? (0 = none, k = enter key manually)"

@@ -666,11 +666,26 @@ func doDefaultRun() {
 	if openLibraryToUpdate() {
 		clearEntryWarnings()
 		Library.CheckEntries()
+		if Library.QuitWasRequested() {
+			return
+		}
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
+		if Library.QuitWasRequested() {
+			return
+		}
 		Library.CheckAlignTitles(false)
+		if Library.QuitWasRequested() {
+			return
+		}
 		Library.CheckDuplicateDBLPKeys()
+		if Library.QuitWasRequested() {
+			return
+		}
 		Library.CheckLoneProceedings()
+		if Library.QuitWasRequested() {
+			return
+		}
 		stepN := Reporting.StepSize()
 		questionCounter := 0
 		forEachBibEntryKey(func(key string) bool {
@@ -1724,7 +1739,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
 	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
 	flag.BoolVar(&cmdRebuildDblpCrossrefIndex, "rebuild_dblp_crossref_index", false, "rebuild DBLP crossref children index from stored data.json files")
-	flag.BoolVar(&cmdRebuildDblpTitleIndex, "rebuild_dblp_title_index", false, "rebuild DBLP title index from stored data.json files (no XML needed)")
+	flag.BoolVar(&cmdRebuildDblpTitleIndex, "rebuild_dblp_title_index", false, "rebuild DBLP title index from stored data.json files (no XML needed; -base required for folder config)")
 	flag.BoolVar(&cmdRepairGarbledNames, "repair_garbled_names", false, "clean bad name_mappings and repair garbled author/editor fields")
 	flag.StringVar(&repairBibPath, "repair_bib", "", "path to a reference .bib file for -repair_garbled_names (non-DBLP entries)")
 	flag.BoolVar(&cmdRestoreKeyHints, "restore_key_hints", false, "restore key hints from a backup CSV, remapping old keys via key_oldies")

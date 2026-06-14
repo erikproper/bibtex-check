@@ -1087,11 +1087,17 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		if entryDBLP != "" {
 			forEachLibraryChildOf(key, func(childKey string) {
 				if l.EntryFieldValueity(childKey, DBLPField) == "" && !l.DblpWaived.Contains(childKey) {
+					msg := fmt.Sprintf(WarningNoDblpKeyForChild, key, entryDBLP)
+					l.ReportEntryWarning(childKey, "%s", msg)
+					l.EntryInvolvedInWarning(key)
 					fmt.Fprintf(os.Stderr, "\nChild entry:\n%s\nParent entry:\n%s\n",
 						l.entryDisplayString(childKey), l.entryDisplayString(key))
-					if l.WarningYesNoQuestion(QuestionAddToDblpWaived, WarningNoDblpKeyForChild, childKey, key, entryDBLP) {
+					if l.WarningYesNoQuestion(QuestionAddToDblpWaived, "") {
 						l.DblpWaived.Add(childKey)
 						l.dblpWaivedModified = true
+						// Waived: remove from entry_warnings so it doesn't appear in repair.bib.
+						deleteEntryWarning(childKey, msg)
+						deleteEntryWarning(key, "")
 					}
 				}
 			})
