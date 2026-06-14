@@ -403,7 +403,16 @@ func addHarvestEntry(l *TBibTeXLibrary, e TBibTeXEntry) string {
 	key := l.NewKey()
 	l.SetEntryType(key, e.Fields[EntryTypeField])
 	for field, value := range e.Fields {
-		if field != EntryTypeField && value != "" {
+		if field == EntryTypeField || value == "" {
+			continue
+		}
+		switch field {
+		case DBLPField, PreferredAliasField:
+			// Write directly without registering alias/hint mappings for this
+			// temp key — it will be merged immediately and the canonical entry
+			// already owns these mappings.
+			l.SetEntryFieldValue(key, field, value)
+		default:
 			l.ProcessRawEntryFieldValue(key, field, value)
 		}
 	}
@@ -528,12 +537,13 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, log THarvestLog,
 
 	for _, e := range entries {
 		if withLog && harvestShouldSkip(e, log, l) {
-			// Retroactively collect key hints for already-processed entries in case
-			// -collect_keys was not active when they were first logged.
+			// Always register confirmed log entries as key hints — the harvest log
+			// is a curated record of approved mappings, not gated on -collect_keys.
 			if entry := harvestLogLookup(e, log); entry != nil &&
 				entry.Action != harvestActionSkipContent &&
-				entry.Action != harvestActionSkipNever {
-				maybeCollectKeyHint(l, e.Key, entry.Action)
+				entry.Action != harvestActionSkipNever &&
+				e.Key != "" {
+				l.AddKeyHint(e.Key, entry.Action)
 			}
 			continue
 		}
@@ -679,12 +689,39 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		skipped, pending)
 
 	if pending == 0 {
-		Library.Progress("  All entries already logged — nothing to do")
+		// Re-run PDF harvest and key-hint registration for all resolved entries.
+		// PDFs may have been added to the source bib since the first logged run,
+		// and key hints must be registered regardless of whether -collect_keys
+		// was active during the original harvest run.
+		pdfsBefore := len(Library.PDFFiles)
+		hintsBefore := len(Library.newKeyHints)
+		for _, e := range entries {
+			entry := harvestLogLookup(e, log)
+			if entry == nil || entry.Action == harvestActionSkipContent || entry.Action == harvestActionSkipNever {
+				continue
+			}
+			canon := Library.MapEntryKey(entry.Action)
+			Library.maybeHarvestPDF(e, canon)
+			if e.Key != "" {
+				Library.AddKeyHint(e.Key, entry.Action)
+			}
+		}
+		pdfsHarvested := len(Library.PDFFiles) - pdfsBefore
+		hintsAdded := len(Library.newKeyHints) - hintsBefore
+		if pdfsHarvested > 0 || hintsAdded > 0 {
+			Library.Progress("  PDFs harvested : %d  Key hints added : %d (re-run)", pdfsHarvested, hintsAdded)
+		} else {
+			Library.Progress("  All entries already logged — nothing to do")
+		}
 		return
 	}
 
+	pdfsBefore := len(Library.PDFFiles)
+	hintsBefore := len(Library.newKeyHints)
 	log = Library.runHarvestLoop(entries, log, true)
 	writeHarvestLog(logPath, log)
+	pdfsHarvested := len(Library.PDFFiles) - pdfsBefore
+	hintsAdded := len(Library.newKeyHints) - hintsBefore
 
 	// Final summary: count by outcome across the full log.
 	resolved, skippedContent, waived, stillPending := 0, 0, 0, 0
@@ -710,6 +747,8 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	Library.Progress("  Skipped (skip-content)  : %d", skippedContent)
 	Library.Progress("  Waived  (skip-never)    : %d", waived)
 	Library.Progress("  Pending (not yet seen)  : %d", stillPending)
+	Library.Progress("  PDFs harvested          : %d", pdfsHarvested)
+	Library.Progress("  Key hints added         : %d", hintsAdded)
 }
 
 // --- Mode transitions ---
