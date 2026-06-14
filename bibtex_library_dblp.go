@@ -82,6 +82,17 @@ func (l *TBibTeXLibrary) resolveDBLPCrossref(crossrefDblpKey string, allowURLFet
 		// Add from local file store regardless of allowURLFetch; URL fetch only
 		// happens inside MaybeMergeDBLPEntry when dblpEntryFromFile returns nil.
 		if dblpEntryFromFile(crossrefDblpKey) != nil || allowURLFetch {
+			// Before creating a new entry, check whether an existing library entry
+			// with the same title and type already covers this proceedings. This
+			// prevents creating a duplicate that would steal crossref children from
+			// a manually-entered proceedings entry and leave it orphaned (lone).
+			if existing := l.findExistingNonDblpProceedings(crossrefDblpKey); existing != "" {
+				l.KeyToKey[dblpAlias] = existing
+				l.HintToKey[dblpAlias] = existing
+				l.MaybeMergeDBLPEntry(crossrefDblpKey, existing, false)
+				l.Progress("Associated DBLP key %s with existing entry %s (title match)", crossrefDblpKey, existing)
+				return existing
+			}
 			libraryKey = l.MaybeAddDBLPEntry(crossrefDblpKey)
 		} else {
 			l.Warning("DBLP crossref not in local DB (skipping): %s", crossrefDblpKey)
@@ -89,6 +100,47 @@ func (l *TBibTeXLibrary) resolveDBLPCrossref(crossrefDblpKey string, allowURLFet
 		}
 	}
 	return libraryKey
+}
+
+// findExistingNonDblpProceedings looks for a library entry that:
+//   - has the same entry type as the DBLP entry for dblpKey
+//   - has the same normalised title (via TitleIndex)
+//   - has no dblp field yet (so it has not been claimed by any DBLP key)
+//
+// Returns the canonical key of the matching entry, or "" when none is found.
+// Used by resolveDBLPCrossref to avoid creating a duplicate proceedings.
+func (l *TBibTeXLibrary) findExistingNonDblpProceedings(dblpKey string) string {
+	dblpEntry := dblpEntryFromFile(dblpKey)
+	if dblpEntry == nil {
+		return ""
+	}
+	wantType := dblpEntry.Fields[EntryTypeField]
+	if !BibTeXBookish.Contains(wantType) {
+		return ""
+	}
+	rawTitle := dblpEntry.Fields[TitleField]
+	if rawTitle == "" {
+		return ""
+	}
+	titleIdx := TeXStringIndexer(l.NormaliseFieldValue(TitleField, rawTitle))
+	if titleIdx == "" {
+		return ""
+	}
+	matches := l.TitleIndex[titleIdx]
+	for _, candidate := range matches.ElementsSorted() {
+		canonical := l.MapEntryKey(candidate)
+		if canonical == "" || !l.EntryExists(canonical) {
+			continue
+		}
+		if l.EntryType(canonical) != wantType {
+			continue
+		}
+		if l.EntryFieldValueity(canonical, DBLPField) != "" {
+			continue // already claimed
+		}
+		return canonical
+	}
+	return ""
 }
 
 // MaybeMergeDBLPEntry builds a source entry from the DBLP database (primary) or,
@@ -284,14 +336,6 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	if title := l.EntryFieldValueity(key, TitleField); title != "" {
 		l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(title), key)
 	}
-
-	// If an existing library entry with the same title is already in the library
-	// (e.g. a manually-entered proceedings with no DBLP key), merge this new entry
-	// into it rather than creating a duplicate. Without this, the children-redirect
-	// loop below would steal all crossref children from the existing entry, leaving
-	// it as a lone proceedings.
-	l.CheckNeedToMergeForEqualTitles(key)
-	key = l.MapEntryKey(key) // re-resolve: may have become an alias after the merge
 
 	l.CheckAndEnforcePreferredAlias(l.buildEntry(key))
 
