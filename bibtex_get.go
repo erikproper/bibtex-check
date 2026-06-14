@@ -624,12 +624,14 @@ func applyBiberMode(field, value string) string {
 }
 
 // bibEditorNoiseFields is the set of fields excluded from all content fingerprints
-// (harvest, subset sync). Includes editor-injected housekeeping fields and local-url,
-// which is derived from file existence on disk rather than bibliographic content.
+// (harvest, subset sync). Includes editor-injected housekeeping fields, local-url/file
+// (derived from disk state), and groups (managed separately via syncGroupMembershipsFromBib
+// and bib_groups — never stored in bib_entries, so the DB fingerprint never includes it).
 var bibEditorNoiseFields = func() TStringSet {
 	s := TStringSetNew()
 	s.Add(
 		LocalURLField,
+		"groups",
 		"date-added", "date-modified",
 		"owner", "creationdate", "modificationdate",
 		JabrefFileField,
