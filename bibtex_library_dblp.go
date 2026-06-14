@@ -285,6 +285,14 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 		l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(title), key)
 	}
 
+	// If an existing library entry with the same title is already in the library
+	// (e.g. a manually-entered proceedings with no DBLP key), merge this new entry
+	// into it rather than creating a duplicate. Without this, the children-redirect
+	// loop below would steal all crossref children from the existing entry, leaving
+	// it as a lone proceedings.
+	l.CheckNeedToMergeForEqualTitles(key)
+	key = l.MapEntryKey(key) // re-resolve: may have become an alias after the merge
+
 	l.CheckAndEnforcePreferredAlias(l.buildEntry(key))
 
 	// For bookish entries (proceedings/book) add all children from the DBLP file store,
