@@ -1051,9 +1051,26 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		parentKey := l.LookupDBLPKey(parentDBLP)
 
 		if parentKey != "" && crossrefKey != parentKey {
-			l.SetEntryFieldValue(key, "crossref", parentKey)
-			crossrefKey = parentKey
-			crossrefDBLP = parentDBLP
+			// Before redirecting: if the current crossref is a non-DBLP entry with the
+			// same normalised title as the DBLP parent, absorb the DBLP key into it
+			// rather than redirecting. Redirecting steals all children from the existing
+			// entry (leaving it as a lone proceedings) without ever removing it.
+			if crossrefKey != "" && l.EntryFieldValueity(crossrefKey, DBLPField) == "" {
+				cTitle := TeXStringIndexer(l.NormaliseFieldValue(TitleField, l.EntryFieldValueity(crossrefKey, TitleField)))
+				pTitle := TeXStringIndexer(l.NormaliseFieldValue(TitleField, l.EntryFieldValueity(parentKey, TitleField)))
+				if cTitle != "" && cTitle == pTitle {
+					l.KeyToKey[KeyForDBLP(parentDBLP)] = crossrefKey
+					l.HintToKey[KeyForDBLP(parentDBLP)] = crossrefKey
+					l.MaybeMergeDBLPEntry(parentDBLP, crossrefKey, false)
+					crossrefDBLP = parentDBLP
+					parentKey = crossrefKey // crossrefKey == parentKey: no redirect
+				}
+			}
+			if crossrefKey != parentKey {
+				l.SetEntryFieldValue(key, "crossref", parentKey)
+				crossrefKey = parentKey
+				crossrefDBLP = parentDBLP
+			}
 		}
 
 		if crossrefDBLP == "" && parentDBLP != "" {
