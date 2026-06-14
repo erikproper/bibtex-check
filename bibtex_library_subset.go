@@ -392,7 +392,7 @@ func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
 		return "off"
 	}
 	Library.Progress("Sync subset: %s", cfg.FileName)
-	Library.Progress("  trusted_subset=%-3s  pdf_files=%q", on(cfg.TrustedSubset), cfg.PDFFiles)
+	Library.Progress("  trusted_subset=%-3s  pdf_files=%-8q  fix=%-3s", on(cfg.TrustedSubset), cfg.PDFFiles, on(cmdFix))
 
 	existingState := readSubsetState(statePath)
 

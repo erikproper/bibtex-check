@@ -931,8 +931,8 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		dbInteraction.Progress("Sync pull: %s", cfg.FileName)
 		dbInteraction.Progress("  doi=%-3s  isbn=%-3s  url=%-3s  dblp=%-3s  key_mapping=%-3s",
 			on(cfg.IncludeDOI), on(cfg.IncludeISBN), on(cfg.IncludeURL), on(cfg.IncludeDblp), on(cfg.KeyMapping))
-		dbInteraction.Progress("  biber=%-3s  shorten=%-3s  urldate_as_note=%-3s  hyphenations=%-3s  fix=%-3s",
-			on(cfg.BiberMode), on(cfg.Shorten), on(cfg.UrldateAsNote), on(cfg.Hyphenations), on(cmdFix))
+		dbInteraction.Progress("  biber=%-3s  shorten=%-3s  urldate_as_note=%-3s  hyphenations=%-3s  fix=%-3s  format=%s",
+			on(cfg.BiberMode), on(cfg.Shorten), on(cfg.UrldateAsNote), on(cfg.Hyphenations), on(cmdFix), cfg.Format)
 		dbInteraction.Progress("  Keys  : %d entr%s from %s", len(pairs), map[bool]string{true: "y", false: "ies"}[len(pairs) == 1], mapFilePath+KeysFileExtension)
 		if selectFileFound {
 			dbInteraction.Progress("  Select: %d statement(s) → %d extra entr%s from %s", len(selectStmts), len(extraCanonicals), map[bool]string{true: "y", false: "ies"}[len(extraCanonicals) == 1], mapFilePath+".select")
@@ -1105,9 +1105,49 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		writeOneEntry(ap.canonicalKey, ap.localKey, "")
 	}
 
-	// BibDesk static groups — subset mode only, restricted to entries written here.
-	if cfg.Mode == "subset" && len(Library.GroupEntries) > 0 {
-		// Map canonical key → output key for everything written (pairs, extras, auto-parents).
+	// Trailing format block: group definitions.
+	// For BibDesk: emit @comment{BibDesk Static Groups{...}} (subset-only; entry-based groups
+	// have no place in non-subset bibs since the full library is not present).
+	// For JabRef: emit jabref-meta: databaseType + grouping block for any bib mode.
+	if cfg.Format == "jabref" {
+		// Always emit the database type declaration.
+		w.WriteString("@" + CommentEntryType + "{jabref-meta: databaseType:bibtex;}\n\n")
+
+		// Emit the grouping block when there are groups that have at least one member
+		// in this output file.
+		if len(Library.GroupEntries) > 0 {
+			type groupLine struct{ name string }
+			var groupLines []groupLine
+			for group, members := range Library.GroupEntries {
+				hasOutput := false
+				for key := range members.Elements() {
+					if _, ok := canonicalToLocal[Library.MapEntryKey(key)]; ok {
+						hasOutput = true
+						break
+					}
+					if _, ok := autoParentLocal[Library.MapEntryKey(key)]; ok {
+						hasOutput = true
+						break
+					}
+				}
+				if hasOutput {
+					groupLines = append(groupLines, groupLine{group})
+				}
+			}
+			if len(groupLines) > 0 {
+				sort.Slice(groupLines, func(i, j int) bool { return groupLines[i].name < groupLines[j].name })
+				w.WriteString("@" + CommentEntryType + "{jabref-meta: grouping:\n")
+				w.WriteString("0 AllEntriesGroup:;\n")
+				for _, g := range groupLines {
+					// name\;hierarchy\;expand\;color\;icon\;description\;
+					escaped := strings.ReplaceAll(strings.ReplaceAll(g.name, `\`, `\\`), `;`, `\;`)
+					w.WriteString("1 StaticGroup:" + escaped + `\;0\;1\;\;\;\;` + "\n")
+				}
+				w.WriteString("}\n\n")
+			}
+		}
+	} else if cfg.Mode == "subset" && len(Library.GroupEntries) > 0 {
+		// BibDesk static groups — subset mode only, restricted to entries written here.
 		outputKeyFor := func(canonical string) string {
 			if k, ok := canonicalToLocal[canonical]; ok {
 				return k
@@ -1271,6 +1311,12 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 	if _, hasMode := rawMap["mode"]; !hasMode {
 		cfg.Mode = "pull"
 		rawMap["mode"] = json.RawMessage(`"pull"`)
+		needsWriteBack = true
+	}
+
+	// Seed format="bibdesk" for configs that predate this field.
+	if _, hasFormat := rawMap["format"]; !hasFormat {
+		rawMap["format"] = json.RawMessage(`"bibdesk"`)
 		needsWriteBack = true
 	}
 

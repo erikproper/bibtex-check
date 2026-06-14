@@ -145,8 +145,8 @@ func (c *TCharacterStream) TextfileOpen(fileName string) bool {
 
 	if err == nil {
 		c.textScanner = bufio.NewScanner(c.textfile)
-
-		return c.NextCharacter()
+		c.NextCharacter()
+		return true // file opened successfully; an empty file is not an error
 	} else {
 		c.endOfStream = true
 
