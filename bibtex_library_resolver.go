@@ -138,14 +138,6 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return challengeRaw
 	}
 
-	// -fix mode: auto-keep current for title/booktitle/volume/edition and record the
-	// entry-specific mapping so DBLP cannot re-challenge with the same old form.
-	if cmdAutoFixAlignTitles && (field == TitleField || field == "booktitle" || field == "volume" || field == "edition") {
-		l.UpdateEntryFieldAlias(key, field, challenge, current)
-		l.setLineage(key, field, challengeSource, true)
-		return current
-	}
-
 	options := TStringSetNew()
 	if field == EntryTypeField || field == "year" || field == "pages" || field == "author" || field == "editor" ||
 		field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {

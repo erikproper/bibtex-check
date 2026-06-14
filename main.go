@@ -63,7 +63,6 @@ var (
 	forceWrite            bool
 	cmdStep               stepFlag
 	cmdNoGarbageCleaning  bool
-	cmdAutoFixAlignTitles bool
 	cmdTrustHints         bool // -trust_hints: auto-accept key-hint matches in harvest
 	cmdCollectKeys        bool // -collect_keys: add source keys to hints DB when unambiguous
 	cmdFix                bool // -fix: apply full per-entry checks when combined with -sync or -harvest
@@ -1219,9 +1218,6 @@ func doUpsertDblpEntries() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
-		if cmdAutoFixAlignTitles {
-			Library.CheckAlignTitles(true)
-		}
 		total := countBibEntries()
 
 		// Collect bookish and non-bookish keys separately so bookish entries are
@@ -1833,7 +1829,6 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	flag.BoolVar(&cmdImportBib, "import_bib", false, "import a bib file into the DB (requires filename argument; use to initialise or reinitialise bib_entries)")
 	flag.BoolVar(&cmdHarvest, "harvest", false, "interactively ingest entries from a bib file (path from args) or stdin into the library")
 
-			flag.BoolVar(&cmdAutoFixAlignTitles, "fix", false, "auto-accept all title/volume/edition alignment suggestions (use with -update_all_dblp_entries)")
 
 	// Normalise "-step N" (space-separated) to "-step=N" before flag.Parse so
 	// that IsBoolFlag-style parsing handles "-step" (no value) correctly too.
