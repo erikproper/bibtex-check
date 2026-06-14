@@ -57,8 +57,9 @@ type TBibGetConfig struct {
 	TrustHints    bool   `json:"trust_hints"`    // harvest: auto-accept key-hint matches without confirmation
 	CollectKeys   bool   `json:"collect_keys"`   // harvest: add source keys to hints DB when unambiguous
 	TrustedSubset bool   `json:"trusted_subset"` // subset: apply changes/adds/deletes without confirmation
-	PDFFiles      string `json:"pdf_files"`      // subset/full: "" | "global" | "local"
-	Format        string `json:"format"`         // output dialect: "bibdesk" (default) | "jabref"
+	PDFFiles      string   `json:"pdf_files"`      // subset/full: "" | "global" | "local"
+	Format        string   `json:"format"`         // output dialect: "bibdesk" (default) | "jabref"
+	SyncGroups    []string `json:"groups"`         // group names to sync to main DB; all others stay local
 }
 
 // migrateRawConfigFileNames migrates "file_name" → "file_names" in a raw JSON map.
@@ -124,6 +125,7 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		{"trusted_subset", json.RawMessage(`false`)},
 		{"pdf_files", json.RawMessage(`""`)},
 		{"format", json.RawMessage(`"bibdesk"`)},
+		{"groups", json.RawMessage(`[]`)},
 	} {
 		if _, present := rawMap[opt.key]; !present {
 			rawMap[opt.key] = opt.val

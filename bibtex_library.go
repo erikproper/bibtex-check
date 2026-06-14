@@ -84,8 +84,10 @@ type (
 		genericFieldMappingsModified      bool
 		entryFieldMappingsModified        bool
 		harvestNameAliases                bool
-		harvestCapturePDFFields           bool   // when true: file/local-url pass through for harvest PDF copy
-		harvestSourceDir                  string // directory of the source bib file; used for relative PDF paths
+		harvestCapturePDFFields           bool         // when true: file/local-url pass through for harvest PDF copy
+		harvestSourceDir                  string       // directory of the source bib file; used for relative PDF paths
+		harvestSyncGroups                 TStringSet   // groups to sync to main DB during harvest (from config)
+		harvestLocalGroups                TStringSetMap // groups to store locally during harvest
 		PDFFiles                          map[string]bool // keys with a <key>.pdf in FilesFolder; populated by LoadPDFFiles
 		capturedDBLPEntry                 *TBibTeXEntry
 		capturedHarvestEntries            *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB

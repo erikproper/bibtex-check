@@ -395,9 +395,44 @@ func (l *TBibTeXLibrary) maybeHarvestPDF(e TBibTeXEntry, canonicalKey string) {
 	l.Progress("Harvested PDF: %s → %s", filepath.Base(srcPath), canonicalKey+".pdf")
 }
 
-// maybeHarvestGroups imports the JabRef per-entry groups field into the library's
-// GroupEntries and persists each membership to bib_groups. The field value is a
-// comma-separated list of group names. Idempotent: re-runs add nothing new.
+// --- Local groups I/O ---
+
+// readLocalGroups loads a .groups file (group;canonicalKey CSV) into a TStringSetMap.
+func readLocalGroups(path string) TStringSetMap {
+	result := TStringSetMap{}
+	processFile(path, func(line string) {
+		parts := strings.SplitN(line, csvDelimiter, 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			result.AddValueToStringSetMap(parts[0], parts[1])
+		}
+	})
+	return result
+}
+
+// writeLocalGroups writes a TStringSetMap to a .groups file (group;canonicalKey CSV).
+func writeLocalGroups(path string, groups TStringSetMap) {
+	f, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	groupNames := make([]string, 0, len(groups))
+	for g := range groups {
+		groupNames = append(groupNames, g)
+	}
+	sort.Strings(groupNames)
+	for _, g := range groupNames {
+		members := groups[g] // copy so Elements() can be called (pointer method)
+		for key := range members.Elements() {
+			fmt.Fprintf(f, "%s%s%s\n", g, csvDelimiter, key)
+		}
+	}
+}
+
+// maybeHarvestGroups imports the JabRef per-entry groups field from a harvested entry.
+// Groups in l.harvestSyncGroups are written to the main bib_groups DB table.
+// All other groups are added to l.harvestLocalGroups (persisted at end of harvest run).
+// The groups field value is a comma-separated list of group names. Idempotent.
 func (l *TBibTeXLibrary) maybeHarvestGroups(e TBibTeXEntry, canonicalKey string) {
 	raw := e.Fields["groups"]
 	if raw == "" {
@@ -408,11 +443,15 @@ func (l *TBibTeXLibrary) maybeHarvestGroups(e TBibTeXEntry, canonicalKey string)
 		if group == "" {
 			continue
 		}
-		l.GroupEntries.AddValueToStringSetMap(group, canonicalKey)
-		if err := bibExec(
-			`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`,
-			group, canonicalKey); err != nil {
-			l.Warning("Could not persist group %q for %s: %s", group, canonicalKey, err)
+		if l.harvestSyncGroups.Contains(group) {
+			l.GroupEntries.AddValueToStringSetMap(group, canonicalKey)
+			if err := bibExec(
+				`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`,
+				group, canonicalKey); err != nil {
+				l.Warning("Could not persist group %q for %s: %s", group, canonicalKey, err)
+			}
+		} else {
+			l.harvestLocalGroups.AddValueToStringSetMap(group, canonicalKey)
 		}
 	}
 }
@@ -681,8 +720,17 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	}
 	keysBasePath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath))
 	logPath := keysBasePath + HarvestLogExtension
+	localGroupsPath := keysBasePath + LocalGroupsExtension
 
 	maybeMigrateSubsetToHarvest(sourcePath, keysBasePath, logPath)
+
+	// Initialise group routing: names in cfg.SyncGroups go to main DB; rest stay local.
+	syncGroups := TStringSetNew()
+	for _, g := range cfg.SyncGroups {
+		syncGroups.Add(g)
+	}
+	Library.harvestSyncGroups = syncGroups
+	Library.harvestLocalGroups = readLocalGroups(localGroupsPath) // seed from existing file
 
 	on := func(b bool) string {
 		if b {
@@ -777,6 +825,9 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	Library.Progress("  Pending (not yet seen)  : %d", stillPending)
 	Library.Progress("  PDFs harvested          : %d", pdfsHarvested)
 	Library.Progress("  Key hints added         : %d", hintsAdded)
+	writeLocalGroups(localGroupsPath, Library.harvestLocalGroups)
+	Library.harvestSyncGroups = TStringSetNew()
+	Library.harvestLocalGroups = TStringSetMap{}
 }
 
 // --- Mode transitions ---
