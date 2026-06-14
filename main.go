@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.87"
+const AppVersion = "24.88"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -662,31 +662,13 @@ func reportHomework() {
 		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked)
 }
 
-func doDefaultRun() {
+// doExtendDblpCoverage interactively finds DBLP matches for library entries that have
+// no DBLP key yet, by title-index lookup and same-title peer detection.
+// Separated from doDefaultRun so the main check loop stays fast when there are many
+// unmatched entries.
+func doExtendDblpCoverage() {
 	if openLibraryToUpdate() {
 		defer reportHomework()
-		clearEntryWarnings()
-		Library.CheckEntries()
-		if Library.QuitWasRequested() {
-			return
-		}
-		Library.ReadKeyNonDoublesFile()
-		Library.FixDblpHierarchy()
-		if Library.QuitWasRequested() {
-			return
-		}
-		Library.CheckAlignTitles(false)
-		if Library.QuitWasRequested() {
-			return
-		}
-		Library.CheckDuplicateDBLPKeys()
-		if Library.QuitWasRequested() {
-			return
-		}
-		Library.CheckLoneProceedings()
-		if Library.QuitWasRequested() {
-			return
-		}
 		stepN := Reporting.StepSize()
 		questionCounter := 0
 		forEachBibEntryKey(func(key string) bool {
@@ -712,6 +694,34 @@ func doDefaultRun() {
 			}
 			return true
 		})
+	}
+}
+
+func doDefaultRun() {
+	if openLibraryToUpdate() {
+		defer reportHomework()
+		clearEntryWarnings()
+		Library.CheckEntries()
+		if Library.QuitWasRequested() {
+			return
+		}
+		Library.ReadKeyNonDoublesFile()
+		Library.FixDblpHierarchy()
+		if Library.QuitWasRequested() {
+			return
+		}
+		Library.CheckAlignTitles(false)
+		if Library.QuitWasRequested() {
+			return
+		}
+		Library.CheckDuplicateDBLPKeys()
+		if Library.QuitWasRequested() {
+			return
+		}
+		Library.CheckLoneProceedings()
+		if Library.QuitWasRequested() {
+			return
+		}
 		Library.ScanOrphanPDFs()
 		Library.ReadURLsIgnoreFile()
 		Library.CheckAllURLs()
@@ -1661,7 +1671,8 @@ func main() {
 		cmdFixEntries         bool
 		cmdFixAllEntries      bool
 		cmdAddDblpEntry    bool
-		cmdAddDblpEntries  bool
+		cmdAddDblpEntries        bool
+		cmdExtendDblpCoverage    bool
 		cmdWatch             bool
 		cmdAddKeyMapping         bool
 		cmdMergeEntries       bool
@@ -1713,6 +1724,7 @@ func main() {
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
 	flag.BoolVar(&cmdFixAllEntries, "fix_all_entries", false, "fix/check all entries")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
+	flag.BoolVar(&cmdExtendDblpCoverage, "extend_dblp_coverage", false, "interactively find DBLP matches for library entries without a DBLP key")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "upsert DBLP data for one or more given entries (library or DBLP keys)")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
 	flag.BoolVar(&cmdWatch, "watch", false, "check watched persons/ORCIDs for missing publications")
@@ -1959,6 +1971,9 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 			runWatch()
 			runScript()
 		}
+
+	case cmdExtendDblpCoverage:
+		doExtendDblpCoverage()
 
 	case cmdAddDblpEntries:
 		requireNoDblpImport()
