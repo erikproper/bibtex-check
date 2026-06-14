@@ -1051,22 +1051,13 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		parentKey := l.LookupDBLPKey(parentDBLP)
 
 		if parentKey != "" && crossrefKey != parentKey {
-			// Before redirecting: if the current crossref is a non-DBLP entry with the
-			// same normalised title as the DBLP parent, absorb the DBLP key into it
-			// rather than redirecting. Redirecting steals all children from the existing
-			// entry (leaving it as a lone proceedings) without ever removing it.
-			if crossrefKey != "" && l.EntryFieldValueity(crossrefKey, DBLPField) == "" {
-				cTitle := TeXStringIndexer(l.NormaliseFieldValue(TitleField, l.EntryFieldValueity(crossrefKey, TitleField)))
-				pTitle := TeXStringIndexer(l.NormaliseFieldValue(TitleField, l.EntryFieldValueity(parentKey, TitleField)))
-				if cTitle != "" && cTitle == pTitle {
-					l.KeyToKey[KeyForDBLP(parentDBLP)] = crossrefKey
-					l.HintToKey[KeyForDBLP(parentDBLP)] = crossrefKey
-					l.MaybeMergeDBLPEntry(parentDBLP, crossrefKey, false)
-					crossrefDBLP = parentDBLP
-					parentKey = crossrefKey // crossrefKey == parentKey: no redirect
-				}
-			}
-			if crossrefKey != parentKey {
+			// Only redirect to parentKey when the current crossref has a DBLP key
+			// (safe to update within the DBLP hierarchy) or no longer exists.
+			// When crossrefKey is a live non-DBLP proceedings, skip the redirect —
+			// the crossrefDBLP block below will assign the DBLP parent key to it
+			// directly, keeping it as the canonical parent without orphaning it.
+			if crossrefKey == "" || !l.EntryExists(crossrefKey) ||
+				l.EntryFieldValueity(crossrefKey, DBLPField) != "" {
 				l.SetEntryFieldValue(key, "crossref", parentKey)
 				crossrefKey = parentKey
 				crossrefDBLP = parentDBLP
@@ -1096,7 +1087,13 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 			for i, childDBLP := range children {
 				childKey := l.LookupDBLPKey(childDBLP)
 				if childKey != "" {
-					l.SetEntryFieldValue(childKey, "crossref", key)
+					// Same guard as MaybeAddDBLPEntry: don't redirect away from a live
+					// non-DBLP proceedings — that would orphan it as a lone proceedings.
+					oldCrossref := l.EntryFieldValueity(childKey, "crossref")
+					if oldCrossref == "" || !l.EntryExists(oldCrossref) ||
+						l.EntryFieldValueity(oldCrossref, DBLPField) != "" {
+						l.SetEntryFieldValue(childKey, "crossref", key)
+					}
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}

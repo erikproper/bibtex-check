@@ -232,7 +232,23 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 			crossrefDblpKey = dblpEntry.Fields["crossref"]
 		}
 		if crossrefDblpKey != "" {
-			if libraryKey := l.resolveDBLPCrossref(crossrefDblpKey, allowURLFetch); libraryKey != "" {
+			// If the library child already has a crossref to a live non-DBLP proceedings
+			// and the DBLP parent isn't yet mapped to any library entry, use the existing
+			// crossref directly rather than creating a new proceedings entry. Creating a
+			// new one would cause its children loop to steal children from the existing
+			// entry, leaving it orphaned (lone proceedings).
+			existingCrossref := l.EntryFieldValueity(key, "crossref")
+			if existingCrossref != "" && l.EntryExists(existingCrossref) &&
+				l.EntryFieldValueity(existingCrossref, DBLPField) == "" &&
+				l.LookupDBLPKey(crossrefDblpKey) == "" {
+				l.KeyToKey[KeyForDBLP(crossrefDblpKey)] = existingCrossref
+				l.HintToKey[KeyForDBLP(crossrefDblpKey)] = existingCrossref
+				l.MaybeMergeDBLPEntry(crossrefDblpKey, existingCrossref, false)
+				dblpEntry.Fields["crossref"] = existingCrossref
+				for field := range BibTeXMustInheritFields.Elements() {
+					delete(dblpEntry.Fields, field)
+				}
+			} else if libraryKey := l.resolveDBLPCrossref(crossrefDblpKey, allowURLFetch); libraryKey != "" {
 				dblpEntry.Fields["crossref"] = libraryKey
 				// DBLP stores short/incomplete inherited fields (booktitle, year, editor…)
 				// on child entries. Strip them so the library's full values are not
@@ -350,7 +366,15 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 			spinner := l.NewSpinner(fmt.Sprintf("Adding %d children of %s", len(children), DBLPKey))
 			for i, childDBLP := range children {
 				if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
-					l.SetEntryFieldValue(childKey, "crossref", key)
+					// Only redirect if the child has no existing crossref, or its current
+					// crossref no longer exists, or it already points to a DBLP-backed entry.
+					// Do NOT redirect away from a live non-DBLP proceedings — that steals
+					// all its children and leaves it orphaned as a lone proceedings.
+					oldCrossref := l.EntryFieldValueity(childKey, "crossref")
+					if oldCrossref == "" || !l.EntryExists(oldCrossref) ||
+						l.EntryFieldValueity(oldCrossref, DBLPField) != "" {
+						l.SetEntryFieldValue(childKey, "crossref", key)
+					}
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}
@@ -427,9 +451,25 @@ func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) st
 			for _, field := range remaining {
 				fmt.Fprintf(os.Stderr, "\n    %-12s: %s", field, entry.Fields[field])
 			}
-			// Show crossref parent for context (title, year, editor) and
-			// children count to let the user estimate cascading work.
-			if crossref := entry.Fields["crossref"]; crossref != "" {
+			// Show children count to let the user estimate cascading work on acceptance.
+			// For bookish candidates (proceedings/book): show their own children count.
+			// For non-bookish (inproceedings etc.): show the parent's context + children.
+			showChildrenCount := func(dblpKey string) {
+				children := readDblpCrossrefChildren(dblpKey)
+				if len(children) > 0 {
+					alreadyIn := 0
+					for _, child := range children {
+						if l.LookupDBLPKey(child) != "" {
+							alreadyIn++
+						}
+					}
+					fmt.Fprintf(os.Stderr, "\n    %-12s: %d total, %d already in library, %d new",
+						"children", len(children), alreadyIn, len(children)-alreadyIn)
+				}
+			}
+			if BibTeXBookish.Contains(entry.EntryType()) {
+				showChildrenCount(dblpKey)
+			} else if crossref := entry.Fields["crossref"]; crossref != "" {
 				if parent := dblpEntryFromFile(crossref); parent != nil {
 					fmt.Fprintf(os.Stderr, "\n  Parent: %s", crossref)
 					for _, field := range []string{"title", "booktitle", "year", "editor", "publisher", "series"} {
@@ -437,19 +477,7 @@ func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) st
 							fmt.Fprintf(os.Stderr, "\n    %-12s: %s", field, v)
 						}
 					}
-					// Show how many children the parent has and how many are new.
-					children := readDblpCrossrefChildren(crossref)
-					if len(children) > 0 {
-						alreadyIn := 0
-						for _, child := range children {
-							if l.LookupDBLPKey(child) != "" {
-								alreadyIn++
-							}
-						}
-						newChildren := len(children) - alreadyIn
-						fmt.Fprintf(os.Stderr, "\n    %-12s: %d total, %d already in library, %d new",
-							"children", len(children), alreadyIn, newChildren)
-					}
+					showChildrenCount(crossref)
 				}
 			}
 		}
