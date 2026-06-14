@@ -301,15 +301,7 @@ func doRebuildDblpTitleIndex() {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Counting entries in %s...\n", entriesRoot)
-	var total int
-	filepath.WalkDir(entriesRoot, func(path string, d fs.DirEntry, err error) error { //nolint:errcheck
-		if err == nil && !d.IsDir() && d.Name() == "data.json" {
-			total++
-		}
-		return err
-	})
-	fmt.Fprintf(os.Stderr, "Rebuilding title index from %d entries...\n", total)
+	fmt.Fprintf(os.Stderr, "Rebuilding title index from %s...\n", entriesRoot)
 
 	// Accumulate hash→keys in memory to avoid per-entry read-before-write in
 	// appendToIndexFile. Writing all link files in one batch at the end eliminates
@@ -343,12 +335,7 @@ func doRebuildDblpTitleIndex() {
 		}
 		count++
 		if now := time.Now(); now.Sub(lastReport) >= 5*time.Second {
-			pct := 0.0
-			if total > 0 {
-				pct = float64(count) * 100.0 / float64(total)
-			}
-			fmt.Fprintf(os.Stderr, "  %d / %d entries indexed (%.1f%%, %.0fs)...\n",
-				count, total, pct, now.Sub(start).Seconds())
+			fmt.Fprintf(os.Stderr, "  %d entries indexed (%.0fs)...\n", count, now.Sub(start).Seconds())
 			lastReport = now
 		}
 		return nil
