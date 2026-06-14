@@ -103,6 +103,7 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 	needsWriteBack := migrateRawConfigFileNames(rawMap)
 
 	// Seed all absent option fields so bib.config is fully self-documenting.
+	// Per-file .config files inherit these and only need to specify overrides.
 	for _, opt := range []struct {
 		key string
 		val json.RawMessage
@@ -114,10 +115,14 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		{"include_dblp", json.RawMessage(`false`)},
 		{"biber_mode", json.RawMessage(`false`)},
 		{"shorten", json.RawMessage(`false`)},
+		{"shorten_file", json.RawMessage(`""`)},
 		{"urldate_as_note", json.RawMessage(`false`)},
 		{"hyphenations", json.RawMessage(`false`)},
 		{"trust_hints", json.RawMessage(`false`)},
 		{"collect_keys", json.RawMessage(`false`)},
+		{"trusted_subset", json.RawMessage(`false`)},
+		{"pdf_files", json.RawMessage(`""`)},
+		{"format", json.RawMessage(`"bibdesk"`)},
 	} {
 		if _, present := rawMap[opt.key]; !present {
 			rawMap[opt.key] = opt.val
@@ -1314,12 +1319,6 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 		needsWriteBack = true
 	}
 
-	// Seed format="bibdesk" for configs that predate this field.
-	if _, hasFormat := rawMap["format"]; !hasFormat {
-		rawMap["format"] = json.RawMessage(`"bibdesk"`)
-		needsWriteBack = true
-	}
-
 	// Seed pdf_files="global" for subset configs that predate this field.
 	if _, hasPDFFiles := rawMap["pdf_files"]; !hasPDFFiles {
 		var modeStr string
@@ -1329,6 +1328,24 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 		if modeStr == "subset" {
 			rawMap["pdf_files"] = json.RawMessage(`"global"`)
 			needsWriteBack = true
+		}
+	}
+
+	// Strip options from rawMap whose value matches the bib.config default — per-file
+	// configs should only contain overrides. "mode" is always kept since it is the
+	// primary per-file identifier.
+	defaultsData, _ := json.Marshal(baseCfg)
+	var defaultsMap map[string]json.RawMessage
+	json.Unmarshal(defaultsData, &defaultsMap) //nolint:errcheck
+	for key, val := range rawMap {
+		if key == "mode" {
+			continue
+		}
+		if defVal, inDefaults := defaultsMap[key]; inDefaults {
+			if string(val) == string(defVal) {
+				delete(rawMap, key)
+				needsWriteBack = true
+			}
 		}
 	}
 
@@ -1570,6 +1587,10 @@ func doSync(filter string) {
 		if !openLibraryToReport() {
 			return
 		}
+	}
+
+	if cmdFix {
+		Library.Progress("Fix mode: active (full per-entry checks applied to each touched entry)")
 	}
 
 	// Scan for orphaned PDFs and auto-associate missing local-url fields before
