@@ -307,7 +307,6 @@ func connectToDatabase() {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", dbName, err.Error())
 	}
-	db.SetMaxOpenConns(1) // SQLite supports only one write at a time; single connection avoids SQLITE_BUSY
 	configureDatabasePragmas()
 
 	ensureTableDatesTableExists()
@@ -372,7 +371,6 @@ func reopenDb(path string) {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", path, err)
 	}
-	db.SetMaxOpenConns(1)
 	configureDatabasePragmas()
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
