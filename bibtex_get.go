@@ -54,12 +54,13 @@ type TBibGetConfig struct {
 	IncludeURL    bool   `json:"include_url"`
 	UrldateAsNote bool   `json:"urldate_as_note"`
 	Hyphenations  bool   `json:"hyphenations"`   // insert \- hints from global_folder/hyphenations.csv
-	TrustHints    bool   `json:"trust_hints"`    // harvest: auto-accept key-hint matches without confirmation
-	CollectKeys   bool   `json:"collect_keys"`   // harvest: add source keys to hints DB when unambiguous
-	TrustedSubset bool   `json:"trusted_subset"` // subset: apply changes/adds/deletes without confirmation
-	PDFFiles      string   `json:"pdf_files"`      // subset/full: "" | "global" | "local"
-	Format        string   `json:"format"`         // output dialect: "bibdesk" (default) | "jabref"
-	SyncGroups    []string `json:"groups"`         // group names to sync to main DB; all others stay local
+	TrustHints      bool     `json:"trust_hints"`       // harvest: auto-accept key-hint matches without confirmation
+	CollectKeys     bool     `json:"collect_keys"`      // harvest: add source keys to hints DB when unambiguous
+	HarvestTransfer string   `json:"harvest_transfer"`  // harvest: base name of target bib to append resolved keys into
+	TrustedSubset   bool     `json:"trusted_subset"`    // subset: apply changes/adds/deletes without confirmation
+	PDFFiles        string   `json:"pdf_files"`         // subset/full: "" | "global" | "local"
+	Format          string   `json:"format"`            // output dialect: "bibdesk" (default) | "jabref"
+	SyncGroups      []string `json:"groups"`            // group names to sync to main DB; all others stay local
 
 	// Runtime-only (not serialised): all group assignments per canonical key, pre-built
 	// from the .sync state before the write phase. When non-nil, entryGetString uses this
@@ -851,34 +852,6 @@ func (l *TBibTeXLibrary) entryGetString(
 	return result
 }
 
-// maybeBuildKeysFromHarvest builds a .keys file from a .harvest log when the
-// .keys file is absent. Used by harvest and follow modes to seed the output set
-// from a previously-run harvest without requiring a manual .keys file.
-func maybeBuildKeysFromHarvest(keysBasePath string) {
-	keysPath := keysBasePath + KeysFileExtension
-	if FileExists(keysPath) {
-		return
-	}
-	harvestPath := keysBasePath + HarvestLogExtension
-	if !FileExists(harvestPath) {
-		Library.Progress("  Keys: no .harvest log found at %s — .keys not created", harvestPath)
-		return
-	}
-	log := readHarvestLog(harvestPath)
-	var pairs []TBibGetPair
-	for _, entry := range log {
-		if entry.Action == "" || entry.Action == harvestActionSkipContent || entry.Action == harvestActionSkipNever {
-			continue
-		}
-		pairs = append(pairs, TBibGetPair{canonicalKey: entry.Action})
-	}
-	if len(pairs) > 0 {
-		Library.Progress("  Keys: seeding .keys from .harvest log (%d entries)", len(pairs))
-		rewriteKeysFile(keysBasePath, pairs, false)
-	} else {
-		Library.Progress("  Keys: .harvest log has no matched entries — .keys not created")
-	}
-}
 
 // doGetWithConfig implements the subset bib export with a pre-read config.
 // baseDir is the directory used to resolve relative file_name paths; pass ""
@@ -903,11 +876,6 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 
 	// Resolve the keys file path (base name without extension).
 	mapFilePath := resolveRelative(cfg.FileName)
-
-	// Follow mode: if no .keys file exists yet, derive one from the .harvest log.
-	if cfg.Mode == "follow" {
-		maybeBuildKeysFromHarvest(mapFilePath)
-	}
 
 	pairs, keysModified, ok := readKeysFile(mapFilePath)
 	if !ok {
@@ -1540,8 +1508,8 @@ func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// writeFullSync writes the full library bib file assuming the library is already open.
-func writeFullSync(cfg TBibGetConfig, baseDir string) {
+// fullSyncOutPath resolves the output path for a full-mode sync config.
+func fullSyncOutPath(cfg TBibGetConfig, baseDir string) string {
 	fileName := cfg.FileName
 	if fileName == "" {
 		fileName = bibTeXBaseName
@@ -1550,17 +1518,19 @@ func writeFullSync(cfg TBibGetConfig, baseDir string) {
 	if !filepath.IsAbs(outPath) {
 		outPath = filepath.Join(baseDir, outPath)
 	}
+	return outPath
+}
 
-	entryTypes := map[string]string{}
-	forEachBibEntryType(func(key, entryType string) {
-		entryTypes[key] = entryType
-	})
-
-	newContent := buildSyncBibContent(fileName, entryTypes)
+// runFullPhase1 detects whether the full sync bib was manually edited and re-imports
+// it into the DB when the user confirms. Must run in phase 1 (before subset/harvest)
+// so edits from the full bib reach the DB before other modes process their own changes.
+// Returns false only when a re-import was attempted but failed — phase 2 should be
+// skipped in that case to avoid overwriting the bib with stale content.
+func runFullPhase1(cfg TBibGetConfig, baseDir string) bool {
+	outPath := fullSyncOutPath(cfg, baseDir)
 	mdatePath := outPath + ".mdate"
 
 	// Detect manual edits: compare stored write-time against current bib mtime.
-	// Two O(1) stat/read calls — no file read of the bib needed.
 	bibWasEdited := false
 	if bibInfo, errBib := os.Stat(outPath); errBib == nil {
 		if mdateData, errMD := os.ReadFile(mdatePath); errMD == nil {
@@ -1569,39 +1539,49 @@ func writeFullSync(cfg TBibGetConfig, baseDir string) {
 			}
 		}
 	}
+	if !bibWasEdited {
+		return true
+	}
 
-	if bibWasEdited && !cmdPull {
-		// The sync bib was edited externally (e.g. BibDesk): ask before re-importing;
-		// in non-interactive mode (scripted / piped) skip re-import and just overwrite.
-		doReimport := false
-		if !Reporting.InteractionIsOff() {
-			// Warn when the DB has also been modified since the last export, so the
-			// user knows that re-importing may overwrite in-library changes.
-			if mdateData, errMD := os.ReadFile(mdatePath); errMD == nil {
-				if storedUnix, parseErr := strconv.ParseInt(strings.TrimSpace(string(mdateData)), 10, 64); parseErr == nil {
-					if tableModTime("bib_entries") > storedUnix*1_000_000 {
-						dbInteraction.Warning("DB has been modified since the last sync export — re-importing will overwrite those changes.")
-					}
+	// The sync bib was edited externally (e.g. BibDesk): ask before re-importing;
+	// in non-interactive mode (scripted / piped) skip re-import and just overwrite.
+	if !Reporting.InteractionIsOff() {
+		// Warn when the DB has also been modified since the last export.
+		if mdateData, errMD := os.ReadFile(mdatePath); errMD == nil {
+			if storedUnix, parseErr := strconv.ParseInt(strings.TrimSpace(string(mdateData)), 10, 64); parseErr == nil {
+				if tableModTime("bib_entries") > storedUnix*1_000_000 {
+					dbInteraction.Warning("DB has been modified since the last sync export — re-importing will overwrite those changes.")
 				}
 			}
-			doReimport = Reporting.ConfirmAction(fmt.Sprintf("Sync bib was edited externally — re-import %s?", outPath))
-		} else {
-			dbInteraction.Progress("Sync bib edited externally — overwriting without re-import: %s", outPath)
 		}
-		if doReimport {
-			dbInteraction.Progress("Re-importing edited sync bib: %s", outPath)
-			if !parseSyncBibFile(outPath) {
-				fmt.Fprintf(os.Stderr, "WARNING: re-import failed for %s — skipping write\n", outPath)
-				return
-			}
-			// Re-collect entry types from the freshly-parsed DB and regenerate content.
-			entryTypes = map[string]string{}
-			forEachBibEntryType(func(key, entryType string) {
-				entryTypes[key] = entryType
-			})
-			newContent = buildSyncBibContent(fileName, entryTypes)
+		if !Reporting.ConfirmAction(fmt.Sprintf("Sync bib was edited externally — re-import %s?", outPath)) {
+			return true
 		}
+	} else {
+		dbInteraction.Progress("Sync bib edited externally — overwriting without re-import: %s", outPath)
+		return true
 	}
+
+	dbInteraction.Progress("Re-importing edited sync bib: %s", outPath)
+	if !parseSyncBibFile(outPath) {
+		fmt.Fprintf(os.Stderr, "WARNING: re-import failed for %s — skipping write\n", outPath)
+		return false
+	}
+	return true
+}
+
+// writeFullSync writes the full library bib file assuming the library is already open
+// and phase 1 (runFullPhase1) has already run. Always rebuilds content from the DB.
+func writeFullSync(cfg TBibGetConfig, baseDir string) {
+	outPath := fullSyncOutPath(cfg, baseDir)
+
+	entryTypes := map[string]string{}
+	forEachBibEntryType(func(key, entryType string) {
+		entryTypes[key] = entryType
+	})
+
+	newContent := buildSyncBibContent(cfg.FileName, entryTypes)
+	mdatePath := outPath + ".mdate"
 
 	dbInteraction.Progress("Sync full: %s → %s (%d entries)", cfg.FileName, outPath, len(entryTypes))
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
@@ -1626,7 +1606,9 @@ func doFullSync(cfg TBibGetConfig, baseDir string) {
 	if !openLibraryToUpdate() {
 		return
 	}
-	writeFullSync(cfg, baseDir)
+	if runFullPhase1(cfg, baseDir) {
+		writeFullSync(cfg, baseDir)
+	}
 }
 
 // doSync is the -sync entry point.
@@ -1732,11 +1714,22 @@ func doSync(filter string) {
 
 	// Phase 1: merge all bib-side changes into the DB before writing any output.
 	// Skipped entirely when -pull is active — DB is left untouched.
+	// Order (enforced by sort above): full → subset → harvest → follow/pull.
 	if !cmdPull {
 		for i := range files {
 			switch files[i].cfg.Mode {
+			case "full":
+				if !runFullPhase1(files[i].cfg, "") {
+					files[i].skipPhase2 = true
+				}
 			case "harvest":
+				allCfgs := make([]TBibGetConfig, len(files))
+				for j, f := range files {
+					allCfgs[j] = f.cfg
+				}
+				cmdHarvestTransferKeysPath = resolveHarvestTransferPath(files[i].cfg, allCfgs)
 				runHarvestSync(files[i].cfg, "")
+				cmdHarvestTransferKeysPath = ""
 			case "subset":
 				files[i].skipPhase2, files[i].syncState = runSubsetPhase1(files[i].cfg, "")
 			}
@@ -1747,7 +1740,9 @@ func doSync(filter string) {
 	for _, f := range files {
 		switch f.cfg.Mode {
 		case "full":
-			writeFullSync(f.cfg, "")
+			if !f.skipPhase2 {
+				writeFullSync(f.cfg, "")
+			}
 		case "harvest":
 			// harvest has no bib output
 		case "subset":
@@ -1761,6 +1756,52 @@ func doSync(filter string) {
 		}
 	}
 
+}
+
+// resolveHarvestTransferPath validates the harvest_transfer target and returns the
+// absolute path to its .keys file, or "" when transfer is disabled or invalid.
+func resolveHarvestTransferPath(harvestCfg TBibGetConfig, cfgs []TBibGetConfig) string {
+	target := harvestCfg.HarvestTransfer
+	if target == "" {
+		return ""
+	}
+	for _, cfg := range cfgs {
+		if cfg.FileName != target {
+			continue
+		}
+		if !cfg.KeyMapping {
+			Library.Warning("harvest_transfer target %q has key_mapping=false — transfer disabled (key_mapping must be true)", target)
+			return ""
+		}
+		cwd, _ := os.Getwd()
+		return filepath.Join(cwd, target+KeysFileExtension)
+	}
+	Library.Warning("harvest_transfer target %q not found in file_names — transfer disabled", target)
+	return ""
+}
+
+// appendPairToKeysFile appends localKey;canonicalKey to keysFilePath if the pair
+// is not already present. Creates the file if absent.
+func appendPairToKeysFile(keysFilePath, localKey, canonicalKey string) {
+	if keysFilePath == "" || localKey == "" || canonicalKey == "" {
+		return
+	}
+	line := localKey + csvDelimiter + canonicalKey
+	// Check for existing pair to avoid duplicates.
+	if data, err := os.ReadFile(keysFilePath); err == nil {
+		for _, existing := range strings.Split(string(data), "\n") {
+			if strings.TrimSpace(existing) == line {
+				return
+			}
+		}
+	}
+	f, err := os.OpenFile(keysFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		Library.Warning("harvest_transfer: cannot open %s: %s", keysFilePath, err)
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, line)
 }
 
 // appendToKeysFile appends alias;canonicalKey to the .keys file named in bib.config.

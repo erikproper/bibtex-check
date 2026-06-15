@@ -6,9 +6,9 @@
  * for the main library. Entries are processed sequentially and interactively.
  *
  * Three input sources:
- *   - Watch file: mode="harvest" in bib.config; triggered by -sync; .harvest log maintained.
- *   - One-off:    -harvest <path>; no .harvest log written.
- *   - Stdin:      -harvest (no path); no .harvest log written.
+ *   - Watch file: mode="harvest" in bib.config; triggered by -sync; state in .sync DB.
+ *   - One-off:    -harvest <path>; no state written.
+ *   - Stdin:      -harvest (no path); no state written.
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
@@ -17,8 +17,6 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,111 +24,40 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 // --- Delta log types and I/O ---
 
-// THarvestLogEntry is one row of the .harvest CSV delta log.
-type THarvestLogEntry struct {
-	OriginalKey        string // key from source bib (empty if absent)
-	TitleHash          string // MD5 of TeXStringIndexer(title)
-	ContentFingerprint string // MD5 of sorted field=value pairs
-	Action             string // library canonical key, "skip-content", or "skip-never"
-}
-
-const (
-	harvestActionSkipContent = "skip-content"
-	harvestActionSkipNever   = "skip-never"
-)
-
-// THarvestLog is the in-memory delta log for one source bib.
-type THarvestLog []THarvestLogEntry
-
 // harvestContentFingerprint returns an MD5 of all non-empty field=value pairs, sorted.
+// Used for skip-content tracking in the .sync DB.
 func harvestContentFingerprint(e TBibTeXEntry) string {
 	return bibContentFingerprint(e)
 }
 
-// harvestTitleHash returns MD5 of the TeXStringIndexer-normalised title.
-func harvestTitleHash(e TBibTeXEntry) string {
-	title := e.Fields[TitleField]
-	if title == "" {
-		return ""
+// harvestSkipStatus checks the sync state for e and returns whether it should be
+// skipped, and if it was already resolved, returns the canonical key for re-run work.
+// Returns (skip, resolvedCanon): skip=true means skip the entry; resolvedCanon is
+// non-empty only when the entry was previously resolved (for PDF/hint re-registration).
+func harvestSkipStatus(e TBibTeXEntry, syncState *TSyncState, l *TBibTeXLibrary) (skip bool, resolvedCanon string) {
+	if syncState == nil || e.Key == "" {
+		return false, ""
 	}
-	h := md5.Sum([]byte(TeXStringIndexer(title)))
-	return hex.EncodeToString(h[:])
-}
-
-// readHarvestLog reads a .harvest CSV file; returns an empty log when absent.
-func readHarvestLog(logPath string) THarvestLog {
-	var log THarvestLog
-	processFile(logPath, func(line string) {
-		parts := strings.SplitN(line, csvDelimiter, 4)
-		if len(parts) != 4 {
-			return
-		}
-		log = append(log, THarvestLogEntry{
-			OriginalKey:        parts[0],
-			TitleHash:          parts[1],
-			ContentFingerprint: parts[2],
-			Action:             parts[3],
-		})
-	})
-	return log
-}
-
-// writeHarvestLog writes the log to logPath.
-func writeHarvestLog(logPath string, log THarvestLog) {
-	f, err := os.Create(logPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Cannot write harvest log:", err)
-		return
+	status := syncState.GetStatus(e.Key)
+	if status == "" {
+		return false, ""
 	}
-	defer f.Close()
-	for _, e := range log {
-		fmt.Fprintf(f, "%s%s%s%s%s%s%s\n",
-			e.OriginalKey, csvDelimiter,
-			e.TitleHash, csvDelimiter,
-			e.ContentFingerprint, csvDelimiter,
-			e.Action)
-	}
-}
-
-// harvestLogLookup finds the log entry for e. Checks OriginalKey first, then TitleHash.
-func harvestLogLookup(e TBibTeXEntry, log THarvestLog) *THarvestLogEntry {
-	if e.Key != "" {
-		for i := range log {
-			if log[i].OriginalKey == e.Key {
-				return &log[i]
-			}
-		}
-	}
-	titleHash := harvestTitleHash(e)
-	if titleHash != "" {
-		for i := range log {
-			if log[i].TitleHash == titleHash {
-				return &log[i]
-			}
-		}
-	}
-	return nil
-}
-
-// harvestShouldSkip returns true when e should be silently skipped this run.
-func harvestShouldSkip(e TBibTeXEntry, log THarvestLog, l *TBibTeXLibrary) bool {
-	entry := harvestLogLookup(e, log)
-	if entry == nil {
-		return false
-	}
-	switch entry.Action {
-	case harvestActionSkipNever:
-		return true
-	case harvestActionSkipContent:
-		return harvestContentFingerprint(e) == entry.ContentFingerprint
+	switch {
+	case status == SyncStatusWaived:
+		return true, ""
+	case strings.HasPrefix(status, "skip-content:"):
+		fp := strings.TrimPrefix(status, "skip-content:")
+		return harvestContentFingerprint(e) == fp, ""
 	default:
-		// Action is a library canonical key: skip if that key still exists.
-		return l.EntryExists(l.MapEntryKey(entry.Action))
+		canon := l.MapEntryKey(status)
+		if l.EntryExists(canon) {
+			return true, canon
+		}
+		return false, ""
 	}
 }
 
@@ -310,6 +237,13 @@ func printEntryFields(entryType, key string, fields map[string]string) {
 	fmt.Fprintf(os.Stderr, "  }\n")
 }
 
+
+// transferHarvestKey appends localKey;finalKey to the harvest_transfer target's keys file.
+func transferHarvestKey(localKey, finalKey string) {
+	if cmdHarvestTransferKeysPath != "" {
+		appendPairToKeysFile(cmdHarvestTransferKeysPath, localKey, finalKey)
+	}
+}
 
 // addToHarvestGroup adds finalKey to cmdHarvestGroup when the flag is set.
 func addToHarvestGroup(l *TBibTeXLibrary, finalKey string) {
@@ -499,19 +433,14 @@ func addHarvestEntry(l *TBibTeXLibrary, e TBibTeXEntry) string {
 // --- Interactive loop ---
 
 // runHarvestEntry processes one harvested entry through the 4-step pipeline.
-// Returns the updated log and true when the user chose to quit.
-func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLog bool) (THarvestLog, bool) {
-	titleHash := harvestTitleHash(e)
-	contentFP := harvestContentFingerprint(e)
-
-	appendLog := func(action string) THarvestLog {
-		if withLog {
-			return append(log, THarvestLogEntry{e.Key, titleHash, contentFP, action})
+// Writes the outcome to syncState when non-nil (watch mode).
+// Returns the resolved canonical key (empty if not resolved) and whether the user quit.
+func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) (string, bool) {
+	recordStatus := func(status string) {
+		if syncState != nil && e.Key != "" {
+			syncState.SetStatus(e.Key, status)
 		}
-		return log
 	}
-	// fixEntry runs the full per-entry fix when -fix is set: DBLP update for
-	// entries that already have a DBLP key, peer+candidate search for those that don't.
 	fixEntry := func(key string) {
 		if !cmdFix {
 			return
@@ -533,9 +462,6 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		fixEntry(finalKey)
 		return l.MapEntryKey(finalKey)
 	}
-	collectKey := func(sourceKey, finalKey string) {
-		maybeCollectKeyHint(l, sourceKey, finalKey)
-	}
 
 	// Always show the source entry first.
 	fmt.Fprintf(os.Stderr, "\nSource entry:\n")
@@ -547,11 +473,13 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		fmt.Fprint(os.Stderr, l.entryDisplayString(keyMatch))
 		if cmdTrustHints || l.ConfirmAction(QuestionHarvestKeyMatch) {
 			finalKey := mergeAndCheck(addHarvestEntry(l, e), keyMatch)
-			collectKey(e.Key, finalKey)
+			maybeCollectKeyHint(l, e.Key, finalKey)
 			l.maybeHarvestPDF(e, finalKey)
 			l.maybeHarvestGroups(e, finalKey)
 			addToHarvestGroup(l, finalKey)
-			return appendLog(finalKey), false
+			transferHarvestKey(e.Key, finalKey)
+			recordStatus(finalKey)
+			return finalKey, false
 		}
 	}
 
@@ -564,11 +492,13 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		}
 		if pick := l.askHarvestLibraryChoice(len(titleMatches)); pick > 0 {
 			finalKey := mergeAndCheck(addHarvestEntry(l, e), titleMatches[pick-1])
-			collectKey(e.Key, finalKey)
+			maybeCollectKeyHint(l, e.Key, finalKey)
 			l.maybeHarvestPDF(e, finalKey)
 			l.maybeHarvestGroups(e, finalKey)
 			addToHarvestGroup(l, finalKey)
-			return appendLog(finalKey), false
+			transferHarvestKey(e.Key, finalKey)
+			recordStatus(finalKey)
+			return finalKey, false
 		}
 	}
 
@@ -581,74 +511,78 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			l.Progress("Checking %s", finalKey)
 			doAllChecks(finalKey)
 			fixEntry(finalKey)
-			collectKey(e.Key, l.MapEntryKey(finalKey))
-			l.maybeHarvestPDF(e, l.MapEntryKey(finalKey))
-			addToHarvestGroup(l, l.MapEntryKey(finalKey))
-			return appendLog(l.MapEntryKey(finalKey)), false
+			finalKey = l.MapEntryKey(finalKey)
+			maybeCollectKeyHint(l, e.Key, finalKey)
+			l.maybeHarvestPDF(e, finalKey)
+			addToHarvestGroup(l, finalKey)
+			transferHarvestKey(e.Key, finalKey)
+			recordStatus(finalKey)
+			return finalKey, false
 		}
 	}
 
-	// Step 4: no match — offer add or skip.
+	// Step 4: no match — offer add, skip, waive, or quit.
 	validActions := TStringSetNew()
 	validActions.Add("a").Add("s").Add("w").Add("q")
 	switch l.WarningQuestion(QuestionHarvestAction, validActions, "") {
 	case "q":
-		return log, true
+		return "", true
 	case "w":
-		return appendLog(harvestActionSkipNever), false
+		recordStatus(SyncStatusWaived)
+		return "", false
 	case "s":
-		return appendLog(harvestActionSkipContent), false
+		recordStatus("skip-content:" + harvestContentFingerprint(e))
+		return "", false
 	default: // "a"
 		newKey := addHarvestEntry(l, e)
 		l.Progress("Checking %s", l.MapEntryKey(newKey))
 		doAllChecks(newKey)
 		finalKey := l.MapEntryKey(newKey)
 		fixEntry(finalKey)
-		collectKey(e.Key, finalKey)
+		maybeCollectKeyHint(l, e.Key, finalKey)
 		l.maybeHarvestPDF(e, finalKey)
 		addToHarvestGroup(l, finalKey)
-		return appendLog(finalKey), false
+		transferHarvestKey(e.Key, finalKey)
+		recordStatus(finalKey)
+		return finalKey, false
 	}
 }
 
 // runHarvestLoop processes entries interactively in source-file order.
-// Entries already resolved in the log are silently skipped when withLog is true.
-// Returns the updated log.
-func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, log THarvestLog, withLog bool) THarvestLog {
+// Entries already handled (resolved, waived, or skip-content unchanged) are silently
+// skipped when syncState is non-nil. For previously resolved entries, PDF sync and
+// key-hint registration are re-run on each pass.
+func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSyncState) {
 	stepN := int(cmdStep)
 	questionCounter := 0
 
 	for _, e := range entries {
-		if withLog && harvestShouldSkip(e, log, l) {
-			// Always register confirmed log entries as key hints and group memberships —
-			// both are curated approved data, not gated on -collect_keys.
-			if entry := harvestLogLookup(e, log); entry != nil &&
-				entry.Action != harvestActionSkipContent &&
-				entry.Action != harvestActionSkipNever {
-				canon := l.MapEntryKey(entry.Action)
+		skip, resolvedCanon := harvestSkipStatus(e, syncState, l)
+		if skip {
+			if resolvedCanon != "" {
+				l.maybeHarvestPDF(e, resolvedCanon)
+				l.maybeHarvestGroups(e, resolvedCanon)
 				if e.Key != "" {
-					l.AddKeyHint(e.Key, entry.Action)
+					l.AddKeyHint(e.Key, resolvedCanon)
+					transferHarvestKey(e.Key, resolvedCanon)
 				}
-				l.maybeHarvestGroups(e, canon)
 			}
 			continue
 		}
-		var quit bool
-		log, quit = l.runHarvestEntry(e, log, withLog)
+		_, quit := l.runHarvestEntry(e, syncState)
 		if quit {
-			return log
+			return
 		}
 		if stepN > 0 {
 			questionCounter++
 			if questionCounter >= stepN {
 				if l.AskContinueOrQuit() {
-					return log
+					return
 				}
 				questionCounter = 0
 			}
 		}
 	}
-	return log
 }
 
 // --- Top-level harvest commands ---
@@ -712,13 +646,12 @@ func doHarvest(sourcePath string) {
 	}
 	Library.Progress(ProgressHarvestParsed, len(entries), plural, sourcePath)
 
-	Library.runHarvestLoop(entries, nil, false)
+	Library.runHarvestLoop(entries, nil)
 }
 
-// runHarvestSync is called from doSync when mode == "harvest". The library is
-// already open. Maintains the .harvest delta log next to the source bib.
+// runHarvestSync is called from doSync when mode == "harvest". The library is already open.
+// State (resolved/waived/skip-content) is tracked in the .sync DB next to the source bib.
 func runHarvestSync(cfg TBibGetConfig, baseDir string) {
-	// Config values are OR'd with CLI flags: either source enables the feature.
 	if cfg.TrustHints {
 		cmdTrustHints = true
 	}
@@ -726,7 +659,6 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		cmdCollectKeys = true
 	}
 
-	// Resolve source path to absolute using the same logic as writePullSync.
 	sourcePath := cfg.FileName
 	if filepath.Ext(sourcePath) == "" {
 		sourcePath += BibFileExtension
@@ -739,21 +671,17 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		}
 	}
 	keysBasePath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath))
-	logPath := keysBasePath + HarvestLogExtension
 	localGroupsPath := keysBasePath + LocalGroupsExtension
 
 	syncState := openSyncState(keysBasePath)
 	defer syncState.close()
 
-	maybeMigrateSubsetToHarvest(sourcePath, keysBasePath, logPath)
-
-	// Initialise group routing: names in cfg.SyncGroups go to main DB; rest stay local.
 	syncGroups := TStringSetNew()
 	for _, g := range cfg.SyncGroups {
 		syncGroups.Add(g)
 	}
 	Library.harvestSyncGroups = syncGroups
-	Library.harvestLocalGroups = readLocalGroups(localGroupsPath) // seed from existing file
+	Library.harvestLocalGroups = readLocalGroups(localGroupsPath)
 
 	on := func(b bool) string {
 		if b {
@@ -766,82 +694,45 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		on(cmdTrustHints), on(cmdCollectKeys), on(cmdFix))
 	Library.Progress("  Source: %s", sourcePath)
 
-	// Build .keys from .harvest log if no .keys file exists yet.
-	maybeBuildKeysFromHarvest(keysBasePath)
-
-	entries, _ := Library.parseHarvestBib(sourcePath)
+	entries, parseOK := Library.parseHarvestBib(sourcePath)
+	if !parseOK {
+		Library.Progress("  Harvest sync aborted: fix the source bib and re-run.")
+		return
+	}
 	if len(entries) == 0 {
 		Library.Progress("  Source: no entries found")
 		return
 	}
 
-	log := readHarvestLog(logPath)
-
-	// Count how many entries the log already covers (will be skipped).
 	skipped := 0
 	for _, e := range entries {
-		if harvestShouldSkip(e, log, &Library) {
+		if skip, _ := harvestSkipStatus(e, syncState, &Library); skip {
 			skipped++
 		}
 	}
 	pending := len(entries) - skipped
-	Library.Progress("  Source: %d entr%s total; %d logged, %d pending",
+	Library.Progress("  Source: %d entr%s total; %d synced, %d pending",
 		len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1],
 		skipped, pending)
 
-	if pending == 0 {
-		// Re-run PDF harvest and key-hint registration for all resolved entries.
-		// PDFs may have been added to the source bib since the first logged run,
-		// and key hints must be registered regardless of whether -collect_keys
-		// was active during the original harvest run.
-		pdfsBefore := len(Library.PDFFiles)
-		hintsBefore := len(Library.newKeyHints)
-		for _, e := range entries {
-			entry := harvestLogLookup(e, log)
-			if entry == nil || entry.Action == harvestActionSkipContent || entry.Action == harvestActionSkipNever {
-				continue
-			}
-			canon := Library.MapEntryKey(entry.Action)
-			Library.maybeHarvestPDF(e, canon)
-			Library.maybeHarvestGroups(e, canon)
-			// Only register the hint when the cite key matches the logged original key.
-			// A title-hash match (e.Key != entry.OriginalKey) means a different entry
-			// coincidentally shares the same title — registering its key as a hint would
-			// create a false mapping.
-			if e.Key != "" && e.Key == entry.OriginalKey {
-				Library.AddKeyHint(e.Key, entry.Action)
-			}
-		}
-		pdfsHarvested := len(Library.PDFFiles) - pdfsBefore
-		hintsAdded := len(Library.newKeyHints) - hintsBefore
-		if pdfsHarvested > 0 || hintsAdded > 0 {
-			Library.Progress("  PDFs harvested : %d  Key hints added : %d (re-run)", pdfsHarvested, hintsAdded)
-		} else {
-			Library.Progress("  All entries already logged — nothing to do")
-		}
-		buildHarvestSyncState(cfg, log, syncState)
-		return
-	}
-
 	pdfsBefore := len(Library.PDFFiles)
 	hintsBefore := len(Library.newKeyHints)
-	log = Library.runHarvestLoop(entries, log, true)
-	writeHarvestLog(logPath, log)
+	Library.runHarvestLoop(entries, syncState)
 	pdfsHarvested := len(Library.PDFFiles) - pdfsBefore
 	hintsAdded := len(Library.newKeyHints) - hintsBefore
 
-	// Final summary: count by outcome across the full log.
 	resolved, skippedContent, waived, stillPending := 0, 0, 0, 0
 	for _, e := range entries {
-		entry := harvestLogLookup(e, log)
-		if entry == nil {
-			stillPending++
+		if e.Key == "" {
 			continue
 		}
-		switch entry.Action {
-		case harvestActionSkipNever:
+		status := syncState.GetStatus(e.Key)
+		switch {
+		case status == "":
+			stillPending++
+		case status == SyncStatusWaived:
 			waived++
-		case harvestActionSkipContent:
+		case strings.HasPrefix(status, "skip-content:"):
 			skippedContent++
 		default:
 			resolved++
@@ -852,60 +743,16 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1])
 	Library.Progress("  Resolved (merged/added) : %d", resolved)
 	Library.Progress("  Skipped (skip-content)  : %d", skippedContent)
-	Library.Progress("  Waived  (skip-never)    : %d", waived)
+	Library.Progress("  Waived                  : %d", waived)
 	Library.Progress("  Pending (not yet seen)  : %d", stillPending)
 	Library.Progress("  PDFs harvested          : %d", pdfsHarvested)
 	Library.Progress("  Key hints added         : %d", hintsAdded)
 	writeLocalGroups(localGroupsPath, Library.harvestLocalGroups)
 	Library.harvestSyncGroups = TStringSetNew()
 	Library.harvestLocalGroups = TStringSetMap{}
-	buildHarvestSyncState(cfg, log, syncState)
 }
 
-// buildHarvestSyncState records all matched harvest log entries into the sync state.
-// Called at the end of each runHarvestSync path that processes entries.
-// Entries not matched (skip-content, skip-never, pending) are removed from the state.
-func buildHarvestSyncState(cfg TBibGetConfig, log THarvestLog, syncState *TSyncState) {
-	if syncState == nil {
-		return
-	}
-	now := time.Now().Unix()
-	matched := map[string]bool{}
-	for _, entry := range log {
-		if entry.Action == "" || entry.Action == harvestActionSkipContent || entry.Action == harvestActionSkipNever {
-			continue
-		}
-		canon := Library.MapEntryKey(entry.Action)
-		if canon == "" {
-			canon = entry.Action
-		}
-		if !Library.EntryExists(canon) {
-			continue
-		}
-		matched[canon] = true
-		groups := TStringSetNew()
-		for g, members := range Library.GroupEntries {
-			if groupInScope(g, cfg.SyncGroups) && members.Contains(canon) {
-				groups.Add(g)
-			}
-		}
-		syncState.set(TSyncEntry{
-			CanonicalKey: canon,
-			OutputKey:    canon,
-			Groups:       groups,
-			DBHash:       subsetDBFingerprint(canon),
-			Fields:       make(map[string]string),
-			SyncTime:     now,
-		})
-	}
-	for _, k := range syncState.keys() {
-		if !matched[k] {
-			syncState.delete(k)
-		}
-	}
-}
-
-// --- Mode transitions ---
+// --- Config patching ---
 
 // patchConfigField reads the JSON config at cfgPath, sets rawKey to rawVal, and writes back.
 func patchConfigField(cfgPath, rawKey string, rawVal json.RawMessage) {
@@ -921,114 +768,4 @@ func patchConfigField(cfgPath, rawKey string, rawVal json.RawMessage) {
 	if out, err := json.MarshalIndent(m, "", "  "); err == nil {
 		os.WriteFile(cfgPath, append(out, '\n'), 0644) //nolint:errcheck
 	}
-}
-
-// maybeMigrateHarvestToSubset handles a harvest→subset mode transition. When the
-// user changes the config from mode="harvest" to mode="subset", the existing harvest
-// log is used to seed the initial .keys file so the subset bib keeps the source
-// keys as output keys. key_mapping is enabled in the config and in cfg so that the
-// current sync run uses local keys immediately.
-//
-// Detection: subset state file absent + harvest log file present + no .keys file yet.
-func maybeMigrateHarvestToSubset(cfg *TBibGetConfig, keysBasePath, statePath, logPath string) {
-	keysPath := keysBasePath + KeysFileExtension
-	if FileExists(statePath) || !FileExists(logPath) || FileExists(keysPath) {
-		return
-	}
-	log := readHarvestLog(logPath)
-	if len(log) == 0 {
-		return
-	}
-	var pairs []TBibGetPair
-	for _, e := range log {
-		if e.OriginalKey == "" || e.Action == harvestActionSkipContent || e.Action == harvestActionSkipNever {
-			continue
-		}
-		canon := Library.MapEntryKey(e.Action)
-		if !Library.EntryExists(canon) {
-			continue
-		}
-		pairs = append(pairs, TBibGetPair{localKey: e.OriginalKey, canonicalKey: canon})
-	}
-	if len(pairs) == 0 {
-		Library.Progress("Harvest→subset: no resolved entries in harvest log — skipping .keys creation")
-		return
-	}
-	// Build a source-key → entry map from the source bib so we can harvest groups
-	// and capture the verbatim jabref-meta grouping block before the bib is overwritten.
-	sourcePath := keysBasePath + BibFileExtension
-	Library.jabrefGroupingBlock = "" // reset before parse
-	sourceEntries, _ := Library.parseHarvestBib(sourcePath)
-	sourceByKey := make(map[string]TBibTeXEntry, len(sourceEntries))
-	for _, e := range sourceEntries {
-		if e.Key != "" {
-			sourceByKey[e.Key] = e
-		}
-	}
-
-	// Populate local groups from source bib (syncGroups empty at transition → all local).
-	Library.harvestSyncGroups = TStringSetNew()
-	for _, g := range cfg.SyncGroups {
-		Library.harvestSyncGroups.Add(g)
-	}
-	Library.harvestLocalGroups = TStringSetMap{}
-	for _, p := range pairs {
-		if e, ok := sourceByKey[p.localKey]; ok {
-			Library.maybeHarvestGroups(e, p.canonicalKey)
-		}
-	}
-	localGroupsPath := keysBasePath + LocalGroupsExtension
-	if len(Library.harvestLocalGroups) > 0 {
-		writeLocalGroups(localGroupsPath, Library.harvestLocalGroups)
-	}
-	Library.harvestSyncGroups = TStringSetNew()
-	Library.harvestLocalGroups = TStringSetMap{}
-
-	cfg.KeyMapping = true
-	rewriteKeysFile(keysBasePath, pairs, true)
-	patchConfigField(keysBasePath+ConfigFileExtension, "key_mapping", json.RawMessage("true"))
-	os.Rename(logPath, logPath+".bak") //nolint:errcheck
-	Library.Progress("Harvest→subset transition: wrote %d key pairs from harvest log; harvest log archived", len(pairs))
-}
-
-// maybeMigrateSubsetToHarvest handles a subset→harvest mode transition. When the
-// user changes the config from mode="subset" to mode="harvest", the existing .keys
-// file is used to pre-populate the harvest log so previously absorbed entries are
-// not presented again. The .keys file is archived to .keys.bak.
-//
-// Detection: harvest log absent + .keys file present.
-func maybeMigrateSubsetToHarvest(sourcePath, keysBasePath, logPath string) {
-	keysPath := keysBasePath + KeysFileExtension
-	if FileExists(logPath) || !FileExists(keysPath) {
-		return
-	}
-	pairs, _, ok := readKeysFile(keysBasePath)
-	if !ok || len(pairs) == 0 {
-		return
-	}
-	localToCanon := make(map[string]string, len(pairs))
-	for _, p := range pairs {
-		localToCanon[p.localKey] = p.canonicalKey
-	}
-	entries, _ := Library.parseHarvestBib(sourcePath)
-	var log THarvestLog
-	for _, e := range entries {
-		canon, found := localToCanon[e.Key]
-		if !found {
-			continue
-		}
-		canon = Library.MapEntryKey(canon)
-		if !Library.EntryExists(canon) {
-			continue
-		}
-		log = append(log, THarvestLogEntry{
-			OriginalKey:        e.Key,
-			TitleHash:          harvestTitleHash(e),
-			ContentFingerprint: harvestContentFingerprint(e),
-			Action:             canon,
-		})
-	}
-	writeHarvestLog(logPath, log)
-	os.Rename(keysPath, keysPath+".bak") //nolint:errcheck
-	Library.Progress("Subset→harvest transition: pre-logged %d entries from .keys file", len(log))
 }

@@ -392,9 +392,6 @@ func runSubsetPhase1(cfg TBibGetConfig, baseDir string) (bool, *TSyncState) {
 	Library.jabrefGroupingBlock = ""
 	Library.jabrefMetaBlocks = nil
 	Library.bibdeskMetaBlocks = nil
-	logPath := keysBasePath + HarvestLogExtension
-	maybeMigrateHarvestToSubset(&cfg, keysBasePath, statePath, logPath)
-
 	on := func(b bool) string {
 		if b {
 			return "on"
@@ -1035,11 +1032,10 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 			if c.status != statusNew {
 				continue
 			}
-			var updated THarvestLog
-			updated, quit = Library.runHarvestEntry(c.bibEntry, nil, false)
-			// If the entry was added/merged, its canonical key landed in the log action.
-			if len(updated) > 0 && updated[0].Action != harvestActionSkipContent && updated[0].Action != harvestActionSkipNever {
-				bibSeenCanonicals[updated[0].Action] = true
+			var canonicalKey string
+			canonicalKey, quit = Library.runHarvestEntry(c.bibEntry, nil)
+			if canonicalKey != "" {
+				bibSeenCanonicals[canonicalKey] = true
 			}
 			questions++
 		}

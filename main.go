@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.135"
+const AppVersion = "24.138"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -64,9 +64,10 @@ var (
 	forceWrite            bool
 	cmdStep               stepFlag
 	cmdNoGarbageCleaning  bool
-	cmdTrustHints         bool   // -trust_hints: auto-accept key-hint matches in harvest
-	cmdCollectKeys        bool   // -collect_keys: add source keys to hints DB when unambiguous
-	cmdHarvestGroup       string // -group: add all resolved harvest entries to this group
+	cmdTrustHints              bool   // -trust_hints: auto-accept key-hint matches in harvest
+	cmdCollectKeys             bool   // -collect_keys: add source keys to hints DB when unambiguous
+	cmdHarvestGroup            string // -group: add all resolved harvest entries to this group
+	cmdHarvestTransferKeysPath string // resolved .keys path for harvest_transfer target; "" = disabled
 	cmdFix                bool // -fix: apply full per-entry checks when combined with -sync or -harvest
 	cmdPull               bool // -pull: with -sync, skip up-sync (phase 1); only write bib output from DB
 )

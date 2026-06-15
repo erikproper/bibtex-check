@@ -112,7 +112,10 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	challengePriority := lineagePriorityOf(challengeSource)
 	currentPriority := lineagePriorityOf(currentRec.Source)
 
-	if challengePriority < currentPriority {
+	// Lineage priority only blocks a challenger when the current value is non-empty.
+	// A DBLP lineage on an empty field means DBLP has no value — it must not prevent
+	// the user from supplying one.
+	if current != "" && challengePriority < currentPriority {
 		return current
 	}
 
