@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.125"
+const AppVersion = "24.126"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1881,6 +1881,24 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	}
 
 	if cmdVersion {
+		os.Exit(0)
+	}
+
+	// -export_sync and -import_sync operate on an explicit .sync file; no -base needed.
+	if cmdExportSync != "" {
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: bibtex_check -export_sync <table|all> <sync-file-stem>")
+			os.Exit(1)
+		}
+		DoExportSync(cmdExportSync, args[0])
+		os.Exit(0)
+	}
+	if cmdImportSync != "" {
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: bibtex_check -import_sync <table|all> <sync-file-stem>")
+			os.Exit(1)
+		}
+		DoImportSync(cmdImportSync, args[0])
 		os.Exit(0)
 	}
 
