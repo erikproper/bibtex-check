@@ -311,6 +311,21 @@ func printEntryFields(entryType, key string, fields map[string]string) {
 }
 
 
+// addToHarvestGroup adds finalKey to cmdHarvestGroup when the flag is set.
+func addToHarvestGroup(l *TBibTeXLibrary, finalKey string) {
+	if cmdHarvestGroup == "" || finalKey == "" {
+		return
+	}
+	if members := l.GroupEntries[cmdHarvestGroup]; !members.Contains(finalKey) {
+		l.GroupEntries.AddValueToStringSetMap(cmdHarvestGroup, finalKey)
+		if err := bibExec(`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`, cmdHarvestGroup, finalKey); err != nil {
+			l.Warning("Group add failed (%s → %q): %s", finalKey, cmdHarvestGroup, err)
+		} else {
+			l.Progress("Added %s to group %q", finalKey, cmdHarvestGroup)
+		}
+	}
+}
+
 // maybeCollectKeyHint adds sourceKey → finalKey to the hints DB when -collect_keys
 // is active and the mapping is unambiguous (not already pointing elsewhere).
 func maybeCollectKeyHint(l *TBibTeXLibrary, sourceKey, finalKey string) {
@@ -535,6 +550,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			collectKey(e.Key, finalKey)
 			l.maybeHarvestPDF(e, finalKey)
 			l.maybeHarvestGroups(e, finalKey)
+			addToHarvestGroup(l, finalKey)
 			return appendLog(finalKey), false
 		}
 	}
@@ -551,6 +567,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			collectKey(e.Key, finalKey)
 			l.maybeHarvestPDF(e, finalKey)
 			l.maybeHarvestGroups(e, finalKey)
+			addToHarvestGroup(l, finalKey)
 			return appendLog(finalKey), false
 		}
 	}
@@ -566,6 +583,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 			fixEntry(finalKey)
 			collectKey(e.Key, l.MapEntryKey(finalKey))
 			l.maybeHarvestPDF(e, l.MapEntryKey(finalKey))
+			addToHarvestGroup(l, l.MapEntryKey(finalKey))
 			return appendLog(l.MapEntryKey(finalKey)), false
 		}
 	}
@@ -588,6 +606,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, log THarvestLog, withLo
 		fixEntry(finalKey)
 		collectKey(e.Key, finalKey)
 		l.maybeHarvestPDF(e, finalKey)
+		addToHarvestGroup(l, finalKey)
 		return appendLog(finalKey), false
 	}
 }

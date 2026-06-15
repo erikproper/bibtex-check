@@ -64,8 +64,9 @@ var (
 	forceWrite            bool
 	cmdStep               stepFlag
 	cmdNoGarbageCleaning  bool
-	cmdTrustHints         bool // -trust_hints: auto-accept key-hint matches in harvest
-	cmdCollectKeys        bool // -collect_keys: add source keys to hints DB when unambiguous
+	cmdTrustHints         bool   // -trust_hints: auto-accept key-hint matches in harvest
+	cmdCollectKeys        bool   // -collect_keys: add source keys to hints DB when unambiguous
+	cmdHarvestGroup       string // -group: add all resolved harvest entries to this group
 	cmdFix                bool // -fix: apply full per-entry checks when combined with -sync or -harvest
 	cmdPull               bool // -pull: with -sync, skip up-sync (phase 1); only write bib output from DB
 )
@@ -1726,6 +1727,7 @@ func main() {
 	flag.Var(&cmdStep, "step", "pause every N entries in for-all loops (default N=1 when flag is given)")
 	flag.BoolVar(&cmdTrustHints, "trust_hints", false, "harvest: auto-accept key-hint matches without confirmation")
 	flag.BoolVar(&cmdCollectKeys, "collect_keys", false, "harvest: add source entry keys to the hints DB when unambiguous")
+	flag.StringVar(&cmdHarvestGroup, "group", "", "harvest: add all resolved entries to this group")
 
 	var cmdVersion bool
 	flag.BoolVar(&cmdVersion, "version", false, "print version and exit")
