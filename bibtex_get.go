@@ -238,7 +238,7 @@ func rewriteKeysFile(fileName string, pairs []TBibGetPair, keyMapping bool) {
 	defer f.Close()
 	w := bufio.NewWriter(f)
 	for _, p := range pairs {
-		if keyMapping {
+		if keyMapping && p.localKey != p.canonicalKey {
 			w.WriteString(p.localKey + csvDelimiter + p.canonicalKey + "\n")
 		} else {
 			w.WriteString(p.canonicalKey + "\n")
@@ -947,6 +947,13 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		}
 	}
 	pairs = filtered
+
+	// Warn about keys that resolved but point to entries absent from the library.
+	for _, p := range pairs {
+		if !bibEntryExists(p.canonicalKey) {
+			Library.Warning(WarningKeysFileUnknownKey, mapFilePath+KeysFileExtension, p.canonicalKey, p.localKey)
+		}
+	}
 
 	if keysModified {
 		rewriteKeysFile(mapFilePath, pairs, cfg.KeyMapping)
