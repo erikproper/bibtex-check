@@ -128,6 +128,7 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		{"hyphenations", json.RawMessage(`false`)},
 		{"trust_hints", json.RawMessage(`false`)},
 		{"collect_keys", json.RawMessage(`false`)},
+		{"harvest_transfer", json.RawMessage(`""`)},
 		{"trusted_subset", json.RawMessage(`false`)},
 		{"pdf_files", json.RawMessage(`""`)},
 		{"format", json.RawMessage(`"bibdesk"`)},
@@ -1288,6 +1289,16 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		os.Exit(1)
 	}
 
+	// Follow mode: append verbatim entries from the .weave file when present.
+	if cfg.Mode == "follow" {
+		weavePath := resolveRelative(cfg.FileName) + WeaveFileExtension
+		if weaveData, err := os.ReadFile(weavePath); err == nil && len(weaveData) > 0 {
+			newContent = append(newContent, '\n')
+			newContent = append(newContent, weaveData...)
+			Reporting.Progress("  Weave   : appended %d bytes from %s", len(weaveData), weavePath)
+		}
+	}
+
 	if err := os.WriteFile(outPath, newContent, 0644); err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot write output file:", err)
 		os.Exit(1)
@@ -1728,8 +1739,13 @@ func doSync(filter string) {
 					allCfgs[j] = f.cfg
 				}
 				cmdHarvestTransferKeysPath = resolveHarvestTransferPath(files[i].cfg, allCfgs)
+				if cmdHarvestTransferKeysPath != "" {
+					cmdHarvestWeavePath = strings.TrimSuffix(cmdHarvestTransferKeysPath, KeysFileExtension) + WeaveFileExtension
+				}
 				runHarvestSync(files[i].cfg, "")
 				cmdHarvestTransferKeysPath = ""
+				cmdHarvestWeavePath = ""
+				cmdHarvestWeaveEntries = nil
 			case "subset":
 				files[i].skipPhase2, files[i].syncState = runSubsetPhase1(files[i].cfg, "")
 			}

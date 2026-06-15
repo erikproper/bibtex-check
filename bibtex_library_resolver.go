@@ -14,6 +14,8 @@
 
 package main
 
+import "strings"
+
 func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
 	regularFileReference := l.FilesFolder + key + ".pdf"
 	otherFileReference := l.FileReferencety(otherKey)
@@ -75,6 +77,25 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 
 	if field == LocalURLField {
 		return l.ResolveFileReferences(key, challengeKey)
+	}
+
+	// DOIs that differ only in letter case are the same DOI — resolve without prompting.
+	// Prefer the DBLP-sourced form; if neither is from DBLP, keep whichever has uppercase
+	// letters (the publisher's original form over a lowercased normalisation).
+	if field == "doi" && strings.EqualFold(current, challenge) {
+		challengeSource := sourceFromChallengeKey(challengeKey)
+		currentRec := l.getLineage(key, field)
+		if currentRec.Source == "dblp" {
+			return current
+		}
+		if challengeSource == "dblp" {
+			l.setLineage(key, field, "dblp", false)
+			return challenge
+		}
+		if strings.ToLower(current) == current {
+			return challenge // current is all-lowercase; challenge has uppercase
+		}
+		return current
 	}
 
 	// For fields that must not be empty for this entry type: a non-empty challenger

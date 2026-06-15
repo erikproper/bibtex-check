@@ -606,7 +606,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			for _, field := range []string{DBLPField, "doi"} {
 				sv := l.EntryFieldValueity(source, field)
 				tv := l.EntryFieldValueity(target, field)
-				if EvidencedUnequal(sv, tv) {
+				if EvidencedUnequal(sv, tv) && !(field == "doi" && strings.EqualFold(sv, tv)) {
 					l.Warning(WarningMergeConflictingField, source, target, field, sv, tv)
 				}
 			}
@@ -725,8 +725,11 @@ func (l *TBibTeXLibrary) EvidencedUnequalEntryFields(source, target, field strin
 }
 
 func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string) bool {
-	return l.EvidencedUnequalEntryFields(source, target, DBLPField) ||
-		l.EvidencedUnequalEntryFields(source, target, "doi")
+	if l.EvidencedUnequalEntryFields(source, target, DBLPField) {
+		return true
+	}
+	sv, tv := l.EntryFieldValueity(source, "doi"), l.EntryFieldValueity(target, "doi")
+	return sv != "" && tv != "" && !strings.EqualFold(sv, tv)
 	// || l.EvidencedUnequalEntryFields(source, target, "crossref")
 }
 

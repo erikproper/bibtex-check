@@ -52,6 +52,10 @@ func harvestSkipStatus(e TBibTeXEntry, syncState *TSyncState, l *TBibTeXLibrary)
 	case strings.HasPrefix(status, "skip-content:"):
 		fp := strings.TrimPrefix(status, "skip-content:")
 		return harvestContentFingerprint(e) == fp, ""
+	case strings.HasPrefix(status, SyncStatusIgnored+":"):
+		fp := strings.TrimPrefix(status, SyncStatusIgnored+":")
+		// Same content: skip (caller re-adds to weave). Changed: re-present to user.
+		return harvestContentFingerprint(e) == fp, ""
 	default:
 		canon := l.MapEntryKey(status)
 		if l.EntryExists(canon) {
@@ -242,6 +246,42 @@ func printEntryFields(entryType, key string, fields map[string]string) {
 func transferHarvestKey(localKey, finalKey string) {
 	if cmdHarvestTransferKeysPath != "" {
 		appendPairToKeysFile(cmdHarvestTransferKeysPath, localKey, finalKey)
+	}
+}
+
+// addToHarvestWeave queues e for verbatim inclusion in the harvest_transfer target's .weave file.
+func addToHarvestWeave(e TBibTeXEntry) {
+	if cmdHarvestWeavePath != "" {
+		cmdHarvestWeaveEntries = append(cmdHarvestWeaveEntries, e)
+	}
+}
+
+// writeHarvestWeave writes all queued weave entries to cmdHarvestWeavePath.
+// If no entries are queued but the file exists, it is removed.
+func writeHarvestWeave() {
+	if cmdHarvestWeavePath == "" {
+		return
+	}
+	if len(cmdHarvestWeaveEntries) == 0 {
+		os.Remove(cmdHarvestWeavePath)
+		return
+	}
+	f, err := os.Create(cmdHarvestWeavePath)
+	if err != nil {
+		Library.Warning("weave: cannot write %s: %s", cmdHarvestWeavePath, err)
+		return
+	}
+	defer f.Close()
+	for _, e := range cmdHarvestWeaveEntries {
+		entryType := e.Fields[EntryTypeField]
+		fmt.Fprintf(f, "@%s{%s,\n", entryType, e.Key)
+		for field, value := range e.Fields {
+			if field == EntryTypeField || value == "" {
+				continue
+			}
+			fmt.Fprintf(f, "  %-16s = {%s},\n", field, value)
+		}
+		fmt.Fprintf(f, "}\n\n")
 	}
 }
 
@@ -521,14 +561,21 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		}
 	}
 
-	// Step 4: no match — offer add, skip, waive, or quit.
+	// Step 4: no match — offer add, skip, waive, ignore (weave), or quit.
 	validActions := TStringSetNew()
 	validActions.Add("a").Add("s").Add("w").Add("q")
+	if cmdHarvestWeavePath != "" {
+		validActions.Add("i") // ignore: write verbatim to weave file, do not merge
+	}
 	switch l.WarningQuestion(QuestionHarvestAction, validActions, "") {
 	case "q":
 		return "", true
 	case "w":
 		recordStatus(SyncStatusWaived)
+		return "", false
+	case "i":
+		recordStatus(SyncStatusIgnored + ":" + harvestContentFingerprint(e))
+		addToHarvestWeave(e)
 		return "", false
 	case "s":
 		recordStatus("skip-content:" + harvestContentFingerprint(e))
@@ -565,6 +612,10 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 				if e.Key != "" {
 					l.AddKeyHint(e.Key, resolvedCanon)
 					transferHarvestKey(e.Key, resolvedCanon)
+				}
+			} else if e.Key != "" && syncState != nil {
+				if strings.HasPrefix(syncState.GetStatus(e.Key), SyncStatusIgnored+":") {
+					addToHarvestWeave(e) // re-queue for verbatim output in .weave
 				}
 			}
 			continue
@@ -721,7 +772,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	pdfsHarvested := len(Library.PDFFiles) - pdfsBefore
 	hintsAdded := len(Library.newKeyHints) - hintsBefore
 
-	resolved, skippedContent, waived, stillPending := 0, 0, 0, 0
+	resolved, skippedContent, waived, ignored, stillPending := 0, 0, 0, 0, 0
 	for _, e := range entries {
 		if e.Key == "" {
 			continue
@@ -734,6 +785,8 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 			waived++
 		case strings.HasPrefix(status, "skip-content:"):
 			skippedContent++
+		case strings.HasPrefix(status, SyncStatusIgnored+":"):
+			ignored++
 		default:
 			resolved++
 		}
@@ -742,11 +795,13 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	Library.Progress("  Total  : %d source entr%s",
 		len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1])
 	Library.Progress("  Resolved (merged/added) : %d", resolved)
+	Library.Progress("  Ignored (woven verbatim): %d", ignored)
 	Library.Progress("  Skipped (skip-content)  : %d", skippedContent)
 	Library.Progress("  Waived                  : %d", waived)
 	Library.Progress("  Pending (not yet seen)  : %d", stillPending)
 	Library.Progress("  PDFs harvested          : %d", pdfsHarvested)
 	Library.Progress("  Key hints added         : %d", hintsAdded)
+	writeHarvestWeave()
 	writeLocalGroups(localGroupsPath, Library.harvestLocalGroups)
 	Library.harvestSyncGroups = TStringSetNew()
 	Library.harvestLocalGroups = TStringSetMap{}

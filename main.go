@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.139"
+const AppVersion = "24.141"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -67,7 +67,9 @@ var (
 	cmdTrustHints              bool   // -trust_hints: auto-accept key-hint matches in harvest
 	cmdCollectKeys             bool   // -collect_keys: add source keys to hints DB when unambiguous
 	cmdHarvestGroup            string // -group: add all resolved harvest entries to this group
-	cmdHarvestTransferKeysPath string // resolved .keys path for harvest_transfer target; "" = disabled
+	cmdHarvestTransferKeysPath string         // resolved .keys path for harvest_transfer target; "" = disabled
+	cmdHarvestWeavePath        string         // resolved .weave path for harvest_transfer target; "" = disabled
+	cmdHarvestWeaveEntries     []TBibTeXEntry // ignored entries accumulated during this harvest run
 	cmdFix                bool // -fix: apply full per-entry checks when combined with -sync or -harvest
 	cmdPull               bool // -pull: with -sync, skip up-sync (phase 1); only write bib output from DB
 )
