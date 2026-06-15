@@ -949,9 +949,15 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			keysModified = true
 		}
 		// Homonym check: warn when the same canonical maps to more than one local key.
-		// Both entries are kept — LaTeX source may reference both local keys.
 		if firstLocal, seen := resolvedSeen[resolved]; seen {
-			Library.Warning(WarningKeysFileDuplicateCanonical, mapFilePath+KeysFileExtension, resolved, firstLocal, pairs[i].localKey)
+			if firstLocal == pairs[i].localKey {
+				// Exact duplicate (same local key and same canonical) — silently remove.
+				pairs[i] = TBibGetPair{}
+				keysModified = true
+			} else {
+				// Different local keys for the same canonical — warn, keep both.
+				Library.Warning(WarningKeysFileDuplicateCanonical, mapFilePath+KeysFileExtension, resolved, firstLocal, pairs[i].localKey)
+			}
 		} else {
 			resolvedSeen[resolved] = pairs[i].localKey
 		}

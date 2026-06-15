@@ -223,8 +223,6 @@ func (s *TSyncState) ensureSchema() bool {
 		dbInteraction.Warning("sync: schema creation failed: %s", err)
 		return false
 	}
-	// Add bib_hash column if it does not yet exist (migration from older .sync files).
-	_, _ = s.db.Exec(`ALTER TABLE sync_manifest ADD COLUMN bib_hash TEXT NOT NULL DEFAULT ''`)
 	return true
 }
 
