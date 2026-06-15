@@ -53,6 +53,7 @@ type TSyncState struct {
 	db          *sql.DB
 	entries     map[string]*TSyncEntry
 	statuses    map[string]string // source_key → status ("waived", "ignored", …)
+	localGroups TStringSetMap     // entry_key → set of local group names (harvest mode)
 	modified    bool
 }
 
@@ -106,6 +107,7 @@ func openSyncState(keysBasePath string) *TSyncState {
 		isolated:    isolated,
 		db:          conn,
 		entries:     make(map[string]*TSyncEntry),
+		localGroups: TStringSetMap{},
 	}
 	if !s.ensureSchema() {
 		conn.Close()
@@ -216,6 +218,11 @@ CREATE TABLE IF NOT EXISTS sync_status (
     status     TEXT NOT NULL,
     set_time   INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS local_groups (
+    entry_key  TEXT NOT NULL,
+    group_name TEXT NOT NULL,
+    PRIMARY KEY (entry_key, group_name)
+);
 `
 
 func (s *TSyncState) ensureSchema() bool {
@@ -300,6 +307,19 @@ func (s *TSyncState) loadAll() {
 			}
 		}
 	}
+
+	// Load local group memberships (harvest mode: groups not synced to main DB).
+	rows6, err := s.db.Query(`SELECT entry_key, group_name FROM local_groups`)
+	if err == nil {
+		defer rows6.Close()
+		for rows6.Next() {
+			var entryKey, groupName string
+			rows6.Scan(&entryKey, &groupName)
+			if entryKey != "" && groupName != "" {
+				s.localGroups.AddValueToStringSetMap(groupName, entryKey)
+			}
+		}
+	}
 }
 
 // --- flush ---
@@ -312,7 +332,7 @@ func (s *TSyncState) flush() error {
 	}
 
 	// Clear all tables and rewrite from memory.
-	for _, tbl := range []string{"sync_manifest", "sync_entries", "sync_groups", "sync_pdfs", "sync_status"} {
+	for _, tbl := range []string{"sync_manifest", "sync_entries", "sync_groups", "sync_pdfs", "sync_status", "local_groups"} {
 		if _, err := tx.Exec("DELETE FROM " + tbl); err != nil {
 			tx.Rollback()
 			return err
@@ -374,6 +394,18 @@ func (s *TSyncState) flush() error {
 		}
 	}
 
+	for groupName, members := range s.localGroups {
+		for entryKey := range members.Elements() {
+			if _, err := tx.Exec(
+				`INSERT INTO local_groups (entry_key, group_name) VALUES (?, ?)`,
+				entryKey, groupName,
+			); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -397,6 +429,23 @@ func (s *TSyncState) SetStatus(sourceKey, status string) {
 		s.statuses[sourceKey] = status
 	}
 	s.modified = true
+}
+
+// AddLocalGroup records that entryKey belongs to groupName in the local (non-DB) group set.
+func (s *TSyncState) AddLocalGroup(entryKey, groupName string) {
+	if s == nil || entryKey == "" || groupName == "" {
+		return
+	}
+	s.localGroups.AddValueToStringSetMap(groupName, entryKey)
+	s.modified = true
+}
+
+// LocalGroups returns the full local-groups map (group → set of entry keys).
+func (s *TSyncState) LocalGroups() TStringSetMap {
+	if s == nil {
+		return TStringSetMap{}
+	}
+	return s.localGroups
 }
 
 // DoSetSyncStatus opens the .sync DB at stemPath and sets (or clears) the status

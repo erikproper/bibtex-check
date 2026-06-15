@@ -87,7 +87,6 @@ type (
 		harvestCapturePDFFields           bool         // when true: file/local-url pass through for harvest PDF copy
 		harvestSourceDir                  string       // directory of the source bib file; used for relative PDF paths
 		harvestSyncGroups                 TStringSet    // groups to sync to main DB during harvest (from config)
-		harvestLocalGroups                TStringSetMap // groups to store locally during harvest
 		subsetLocalGroups                 TStringSetMap // local groups loaded for current subset write pass
 		jabrefGroupingBlock               string   // verbatim @Comment{jabref-meta: grouping:...} from source bib
 		jabrefMetaBlocks                  []string // other @Comment{jabref-meta: ...} blocks carried verbatim
@@ -860,9 +859,6 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 
 // Add a new key hint
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
-	if strings.HasPrefix(hint, "DBLP:") {
-		l.Warning("Key hint alias is a DBLP key (%s → %s) — DBLP key should be associated via -add_dblp_entry, not stored as a hint", hint, key)
-	}
 	resolvedKey := l.MapEntryKey(key)
 	if hint == resolvedKey {
 		return
