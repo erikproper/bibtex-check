@@ -482,23 +482,31 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	Library.Progress("  Written .subset state: %d entries", len(newState))
 }
 
+// groupInScope reports whether group g matches any pattern in patterns.
+// Patterns support the same wildcards as filepath.Match: * matches any sequence
+// of non-separator characters, ? matches any single character.
+// Examples: "ISE", "erik-*", "*".
+func groupInScope(g string, patterns []string) bool {
+	for _, p := range patterns {
+		if matched, _ := filepath.Match(p, g); matched {
+			return true
+		}
+	}
+	return false
+}
+
 // syncGroupMembershipsFromBib diffs the bib's groups fields against bib_groups and
-// syncs additions and removals to the DB for groups listed in cfg.SyncGroups.
+// syncs additions and removals to the DB for groups matching any cfg.SyncGroups pattern.
 //
-// cfg.SyncGroups is the allowlist for both BibDesk and JabRef formats: only groups
-// named there can flow between the bib and the main DB. Groups not in the list are
-// treated as bib-local and never touch bib_groups. When cfg.SyncGroups is empty,
-// nothing is synced.
+// cfg.SyncGroups entries are glob patterns (e.g. "ISE", "erik-*", "*"): only groups
+// whose name matches a pattern flow between the bib and the main DB. Unmatched groups
+// are bib-local and never touch bib_groups. When cfg.SyncGroups is empty, nothing syncs.
 //
 // Removals are scoped to entries that appear in this subset bib — entries not present
 // here are not touched, since the subset is not the full picture of membership.
 func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanonical map[string]string) {
 	if len(cfg.SyncGroups) == 0 {
 		return
-	}
-	syncSet := TStringSetNew()
-	for _, g := range cfg.SyncGroups {
-		syncSet.Add(g)
 	}
 
 	// Collect bib-side membership (group → canonical keys) and the full set of
@@ -520,7 +528,7 @@ func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, o
 		subsetCanonicals.Add(canon)
 		for _, g := range strings.Split(e.Fields["groups"], ",") {
 			g = strings.TrimSpace(g)
-			if g != "" && syncSet.Contains(g) {
+			if g != "" && groupInScope(g, cfg.SyncGroups) {
 				bibMembers.AddValueToStringSetMap(g, canon)
 			}
 		}
@@ -544,10 +552,12 @@ func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, o
 		}
 	}
 
-	// Removals: keys present in DB but absent from bib, restricted to entries that
-	// are actually in this subset (entries outside the subset are not authoritative).
-	for _, group := range cfg.SyncGroups {
-		dbSet := Library.GroupEntries[group]
+	// Removals: scan all DB groups whose name matches a cfg.SyncGroups pattern, then
+	// remove any subset entry that is no longer listed in the bib for that group.
+	for group, dbSet := range Library.GroupEntries {
+		if !groupInScope(group, cfg.SyncGroups) {
+			continue
+		}
 		bibSet := bibMembers[group]
 		toRemove := dbSet // value copy for safe iteration
 		for key := range toRemove.Elements() {
@@ -563,6 +573,37 @@ func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, o
 			}
 		}
 	}
+}
+
+// computeCurrentScope returns the set of canonical keys that the .keys and .select files
+// currently select. It mirrors the scope-building logic of writePullSync without writing
+// anything. Used by runSubsetUpSync to tell apart intentional user deletions from entries
+// that simply fell out of scope (e.g. via only_these; group "ISE"; after a group change).
+func computeCurrentScope(cfg TBibGetConfig, keysBasePath string) map[string]bool {
+	scope := map[string]bool{}
+	pairs, _, ok := readKeysFile(keysBasePath)
+	if !ok {
+		return scope
+	}
+	selectStmts, _ := readSelectFile(keysBasePath)
+	if selectOnlyThese(selectStmts) {
+		pairs = nil
+	}
+	explicitKeys := map[string]bool{}
+	for _, p := range pairs {
+		resolved := Library.MapEntryKey(p.canonicalKey)
+		if resolved == "" {
+			resolved = p.canonicalKey
+		}
+		if resolved != "" {
+			scope[resolved] = true
+			explicitKeys[resolved] = true
+		}
+	}
+	for _, canonical := range expandSelectStmts(selectStmts, explicitKeys) {
+		scope[canonical] = true
+	}
+	return scope
 }
 
 // runSubsetUpSync handles phase 1 of subsequent syncs: parses the bib, detects three-way
@@ -731,12 +772,24 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 	// Identify deleted entries: in state but not seen in parsed bib.
 	// Entries that were explicitly deleted from the library (recorded in deleted_entries)
 	// are silently accepted — no prompt needed, phase 2 will drop them from the state.
+	//
+	// Entries that fell out of scope (e.g. only_these; group "ISE"; no longer includes
+	// them because they were removed from the group) are also silently pruned — they are
+	// NOT treated as user-initiated DB deletions. Phase 2 rebuilds the state from scratch
+	// so no explicit cleanup is needed here.
+	currentScope := computeCurrentScope(cfg, keysBasePath)
 	var deletedCanonicals []string
+	outOfScope := 0
 	for canonical := range existingState {
 		if !bibSeenCanonicals[canonical] {
-			if !isDeletedEntry(canonical) {
-				deletedCanonicals = append(deletedCanonicals, canonical)
+			if isDeletedEntry(canonical) {
+				continue
 			}
+			if !currentScope[canonical] {
+				outOfScope++
+				continue
+			}
+			deletedCanonicals = append(deletedCanonicals, canonical)
 		}
 	}
 	sort.Strings(deletedCanonicals)
@@ -746,9 +799,9 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 	for _, c := range toProcess {
 		counts[c.status]++
 	}
-	Library.Progress("  Changes: %d unchanged, %d bib-changed, %d db-changed, %d both-changed, %d new, %d deleted",
+	Library.Progress("  Changes: %d unchanged, %d bib-changed, %d db-changed, %d both-changed, %d new, %d deleted, %d out-of-scope",
 		counts[statusUnchanged], counts[statusBibChanged], counts[statusDBChanged],
-		counts[statusBothChanged], counts[statusNew], len(deletedCanonicals))
+		counts[statusBothChanged], counts[statusNew], len(deletedCanonicals), outOfScope)
 
 	quit := false
 
