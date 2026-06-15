@@ -238,7 +238,7 @@ func rewriteKeysFile(fileName string, pairs []TBibGetPair, keyMapping bool) {
 	defer f.Close()
 	w := bufio.NewWriter(f)
 	for _, p := range pairs {
-		if keyMapping && p.localKey != p.canonicalKey {
+		if keyMapping {
 			w.WriteString(p.localKey + csvDelimiter + p.canonicalKey + "\n")
 		} else {
 			w.WriteString(p.canonicalKey + "\n")
@@ -1184,45 +1184,11 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			w.WriteString("\n\n")
 		}
 
-		// Emit the grouping block. When cfg.SyncGroups is set we always generate from
-		// the filtered DB state so stale groups from a previous verbatim block cannot
-		// reappear. When cfg.SyncGroups is empty, replay the verbatim block if available.
-		useVerbatim := Library.jabrefGroupingBlock != "" && len(cfg.SyncGroups) == 0
-		if useVerbatim {
+		// Always replay the jabref-meta grouping block verbatim — never touch it.
+		// Group membership is managed via the groups field on individual entries only.
+		if Library.jabrefGroupingBlock != "" {
 			w.WriteString(Library.jabrefGroupingBlock)
 			w.WriteString("\n\n")
-		} else {
-			type groupLine struct{ name string }
-			var groupLines []groupLine
-			for group, members := range Library.GroupEntries {
-				if !groupInScope(group, cfg.SyncGroups) {
-					continue
-				}
-				hasOutput := false
-				for key := range members.Elements() {
-					if _, ok := canonicalToLocal[Library.MapEntryKey(key)]; ok {
-						hasOutput = true
-						break
-					}
-					if _, ok := autoParentLocal[Library.MapEntryKey(key)]; ok {
-						hasOutput = true
-						break
-					}
-				}
-				if hasOutput {
-					groupLines = append(groupLines, groupLine{group})
-				}
-			}
-			if len(groupLines) > 0 {
-				sort.Slice(groupLines, func(i, j int) bool { return groupLines[i].name < groupLines[j].name })
-				w.WriteString("@" + CommentEntryType + "{jabref-meta: grouping:\n")
-				w.WriteString("0 AllEntriesGroup:;\n")
-				for _, g := range groupLines {
-					escaped := strings.ReplaceAll(strings.ReplaceAll(g.name, `\`, `\\`), `;`, `\;`)
-					w.WriteString("1 StaticGroup:" + escaped + `\;0\;1\;\;\;\;` + "\n")
-				}
-				w.WriteString("}\n\n")
-			}
 		}
 	} else if cfg.Mode == "subset" {
 		// Carry through any non-static-groups BibDesk blocks verbatim.

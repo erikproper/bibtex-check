@@ -189,19 +189,25 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	return current
 }
 
+// TODO (code cleanup): revisit lineage tracking across all MaybeResolveFieldValue / ResolveFieldValue paths —
+// e.g. what lineage is set when a library-to-library merge fills an empty field and the user accepts.
 func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challenge, current string) string {
 	if field == "url" && l.IsRedundantURL(challenge, key) {
 		return ""
 	}
 
 	if current == "" {
-		if challenge != "" {
-			challengeSource := sourceFromChallengeKey(challengeKey)
-			if challengeSource != "" {
-				l.setLineage(key, field, challengeSource, false)
-			}
+		if challenge == "" {
+			return ""
 		}
-		return challenge
+		challengeSource := sourceFromChallengeKey(challengeKey)
+		if challengeSource != "" {
+			// Known-authoritative external source filling an empty field: accept silently.
+			l.setLineage(key, field, challengeSource, false)
+			return challenge
+		}
+		// Library-to-library merge adding a value to an empty field: ask.
+		return l.ResolveFieldValue(key, challengeKey, field, challenge, current)
 	}
 
 	if challenge == "" {

@@ -20,7 +20,7 @@ var fieldProcessors TFieldProcessors
 
 func processDBLPValue(l *TBibTeXLibrary, key, value string) (string, string) {
 	l.AddKeyAlias(KeyForDBLP(value), key)
-	l.AddKeyHint(KeyForDBLP(value), key)
+	addDblpKeyHintTransient(l, KeyForDBLP(value), key)
 
 	return DBLPField, value
 }
