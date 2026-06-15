@@ -535,6 +535,32 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 // When syncState is nil every snapshot set is treated as empty: additions still
 // propagate but removals are suppressed (safe default for first run / open failed).
 func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanonical map[string]string, syncState *TSyncState) {
+	mappings := parseGroupMappings(cfg.SyncGroups)
+
+	// Log the effective DB→local group mapping once so the user can verify scope.
+	if len(mappings) > 0 {
+		var managedPairs []string
+		seen := map[string]bool{}
+		for dbGroup := range Library.GroupEntries {
+			localGroup := dbGroupToLocal(dbGroup, mappings)
+			if localGroup == "" || seen[dbGroup] {
+				continue
+			}
+			seen[dbGroup] = true
+			if dbGroup == localGroup {
+				managedPairs = append(managedPairs, dbGroup)
+			} else {
+				managedPairs = append(managedPairs, dbGroup+" → "+localGroup)
+			}
+		}
+		sort.Strings(managedPairs)
+		if len(managedPairs) > 0 {
+			Library.Progress("  Managed groups: %s", strings.Join(managedPairs, ", "))
+		} else {
+			Library.Progress("  Managed groups: none match config patterns")
+		}
+	}
+
 	for _, e := range bibEntries {
 		canon := outputToCanonical[e.Key]
 		if canon == "" {
@@ -584,7 +610,6 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 
 		// Step 2: three-way merge for managed groups using snapGroups as common ancestor.
 		// Expansion is purely DB-side: iterate Library.GroupEntries and map to local names.
-		mappings := parseGroupMappings(cfg.SyncGroups)
 		for dbGroup := range Library.GroupEntries {
 			localGroup := dbGroupToLocal(dbGroup, mappings)
 			if localGroup == "" {
