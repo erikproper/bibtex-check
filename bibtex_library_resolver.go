@@ -77,6 +77,13 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return l.ResolveFileReferences(key, challengeKey)
 	}
 
+	// For fields that must not be empty for this entry type: a non-empty challenger
+	// always wins against an empty current value — before stored-mapping lookups so
+	// stale "challenge → empty" mappings cannot suppress the fix.
+	if current == "" && FieldIsRequiredForEntry(l.EntryType(key), field) {
+		return challenge
+	}
+
 	if l.EntryFieldAliasHasTarget(key, field, current, challenge) {
 		return challenge
 	} else if l.EntryFieldAliasHasTarget(key, field, challenge, current) {
@@ -112,10 +119,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	challengePriority := lineagePriorityOf(challengeSource)
 	currentPriority := lineagePriorityOf(currentRec.Source)
 
-	// Lineage priority only blocks a challenger when the current value is non-empty.
-	// A DBLP lineage on an empty field means DBLP has no value — it must not prevent
-	// the user from supplying one.
-	if current != "" && challengePriority < currentPriority {
+	if challengePriority < currentPriority {
 		return current
 	}
 

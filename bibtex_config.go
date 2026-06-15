@@ -15,7 +15,8 @@
 package main
 
 var (
-	BibTeXAllowedEntryFields map[string]TStringSet // Per entry type, the allowed field
+	BibTeXAllowedEntryFields  map[string]TStringSet // Per entry type, the allowed fields
+	BibTeXRequiredEntryFields map[string]TStringSet // Per entry type, fields that must not be empty
 	//BibTeXImportFields       TStringSet            // Set of fields we would consider importing
 	BibTeXAllowedFields     TStringSet // Aggregation of all allowed fields
 	BibTeXMustInheritFields TStringSet //
@@ -98,6 +99,21 @@ const (
 	FlagLoneProceedingsWaived = "lone-proceedings-waived"
 )
 
+// AddRequiredEntryFields marks fields as required (must-not-be-empty) for the given entry type.
+func AddRequiredEntryFields(entry string, fields ...string) {
+	if _, exists := BibTeXRequiredEntryFields[entry]; !exists {
+		BibTeXRequiredEntryFields[entry] = TStringSetNew()
+	}
+	for _, field := range fields {
+		BibTeXRequiredEntryFields[entry].Set().Add(field)
+	}
+}
+
+// FieldIsRequiredForEntry reports whether field must not be empty for the given entry type.
+func FieldIsRequiredForEntry(entryType, field string) bool {
+	return BibTeXRequiredEntryFields[entryType].Set().Contains(field)
+}
+
 // Add the allowed fields for an entry, while updating the aggregations of allowed entries and fields.
 func AddAllowedEntryFields(entry string, fields ...string) {
 	BibTeXAllowedEntries.Add(entry)
@@ -137,6 +153,7 @@ func init() {
 	}
 
 	BibTeXAllowedEntryFields = map[string]TStringSet{}
+	BibTeXRequiredEntryFields = map[string]TStringSet{}
 
 	// Use SAFE options?
 	BibTeXAllowedEntries.Initialise()
@@ -180,6 +197,23 @@ func init() {
 	AddAllowedEntryFields(
 		"booklet", "howpublished", "address", "issn", "isbn")
 	// (*) The above ones are the official ones. It makes sense to allow a config file to add to these.
+
+	// Required fields per entry type (BibTeX standard).
+	// A non-empty challenger always wins against an empty value for these fields — they
+	// should never be empty and are excluded from the stored-mapping override path.
+	AddRequiredEntryFields("article",       "author", TitleField, "journal", "year")
+	AddRequiredEntryFields("book",          TitleField, "publisher", "year")
+	AddRequiredEntryFields("booklet",       TitleField)
+	AddRequiredEntryFields("inbook",        TitleField, "publisher", "year")
+	AddRequiredEntryFields("incollection",  "author", TitleField, "booktitle", "publisher", "year")
+	AddRequiredEntryFields("inproceedings", "author", TitleField, "booktitle", "year")
+	AddRequiredEntryFields("manual",        TitleField)
+	AddRequiredEntryFields("mastersthesis", "author", TitleField, "school", "year")
+	AddRequiredEntryFields("phdthesis",     "author", TitleField, "school", "year")
+	AddRequiredEntryFields("proceedings",   TitleField, "year")
+	AddRequiredEntryFields("techreport",    "author", TitleField, "institution", "year")
+	AddRequiredEntryFields("unpublished",   "author", TitleField)
+	// misc has no required fields.
 
 	AddAllowedFields(
 		"month", "year", "note", "doi", "key", "author", TitleField,
