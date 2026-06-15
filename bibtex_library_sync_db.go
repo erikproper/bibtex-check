@@ -38,7 +38,7 @@ type TSyncEntry struct {
 	CanonicalKey string
 	OutputKey    string
 	Fields       map[string]string // all fields as written to bib (excl. noise)
-	Groups       TStringSet        // cfg.SyncGroups groups as written to bib
+	Groups       TStringSet        // all group assignments for this entry in the bib (managed + local)
 	PDFMd5       string            // MD5 of local PDF copy (pdf_files="local"; "" otherwise)
 	DBHash       string            // subsetDBFingerprint at last sync (for db-changed detection)
 	SyncTime     int64             // Unix timestamp of last sync

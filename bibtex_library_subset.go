@@ -452,11 +452,35 @@ func buildSubsetState(writtenPairs []TBibGetPair, sourcePath string) TSubsetStat
 	return state
 }
 
+// buildEntryGroupsFromSyncState builds the runtime entryGroups map from the sync
+// state: canonical key → sorted slice of all group names (managed + local).
+// Called before writePullSync so entryGetString can emit all groups per entry.
+func buildEntryGroupsFromSyncState(syncState *TSyncState) map[string][]string {
+	result := make(map[string][]string)
+	if syncState == nil {
+		return result
+	}
+	for _, canonKey := range syncState.keys() {
+		se := syncState.get(canonKey)
+		if se == nil {
+			continue
+		}
+		var groups []string
+		for g := range se.Groups.Elements() {
+			groups = append(groups, g)
+		}
+		sort.Strings(groups)
+		result[canonKey] = groups
+	}
+	return result
+}
+
 // runSubsetPhase2 is called from doSync phase 2: re-exports the subset bib from the
 // (now fully updated) DB, writes the new .subset state file, and closes the sync state.
 func runSubsetPhase2(cfg TBibGetConfig, baseDir string, syncState *TSyncState) {
 	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
 
+	cfg.entryGroups = buildEntryGroupsFromSyncState(syncState)
 	writtenPairs := writePullSync(cfg, baseDir)
 	if writtenPairs == nil {
 		syncState.close()
@@ -476,6 +500,8 @@ func runSubsetPhase2(cfg TBibGetConfig, baseDir string, syncState *TSyncState) {
 func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, statePath string, syncState *TSyncState) {
 	Library.Progress("  State  : %s (new)", statePath)
 
+	// No bib has been read yet so there are no local groups; entryGroups stays nil
+	// and entryGetString falls back to Library.GroupEntries for managed groups.
 	writtenPairs := writePullSync(cfg, baseDir)
 	if writtenPairs == nil {
 		return // user declined to overwrite the bib
@@ -495,20 +521,20 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	syncState.close()
 }
 
-// applyGroupSync performs a three-way merge of group memberships using the
-// sync state snapshot as the common ancestor. For each in-scope group and each
-// entry in the subset:
+// applyGroupSync updates the sync state with all group assignments from the bib,
+// then performs a three-way merge of managed group memberships using the previous
+// sync state snapshot as the common ancestor.
+//
+// Step 1 — record all groups (managed + local) from the bib into the sync state.
+// Step 2 — for each managed group and each entry:
 //   - bib added it (not in snap, not in DB) → push to DB
 //   - bib removed it (was in snap, still in DB) → remove from DB
-//   - DB added it (not in snap, not in bib) → no action; phase 2 propagates to bib
+//   - DB added it (not in snap, not in bib) → add to sync state so phase 2 writes it to bib
 //   - DB removed it (was in snap, not in DB, not in bib) → no action
 //
-// When syncState is nil (first run / open failed) every snapshot set is treated
-// as empty, so additions still propagate but removals are suppressed (safe default).
+// When syncState is nil every snapshot set is treated as empty: additions still
+// propagate but removals are suppressed (safe default for first run / open failed).
 func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanonical map[string]string, syncState *TSyncState) {
-	if len(cfg.SyncGroups) == 0 {
-		return
-	}
 	for _, e := range bibEntries {
 		canon := outputToCanonical[e.Key]
 		if canon == "" {
@@ -524,17 +550,42 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 			continue
 		}
 
-		var snapGroups TStringSet
+		// Save the previous snapshot BEFORE overwriting with current bib state.
+		snapGroups := TStringSetNew()
 		if se := syncState.get(canon); se != nil {
-			snapGroups = se.Groups
-		} else {
-			snapGroups = TStringSetNew()
+			for g := range se.Groups.Elements() {
+				snapGroups.Add(g)
+			}
 		}
 
-		bibGroups := TStringSetNew()
+		// Step 1: record ALL groups from bib into sync state (preserving non-group fields).
+		allBibGroups := TStringSetNew()
 		for _, g := range strings.Split(e.Fields["groups"], ",") {
 			g = strings.TrimSpace(g)
-			if g != "" && groupInScope(g, cfg.SyncGroups) {
+			if g != "" {
+				allBibGroups.Add(g)
+			}
+		}
+		if se := syncState.get(canon); se != nil {
+			updated := *se
+			updated.Groups = allBibGroups
+			syncState.set(updated)
+		} else {
+			syncState.set(TSyncEntry{
+				CanonicalKey: canon,
+				Groups:       allBibGroups,
+				Fields:       make(map[string]string),
+			})
+		}
+
+		if len(cfg.SyncGroups) == 0 {
+			continue
+		}
+
+		// Step 2: three-way merge for managed groups using snapGroups as common ancestor.
+		bibGroups := TStringSetNew()
+		for g := range allBibGroups.Elements() {
+			if groupInScope(g, cfg.SyncGroups) {
 				bibGroups.Add(g)
 			}
 		}
@@ -544,7 +595,9 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 			candidates.Add(g)
 		}
 		for g := range snapGroups.Elements() {
-			candidates.Add(g)
+			if groupInScope(g, cfg.SyncGroups) {
+				candidates.Add(g)
+			}
 		}
 		for g, members := range Library.GroupEntries {
 			if groupInScope(g, cfg.SyncGroups) && members.Contains(canon) {
@@ -560,6 +613,7 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 
 			switch {
 			case bibHas && !dbHas && !snapHas:
+				// Bib added → push to DB.
 				Library.GroupEntries.AddValueToStringSetMap(g, canon)
 				if err := bibExec(`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`, g, canon); err != nil {
 					Library.Warning("Group sync insert failed (%s → %q): %s", canon, g, err)
@@ -567,21 +621,30 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 					Library.Progress("Group sync: +%s → %q", canon, g)
 				}
 			case !bibHas && dbHas && snapHas:
+				// Bib removed → remove from DB.
 				Library.GroupEntries.DeleteValueFromStringSetMap(g, canon)
 				if err := bibExec(`DELETE FROM bib_groups WHERE group_name=? AND entry_key=?`, g, canon); err != nil {
 					Library.Warning("Group sync delete failed (%s → %q): %s", canon, g, err)
 				} else {
 					Library.Progress("Group sync: -%s → %q", canon, g)
 				}
+			case !bibHas && dbHas && !snapHas:
+				// DB added independently → propagate to sync state so phase 2 writes it to bib.
+				if se := syncState.get(canon); se != nil {
+					updated := *se
+					updated.Groups.Add(g)
+					syncState.set(updated)
+				}
 			}
 		}
 	}
 }
 
-// buildSyncStateSnapshot records the group memberships and DB fingerprint for
-// every entry written in this sync cycle. Called at the end of phase 2.
-// Fields-level snapshot is deferred to a later increment; for now we capture
-// groups + DBHash, which is enough for correct group three-way merge.
+// buildSyncStateSnapshot records the output key, DB fingerprint, and group
+// memberships for every entry written in this sync cycle. The Groups field is
+// already correct from applyGroupSync (all managed + local groups from bib,
+// plus any DB-added managed groups); we preserve it and only update the
+// identity/hash fields.
 func buildSyncStateSnapshot(cfg TBibGetConfig, writtenPairs []TBibGetPair, syncState *TSyncState) {
 	if syncState == nil {
 		return
@@ -591,10 +654,9 @@ func buildSyncStateSnapshot(cfg TBibGetConfig, writtenPairs []TBibGetPair, syncS
 	for _, p := range writtenPairs {
 		written[p.canonicalKey] = true
 		groups := TStringSetNew()
-		for g, members := range Library.GroupEntries {
-			if groupInScope(g, cfg.SyncGroups) && members.Contains(p.canonicalKey) {
-				groups.Add(g)
-			}
+		if se := syncState.get(p.canonicalKey); se != nil {
+			// Preserve all groups recorded during applyGroupSync (managed + local).
+			groups = se.Groups
 		}
 		syncState.set(TSyncEntry{
 			CanonicalKey: p.canonicalKey,
@@ -623,86 +685,6 @@ func groupInScope(g string, patterns []string) bool {
 		}
 	}
 	return false
-}
-
-// syncGroupMembershipsFromBib diffs the bib's groups fields against bib_groups and
-// syncs additions and removals to the DB for groups matching any cfg.SyncGroups pattern.
-//
-// cfg.SyncGroups entries are glob patterns (e.g. "ISE", "erik-*", "*"): only groups
-// whose name matches a pattern flow between the bib and the main DB. Unmatched groups
-// are bib-local and never touch bib_groups. When cfg.SyncGroups is empty, nothing syncs.
-//
-// Removals are scoped to entries that appear in this subset bib — entries not present
-// here are not touched, since the subset is not the full picture of membership.
-func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanonical map[string]string) {
-	if len(cfg.SyncGroups) == 0 {
-		return
-	}
-
-	// Collect bib-side membership (group → canonical keys) and the full set of
-	// canonical keys present in the subset (needed to scope removals).
-	bibMembers := TStringSetMap{}
-	subsetCanonicals := TStringSetNew()
-	for _, e := range bibEntries {
-		canon, ok := outputToCanonical[e.Key]
-		if !ok || canon == "" {
-			// Bare-key mode: output key IS the canonical key (no key_mapping).
-			resolved := Library.MapEntryKey(e.Key)
-			if !Library.EntryExists(resolved) {
-				continue
-			}
-			canon = resolved
-		} else {
-			canon = Library.MapEntryKey(canon)
-		}
-		subsetCanonicals.Add(canon)
-		for _, g := range strings.Split(e.Fields["groups"], ",") {
-			g = strings.TrimSpace(g)
-			if g != "" && groupInScope(g, cfg.SyncGroups) {
-				bibMembers.AddValueToStringSetMap(g, canon)
-			}
-		}
-	}
-
-	// Additions: keys present in bib but absent from DB.
-	for group, bibSet := range bibMembers {
-		dbSet := Library.GroupEntries[group]
-		setToAdd := bibSet // value copy for safe iteration
-		for key := range setToAdd.Elements() {
-			if !dbSet.Contains(key) {
-				Library.GroupEntries.AddValueToStringSetMap(group, key)
-				if err := bibExec(
-					`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`,
-					group, key); err != nil {
-					Library.Warning("Group sync insert failed (%s → %q): %s", key, group, err)
-				} else {
-					Library.Progress("Group sync: +%s → %q", key, group)
-				}
-			}
-		}
-	}
-
-	// Removals: scan all DB groups whose name matches a cfg.SyncGroups pattern, then
-	// remove any subset entry that is no longer listed in the bib for that group.
-	for group, dbSet := range Library.GroupEntries {
-		if !groupInScope(group, cfg.SyncGroups) {
-			continue
-		}
-		bibSet := bibMembers[group]
-		toRemove := dbSet // value copy for safe iteration
-		for key := range toRemove.Elements() {
-			if subsetCanonicals.Contains(key) && !bibSet.Contains(key) {
-				Library.GroupEntries.DeleteValueFromStringSetMap(group, key)
-				if err := bibExec(
-					`DELETE FROM bib_groups WHERE group_name=? AND entry_key=?`,
-					group, key); err != nil {
-					Library.Warning("Group sync delete failed (%s → %q): %s", key, group, err)
-				} else {
-					Library.Progress("Group sync: -%s → %q", key, group)
-				}
-			}
-		}
-	}
 }
 
 // computeCurrentScope returns the set of canonical keys that the .keys and .select files

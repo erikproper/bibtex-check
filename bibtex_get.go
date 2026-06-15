@@ -60,6 +60,11 @@ type TBibGetConfig struct {
 	PDFFiles      string   `json:"pdf_files"`      // subset/full: "" | "global" | "local"
 	Format        string   `json:"format"`         // output dialect: "bibdesk" (default) | "jabref"
 	SyncGroups    []string `json:"groups"`         // group names to sync to main DB; all others stay local
+
+	// Runtime-only (not serialised): all group assignments per canonical key, pre-built
+	// from the .sync state before the write phase. When non-nil, entryGetString uses this
+	// instead of Library.GroupEntries, so local (non-managed) groups are emitted too.
+	entryGroups map[string][]string
 }
 
 // migrateRawConfigFileNames migrates "file_name" → "file_names" in a raw JSON map.
@@ -819,19 +824,25 @@ func (l *TBibTeXLibrary) entryGetString(
 	}
 
 	// JabRef format: emit groups = {Group A, Group B} for each group this entry belongs to.
-	// Only groups matching cfg.SyncGroups patterns are emitted; local groups stay local.
+	// When cfg.entryGroups is set (subset sync with .sync DB populated), emit all groups
+	// (managed + local) from that map. Otherwise fall back to Library.GroupEntries for
+	// managed groups only (non-subset modes: pull, follow, full).
 	if cfg.Format == "jabref" {
 		var entryGroups []string
-		for group, members := range l.GroupEntries {
-			if !groupInScope(group, cfg.SyncGroups) {
-				continue
+		if cfg.entryGroups != nil {
+			entryGroups = cfg.entryGroups[canonicalKey]
+		} else {
+			for group, members := range l.GroupEntries {
+				if !groupInScope(group, cfg.SyncGroups) {
+					continue
+				}
+				if members.Set().Contains(canonicalKey) {
+					entryGroups = append(entryGroups, group)
+				}
 			}
-			if members.Set().Contains(canonicalKey) {
-				entryGroups = append(entryGroups, group)
-			}
+			sort.Strings(entryGroups)
 		}
 		if len(entryGroups) > 0 {
-			sort.Strings(entryGroups)
 			result += FormatBibTeXFieldAssignment("", "groups", strings.Join(entryGroups, ", "))
 		}
 	}
@@ -1196,8 +1207,10 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			w.WriteString(block)
 			w.WriteString("\n\n")
 		}
-		if len(Library.GroupEntries) > 0 {
+		{
 			// BibDesk static groups — restricted to entries written here.
+			// When cfg.entryGroups is set, invert it to group → output keys (all groups,
+			// managed + local). Otherwise fall back to Library.GroupEntries (managed only).
 			outputKeyFor := func(canonical string) string {
 				if k, ok := canonicalToLocal[canonical]; ok {
 					return k
@@ -1209,19 +1222,34 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			}
 			type groupRow struct{ name, keys string }
 			var rows []groupRow
-			for group, members := range Library.GroupEntries {
-				if !groupInScope(group, cfg.SyncGroups) {
-					continue
-				}
-				var outputKeys []string
-				for key := range members.Elements() {
-					if outKey := outputKeyFor(Library.MapEntryKey(key)); outKey != "" {
-						outputKeys = append(outputKeys, outKey)
+			if cfg.entryGroups != nil {
+				groupToKeys := map[string][]string{}
+				for canonKey, groups := range cfg.entryGroups {
+					if outKey := outputKeyFor(canonKey); outKey != "" {
+						for _, g := range groups {
+							groupToKeys[g] = append(groupToKeys[g], outKey)
+						}
 					}
 				}
-				if len(outputKeys) > 0 {
-					sort.Strings(outputKeys)
-					rows = append(rows, groupRow{group, strings.Join(outputKeys, ",")})
+				for g, outKeys := range groupToKeys {
+					sort.Strings(outKeys)
+					rows = append(rows, groupRow{g, strings.Join(outKeys, ",")})
+				}
+			} else {
+				for group, members := range Library.GroupEntries {
+					if !groupInScope(group, cfg.SyncGroups) {
+						continue
+					}
+					var outputKeys []string
+					for key := range members.Elements() {
+						if outKey := outputKeyFor(Library.MapEntryKey(key)); outKey != "" {
+							outputKeys = append(outputKeys, outKey)
+						}
+					}
+					if len(outputKeys) > 0 {
+						sort.Strings(outputKeys)
+						rows = append(rows, groupRow{group, strings.Join(outputKeys, ",")})
+					}
 				}
 			}
 			if len(rows) > 0 {
