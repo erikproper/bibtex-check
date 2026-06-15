@@ -841,8 +841,8 @@ func (l *TBibTeXLibrary) entryGetString(
 }
 
 // maybeBuildKeysFromHarvest builds a .keys file from a .harvest log when the
-// .keys file is absent. Used by follow mode to seed the output set from a
-// previously-run harvest without requiring a manual .keys file.
+// .keys file is absent. Used by harvest and follow modes to seed the output set
+// from a previously-run harvest without requiring a manual .keys file.
 func maybeBuildKeysFromHarvest(keysBasePath string) {
 	keysPath := keysBasePath + KeysFileExtension
 	if FileExists(keysPath) {
@@ -850,6 +850,7 @@ func maybeBuildKeysFromHarvest(keysBasePath string) {
 	}
 	harvestPath := keysBasePath + HarvestLogExtension
 	if !FileExists(harvestPath) {
+		Library.Progress("  Keys: no .harvest log found at %s — .keys not created", harvestPath)
 		return
 	}
 	log := readHarvestLog(harvestPath)
@@ -861,8 +862,10 @@ func maybeBuildKeysFromHarvest(keysBasePath string) {
 		pairs = append(pairs, TBibGetPair{canonicalKey: entry.Action})
 	}
 	if len(pairs) > 0 {
-		Library.Progress("  Follow: seeding .keys from .harvest log (%d entries)", len(pairs))
+		Library.Progress("  Keys: seeding .keys from .harvest log (%d entries)", len(pairs))
 		rewriteKeysFile(keysBasePath, pairs, false)
+	} else {
+		Library.Progress("  Keys: .harvest log has no matched entries — .keys not created")
 	}
 }
 
