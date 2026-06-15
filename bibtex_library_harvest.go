@@ -782,7 +782,11 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 			canon := Library.MapEntryKey(entry.Action)
 			Library.maybeHarvestPDF(e, canon)
 			Library.maybeHarvestGroups(e, canon)
-			if e.Key != "" {
+			// Only register the hint when the cite key matches the logged original key.
+			// A title-hash match (e.Key != entry.OriginalKey) means a different entry
+			// coincidentally shares the same title — registering its key as a hint would
+			// create a false mapping.
+			if e.Key != "" && e.Key == entry.OriginalKey {
 				Library.AddKeyHint(e.Key, entry.Action)
 			}
 		}

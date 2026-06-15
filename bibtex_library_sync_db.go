@@ -51,8 +51,15 @@ type TSyncState struct {
 	isolated    bool // whether home ≠ working (cache_folder active)
 	db          *sql.DB
 	entries     map[string]*TSyncEntry
+	statuses    map[string]string // source_key → status ("waived", "ignored", …)
 	modified    bool
 }
+
+// Sync status constants used across modes.
+const (
+	SyncStatusWaived  = "waived"  // harvest: never present this entry again
+	SyncStatusIgnored = "ignored" // weave: write verbatim, do not merge
+)
 
 // syncWorkingPath returns the working (cache) path for a given home sync path.
 func syncWorkingPath(homePath string) string {
@@ -202,6 +209,11 @@ CREATE TABLE IF NOT EXISTS sync_pdfs (
     canonical_key TEXT NOT NULL PRIMARY KEY,
     pdf_md5       TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sync_status (
+    source_key TEXT NOT NULL PRIMARY KEY,
+    status     TEXT NOT NULL,
+    set_time   INTEGER NOT NULL DEFAULT 0
+);
 `
 
 func (s *TSyncState) ensureSchema() bool {
@@ -273,6 +285,20 @@ func (s *TSyncState) loadAll() {
 	for k, e := range manifest {
 		s.entries[k] = e
 	}
+
+	// Load per-source-key status flags.
+	s.statuses = make(map[string]string)
+	rows5, err := s.db.Query(`SELECT source_key, status FROM sync_status`)
+	if err == nil {
+		defer rows5.Close()
+		for rows5.Next() {
+			var key, status string
+			rows5.Scan(&key, &status)
+			if key != "" && status != "" {
+				s.statuses[key] = status
+			}
+		}
+	}
 }
 
 // --- flush ---
@@ -285,7 +311,7 @@ func (s *TSyncState) flush() error {
 	}
 
 	// Clear all tables and rewrite from memory.
-	for _, tbl := range []string{"sync_manifest", "sync_entries", "sync_groups", "sync_pdfs"} {
+	for _, tbl := range []string{"sync_manifest", "sync_entries", "sync_groups", "sync_pdfs", "sync_status"} {
 		if _, err := tx.Exec("DELETE FROM " + tbl); err != nil {
 			tx.Rollback()
 			return err
@@ -337,7 +363,69 @@ func (s *TSyncState) flush() error {
 		}
 	}
 
+	for sourceKey, status := range s.statuses {
+		if _, err := tx.Exec(
+			`INSERT INTO sync_status (source_key, status, set_time) VALUES (?, ?, ?)`,
+			sourceKey, status, now,
+		); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
 	return tx.Commit()
+}
+
+// GetStatus returns the sync status for sourceKey ("waived", "ignored", etc.) or "".
+func (s *TSyncState) GetStatus(sourceKey string) string {
+	if s == nil {
+		return ""
+	}
+	return s.statuses[sourceKey]
+}
+
+// SetStatus sets or clears the sync status for sourceKey.
+// An empty status string removes the entry.
+func (s *TSyncState) SetStatus(sourceKey, status string) {
+	if s == nil {
+		return
+	}
+	if status == "" {
+		delete(s.statuses, sourceKey)
+	} else {
+		s.statuses[sourceKey] = status
+	}
+	s.modified = true
+}
+
+// DoSetSyncStatus opens the .sync DB at stemPath and sets (or clears) the status
+// for sourceKey. Called directly from the CLI — no main library needed.
+func DoSetSyncStatus(status, sourceKey, stemPath string) {
+	syncPath, _ := resolveSyncPath(stemPath)
+	conn, err := openSyncDirect(syncPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "set_sync_status: cannot open %s: %s\n", syncPath, err)
+		return
+	}
+	defer conn.Close()
+
+	if status == "" {
+		if _, err := conn.Exec(`DELETE FROM sync_status WHERE source_key = ?`, sourceKey); err != nil {
+			fmt.Fprintf(os.Stderr, "set_sync_status: delete failed: %s\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Cleared status for %s in %s\n", sourceKey, syncPath)
+	} else {
+		if _, err := conn.Exec(
+			`INSERT INTO sync_status (source_key, status, set_time) VALUES (?, ?, ?)
+			 ON CONFLICT(source_key) DO UPDATE SET status=excluded.status, set_time=excluded.set_time`,
+			sourceKey, status, time.Now().Unix(),
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "set_sync_status: upsert failed: %s\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Set status %q for %s in %s\n", status, sourceKey, syncPath)
+	}
 }
 
 // --- export / import ---
