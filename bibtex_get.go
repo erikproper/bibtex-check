@@ -57,6 +57,7 @@ type TBibGetConfig struct {
 	TrustHints      bool     `json:"trust_hints"`       // harvest: auto-accept key-hint matches without confirmation
 	CollectKeys     bool     `json:"collect_keys"`      // harvest: add source keys to hints DB when unambiguous
 	HarvestTransfer string   `json:"harvest_transfer"`  // harvest: base name of target bib to append resolved keys into
+	PruneResolved   bool     `json:"prune_resolved"`    // harvest: rewrite source bib keeping only pending/skip-content entries
 	TrustedSubset   bool     `json:"trusted_subset"`    // subset: apply changes/adds/deletes without confirmation
 	PDFFiles        string   `json:"pdf_files"`         // subset/full: "" | "global" | "local"
 	Format          string   `json:"format"`            // output dialect: "bibdesk" (default) | "jabref"
@@ -129,6 +130,7 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		{"trust_hints", json.RawMessage(`false`)},
 		{"collect_keys", json.RawMessage(`false`)},
 		{"harvest_transfer", json.RawMessage(`""`)},
+		{"prune_resolved", json.RawMessage(`false`)},
 		{"trusted_subset", json.RawMessage(`false`)},
 		{"pdf_files", json.RawMessage(`""`)},
 		{"format", json.RawMessage(`"bibdesk"`)},

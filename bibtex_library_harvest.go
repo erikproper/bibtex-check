@@ -804,6 +804,52 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	}
 
 	Library.harvestSyncGroups = TStringSetNew()
+
+	if cfg.PruneResolved {
+		pruneResolvedFromSource(sourcePath, entries, syncState)
+	}
+}
+
+// pruneResolvedFromSource rewrites sourcePath keeping only entries that still need
+// processing: those with no status (pending) or a "skip-content:…" status.
+// Resolved, waived, and ignored entries are dropped, shrinking the source queue.
+func pruneResolvedFromSource(sourcePath string, entries []TBibTeXEntry, syncState *TSyncState) {
+	var keep []TBibTeXEntry
+	for _, e := range entries {
+		status := syncState.GetStatus(e.Key)
+		if status == "" || strings.HasPrefix(status, "skip-content:") {
+			keep = append(keep, e)
+		}
+	}
+	removed := len(entries) - len(keep)
+	if removed == 0 {
+		return
+	}
+	f, err := os.Create(sourcePath)
+	if err != nil {
+		Library.Warning("harvest: cannot prune source bib %s: %s", sourcePath, err)
+		return
+	}
+	defer f.Close()
+	for _, e := range keep {
+		entryType := e.Fields[EntryTypeField]
+		fmt.Fprintf(f, "@%s{%s,\n", entryType, e.Key)
+		fields := make([]string, 0, len(e.Fields))
+		for field := range e.Fields {
+			if field != EntryTypeField {
+				fields = append(fields, field)
+			}
+		}
+		sort.Strings(fields)
+		for _, field := range fields {
+			if value := e.Fields[field]; value != "" {
+				fmt.Fprintf(f, "  %-16s = {%s},\n", field, value)
+			}
+		}
+		fmt.Fprintf(f, "}\n\n")
+	}
+	Library.Progress("  Pruned source: %d resolved/waived removed, %d pending remain in %s",
+		removed, len(keep), sourcePath)
 }
 
 // --- Config patching ---
