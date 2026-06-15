@@ -141,52 +141,150 @@ func (l *TBibTeXLibrary) moveToLibraryTrash(path string) bool {
 	return os.Rename(path, dest) == nil
 }
 
-// syncLocalPDFs copies global PDFs to a local .files/ folder for pdf_files="local" mode.
-// For each pair: if the global PDF exists and the local copy is absent or has different MD5,
-// it copies (or overwrites) the local copy. When trusted is true and both files exist with
-// different content, the newer file wins — if local is newer it is kept as-is (the local edit
-// takes precedence until the global copy is updated externally). When trusted is false, any
-// conflict is reported as a warning (interactive resolution is not yet implemented).
-func (l *TBibTeXLibrary) syncLocalPDFs(localFilesDir string, pairs []TBibGetPair, trusted bool) {
+// moveToTrash moves path into trashDir, creating it if necessary.
+// If a file with the same name already exists in trashDir, a timestamp suffix is added.
+func moveToTrash(path, trashDir string) bool {
+	if err := os.MkdirAll(trashDir, 0755); err != nil {
+		return false
+	}
+	base := filepath.Base(path)
+	dest := filepath.Join(trashDir, base)
+	if FileExists(dest) {
+		ts := time.Now().Format("20060102-150405")
+		ext := filepath.Ext(base)
+		dest = filepath.Join(trashDir, strings.TrimSuffix(base, ext)+"-"+ts+ext)
+	}
+	return os.Rename(path, dest) == nil
+}
+
+// pdfFileInfo returns a human-readable summary of a PDF file's size and modification time.
+func pdfFileInfo(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "?"
+	}
+	return fmt.Sprintf("%.1f KB, %s", float64(info.Size())/1024, info.ModTime().Format("2006-01-02 15:04"))
+}
+
+// openBothPDFs opens two PDF files in the system default viewer.
+func openBothPDFs(path1, path2 string) {
+	exec.Command("open", path1).Start() //nolint:errcheck
+	exec.Command("open", path2).Start() //nolint:errcheck
+}
+
+// syncLocalPDFs synchronises global PDFs with the local .files/ folder for pdf_files="local".
+// trashDir is the <bib>.trash/ folder; orphaned local PDFs are moved there rather than deleted.
+//
+//   - New global PDF → copy to local silently.
+//   - Global newer than local (trusted) → overwrite local silently.
+//   - Global newer than local (interactive) → show ages+sizes, ask user.
+//   - Local newer than global → always ask; offer to open both in viewer first.
+//   - Local PDF no longer in output pairs → move to trashDir.
+func (l *TBibTeXLibrary) syncLocalPDFs(localFilesDir, trashDir string, pairs []TBibGetPair, trusted bool) {
 	if err := os.MkdirAll(localFilesDir, 0755); err != nil {
 		l.Warning("Cannot create local files dir %s: %s", localFilesDir, err)
 		return
 	}
+
+	// Build expected set of local PDF names from pairs that have a global PDF.
+	expected := map[string]bool{}
+	for _, p := range pairs {
+		if l.PDFFiles[p.canonicalKey] {
+			expected[p.localKey+".pdf"] = true
+		}
+	}
+
+	// Move orphaned local PDFs (present locally, no longer in output) to trash.
+	if entries, err := os.ReadDir(localFilesDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".pdf" {
+				continue
+			}
+			if !expected[entry.Name()] {
+				src := localFilesDir + entry.Name()
+				if !moveToTrash(src, trashDir) {
+					l.Warning("Cannot move orphaned local PDF to trash: %s", entry.Name())
+				}
+			}
+		}
+	}
+
+	// Sync each pair.
+	options := TStringSetNew()
+	options.Add("l", "g", "o", "s")
+
 	for _, p := range pairs {
 		if !l.PDFFiles[p.canonicalKey] {
 			continue
 		}
-		srcPath := l.FilesRoot + l.FilesFolder + p.canonicalKey + ".pdf"
-		dstPath := localFilesDir + p.localKey + ".pdf"
-		if !FileExists(dstPath) {
-			if err := copyFile(srcPath, dstPath); err != nil {
+		globalPath := l.FilesRoot + l.FilesFolder + p.canonicalKey + ".pdf"
+		localPath := localFilesDir + p.localKey + ".pdf"
+
+		if !FileExists(localPath) {
+			if err := copyFile(globalPath, localPath); err != nil {
 				l.Warning("Cannot copy PDF %s → %s: %s", p.canonicalKey+".pdf", p.localKey+".pdf", err)
 			}
 			continue
 		}
-		// Both exist: compare MD5.
-		if MD5ForFile(srcPath) == MD5ForFile(dstPath) {
+		if MD5ForFile(globalPath) == MD5ForFile(localPath) {
 			continue
 		}
-		// Content differs. In trusted mode, keep the newer file.
-		if trusted {
-			srcInfo, srcErr := os.Stat(srcPath)
-			dstInfo, dstErr := os.Stat(dstPath)
-			if srcErr == nil && dstErr == nil && srcInfo.ModTime().After(dstInfo.ModTime()) {
-				if err := copyFile(srcPath, dstPath); err != nil {
+
+		globalInfo, globalErr := os.Stat(globalPath)
+		localInfo, localErr := os.Stat(localPath)
+		if globalErr != nil || localErr != nil {
+			continue
+		}
+		globalNewer := globalInfo.ModTime().After(localInfo.ModTime())
+
+		if globalNewer {
+			if trusted {
+				if err := copyFile(globalPath, localPath); err != nil {
 					l.Warning("Cannot overwrite local PDF %s: %s", p.localKey+".pdf", err)
 				}
+				continue
 			}
-			// If local is newer or stat failed, keep local as-is.
+			// Non-trusted, global newer: show info and ask.
+			warning := "PDF differs for %s:\n  global: %s\n  local : %s"
+			for {
+				answer := l.WarningQuestion(QuestionLocalPDFConflict, options, warning,
+					p.canonicalKey, pdfFileInfo(globalPath), pdfFileInfo(localPath))
+				if answer == "o" {
+					openBothPDFs(globalPath, localPath)
+					continue
+				}
+				if answer == "g" {
+					copyFile(globalPath, localPath) //nolint:errcheck
+				} else if answer == "l" {
+					copyFile(localPath, globalPath) //nolint:errcheck
+				}
+				break
+			}
 		} else {
-			l.Warning("PDF conflict for %s: global and local copies differ (manual resolution needed)", p.canonicalKey)
+			// Local newer: always ask with open-both offer.
+			warning := "Local PDF is newer than global for %s:\n  global: %s\n  local : %s"
+			for {
+				answer := l.WarningQuestion(QuestionLocalPDFConflict, options, warning,
+					p.canonicalKey, pdfFileInfo(globalPath), pdfFileInfo(localPath))
+				if answer == "o" {
+					openBothPDFs(globalPath, localPath)
+					continue
+				}
+				if answer == "l" {
+					copyFile(localPath, globalPath) //nolint:errcheck
+				} else if answer == "g" {
+					copyFile(globalPath, localPath) //nolint:errcheck
+				}
+				break
+			}
 		}
 	}
 }
 
 // mergePDFFile transfers the PDF for sourceKey to targetKey as part of a merge.
-// If source has a PDF and target does not, the file is renamed in place and PDFFiles
-// is updated. If target already has a PDF, the source file is moved to library trash.
+// If source has a PDF and target does not, the file is renamed in place.
+// If both have a PDF, the user is asked which to keep (with open-both offer);
+// the discarded copy goes to library trash.
 // No-op when source has no PDF.
 func (l *TBibTeXLibrary) mergePDFFile(sourceKey, targetKey string) {
 	if !l.PDFFiles[sourceKey] {
@@ -194,12 +292,40 @@ func (l *TBibTeXLibrary) mergePDFFile(sourceKey, targetKey string) {
 	}
 	srcPath := l.FilesRoot + l.FilesFolder + sourceKey + ".pdf"
 	dstPath := l.FilesRoot + l.FilesFolder + targetKey + ".pdf"
+
 	if l.PDFFiles[targetKey] || FileExists(dstPath) {
-		// Target already has a PDF — source copy is redundant.
-		l.moveToLibraryTrash(srcPath) //nolint:errcheck
-		delete(l.PDFFiles, sourceKey)
+		// Both entries have a PDF — ask which to keep.
+		options := TStringSetNew()
+		options.Add("t", "s", "o", "k")
+		warning := "Merge produced two PDFs:\n  target (%s): %s\n  source (%s): %s"
+		for {
+			answer := l.WarningQuestion(QuestionMergePDFConflict, options, warning,
+				targetKey, pdfFileInfo(dstPath), sourceKey, pdfFileInfo(srcPath))
+			switch answer {
+			case "o":
+				openBothPDFs(dstPath, srcPath)
+				continue
+			case "t":
+				// Keep target — move source to trash.
+				l.moveToLibraryTrash(srcPath) //nolint:errcheck
+				delete(l.PDFFiles, sourceKey)
+			case "s":
+				// Keep source — replace target with source.
+				l.moveToLibraryTrash(dstPath) //nolint:errcheck
+				if err := os.Rename(srcPath, dstPath); err != nil {
+					l.Warning("Could not rename PDF %s.pdf → %s.pdf: %s", sourceKey, targetKey, err)
+				} else {
+					delete(l.PDFFiles, sourceKey)
+					l.PDFFiles[targetKey] = true
+				}
+			case "k":
+				// Skip — leave both as-is for now.
+			}
+			break
+		}
 		return
 	}
+
 	if err := os.Rename(srcPath, dstPath); err != nil {
 		l.Warning("Could not rename PDF %s.pdf → %s.pdf: %s", sourceKey, targetKey, err)
 		return

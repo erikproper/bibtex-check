@@ -1107,7 +1107,9 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	// Compute local files dir and sync PDFs before writing (pdf_files="local").
 	localFilesDir := ""
 	if cfg.PDFFiles == "local" {
-		localFilesDir = strings.TrimSuffix(outPath, BibFileExtension) + ".files/"
+		stem := strings.TrimSuffix(outPath, BibFileExtension)
+		localFilesDir = stem + ".files/"
+		localTrashDir := stem + ".trash/"
 		allOutputPairs := make([]TBibGetPair, 0, len(pairs)+len(extraPairs)+len(autoParents))
 		for _, p := range pairs {
 			allOutputPairs = append(allOutputPairs, TBibGetPair{canonicalToLocal[p.canonicalKey], p.canonicalKey})
@@ -1118,7 +1120,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		for _, ap := range autoParents {
 			allOutputPairs = append(allOutputPairs, TBibGetPair{ap.localKey, ap.canonicalKey})
 		}
-		Library.syncLocalPDFs(localFilesDir, allOutputPairs, cfg.TrustedSubset)
+		Library.syncLocalPDFs(localFilesDir, localTrashDir, allOutputPairs, cfg.TrustedSubset)
 	}
 
 	// Build new content into a buffer so we can MD5 it before touching the file.
@@ -1683,6 +1685,21 @@ func doSync(filter string) {
 			needsWrite = true
 		}
 	}
+
+	// Process files in a fixed mode order regardless of their order in file_names:
+	// full → subset → harvest → follow/pull.
+	sort.SliceStable(files, func(i, j int) bool {
+		order := map[string]int{"full": 0, "subset": 1, "harvest": 2}
+		pi, pj := order[files[i].cfg.Mode], order[files[j].cfg.Mode]
+		// Modes not in the map (follow, pull, "") default to 3.
+		if _, ok := order[files[i].cfg.Mode]; !ok {
+			pi = 3
+		}
+		if _, ok := order[files[j].cfg.Mode]; !ok {
+			pj = 3
+		}
+		return pi < pj
+	})
 
 	if needsWrite {
 		if !openLibraryToUpdate() {

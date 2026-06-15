@@ -78,6 +78,8 @@ const (
 
 	WarningURLDead              = "URL appears unreachable or lacks human content (%s): %s — setting urldate to %s"
 	QuestionDoublePdfWaive      = "PDF shared by multiple entries — waive, merge, or skip? (w=waive all, m=merge, s=skip)"
+	QuestionLocalPDFConflict    = "Local PDF is newer than global — keep local (copy→global), keep global (overwrite local), open both, or skip? (l=local, g=global, o=open-both, s=skip)"
+	QuestionMergePDFConflict    = "Merge has two PDFs — keep target, keep source, open both, or skip? (t=target, s=source, o=open-both, k=skip)"
 
 	WarningLoneProceedings    = "Lone proceedings (no children): %s"
 	QuestionLoneProceedings   = "Waive, delete (+ hints/oldies), enter DBLP key, or skip? (w=waive, d=delete, k=dblp key, s=skip)"
