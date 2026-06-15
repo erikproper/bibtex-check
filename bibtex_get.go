@@ -1475,7 +1475,7 @@ func writeFullSync(cfg TBibGetConfig, baseDir string) {
 		}
 	}
 
-	if bibWasEdited {
+	if bibWasEdited && !cmdPull {
 		// The sync bib was edited externally (e.g. BibDesk): ask before re-importing;
 		// in non-interactive mode (scripted / piped) skip re-import and just overwrite.
 		doReimport := false
@@ -1593,7 +1593,7 @@ func doSync(filter string) {
 			os.Exit(1)
 		}
 		files = append(files, fileEntry{cfg: cfg})
-		if cfg.Mode == "full" || cfg.Mode == "harvest" || cfg.Mode == "subset" {
+		if !cmdPull && (cfg.Mode == "full" || cfg.Mode == "harvest" || cfg.Mode == "subset") {
 			needsWrite = true
 		}
 	}
@@ -1619,12 +1619,15 @@ func doSync(filter string) {
 	}
 
 	// Phase 1: merge all bib-side changes into the DB before writing any output.
-	for i := range files {
-		switch files[i].cfg.Mode {
-		case "harvest":
-			runHarvestSync(files[i].cfg, "")
-		case "subset":
-			files[i].skipPhase2 = runSubsetPhase1(files[i].cfg, "")
+	// Skipped entirely when -pull is active — DB is left untouched.
+	if !cmdPull {
+		for i := range files {
+			switch files[i].cfg.Mode {
+			case "harvest":
+				runHarvestSync(files[i].cfg, "")
+			case "subset":
+				files[i].skipPhase2 = runSubsetPhase1(files[i].cfg, "")
+			}
 		}
 	}
 

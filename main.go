@@ -66,6 +66,7 @@ var (
 	cmdTrustHints         bool // -trust_hints: auto-accept key-hint matches in harvest
 	cmdCollectKeys        bool // -collect_keys: add source keys to hints DB when unambiguous
 	cmdFix                bool // -fix: apply full per-entry checks when combined with -sync or -harvest
+	cmdPull               bool // -pull: with -sync, skip up-sync (phase 1); only write bib output from DB
 )
 
 func reportCacheMode() {
@@ -1782,6 +1783,7 @@ func main() {
 	)
 
 	flag.BoolVar(&cmdSync, "sync", false, "sync library to bib file(s) via exchange config; optional arg narrows to one file")
+	flag.BoolVar(&cmdPull, "pull", false, "with -sync: skip up-sync (phase 1) and re-import; only write bib output from DB")
 	flag.BoolVar(&cmdGetPdfs, "get_pdfs", false, "download missing PDFs into the files folder")
 	flag.BoolVar(&cmdFindEntries, "find_entries", false, "list entries matching field [value] (key TAB value per line)")
 	flag.BoolVar(&cmdEntryKey, "entry_key", false, "resolve alias to canonical key")
