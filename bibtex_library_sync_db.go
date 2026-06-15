@@ -84,7 +84,7 @@ func openSyncState(keysBasePath string) *TSyncState {
 	}
 
 	openPath := workingPath
-	conn, err := sql.Open("sqlite3", openPath+"?_journal_mode=WAL")
+	conn, err := sql.Open(sqliteDatabaseDriver, openPath)
 	if err != nil {
 		dbInteraction.Warning("sync: cannot open %s: %s", openPath, err)
 		return nil
