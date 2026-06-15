@@ -976,7 +976,11 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			}
 			return "off"
 		}
-		dbInteraction.Progress("Sync pull: %s", cfg.FileName)
+		modeLabel := cfg.Mode
+		if modeLabel == "" {
+			modeLabel = "pull"
+		}
+		dbInteraction.Progress("Sync %s: %s", modeLabel, cfg.FileName)
 		dbInteraction.Progress("  doi=%-3s  isbn=%-3s  url=%-3s  dblp=%-3s  key_mapping=%-3s",
 			on(cfg.IncludeDOI), on(cfg.IncludeISBN), on(cfg.IncludeURL), on(cfg.IncludeDblp), on(cfg.KeyMapping))
 		dbInteraction.Progress("  biber=%-3s  shorten=%-3s  urldate_as_note=%-3s  hyphenations=%-3s  fix=%-3s  format=%s",

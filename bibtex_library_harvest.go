@@ -726,10 +726,6 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	syncState := openSyncState(keysBasePath)
 	defer syncState.close()
 
-	// Build .keys from .harvest log if no .keys file exists yet.
-	// Gives an explicit, human-editable cite-key → canonical mapping for this source bib.
-	maybeBuildKeysFromHarvest(keysBasePath)
-
 	maybeMigrateSubsetToHarvest(sourcePath, keysBasePath, logPath)
 
 	// Initialise group routing: names in cfg.SyncGroups go to main DB; rest stay local.
@@ -750,6 +746,9 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	Library.Progress("  trust_hints=%-3s  collect_keys=%-3s  fix=%-3s",
 		on(cmdTrustHints), on(cmdCollectKeys), on(cmdFix))
 	Library.Progress("  Source: %s", sourcePath)
+
+	// Build .keys from .harvest log if no .keys file exists yet.
+	maybeBuildKeysFromHarvest(keysBasePath)
 
 	entries, _ := Library.parseHarvestBib(sourcePath)
 	if len(entries) == 0 {
