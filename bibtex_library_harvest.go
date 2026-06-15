@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // --- Delta log types and I/O ---
@@ -722,6 +723,9 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	logPath := keysBasePath + HarvestLogExtension
 	localGroupsPath := keysBasePath + LocalGroupsExtension
 
+	syncState := openSyncState(keysBasePath)
+	defer syncState.close()
+
 	maybeMigrateSubsetToHarvest(sourcePath, keysBasePath, logPath)
 
 	// Initialise group routing: names in cfg.SyncGroups go to main DB; rest stay local.
@@ -789,6 +793,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		} else {
 			Library.Progress("  All entries already logged — nothing to do")
 		}
+		buildHarvestSyncState(cfg, log, syncState)
 		return
 	}
 
@@ -828,6 +833,50 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	writeLocalGroups(localGroupsPath, Library.harvestLocalGroups)
 	Library.harvestSyncGroups = TStringSetNew()
 	Library.harvestLocalGroups = TStringSetMap{}
+	buildHarvestSyncState(cfg, log, syncState)
+}
+
+// buildHarvestSyncState records all matched harvest log entries into the sync state.
+// Called at the end of each runHarvestSync path that processes entries.
+// Entries not matched (skip-content, skip-never, pending) are removed from the state.
+func buildHarvestSyncState(cfg TBibGetConfig, log THarvestLog, syncState *TSyncState) {
+	if syncState == nil {
+		return
+	}
+	now := time.Now().Unix()
+	matched := map[string]bool{}
+	for _, entry := range log {
+		if entry.Action == "" || entry.Action == harvestActionSkipContent || entry.Action == harvestActionSkipNever {
+			continue
+		}
+		canon := Library.MapEntryKey(entry.Action)
+		if canon == "" {
+			canon = entry.Action
+		}
+		if !Library.EntryExists(canon) {
+			continue
+		}
+		matched[canon] = true
+		groups := TStringSetNew()
+		for g, members := range Library.GroupEntries {
+			if groupInScope(g, cfg.SyncGroups) && members.Contains(canon) {
+				groups.Add(g)
+			}
+		}
+		syncState.set(TSyncEntry{
+			CanonicalKey: canon,
+			OutputKey:    canon,
+			Groups:       groups,
+			DBHash:       subsetDBFingerprint(canon),
+			Fields:       make(map[string]string),
+			SyncTime:     now,
+		})
+	}
+	for _, k := range syncState.keys() {
+		if !matched[k] {
+			syncState.delete(k)
+		}
+	}
 }
 
 // --- Mode transitions ---

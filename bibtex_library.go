@@ -857,6 +857,9 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 
 // Add a new key hint
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
+	if strings.HasPrefix(hint, "DBLP:") {
+		l.Warning("Key hint alias is a DBLP key (%s → %s) — DBLP key should be associated via -add_dblp_entry, not stored as a hint", hint, key)
+	}
 	resolvedKey := l.MapEntryKey(key)
 	if hint == resolvedKey {
 		return

@@ -54,12 +54,13 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.119"
+const AppVersion = "24.123"
 
 // Run-state flags consumed by the write tail in main.
 var (
 	skipBibDbRefresh      bool
 	skipBibValidation     bool
+	skipStartupChecks     bool // set by -import so the import runs before consistency checks
 	forceWrite            bool
 	cmdStep               stepFlag
 	cmdNoGarbageCleaning  bool
@@ -272,10 +273,12 @@ func openLibraryToUpdate() bool {
 
 	Library.LoadPDFFiles()
 	Library.ReportLibrarySize()
-	Library.CheckKeyOldiesConsistency()
-	Library.CheckKeyHintsConsistency()
-	Library.CheckDblpWaivedConsistency()
-	Library.CheckEntryFieldMappingWinners()
+	if !skipStartupChecks {
+		Library.CheckKeyOldiesConsistency()
+		Library.CheckKeyHintsConsistency()
+		Library.CheckDblpWaivedConsistency()
+		Library.CheckEntryFieldMappingWinners()
+	}
 	return true
 }
 
@@ -2222,6 +2225,7 @@ case cmdAlignBooktitleCountries:
 		if importSpec == "all" && len(args) > 0 {
 			importSpec = strings.Join(args, ",")
 		}
+		skipStartupChecks = true
 		if openLibraryToUpdate() {
 			ImportTables(importSpec, &Library)
 		}
