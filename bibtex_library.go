@@ -859,6 +859,10 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 
 // Add a new key hint
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
+	// DBLP keys belong in KeyToKey via AssociateDblpKey / the dblp field, not in HintToKey.
+	if strings.HasPrefix(hint, "DBLP:") {
+		return
+	}
 	resolvedKey := l.MapEntryKey(key)
 	if hint == resolvedKey {
 		return

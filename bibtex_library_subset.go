@@ -202,8 +202,11 @@ func bibReflectsDB(bibEntry TBibTeXEntry, canonicalKey string, outputToCanonical
 // subsetFieldsToClear returns the sorted list of fields that are non-empty in the DB
 // entry but absent or empty in the bib entry. These are fields the user intentionally
 // removed from the bib; they should be cleared from the DB as part of the merge.
-// Noise fields and structural fields (EntryType, LocalURL) are excluded.
+// Noise fields, structural fields (EntryType, LocalURL), and fields that are required
+// for the entry type are excluded — required fields cannot be legitimately absent from
+// a tool-generated bib, so their absence indicates a generation gap, not intent.
 func subsetFieldsToClear(cleanFields map[string]string, dbEntry *TBibTeXEntry) []string {
+	entryType := dbEntry.Fields[EntryTypeField]
 	var clear []string
 	for field, dbValue := range dbEntry.Fields {
 		if dbValue == "" {
@@ -213,6 +216,9 @@ func subsetFieldsToClear(cleanFields map[string]string, dbEntry *TBibTeXEntry) [
 			continue
 		}
 		if bibEditorNoiseFields.Contains(field) {
+			continue
+		}
+		if FieldIsRequiredForEntry(entryType, field) {
 			continue
 		}
 		if cleanFields[field] == "" {
