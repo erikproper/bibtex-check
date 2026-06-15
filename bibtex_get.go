@@ -1595,7 +1595,8 @@ func doSync(filter string) {
 	// access level before opening the library.
 	type fileEntry struct {
 		cfg        TBibGetConfig
-		skipPhase2 bool // subset only: skip phase 2 (fresh export done, or up-sync aborted)
+		skipPhase2 bool       // subset only: skip phase 2 (fresh export done, or up-sync aborted)
+		syncState  *TSyncState // subset only: open sync DB passed from phase 1 to phase 2
 	}
 	var files []fileEntry
 	needsWrite := false
@@ -1638,7 +1639,7 @@ func doSync(filter string) {
 			case "harvest":
 				runHarvestSync(files[i].cfg, "")
 			case "subset":
-				files[i].skipPhase2 = runSubsetPhase1(files[i].cfg, "")
+				files[i].skipPhase2, files[i].syncState = runSubsetPhase1(files[i].cfg, "")
 			}
 		}
 	}
@@ -1652,7 +1653,9 @@ func doSync(filter string) {
 			// harvest has no bib output
 		case "subset":
 			if !f.skipPhase2 {
-				runSubsetPhase2(f.cfg, "")
+				runSubsetPhase2(f.cfg, "", f.syncState)
+			} else {
+				f.syncState.close()
 			}
 		default: // "pull"
 			writePullSync(f.cfg, "")

@@ -38,7 +38,8 @@ const (
 	BibFileExtension     = ".bib"
 	KeysFileExtension    = ".keys"    // pull-mode key/alias map (replaces legacy .map)
 	HarvestLogExtension  = ".harvest" // delta log for repeated harvest of the same source bib
-	SubsetStateExtension = ".subset"  // common-ancestor fingerprint snapshot for subset sync
+	SubsetStateExtension = ".subset"  // common-ancestor fingerprint snapshot for subset sync (to be retired)
+	SyncDbExtension      = ".sync"    // per-bib SQLite snapshot store for field-level three-way merge
 	LocalGroupsExtension       = ".groups"      // per-subset local group memberships (group;canonicalKey CSV)
 	LocalGroupsStructExtension = ".groupstruct" // verbatim jabref-meta grouping block from source bib
 	cacheFileExtension   = ".sqlite3"

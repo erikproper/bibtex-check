@@ -382,7 +382,11 @@ func resolveSubsetPaths(cfg TBibGetConfig, baseDir string) (sourcePath, keysBase
 // bib-side changes into the DB. Returns true when phase 2 must be skipped: either a
 // fresh export was performed (bib already written) or the up-sync was aborted (e.g.
 // parse error — bib must not be overwritten).
-func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
+// runSubsetPhase1 is called from doSync phase 1: parses the subset bib and merges any
+// bib-side changes into the DB. Returns (skipPhase2, syncState).
+// skipPhase2 is true when a fresh export was performed or the up-sync was aborted.
+// syncState must be passed to runSubsetPhase2 so it can be populated and closed there.
+func runSubsetPhase1(cfg TBibGetConfig, baseDir string) (bool, *TSyncState) {
 	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
 	// Reset per-file metadata blocks; populated by parseHarvestBib or transition parse.
 	Library.jabrefGroupingBlock = ""
@@ -400,15 +404,17 @@ func runSubsetPhase1(cfg TBibGetConfig, baseDir string) bool {
 	Library.Progress("Sync subset: %s", cfg.FileName)
 	Library.Progress("  trusted_subset=%-3s  pdf_files=%-8q  fix=%-3s", on(cfg.TrustedSubset), cfg.PDFFiles, on(cmdFix))
 
+	syncState := openSyncState(keysBasePath)
+
 	existingState := readSubsetState(statePath)
 
-	if len(existingState) == 0 {
-		runSubsetFreshExport(cfg, baseDir, sourcePath, keysBasePath, statePath)
-		return true
+	if len(existingState) == 0 && (syncState == nil || len(syncState.entries) == 0) {
+		runSubsetFreshExport(cfg, baseDir, sourcePath, keysBasePath, statePath, syncState)
+		return true, syncState
 	}
 
-	aborted := runSubsetUpSync(cfg, sourcePath, keysBasePath, statePath, existingState)
-	return aborted
+	aborted := runSubsetUpSync(cfg, sourcePath, keysBasePath, statePath, existingState, syncState)
+	return aborted, syncState
 }
 
 // buildSubsetState constructs the .subset state after a bib write. It re-parses the
@@ -447,12 +453,13 @@ func buildSubsetState(writtenPairs []TBibGetPair, sourcePath string) TSubsetStat
 }
 
 // runSubsetPhase2 is called from doSync phase 2: re-exports the subset bib from the
-// (now fully updated) DB and writes the new .subset state file.
-func runSubsetPhase2(cfg TBibGetConfig, baseDir string) {
+// (now fully updated) DB, writes the new .subset state file, and closes the sync state.
+func runSubsetPhase2(cfg TBibGetConfig, baseDir string, syncState *TSyncState) {
 	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
 
 	writtenPairs := writePullSync(cfg, baseDir)
 	if writtenPairs == nil {
+		syncState.close()
 		return
 	}
 	rewriteKeysFile(keysBasePath, writtenPairs, cfg.KeyMapping)
@@ -460,10 +467,13 @@ func runSubsetPhase2(cfg TBibGetConfig, baseDir string) {
 	newState := buildSubsetState(writtenPairs, sourcePath)
 	writeSubsetState(statePath, newState)
 	Library.Progress("  Updated .subset state: %d entries", len(newState))
+
+	buildSyncStateSnapshot(cfg, writtenPairs, syncState)
+	syncState.close()
 }
 
-// runSubsetFreshExport handles the first-run case: no prior .subset file.
-func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, statePath string) {
+// runSubsetFreshExport handles the first-run case: no prior .subset or .sync state.
+func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, statePath string, syncState *TSyncState) {
 	Library.Progress("  State  : %s (new)", statePath)
 
 	writtenPairs := writePullSync(cfg, baseDir)
@@ -480,6 +490,126 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	newState := buildSubsetState(writtenPairs, sourcePath)
 	writeSubsetState(statePath, newState)
 	Library.Progress("  Written .subset state: %d entries", len(newState))
+
+	buildSyncStateSnapshot(cfg, writtenPairs, syncState)
+	syncState.close()
+}
+
+// applyGroupSync performs a three-way merge of group memberships using the
+// sync state snapshot as the common ancestor. For each in-scope group and each
+// entry in the subset:
+//   - bib added it (not in snap, not in DB) → push to DB
+//   - bib removed it (was in snap, still in DB) → remove from DB
+//   - DB added it (not in snap, not in bib) → no action; phase 2 propagates to bib
+//   - DB removed it (was in snap, not in DB, not in bib) → no action
+//
+// When syncState is nil (first run / open failed) every snapshot set is treated
+// as empty, so additions still propagate but removals are suppressed (safe default).
+func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanonical map[string]string, syncState *TSyncState) {
+	if len(cfg.SyncGroups) == 0 {
+		return
+	}
+	for _, e := range bibEntries {
+		canon := outputToCanonical[e.Key]
+		if canon == "" {
+			canon = Library.harvestKeyMatch(e)
+		}
+		if canon == "" {
+			continue
+		}
+		if resolved := Library.MapEntryKey(canon); resolved != "" {
+			canon = resolved
+		}
+		if !Library.EntryExists(canon) {
+			continue
+		}
+
+		var snapGroups TStringSet
+		if se := syncState.get(canon); se != nil {
+			snapGroups = se.Groups
+		} else {
+			snapGroups = TStringSetNew()
+		}
+
+		bibGroups := TStringSetNew()
+		for _, g := range strings.Split(e.Fields["groups"], ",") {
+			g = strings.TrimSpace(g)
+			if g != "" && groupInScope(g, cfg.SyncGroups) {
+				bibGroups.Add(g)
+			}
+		}
+
+		candidates := TStringSetNew()
+		for g := range bibGroups.Elements() {
+			candidates.Add(g)
+		}
+		for g := range snapGroups.Elements() {
+			candidates.Add(g)
+		}
+		for g, members := range Library.GroupEntries {
+			if groupInScope(g, cfg.SyncGroups) && members.Contains(canon) {
+				candidates.Add(g)
+			}
+		}
+
+		for g := range candidates.Elements() {
+			bibHas := bibGroups.Contains(g)
+			snapHas := snapGroups.Contains(g)
+			dbMembers := Library.GroupEntries[g]
+			dbHas := dbMembers.Contains(canon)
+
+			switch {
+			case bibHas && !dbHas && !snapHas:
+				Library.GroupEntries.AddValueToStringSetMap(g, canon)
+				if err := bibExec(`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`, g, canon); err != nil {
+					Library.Warning("Group sync insert failed (%s → %q): %s", canon, g, err)
+				} else {
+					Library.Progress("Group sync: +%s → %q", canon, g)
+				}
+			case !bibHas && dbHas && snapHas:
+				Library.GroupEntries.DeleteValueFromStringSetMap(g, canon)
+				if err := bibExec(`DELETE FROM bib_groups WHERE group_name=? AND entry_key=?`, g, canon); err != nil {
+					Library.Warning("Group sync delete failed (%s → %q): %s", canon, g, err)
+				} else {
+					Library.Progress("Group sync: -%s → %q", canon, g)
+				}
+			}
+		}
+	}
+}
+
+// buildSyncStateSnapshot records the group memberships and DB fingerprint for
+// every entry written in this sync cycle. Called at the end of phase 2.
+// Fields-level snapshot is deferred to a later increment; for now we capture
+// groups + DBHash, which is enough for correct group three-way merge.
+func buildSyncStateSnapshot(cfg TBibGetConfig, writtenPairs []TBibGetPair, syncState *TSyncState) {
+	if syncState == nil {
+		return
+	}
+	now := time.Now().Unix()
+	written := map[string]bool{}
+	for _, p := range writtenPairs {
+		written[p.canonicalKey] = true
+		groups := TStringSetNew()
+		for g, members := range Library.GroupEntries {
+			if groupInScope(g, cfg.SyncGroups) && members.Contains(p.canonicalKey) {
+				groups.Add(g)
+			}
+		}
+		syncState.set(TSyncEntry{
+			CanonicalKey: p.canonicalKey,
+			OutputKey:    p.localKey,
+			Groups:       groups,
+			DBHash:       subsetDBFingerprint(p.canonicalKey),
+			Fields:       make(map[string]string),
+			SyncTime:     now,
+		})
+	}
+	for _, k := range syncState.keys() {
+		if !written[k] {
+			syncState.delete(k)
+		}
+	}
 }
 
 // groupInScope reports whether group g matches any pattern in patterns.
@@ -609,7 +739,7 @@ func computeCurrentScope(cfg TBibGetConfig, keysBasePath string) map[string]bool
 // runSubsetUpSync handles phase 1 of subsequent syncs: parses the bib, detects three-way
 // changes, and merges bib-side edits into the DB. Does not write back the bib or state.
 // Returns true if the sync was aborted (e.g. parse error) — caller must skip phase 2.
-func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath string, existingState TSubsetState) bool {
+func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath string, existingState TSubsetState, syncState *TSyncState) bool {
 	Library.Progress("  State  : %s (%d entries)", statePath, len(existingState))
 
 	// Parse the externally-edited bib. Abort if the parse is incomplete — a partial
@@ -628,8 +758,8 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		outputToCanonical[se.OutputKey] = canonical
 	}
 
-	// Sync group memberships: all groups for BibDesk format; cfg.SyncGroups for JabRef.
-	syncGroupMembershipsFromBib(cfg, bibEntries, outputToCanonical)
+	// Three-way group merge using sync state snapshot as common ancestor.
+	applyGroupSync(cfg, bibEntries, outputToCanonical, syncState)
 
 	// Build a second reverse map: current canonical → stale state key.
 	// Covers the case where the bib was already regenerated to the new canonical key
