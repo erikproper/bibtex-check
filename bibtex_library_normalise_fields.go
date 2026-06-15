@@ -324,6 +324,11 @@ func (l *TBibTeXLibrary) NormaliseFieldValue(field, value string) string {
 		value = strings.TrimSpace(value)
 	}
 
+	// A value that is only braces and whitespace (e.g. "{}", "{{}}", "{ }") is empty.
+	if strings.Trim(value, "{} \t") == "" && strings.ContainsAny(value, "{}") {
+		return ""
+	}
+
 	return value
 }
 

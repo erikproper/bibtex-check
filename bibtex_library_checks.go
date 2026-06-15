@@ -595,11 +595,82 @@ func (l *TBibTeXLibrary) CheckDOIPresence(entry *TBibTeXEntry) {
 	}
 }
 
-// accessedPattern matches "Accessed[:][ ]YYYY[./-]MM[./-]DD" case-insensitively,
-// with optional surrounding punctuation/spaces so it can be stripped from longer notes.
-var accessedPattern = regexp.MustCompile(
-	`(?i)accessed\s*:?\s*(\d{4})[./-](\d{2})[./-](\d{2})`,
+// Accessed-date patterns, tried in order.
+// accessedPatternYMD: YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD
+// accessedPatternDMY: DD.MM.YYYY / DD-MM-YYYY / DD/MM/YYYY
+// accessedPatternWords: DD MonthName YYYY  (e.g. "14 June 2013")
+// All accept an optional "Last " prefix before "Accessed".
+var (
+	accessedPatternYMD = regexp.MustCompile(
+		`(?i)(?:last\s+)?accessed\s*:?\s*(\d{4})[./-](\d{2})[./-](\d{2})`,
+	)
+	accessedPatternDMY = regexp.MustCompile(
+		`(?i)(?:last\s+)?accessed\s*:?\s*(\d{1,2})[./-](\d{1,2})[./-](\d{4})`,
+	)
+	accessedPatternWords = regexp.MustCompile(
+		`(?i)(?:last\s+)?accessed\s+(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\.?\s+(\d{4})`,
+	)
 )
+
+var monthNameToNumber = map[string]string{
+	"january": "01", "february": "02", "march": "03", "april": "04",
+	"may": "05", "june": "06", "july": "07", "august": "08",
+	"september": "09", "october": "10", "november": "11", "december": "12",
+}
+
+// findAccessedDate tries all recognised Accessed-date patterns against s.
+// Returns (matchStart, matchEnd, isoDate) where matchStart==-1 means no match.
+func findAccessedDate(s string) (start, end int, isoDate string) {
+	// YYYY-MM-DD (or YYYY.MM.DD etc.)
+	if m := accessedPatternYMD.FindStringSubmatchIndex(s); m != nil {
+		y, mo, d := s[m[2]:m[3]], s[m[4]:m[5]], s[m[6]:m[7]]
+		return m[0], m[1], y + "-" + mo + "-" + d
+	}
+	// DD MonthName YYYY  — try before DMY so "14 June 2013" doesn't partially match DMY
+	if m := accessedPatternWords.FindStringSubmatchIndex(s); m != nil {
+		d, monName, y := s[m[2]:m[3]], strings.ToLower(s[m[4]:m[5]]), s[m[6]:m[7]]
+		if mon, ok := monthNameToNumber[monName]; ok {
+			if len(d) == 1 {
+				d = "0" + d
+			}
+			return m[0], m[1], y + "-" + mon + "-" + d
+		}
+	}
+	// DD.MM.YYYY
+	if m := accessedPatternDMY.FindStringSubmatchIndex(s); m != nil {
+		d, mo, y := s[m[2]:m[3]], s[m[4]:m[5]], s[m[6]:m[7]]
+		if len(d) == 1 {
+			d = "0" + d
+		}
+		if len(mo) == 1 {
+			mo = "0" + mo
+		}
+		return m[0], m[1], y + "-" + mo + "-" + d
+	}
+	return -1, -1, ""
+}
+
+// stripAccessedSpan removes the matched span [start:end] from s, along with any
+// adjacent separators, and returns the cleaned string. If the result is only empty
+// braces (e.g. "{}" or "{{}}"), returns "".
+func stripAccessedSpan(s string, start, end int) string {
+	cleaned := s[:start]
+	if end < len(s) {
+		rest := strings.TrimLeft(s[end:], " ,;.")
+		if cleaned != "" && rest != "" {
+			cleaned = strings.TrimRight(cleaned, " ,;.") + " " + rest
+		} else {
+			cleaned += rest
+		}
+	}
+	cleaned = strings.TrimSpace(cleaned)
+	// Collapse empty-brace residue: "{}", "{{}}", "{ }", "{{  }}", etc.
+	// If stripping all braces and whitespace leaves nothing, the field is empty.
+	if strings.Trim(cleaned, "{} \t") == "" {
+		return ""
+	}
+	return cleaned
+}
 
 // applyNoteAccessedFix extracts an "Accessed: date" span from a raw fields map.
 // Cleans the note in-place and sets urldate when appropriate (URL present, no stable
@@ -610,23 +681,11 @@ func applyNoteAccessedFix(fields map[string]string) string {
 	if note == "" {
 		return ""
 	}
-	m := accessedPattern.FindStringSubmatchIndex(note)
-	if m == nil {
+	start, end, isoDate := findAccessedDate(note)
+	if start == -1 {
 		return ""
 	}
-	year, month, day := note[m[2]:m[3]], note[m[4]:m[5]], note[m[6]:m[7]]
-	isoDate := year + "-" + month + "-" + day
-
-	cleaned := note[:m[0]]
-	if m[1] < len(note) {
-		rest := strings.TrimLeft(note[m[1]:], " ,;.")
-		if cleaned != "" && rest != "" {
-			cleaned = strings.TrimRight(cleaned, " ,;.") + " " + rest
-		} else {
-			cleaned += rest
-		}
-	}
-	fields["note"] = strings.TrimSpace(cleaned)
+	fields["note"] = stripAccessedSpan(note, start, end)
 
 	if fields["url"] != "" &&
 		fields[DBLPField] == "" &&
@@ -648,16 +707,22 @@ func (l *TBibTeXLibrary) CheckNoteAccessed(entry *TBibTeXEntry) {
 	if isoDate == "" {
 		return
 	}
-	// applyNoteAccessedFix already set urldate when absent; handle the conflict case.
+
+	// Always write the cleaned note back to the DB, regardless of urldate outcome.
+	l.setEntryField(entry, "note", entry.Fields["note"])
+
 	if existing != "" && existing != isoDate {
-		l.ReportEntryWarning(entry.Key,
-			"note has Accessed date %s but urldate is already %s — keeping existing urldate",
-			isoDate, existing)
-		entry.Fields["urldate"] = existing // restore
+		// Challenge: note says isoDate, but urldate is already a different value.
+		q := fmt.Sprintf("Keep existing urldate %s (y) or replace with %s from note (n)?", existing, isoDate)
+		if l.WarningYesNoQuestion(q, "Entry %s: note Accessed date %s conflicts with urldate %s", entry.Key, isoDate, existing) {
+			entry.Fields["urldate"] = existing // user kept existing — restore in-memory map
+		} else {
+			l.setEntryField(entry, "urldate", isoDate)
+		}
 		return
 	}
-	// Sync the DB field from the (possibly modified) Fields map.
-	l.setEntryField(entry, "note", entry.Fields["note"])
+
+	// No conflict: sync urldate to DB if applyNoteAccessedFix set it.
 	if entry.Fields["urldate"] != existing {
 		l.setEntryField(entry, "urldate", entry.Fields["urldate"])
 	}
