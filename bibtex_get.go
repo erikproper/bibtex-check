@@ -819,9 +819,13 @@ func (l *TBibTeXLibrary) entryGetString(
 	}
 
 	// JabRef format: emit groups = {Group A, Group B} for each group this entry belongs to.
+	// Only groups matching cfg.SyncGroups patterns are emitted; local groups stay local.
 	if cfg.Format == "jabref" {
 		var entryGroups []string
 		for group, members := range l.GroupEntries {
+			if !groupInScope(group, cfg.SyncGroups) {
+				continue
+			}
 			if members.Set().Contains(canonicalKey) {
 				entryGroups = append(entryGroups, group)
 			}
@@ -1129,15 +1133,20 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			w.WriteString("\n\n")
 		}
 
-		// Emit the grouping block: verbatim from source bib when available (preserves
-		// hierarchy and ordering), otherwise generate a flat block from GroupEntries.
-		if Library.jabrefGroupingBlock != "" {
+		// Emit the grouping block. When cfg.SyncGroups is set we always generate from
+		// the filtered DB state so stale groups from a previous verbatim block cannot
+		// reappear. When cfg.SyncGroups is empty, replay the verbatim block if available.
+		useVerbatim := Library.jabrefGroupingBlock != "" && len(cfg.SyncGroups) == 0
+		if useVerbatim {
 			w.WriteString(Library.jabrefGroupingBlock)
 			w.WriteString("\n\n")
-		} else if len(Library.GroupEntries) > 0 {
+		} else {
 			type groupLine struct{ name string }
 			var groupLines []groupLine
 			for group, members := range Library.GroupEntries {
+				if !groupInScope(group, cfg.SyncGroups) {
+					continue
+				}
 				hasOutput := false
 				for key := range members.Elements() {
 					if _, ok := canonicalToLocal[Library.MapEntryKey(key)]; ok {
@@ -1184,6 +1193,9 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			type groupRow struct{ name, keys string }
 			var rows []groupRow
 			for group, members := range Library.GroupEntries {
+				if !groupInScope(group, cfg.SyncGroups) {
+					continue
+				}
 				var outputKeys []string
 				for key := range members.Elements() {
 					if outKey := outputKeyFor(Library.MapEntryKey(key)); outKey != "" {
