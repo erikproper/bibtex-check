@@ -1231,6 +1231,15 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 						}
 					}
 				}
+				// Ensure every managed group appears even when it has no members in scope.
+				bibMappings := parseGroupMappings(cfg.SyncGroups)
+				for dbGroup := range Library.GroupEntries {
+					if localGroup := dbGroupToLocal(dbGroup, bibMappings); localGroup != "" {
+						if _, exists := groupToKeys[localGroup]; !exists {
+							groupToKeys[localGroup] = nil
+						}
+					}
+				}
 				for g, outKeys := range groupToKeys {
 					sort.Strings(outKeys)
 					rows = append(rows, groupRow{g, strings.Join(outKeys, ",")})
@@ -1246,10 +1255,9 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 							outputKeys = append(outputKeys, outKey)
 						}
 					}
-					if len(outputKeys) > 0 {
-						sort.Strings(outputKeys)
-						rows = append(rows, groupRow{group, strings.Join(outputKeys, ",")})
-					}
+					// Always emit managed groups, even when empty.
+					sort.Strings(outputKeys)
+					rows = append(rows, groupRow{group, strings.Join(outputKeys, ",")})
 				}
 			}
 			if len(rows) > 0 {
