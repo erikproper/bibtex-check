@@ -476,9 +476,9 @@ func buildEntryGroupsFromSyncState(syncState *TSyncState) map[string][]string {
 }
 
 // runSubsetPhase2 is called from doSync phase 2: re-exports the subset bib from the
-// (now fully updated) DB, writes the new .subset state file, and closes the sync state.
+// (now fully updated) DB, updates the .sync state, and closes it.
 func runSubsetPhase2(cfg TBibGetConfig, baseDir string, syncState *TSyncState) {
-	sourcePath, keysBasePath, statePath := resolveSubsetPaths(cfg, baseDir)
+	sourcePath, keysBasePath, _ := resolveSubsetPaths(cfg, baseDir)
 
 	cfg.entryGroups = buildEntryGroupsFromSyncState(syncState)
 	writtenPairs := writePullSync(cfg, baseDir)
@@ -488,11 +488,8 @@ func runSubsetPhase2(cfg TBibGetConfig, baseDir string, syncState *TSyncState) {
 	}
 	rewriteKeysFile(keysBasePath, writtenPairs, cfg.KeyMapping)
 
-	newState := buildSubsetState(writtenPairs, sourcePath)
-	writeSubsetState(statePath, newState)
-	Library.Progress("  Updated .subset state: %d entries", len(newState))
-
-	buildSyncStateSnapshot(cfg, writtenPairs, syncState)
+	buildSyncStateSnapshot(cfg, writtenPairs, sourcePath, syncState)
+	Library.Progress("  Updated .sync state: %d entries", len(writtenPairs))
 	syncState.close()
 }
 
@@ -512,12 +509,8 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 	rewriteKeysFile(keysBasePath, writtenPairs, cfg.KeyMapping)
 	Library.Progress("  Written .keys: %d entries", len(writtenPairs))
 
-	// Build initial state by re-parsing the written bib for accurate BibHash values.
-	newState := buildSubsetState(writtenPairs, sourcePath)
-	writeSubsetState(statePath, newState)
-	Library.Progress("  Written .subset state: %d entries", len(newState))
-
-	buildSyncStateSnapshot(cfg, writtenPairs, syncState)
+	buildSyncStateSnapshot(cfg, writtenPairs, sourcePath, syncState)
+	Library.Progress("  Written .sync state: %d entries", len(writtenPairs))
 	syncState.close()
 }
 
@@ -649,29 +642,44 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 	}
 }
 
-// buildSyncStateSnapshot records the output key, DB fingerprint, and group
-// memberships for every entry written in this sync cycle. The Groups field is
-// already correct from applyGroupSync (all managed + local groups from bib,
-// plus any DB-added managed groups); we preserve it and only update the
-// identity/hash fields.
-func buildSyncStateSnapshot(cfg TBibGetConfig, writtenPairs []TBibGetPair, syncState *TSyncState) {
+// buildSyncStateSnapshot records the output key, DB fingerprint, BibHash, and group
+// memberships for every entry written in this sync cycle.
+// sourcePath is the written bib file; it is re-parsed to compute accurate BibHash
+// values that reflect the actual output (field exclusions, format options, etc.).
+func buildSyncStateSnapshot(cfg TBibGetConfig, writtenPairs []TBibGetPair, sourcePath string, syncState *TSyncState) {
 	if syncState == nil {
 		return
 	}
+
+	// Re-parse the written bib to get accurate BibHash per output key.
+	outputToCanonical := map[string]string{}
+	for _, p := range writtenPairs {
+		outputToCanonical[p.localKey] = p.canonicalKey
+	}
+	bibEntries, _ := Library.parseHarvestBib(sourcePath)
+	bibHashByLocalKey := map[string]string{}
+	for _, e := range bibEntries {
+		bibHashByLocalKey[e.Key] = subsetBibFingerprint(e, outputToCanonical)
+	}
+
 	now := time.Now().Unix()
 	written := map[string]bool{}
 	for _, p := range writtenPairs {
 		written[p.canonicalKey] = true
 		groups := TStringSetNew()
 		if se := syncState.get(p.canonicalKey); se != nil {
-			// Preserve all groups recorded during applyGroupSync (managed + local).
 			groups = se.Groups
+		}
+		bibHash := bibHashByLocalKey[p.localKey]
+		if bibHash == "" {
+			bibHash = subsetDBFingerprint(p.canonicalKey)
 		}
 		syncState.set(TSyncEntry{
 			CanonicalKey: p.canonicalKey,
 			OutputKey:    p.localKey,
 			Groups:       groups,
 			DBHash:       subsetDBFingerprint(p.canonicalKey),
+			BibHash:      bibHash,
 			Fields:       make(map[string]string),
 			SyncTime:     now,
 		})
@@ -776,8 +784,14 @@ func computeCurrentScope(cfg TBibGetConfig, keysBasePath string) map[string]bool
 // runSubsetUpSync handles phase 1 of subsequent syncs: parses the bib, detects three-way
 // changes, and merges bib-side edits into the DB. Does not write back the bib or state.
 // Returns true if the sync was aborted (e.g. parse error) — caller must skip phase 2.
+// existingState is the legacy .subset file (kept for migration; .sync state takes precedence).
 func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath string, existingState TSubsetState, syncState *TSyncState) bool {
-	Library.Progress("  State  : %s (%d entries)", statePath, len(existingState))
+	syncEntries := syncState.keys()
+	stateCount := len(syncEntries)
+	if stateCount == 0 {
+		stateCount = len(existingState)
+	}
+	Library.Progress("  State  : %s (%d entries)", statePath, stateCount)
 
 	// Parse the externally-edited bib. Abort if the parse is incomplete — a partial
 	// result would cause healthy entries to be misclassified as deleted.
@@ -788,11 +802,16 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		return true
 	}
 
-	// Build reverse map: output key → state entry, for matching bib entries back to
-	// canonical library keys.
+	// Build reverse map: output key → canonical key.
+	// .sync state preferred; .subset state as migration fallback.
 	outputToCanonical := map[string]string{}
 	for canonical, se := range existingState {
 		outputToCanonical[se.OutputKey] = canonical
+	}
+	for _, canonKey := range syncEntries {
+		if se := syncState.get(canonKey); se != nil && se.OutputKey != "" {
+			outputToCanonical[se.OutputKey] = canonKey
+		}
 	}
 
 	// Three-way group merge using sync state snapshot as common ancestor.
@@ -800,14 +819,19 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 
 	// Build a second reverse map: current canonical → stale state key.
 	// Covers the case where the bib was already regenerated to the new canonical key
-	// (phase 2 ran after a merge) but the state file still has the old key. Without
-	// this map, the new canonical isn't found in outputToCanonical and harvestKeyMatch
-	// returns it directly — but the old state key is never marked as seen, so it fires
-	// a spurious deletion prompt.
+	// (phase 2 ran after a merge) but the state file still has the old key.
 	resolvedToStateKey := map[string]string{}
-	for stateCanonical := range existingState {
-		if resolved := Library.MapEntryKey(stateCanonical); resolved != stateCanonical && Library.EntryExists(resolved) {
-			resolvedToStateKey[resolved] = stateCanonical
+	allStateKeys := map[string]bool{}
+	for canonical := range existingState {
+		allStateKeys[canonical] = true
+		if resolved := Library.MapEntryKey(canonical); resolved != canonical && Library.EntryExists(resolved) {
+			resolvedToStateKey[resolved] = canonical
+		}
+	}
+	for _, canonKey := range syncEntries {
+		allStateKeys[canonKey] = true
+		if resolved := Library.MapEntryKey(canonKey); resolved != canonKey && Library.EntryExists(resolved) {
+			resolvedToStateKey[resolved] = canonKey
 		}
 	}
 
@@ -823,7 +847,6 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 	type categorizedEntry struct {
 		bibEntry       TBibTeXEntry
 		canonicalKey   string
-		stateEntry     TSubsetEntry
 		currentBibHash string
 		currentDBHash  string
 		status         subsetStatus
@@ -883,13 +906,23 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		// Entry is a known library entry but not yet in the subset state — it was
 		// auto-included as a crossref parent, not edited by the user. Accept silently;
 		// phase 2 will write it to the bib and add it to the state.
-		se, inState := existingState[stateKey]
-		if !inState {
-			se, inState = existingState[canonical]
+		// Look up last-synced hashes: .sync state preferred, .subset fallback.
+		lookupKeys := []string{stateKey, canonical}
+		if oldKey, ok := resolvedToStateKey[canonical]; ok {
+			lookupKeys = append(lookupKeys, oldKey)
 		}
-		if !inState {
-			if oldKey, ok := resolvedToStateKey[canonical]; ok {
-				se, inState = existingState[oldKey]
+		snapshotBibHash, snapshotDBHash, inState := "", "", false
+		for _, lk := range lookupKeys {
+			if lk == "" {
+				continue
+			}
+			if ss := syncState.get(lk); ss != nil {
+				snapshotBibHash, snapshotDBHash, inState = ss.BibHash, ss.DBHash, true
+				break
+			}
+			if sub, ok := existingState[lk]; ok {
+				snapshotBibHash, snapshotDBHash, inState = sub.BibHash, sub.DBHash, true
+				break
 			}
 		}
 		if !inState {
@@ -903,8 +936,8 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		currentBibHash := subsetBibFingerprint(e, outputToCanonical)
 		currentDBHash := subsetDBFingerprint(canonical)
 
-		bibChanged := currentBibHash != se.BibHash
-		dbChanged := currentDBHash != se.DBHash
+		bibChanged := currentBibHash != snapshotBibHash
+		dbChanged := currentDBHash != snapshotDBHash
 
 		// When the stored state is stale (e.g. bib output format changed between
 		// syncs), bibChanged may fire even though the bib accurately reflects the
@@ -929,7 +962,6 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 		toProcess = append(toProcess, categorizedEntry{
 			bibEntry:       e,
 			canonicalKey:   canonical,
-			stateEntry:     se,
 			currentBibHash: currentBibHash,
 			currentDBHash:  currentDBHash,
 			status:         status,
@@ -947,7 +979,7 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 	currentScope := computeCurrentScope(cfg, keysBasePath)
 	var deletedCanonicals []string
 	outOfScope := 0
-	for canonical := range existingState {
+	for canonical := range allStateKeys {
 		if !bibSeenCanonicals[canonical] {
 			if isDeletedEntry(canonical) {
 				continue
@@ -1025,7 +1057,12 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath, statePath stri
 			if quit || (stepN > 0 && questions >= stepN) {
 				break
 			}
-			outputKey := existingState[canonical].OutputKey
+			outputKey := ""
+			if ss := syncState.get(canonical); ss != nil {
+				outputKey = ss.OutputKey
+			} else {
+				outputKey = existingState[canonical].OutputKey
+			}
 			if deleteSubsetEntry(canonical, localFilesDir, outputKey, cfg.TrustedSubset) {
 				delete(existingState, canonical)
 			}

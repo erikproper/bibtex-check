@@ -1319,8 +1319,11 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(md5Path, []byte(newMD5+"\n"), 0644); err != nil {
-		fmt.Fprintln(os.Stderr, "Cannot write MD5 file:", err)
+	// Subset mode owns its bib and always regenerates it — no manual-edit detection needed.
+	if cfg.Mode != "subset" {
+		if err := os.WriteFile(md5Path, []byte(newMD5+"\n"), 0644); err != nil {
+			fmt.Fprintln(os.Stderr, "Cannot write MD5 file:", err)
+		}
 	}
 
 	// Return only pairs that were actually written (entry exists in library).

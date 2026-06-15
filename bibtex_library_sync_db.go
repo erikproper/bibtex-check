@@ -41,6 +41,7 @@ type TSyncEntry struct {
 	Groups       TStringSet        // all group assignments for this entry in the bib (managed + local)
 	PDFMd5       string            // MD5 of local PDF copy (pdf_files="local"; "" otherwise)
 	DBHash       string            // subsetDBFingerprint at last sync (for db-changed detection)
+	BibHash      string            // subsetBibFingerprint of the entry as written (for bib-changed detection)
 	SyncTime     int64             // Unix timestamp of last sync
 }
 
@@ -192,6 +193,7 @@ CREATE TABLE IF NOT EXISTS sync_manifest (
     canonical_key TEXT NOT NULL PRIMARY KEY,
     output_key    TEXT NOT NULL,
     db_hash       TEXT NOT NULL DEFAULT '',
+    bib_hash      TEXT NOT NULL DEFAULT '',
     sync_time     INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS sync_entries (
@@ -230,12 +232,12 @@ func (s *TSyncState) ensureSchema() bool {
 func (s *TSyncState) loadAll() {
 	// Load manifest (canonical_key → output_key, sync_time).
 	manifest := map[string]*TSyncEntry{}
-	rows, err := s.db.Query(`SELECT canonical_key, output_key, db_hash, sync_time FROM sync_manifest`)
+	rows, err := s.db.Query(`SELECT canonical_key, output_key, db_hash, bib_hash, sync_time FROM sync_manifest`)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var e TSyncEntry
-			rows.Scan(&e.CanonicalKey, &e.OutputKey, &e.DBHash, &e.SyncTime)
+			rows.Scan(&e.CanonicalKey, &e.OutputKey, &e.DBHash, &e.BibHash, &e.SyncTime)
 			e.Fields = make(map[string]string)
 			e.Groups = TStringSetNew()
 			manifest[e.CanonicalKey] = &e
@@ -325,8 +327,8 @@ func (s *TSyncState) flush() error {
 			syncTime = now
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO sync_manifest (canonical_key, output_key, db_hash, sync_time) VALUES (?, ?, ?, ?)`,
-			e.CanonicalKey, e.OutputKey, e.DBHash, syncTime,
+			`INSERT INTO sync_manifest (canonical_key, output_key, db_hash, bib_hash, sync_time) VALUES (?, ?, ?, ?, ?)`,
+			e.CanonicalKey, e.OutputKey, e.DBHash, e.BibHash, syncTime,
 		); err != nil {
 			tx.Rollback()
 			return err
@@ -440,7 +442,7 @@ var syncTableNames = map[string]string{
 
 // syncTableColumns defines the column list for each table (in export/import order).
 var syncTableColumns = map[string][]string{
-	"sync_manifest": {"canonical_key", "output_key", "db_hash", "sync_time"},
+	"sync_manifest": {"canonical_key", "output_key", "db_hash", "bib_hash", "sync_time"},
 	"sync_entries":  {"canonical_key", "field", "value"},
 	"sync_groups":   {"canonical_key", "group_name"},
 	"sync_pdfs":     {"canonical_key", "pdf_md5"},
