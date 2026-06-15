@@ -106,6 +106,7 @@ const (
 	ProgressWritingGetBib                  = "Writing get bib file %s"
 	ProgressBuildingSyncBib               = "Building sync bib %s"
 	WarningKeysFileUnknownKey             = "Keys file %s references unknown library key %s (local key: %s) — entry skipped"
+	WarningKeysFileDuplicateCanonical     = "Keys file %s: canonical key %s is referenced by two local keys (%s and %s) — both kept; fix in LaTeX source"
 	WarningGetBibFileModified              = "Get-bib file %s has been manually edited since last generation."
 	QuestionGetBibOverwrite                = "Overwrite anyway?"
 	ProgressWritingPDFConfirmedOkFile      = "Writing PDF confirmed-OK file %s"

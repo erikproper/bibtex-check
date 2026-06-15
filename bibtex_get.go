@@ -907,7 +907,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	// Resolve all canonical keys through the key alias / oldies table.
 	// Bare keys (localKey == "") are resolved to their preferred alias when
 	// key_mapping is on; in no-mapping mode bare keys stay as canonical keys.
-	resolvedSeen := map[string]bool{}
+	resolvedSeen := map[string]string{} // canonical → first local key seen
 	for i, p := range pairs {
 		resolved := Library.MapEntryKey(p.canonicalKey)
 		if resolved == p.canonicalKey {
@@ -918,12 +918,16 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		}
 		pairs[i].canonicalKey = resolved
 		if p.localKey == "" && cfg.KeyMapping {
-			// Bare key: assign preferred alias (or canonical if none exists).
-			preferred := Library.PreferredKey(resolved)
-			if preferred == "" {
-				preferred = resolved
+			// Bare key: preserve the original key as the local alias unless it IS the
+			// canonical (didn't move through any table), in which case upgrade to the
+			// preferred alias so the output uses the human-readable form.
+			localKey := p.canonicalKey
+			if localKey == resolved {
+				if preferred := Library.PreferredKey(resolved); preferred != "" {
+					localKey = preferred
+				}
 			}
-			pairs[i].localKey = preferred
+			pairs[i].localKey = localKey
 			keysModified = true
 		}
 		if pairs[i].localKey != p.localKey || pairs[i].canonicalKey != p.canonicalKey {
@@ -933,14 +937,13 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		if !cfg.KeyMapping && p.localKey != "" {
 			keysModified = true
 		}
-		// Homonym check: warn when the same canonical maps to a different local key.
-		if existing, seen := resolvedSeen[resolved]; seen {
-			_ = existing
-			fmt.Fprintf(os.Stderr, "WARNING: %s: canonical key %q appears more than once (first kept)\n", mapFilePath+KeysFileExtension, resolved)
-			pairs[i] = TBibGetPair{} // mark as skip
-			continue
+		// Homonym check: warn when the same canonical maps to more than one local key.
+		// Both entries are kept — LaTeX source may reference both local keys.
+		if firstLocal, seen := resolvedSeen[resolved]; seen {
+			Library.Warning(WarningKeysFileDuplicateCanonical, mapFilePath+KeysFileExtension, resolved, firstLocal, pairs[i].localKey)
+		} else {
+			resolvedSeen[resolved] = pairs[i].localKey
 		}
-		resolvedSeen[resolved] = true
 	}
 	// Remove skip-marked entries.
 	filtered := pairs[:0]
