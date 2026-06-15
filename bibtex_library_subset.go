@@ -583,56 +583,40 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 		}
 
 		// Step 2: three-way merge for managed groups using snapGroups as common ancestor.
-		bibGroups := TStringSetNew()
-		for g := range allBibGroups.Elements() {
-			if groupInScope(g, cfg.SyncGroups) {
-				bibGroups.Add(g)
+		// Expansion is purely DB-side: iterate Library.GroupEntries and map to local names.
+		mappings := parseGroupMappings(cfg.SyncGroups)
+		for dbGroup := range Library.GroupEntries {
+			localGroup := dbGroupToLocal(dbGroup, mappings)
+			if localGroup == "" {
+				continue // not in scope
 			}
-		}
-
-		candidates := TStringSetNew()
-		for g := range bibGroups.Elements() {
-			candidates.Add(g)
-		}
-		for g := range snapGroups.Elements() {
-			if groupInScope(g, cfg.SyncGroups) {
-				candidates.Add(g)
-			}
-		}
-		for g, members := range Library.GroupEntries {
-			if groupInScope(g, cfg.SyncGroups) && members.Contains(canon) {
-				candidates.Add(g)
-			}
-		}
-
-		for g := range candidates.Elements() {
-			bibHas := bibGroups.Contains(g)
-			snapHas := snapGroups.Contains(g)
-			dbMembers := Library.GroupEntries[g]
+			dbMembers := Library.GroupEntries[dbGroup]
 			dbHas := dbMembers.Contains(canon)
+			bibHas := allBibGroups.Contains(localGroup)
+			snapHas := snapGroups.Contains(localGroup)
 
 			switch {
 			case bibHas && !dbHas && !snapHas:
-				// Bib added → push to DB.
-				Library.GroupEntries.AddValueToStringSetMap(g, canon)
-				if err := bibExec(`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`, g, canon); err != nil {
-					Library.Warning("Group sync insert failed (%s → %q): %s", canon, g, err)
+				// Bib added this entry to an existing DB group → push to DB.
+				Library.GroupEntries.AddValueToStringSetMap(dbGroup, canon)
+				if err := bibExec(`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`, dbGroup, canon); err != nil {
+					Library.Warning("Group sync insert failed (%s → %q): %s", canon, dbGroup, err)
 				} else {
-					Library.Progress("Group sync: +%s → %q", canon, g)
+					Library.Progress("Group sync: +%s → %q (local: %q)", canon, dbGroup, localGroup)
 				}
 			case !bibHas && dbHas && snapHas:
 				// Bib removed → remove from DB.
-				Library.GroupEntries.DeleteValueFromStringSetMap(g, canon)
-				if err := bibExec(`DELETE FROM bib_groups WHERE group_name=? AND entry_key=?`, g, canon); err != nil {
-					Library.Warning("Group sync delete failed (%s → %q): %s", canon, g, err)
+				Library.GroupEntries.DeleteValueFromStringSetMap(dbGroup, canon)
+				if err := bibExec(`DELETE FROM bib_groups WHERE group_name=? AND entry_key=?`, dbGroup, canon); err != nil {
+					Library.Warning("Group sync delete failed (%s → %q): %s", canon, dbGroup, err)
 				} else {
-					Library.Progress("Group sync: -%s → %q", canon, g)
+					Library.Progress("Group sync: -%s → %q (local: %q)", canon, dbGroup, localGroup)
 				}
 			case !bibHas && dbHas && !snapHas:
-				// DB added independently → propagate to sync state so phase 2 writes it to bib.
+				// DB added independently → add local name to sync state so phase 2 writes it to bib.
 				if se := syncState.get(canon); se != nil {
 					updated := *se
-					updated.Groups.Add(g)
+					updated.Groups.Add(localGroup)
 					syncState.set(updated)
 				}
 			}
@@ -674,10 +658,56 @@ func buildSyncStateSnapshot(cfg TBibGetConfig, writtenPairs []TBibGetPair, syncS
 	}
 }
 
+// TGroupMapping holds one group synchronisation rule from the config.
+// DBPattern is a glob matched against DB (bib_groups) group names.
+// LocalPattern is the name used in the local bib file; a * in LocalPattern is
+// replaced by the portion of the DB group name captured by * in DBPattern.
+// When DBPattern has no *, LocalPattern is used verbatim (direct rename).
+type TGroupMapping struct {
+	DBPattern    string
+	LocalPattern string
+}
+
+// parseGroupMappings converts cfg.SyncGroups into []TGroupMapping.
+// Each element may be "DBPattern" (same local name) or "DBPattern:LocalPattern".
+func parseGroupMappings(patterns []string) []TGroupMapping {
+	m := make([]TGroupMapping, 0, len(patterns))
+	for _, p := range patterns {
+		if idx := strings.Index(p, ":"); idx >= 0 {
+			m = append(m, TGroupMapping{p[:idx], p[idx+1:]})
+		} else {
+			m = append(m, TGroupMapping{p, p})
+		}
+	}
+	return m
+}
+
+// dbGroupToLocal maps a DB group name to its local bib name using the first
+// matching mapping. Returns "" when no mapping matches (group not in scope).
+// Expansion is always DB-side: only DB groups that exist are considered.
+func dbGroupToLocal(dbGroup string, mappings []TGroupMapping) string {
+	for _, m := range mappings {
+		if ok, _ := filepath.Match(m.DBPattern, dbGroup); !ok {
+			continue
+		}
+		if !strings.Contains(m.DBPattern, "*") {
+			return m.LocalPattern
+		}
+		parts := strings.SplitN(m.DBPattern, "*", 2)
+		prefix, suffix := parts[0], parts[1]
+		if !strings.HasPrefix(dbGroup, prefix) || !strings.HasSuffix(dbGroup, suffix) {
+			continue
+		}
+		captured := dbGroup[len(prefix) : len(dbGroup)-len(suffix)]
+		return strings.Replace(m.LocalPattern, "*", captured, 1)
+	}
+	return ""
+}
+
 // groupInScope reports whether group g matches any pattern in patterns.
 // Patterns support the same wildcards as filepath.Match: * matches any sequence
 // of non-separator characters, ? matches any single character.
-// Examples: "ISE", "erik-*", "*".
+// Used for non-subset modes where DB and local group names are identical.
 func groupInScope(g string, patterns []string) bool {
 	for _, p := range patterns {
 		if matched, _ := filepath.Match(p, g); matched {

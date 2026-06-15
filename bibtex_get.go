@@ -1358,6 +1358,21 @@ func applyJSONOverlay(cfg *TBibGetConfig, data []byte, path string) bool {
 }
 
 
+// enforceInfoPolicy silently resets information-limiting options to their permissive
+// defaults for subset and full modes. Only follow mode may restrict output fields.
+func enforceInfoPolicy(cfg TBibGetConfig) TBibGetConfig {
+	if cfg.Mode != "follow" {
+		cfg.IncludeDOI = true
+		cfg.IncludeISBN = true
+		cfg.IncludeURL = true
+		cfg.IncludeDblp = true
+		cfg.UrldateAsNote = false
+		cfg.BiberMode = false
+		cfg.Shorten = false
+	}
+	return cfg
+}
+
 // readFileConfig reads the per-file sync config for a single bib file and overlays
 // it on baseCfg. If the file exists but has no "mode" key, "harvest" is written back.
 // If the file does not exist, baseCfg is returned with mode defaulting to "pull".
@@ -1654,6 +1669,7 @@ func doSync(filter string) {
 		if !ok {
 			os.Exit(1)
 		}
+		cfg = enforceInfoPolicy(cfg)
 		files = append(files, fileEntry{cfg: cfg})
 		if !cmdPull && (cfg.Mode == "full" || cfg.Mode == "harvest" || cfg.Mode == "subset") {
 			needsWrite = true
