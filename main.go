@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.124"
+const AppVersion = "24.125"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1779,6 +1779,9 @@ func main() {
 		cmdExport tableListFlag
 		cmdImport tableListFlag
 
+		cmdExportSync string // -export_sync <table> <stem>: export table from <stem>.sync to <stem>.tables/<table>.csv
+		cmdImportSync string // -import_sync <table> <stem>: import into <stem>.sync from <stem>.tables/<table>.csv
+
 		cmdImportAllCSV bool // legacy migration helper; kept for migrate.sh compat
 		cmdImportBib    bool
 
@@ -1838,6 +1841,8 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	// Unified table export / import (v23.0)
 	flag.Var(&cmdExport, "export", "export tables to <base>.tables/ (bare = all; or comma-separated table names)")
 	flag.Var(&cmdImport, "import", "import tables from <base>.tables/, replace-all with confirmation (bare = all; or comma-separated table names)")
+	flag.StringVar(&cmdExportSync, "export_sync", "", "export a .sync table to CSV: -export_sync <table|all> <stem>")
+	flag.StringVar(&cmdImportSync, "import_sync", "", "import a .sync table from CSV: -import_sync <table|all> <stem>")
 	flag.BoolVar(&cmdImportAllCSV, "import_all_csv", false, "import all mapping CSVs (migration helper for migrate.sh)")
 	flag.BoolVar(&cmdImportBib, "import_bib", false, "import a bib file into the DB (requires filename argument; use to initialise or reinitialise bib_entries)")
 	flag.BoolVar(&cmdHarvest, "harvest", false, "interactively ingest entries from a bib file (path from args) or stdin into the library")
@@ -2229,6 +2234,20 @@ case cmdAlignBooktitleCountries:
 		if openLibraryToUpdate() {
 			ImportTables(importSpec, &Library)
 		}
+
+	case cmdExportSync != "":
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -export_sync <table|all> <sync-file-stem>")
+			os.Exit(1)
+		}
+		DoExportSync(cmdExportSync, args[0])
+
+	case cmdImportSync != "":
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: -import_sync <table|all> <sync-file-stem>")
+			os.Exit(1)
+		}
+		DoImportSync(cmdImportSync, args[0])
 
 	case cmdImportAllCSV:
 		// Does not require ValidBibDb: mapping tables are imported independently of bib entries.

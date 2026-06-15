@@ -25,9 +25,11 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -335,5 +337,215 @@ func (s *TSyncState) flush() error {
 		}
 	}
 
+	return tx.Commit()
+}
+
+// --- export / import ---
+
+// syncTableNames maps the short names accepted on the CLI to the actual SQL table names.
+var syncTableNames = map[string]string{
+	"manifest": "sync_manifest",
+	"entries":  "sync_entries",
+	"groups":   "sync_groups",
+	"pdfs":     "sync_pdfs",
+}
+
+// syncTableColumns defines the column list for each table (in export/import order).
+var syncTableColumns = map[string][]string{
+	"sync_manifest": {"canonical_key", "output_key", "db_hash", "sync_time"},
+	"sync_entries":  {"canonical_key", "field", "value"},
+	"sync_groups":   {"canonical_key", "group_name"},
+	"sync_pdfs":     {"canonical_key", "pdf_md5"},
+}
+
+// resolveSyncPath returns (syncFilePath, tablesDir) from a stem (no extension) or
+// a full path including .sync.
+func resolveSyncPath(stem string) (syncPath, tablesDir string) {
+	stem = strings.TrimSuffix(stem, SyncDbExtension)
+	return stem + SyncDbExtension, stem + ".tables"
+}
+
+// openSyncDirect opens the .sync SQLite at path for direct read/write (no cache
+// isolation — for manual export/import operations only).
+func openSyncDirect(syncPath string) (*sql.DB, error) {
+	conn, err := sql.Open(sqliteDatabaseDriver, syncPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Exec(syncSchemaSQL); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// DoExportSync exports the named sync tables (or "all") from stemPath.sync to
+// stemPath.tables/<table>.csv. Called from the -export_sync CLI handler.
+func DoExportSync(tableSpec, stemPath string) {
+	syncPath, tablesDir := resolveSyncPath(stemPath)
+	if !FileExists(syncPath) {
+		fmt.Fprintf(os.Stderr, "export_sync: %s not found\n", syncPath)
+		return
+	}
+	conn, err := openSyncDirect(syncPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "export_sync: cannot open %s: %s\n", syncPath, err)
+		return
+	}
+	defer conn.Close()
+
+	if err := os.MkdirAll(tablesDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "export_sync: cannot create %s: %s\n", tablesDir, err)
+		return
+	}
+
+	tables := resolveSyncTableSpec(tableSpec)
+	for _, tbl := range tables {
+		csvPath := filepath.Join(tablesDir, tbl+".csv")
+		if err := exportSyncTableToCSV(conn, tbl, csvPath); err != nil {
+			fmt.Fprintf(os.Stderr, "export_sync: %s: %s\n", tbl, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Exported %s → %s\n", tbl, csvPath)
+		}
+	}
+}
+
+// DoImportSync imports the named sync tables (or "all") from stemPath.tables/<table>.csv
+// into stemPath.sync. Called from the -import_sync CLI handler.
+func DoImportSync(tableSpec, stemPath string) {
+	syncPath, tablesDir := resolveSyncPath(stemPath)
+	conn, err := openSyncDirect(syncPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "import_sync: cannot open %s: %s\n", syncPath, err)
+		return
+	}
+	defer conn.Close()
+
+	tables := resolveSyncTableSpec(tableSpec)
+	for _, tbl := range tables {
+		csvPath := filepath.Join(tablesDir, tbl+".csv")
+		if !FileExists(csvPath) {
+			fmt.Fprintf(os.Stderr, "import_sync: %s not found — skipped\n", csvPath)
+			continue
+		}
+		if err := importSyncTableFromCSV(conn, tbl, csvPath); err != nil {
+			fmt.Fprintf(os.Stderr, "import_sync: %s: %s\n", tbl, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Imported %s ← %s\n", tbl, csvPath)
+		}
+	}
+}
+
+func resolveSyncTableSpec(spec string) []string {
+	if spec == "all" {
+		return []string{"sync_manifest", "sync_entries", "sync_groups", "sync_pdfs"}
+	}
+	short := strings.ToLower(strings.TrimSpace(spec))
+	if full, ok := syncTableNames[short]; ok {
+		return []string{full}
+	}
+	// Accept full names (sync_manifest etc.) directly.
+	if _, ok := syncTableColumns[short]; ok {
+		return []string{short}
+	}
+	fmt.Fprintf(os.Stderr, "export/import_sync: unknown table %q (valid: manifest, entries, groups, pdfs, all)\n", spec)
+	return nil
+}
+
+func exportSyncTableToCSV(conn *sql.DB, tbl, csvPath string) error {
+	cols, ok := syncTableColumns[tbl]
+	if !ok {
+		return fmt.Errorf("unknown table %q", tbl)
+	}
+	rows, err := conn.Query(fmt.Sprintf("SELECT %s FROM %s ORDER BY 1, 2", strings.Join(cols, ", "), tbl))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	f, err := os.Create(csvPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	fmt.Fprintf(f, "%s\n", strings.Join(cols, ";"))
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			return err
+		}
+		parts := make([]string, len(cols))
+		for i, v := range vals {
+			switch t := v.(type) {
+			case string:
+				parts[i] = t
+			case int64:
+				parts[i] = fmt.Sprintf("%d", t)
+			case []byte:
+				parts[i] = string(t)
+			default:
+				parts[i] = fmt.Sprintf("%v", t)
+			}
+		}
+		fmt.Fprintf(f, "%s\n", strings.Join(parts, ";"))
+	}
+	return rows.Err()
+}
+
+func importSyncTableFromCSV(conn *sql.DB, tbl, csvPath string) error {
+	cols, ok := syncTableColumns[tbl]
+	if !ok {
+		return fmt.Errorf("unknown table %q", tbl)
+	}
+	data, err := os.ReadFile(csvPath)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) < 1 {
+		return nil
+	}
+	// Skip header line.
+	lines = lines[1:]
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM " + tbl); err != nil {
+		tx.Rollback()
+		return err
+	}
+	placeholders := strings.Repeat("?,", len(cols))
+	placeholders = placeholders[:len(placeholders)-1]
+	stmt, err := tx.Prepare(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tbl, strings.Join(cols, ","), placeholders))
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ";", len(cols))
+		for len(parts) < len(cols) {
+			parts = append(parts, "")
+		}
+		args := make([]any, len(cols))
+		for i, p := range parts {
+			args[i] = p
+		}
+		if _, err := stmt.Exec(args...); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("inserting row %q: %w", line, err)
+		}
+	}
 	return tx.Commit()
 }
