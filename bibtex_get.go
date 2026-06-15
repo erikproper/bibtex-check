@@ -910,8 +910,11 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	resolvedSeen := map[string]bool{}
 	for i, p := range pairs {
 		resolved := Library.MapEntryKey(p.canonicalKey)
-		if resolved == "" {
-			resolved = p.canonicalKey
+		if resolved == p.canonicalKey {
+			// Key didn't move through the alias table — try hints (preferred aliases, source keys).
+			if hint, ok := Library.HintToKey[p.canonicalKey]; ok {
+				resolved = Library.MapEntryKey(hint)
+			}
 		}
 		pairs[i].canonicalKey = resolved
 		if p.localKey == "" && cfg.KeyMapping {
