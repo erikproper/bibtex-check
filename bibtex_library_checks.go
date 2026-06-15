@@ -595,6 +595,74 @@ func (l *TBibTeXLibrary) CheckDOIPresence(entry *TBibTeXEntry) {
 	}
 }
 
+// accessedPattern matches "Accessed[:][ ]YYYY[./-]MM[./-]DD" case-insensitively,
+// with optional surrounding punctuation/spaces so it can be stripped from longer notes.
+var accessedPattern = regexp.MustCompile(
+	`(?i)accessed\s*:?\s*(\d{4})[./-](\d{2})[./-](\d{2})`,
+)
+
+// applyNoteAccessedFix extracts an "Accessed: date" span from a raw fields map.
+// Cleans the note in-place and sets urldate when appropriate (URL present, no stable
+// identifier, urldate not already set). Returns the extracted ISO date, or "".
+// Used for pre-normalising harvest candidates before display, and by CheckNoteAccessed.
+func applyNoteAccessedFix(fields map[string]string) string {
+	note := fields["note"]
+	if note == "" {
+		return ""
+	}
+	m := accessedPattern.FindStringSubmatchIndex(note)
+	if m == nil {
+		return ""
+	}
+	year, month, day := note[m[2]:m[3]], note[m[4]:m[5]], note[m[6]:m[7]]
+	isoDate := year + "-" + month + "-" + day
+
+	cleaned := note[:m[0]]
+	if m[1] < len(note) {
+		rest := strings.TrimLeft(note[m[1]:], " ,;.")
+		if cleaned != "" && rest != "" {
+			cleaned = strings.TrimRight(cleaned, " ,;.") + " " + rest
+		} else {
+			cleaned += rest
+		}
+	}
+	fields["note"] = strings.TrimSpace(cleaned)
+
+	if fields["url"] != "" &&
+		fields[DBLPField] == "" &&
+		fields["doi"] == "" &&
+		fields["isbn"] == "" &&
+		fields["issn"] == "" &&
+		fields["urldate"] == "" {
+		fields["urldate"] = isoDate
+	}
+	return isoDate
+}
+
+// CheckNoteAccessed detects "Accessed: YYYY-MM-DD" (and variants) in the note field,
+// promotes the date to urldate when appropriate, and removes the accessed span from
+// the note. Called before CheckURLDateNeed so the derived urldate feeds into that check.
+func (l *TBibTeXLibrary) CheckNoteAccessed(entry *TBibTeXEntry) {
+	existing := entry.FieldValue("urldate")
+	isoDate := applyNoteAccessedFix(entry.Fields)
+	if isoDate == "" {
+		return
+	}
+	// applyNoteAccessedFix already set urldate when absent; handle the conflict case.
+	if existing != "" && existing != isoDate {
+		l.ReportEntryWarning(entry.Key,
+			"note has Accessed date %s but urldate is already %s — keeping existing urldate",
+			isoDate, existing)
+		entry.Fields["urldate"] = existing // restore
+		return
+	}
+	// Sync the DB field from the (possibly modified) Fields map.
+	l.setEntryField(entry, "note", entry.Fields["note"])
+	if entry.Fields["urldate"] != existing {
+		l.setEntryField(entry, "urldate", entry.Fields["urldate"])
+	}
+}
+
 func (l *TBibTeXLibrary) CheckURLDateNeed(entry *TBibTeXEntry) {
 	if entry.FieldValue("urldate") != "" {
 		if entry.FieldValue("url") == "" ||
@@ -1151,6 +1219,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckISBNFromDOI(entry)
 			l.CheckTitlePresence(entry)
 			l.CheckURLRedundance(entry)
+			l.CheckNoteAccessed(entry)
 			l.CheckURLDateNeed(entry)
 			l.CheckISSN(entry)
 			l.CheckISBN(entry)

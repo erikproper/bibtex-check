@@ -1028,6 +1028,17 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		canonicalToLocal[canonical] = outputKey
 	}
 
+	// Follow mode: build entryGroups from managed groups (Library.GroupEntries) plus
+	// local groups mirrored into the follow bib's .sync DB by the harvest phase.
+	if cfg.Mode == "follow" && cfg.entryGroups == nil {
+		keysBasePath := resolveRelative(cfg.FileName)
+		followSync := openSyncState(keysBasePath)
+		cfg.entryGroups = buildEntryGroupsForFollow(followSync, canonicalToLocal)
+		if followSync != nil {
+			followSync.close()
+		}
+	}
+
 	// Collect crossref parents not already covered and auto-add them.
 	type autoParent struct {
 		localKey     string

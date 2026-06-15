@@ -452,6 +452,45 @@ func buildSubsetState(writtenPairs []TBibGetPair, sourcePath string) TSubsetStat
 // buildEntryGroupsFromSyncState builds the runtime entryGroups map from the sync
 // state: canonical key → sorted slice of all group names (managed + local).
 // Called before writePullSync so entryGetString can emit all groups per entry.
+// buildEntryGroupsForFollow builds the canonicalKey → []group map for follow mode.
+// Combines managed groups from Library.GroupEntries with local groups from the
+// follow bib's .sync DB, restricted to canonical keys in canonicalToLocal.
+func buildEntryGroupsForFollow(syncState *TSyncState, canonicalToLocal map[string]string) map[string][]string {
+	result := make(map[string][]string)
+	groupSet := make(map[string]map[string]bool) // canonKey → set of group names
+	for canonKey := range canonicalToLocal {
+		for grp, members := range Library.GroupEntries {
+			if members.Contains(canonKey) {
+				if groupSet[canonKey] == nil {
+					groupSet[canonKey] = make(map[string]bool)
+				}
+				groupSet[canonKey][grp] = true
+			}
+		}
+	}
+	if syncState != nil {
+		for groupName, members := range syncState.LocalGroups() {
+			for entryKey := range members.Elements() {
+				if _, ok := canonicalToLocal[entryKey]; ok {
+					if groupSet[entryKey] == nil {
+						groupSet[entryKey] = make(map[string]bool)
+					}
+					groupSet[entryKey][groupName] = true
+				}
+			}
+		}
+	}
+	for canonKey, grps := range groupSet {
+		list := make([]string, 0, len(grps))
+		for g := range grps {
+			list = append(list, g)
+		}
+		sort.Strings(list)
+		result[canonKey] = list
+	}
+	return result
+}
+
 func buildEntryGroupsFromSyncState(syncState *TSyncState) map[string][]string {
 	result := make(map[string][]string)
 	if syncState == nil {

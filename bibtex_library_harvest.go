@@ -586,6 +586,9 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 	questionCounter := 0
 
 	for _, e := range entries {
+		// Pre-normalise non-interactively before display and fingerprinting so the
+		// candidate entry compares cleanly against the current library content.
+		applyNoteAccessedFix(e.Fields)
 		skip, resolvedCanon := harvestSkipStatus(e, syncState, l)
 		if skip {
 			if resolvedCanon != "" {
@@ -785,6 +788,21 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	Library.Progress("  PDFs harvested          : %d", pdfsHarvested)
 	Library.Progress("  Key hints added         : %d", hintsAdded)
 	writeHarvestWeave()
+
+	// Mirror local groups to the harvest_transfer target's .sync DB so follow mode
+	// can emit them in its output.
+	if cmdHarvestTransferKeysPath != "" && len(syncState.LocalGroups()) > 0 {
+		followBase := strings.TrimSuffix(cmdHarvestTransferKeysPath, KeysFileExtension)
+		if followSync := openSyncState(followBase); followSync != nil {
+			for groupName, members := range syncState.LocalGroups() {
+				for entryKey := range members.Elements() {
+					followSync.AddLocalGroup(entryKey, groupName)
+				}
+			}
+			followSync.close()
+		}
+	}
+
 	Library.harvestSyncGroups = TStringSetNew()
 }
 
