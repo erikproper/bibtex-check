@@ -483,13 +483,15 @@ func runSubsetFreshExport(cfg TBibGetConfig, baseDir, sourcePath, keysBasePath, 
 }
 
 // syncGroupMembershipsFromBib diffs the bib's groups fields against bib_groups and
-// adds new memberships to the DB. Subset sync is add-only — no removals, since the
-// subset does not represent the full picture of group membership.
+// syncs additions and removals to the DB for groups listed in cfg.SyncGroups.
 //
 // cfg.SyncGroups is the allowlist for both BibDesk and JabRef formats: only groups
 // named there can flow between the bib and the main DB. Groups not in the list are
-// treated as bib-local and are never written to bib_groups. When cfg.SyncGroups is
-// empty, no group memberships are synced.
+// treated as bib-local and never touch bib_groups. When cfg.SyncGroups is empty,
+// nothing is synced.
+//
+// Removals are scoped to entries that appear in this subset bib — entries not present
+// here are not touched, since the subset is not the full picture of membership.
 func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanonical map[string]string) {
 	if len(cfg.SyncGroups) == 0 {
 		return
@@ -499,8 +501,10 @@ func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, o
 		syncSet.Add(g)
 	}
 
-	// Collect bib-side membership: group → set of canonical keys.
+	// Collect bib-side membership (group → canonical keys) and the full set of
+	// canonical keys present in the subset (needed to scope removals).
 	bibMembers := TStringSetMap{}
+	subsetCanonicals := TStringSetNew()
 	for _, e := range bibEntries {
 		canon, ok := outputToCanonical[e.Key]
 		if !ok || canon == "" {
@@ -513,21 +517,16 @@ func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, o
 		} else {
 			canon = Library.MapEntryKey(canon)
 		}
-		raw := e.Fields["groups"]
-		if raw == "" {
-			continue
-		}
-		for _, g := range strings.Split(raw, ",") {
+		subsetCanonicals.Add(canon)
+		for _, g := range strings.Split(e.Fields["groups"], ",") {
 			g = strings.TrimSpace(g)
-			if g == "" {
-				continue
-			}
-			if syncSet.Contains(g) {
+			if g != "" && syncSet.Contains(g) {
 				bibMembers.AddValueToStringSetMap(g, canon)
 			}
 		}
 	}
 
+	// Additions: keys present in bib but absent from DB.
 	for group, bibSet := range bibMembers {
 		dbSet := Library.GroupEntries[group]
 		setToAdd := bibSet // value copy for safe iteration
@@ -540,6 +539,26 @@ func syncGroupMembershipsFromBib(cfg TBibGetConfig, bibEntries []TBibTeXEntry, o
 					Library.Warning("Group sync insert failed (%s → %q): %s", key, group, err)
 				} else {
 					Library.Progress("Group sync: +%s → %q", key, group)
+				}
+			}
+		}
+	}
+
+	// Removals: keys present in DB but absent from bib, restricted to entries that
+	// are actually in this subset (entries outside the subset are not authoritative).
+	for _, group := range cfg.SyncGroups {
+		dbSet := Library.GroupEntries[group]
+		bibSet := bibMembers[group]
+		toRemove := dbSet // value copy for safe iteration
+		for key := range toRemove.Elements() {
+			if subsetCanonicals.Contains(key) && !bibSet.Contains(key) {
+				Library.GroupEntries.DeleteValueFromStringSetMap(group, key)
+				if err := bibExec(
+					`DELETE FROM bib_groups WHERE group_name=? AND entry_key=?`,
+					group, key); err != nil {
+					Library.Warning("Group sync delete failed (%s → %q): %s", key, group, err)
+				} else {
+					Library.Progress("Group sync: -%s → %q", key, group)
 				}
 			}
 		}
