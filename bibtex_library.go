@@ -204,6 +204,82 @@ func (l *TBibTeXLibrary) SetEntryType(entry, value string) {
 	upsertBibEntryField(entry, EntryTypeField, value)
 }
 
+// applyJabRefGroupBlock parses the body of a jabref-meta: grouping: or
+// jabref-meta: groupstree: comment and records group memberships.
+//
+// In harvest-capture mode: back-fills each referenced entry's in-memory groups
+// field, exactly mirroring what BibDeskStaticGroupDefinition does for BibDesk.
+// In normal mode: populates GroupEntries.
+//
+// Modern StaticGroup: lines carry no member keys (membership lives in per-entry
+// groups fields); we register the group name so GroupEntries knows it exists.
+// Legacy ExplicitGroup: lines carry member keys after the first two \;-fields.
+func (l *TBibTeXLibrary) applyJabRefGroupBlock(content string) {
+	var keyToIdx map[string]int
+	if l.capturedHarvestEntries != nil {
+		keyToIdx = make(map[string]int, len(*l.capturedHarvestEntries))
+		for i, e := range *l.capturedHarvestEntries {
+			keyToIdx[e.Key] = i
+		}
+	}
+
+	addMember := func(groupName, key string) {
+		if keyToIdx != nil {
+			if idx, ok := keyToIdx[key]; ok {
+				e := &(*l.capturedHarvestEntries)[idx]
+				if e.Fields["groups"] == "" {
+					e.Fields["groups"] = groupName
+				} else {
+					e.Fields["groups"] += ", " + groupName
+				}
+			}
+		} else {
+			l.GroupEntries.AddValueToStringSetMap(groupName, key)
+		}
+	}
+
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(rawLine)
+
+		var isExplicit bool
+		var rest string
+		if i := strings.Index(line, " StaticGroup:"); i >= 0 {
+			rest = line[i+len(" StaticGroup:"):]
+		} else if i := strings.Index(line, " ExplicitGroup:"); i >= 0 {
+			rest = line[i+len(" ExplicitGroup:"):]
+			isExplicit = true
+		} else {
+			continue
+		}
+
+		parts := strings.Split(rest, `\;`)
+		if len(parts) == 0 {
+			continue
+		}
+		groupName := strings.TrimSpace(parts[0])
+		if groupName == "" {
+			continue
+		}
+
+		if isExplicit {
+			// parts[0]=name, parts[1]=hierarchy, parts[2:]=member keys
+			for _, key := range parts[2:] {
+				key = strings.TrimSpace(strings.TrimSuffix(key, ";"))
+				if key != "" {
+					addMember(groupName, key)
+				}
+			}
+		} else {
+			// StaticGroup: members are in per-entry groups fields; just ensure the
+			// group name is registered so GroupEntries knows it exists.
+			if keyToIdx == nil {
+				l.GroupEntries.AddValueToStringSetMap(groupName, "")
+				l.GroupEntries.DeleteValueFromStringSetMap(groupName, "")
+			}
+		}
+	}
+}
+
 // Add a comment to the current library.
 func (l *TBibTeXLibrary) ProcessComment(comment string) bool {
 	// When parsing a harvest/subset source bib: route each comment block to the
@@ -215,6 +291,11 @@ func (l *TBibTeXLibrary) ProcessComment(comment string) bool {
 		switch {
 		case strings.HasPrefix(trimmed, "jabref-meta: grouping:"):
 			l.jabrefGroupingBlock = block
+			l.applyJabRefGroupBlock(trimmed[len("jabref-meta: grouping:"):])
+		case strings.HasPrefix(trimmed, "jabref-meta: groupstree:"):
+			// Legacy format: parse for memberships; do NOT store verbatim.
+			// The write side regenerates a modern grouping: block from GroupEntries.
+			l.applyJabRefGroupBlock(trimmed[len("jabref-meta: groupstree:"):])
 		case strings.HasPrefix(trimmed, "jabref-meta: databaseType:"):
 			// always emitted by us; drop
 		case strings.HasPrefix(trimmed, "jabref-meta: "):

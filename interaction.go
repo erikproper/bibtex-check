@@ -84,11 +84,17 @@ type TInteraction struct {
 	stepMode          bool
 	stepSize          int
 	quitRequested     bool // set when user answers "q" to AskContinueOrQuit
+	questionsAnswered int  // total questions answered; snapshotted before/after runHarvestEntry
 }
 
 // QuitWasRequested reports whether the user asked to stop in any AskContinueOrQuit prompt.
 func (r *TInteraction) QuitWasRequested() bool {
 	return r.quitRequested
+}
+
+// QuestionsAnswered returns the running total of user answers (WarningQuestion + ConfirmAction).
+func (r *TInteraction) QuestionsAnswered() int {
+	return r.questionsAnswered
 }
 
 // ResetQuestionFlag clears the per-entry trackers before processing each entry
@@ -193,6 +199,7 @@ func (r *TInteraction) AskContinueOrQuit() bool {
 // interaction is silenced. Use for safety gates that must not be skipped
 // by batch-mode callers.
 func (r *TInteraction) ConfirmAction(prompt string) bool {
+	r.questionsAnswered++
 	fmt.Fprintf(os.Stderr, "CONFIRM:  %s (y/n): ", prompt)
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -253,6 +260,7 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 // The warning message should provide the formatting.
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
 	r.questionWasAsked = true
+	r.questionsAnswered++
 	if warning != "" {
 		r.Warning(warning, context...)
 	}

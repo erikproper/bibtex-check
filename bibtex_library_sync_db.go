@@ -33,6 +33,15 @@ import (
 	"time"
 )
 
+// TSyncWeaveEntry holds a verbatim bib entry to emit in a follow-mode bib.
+// Populated by harvest when the user chooses "i" (ignore) for an entry.
+type TSyncWeaveEntry struct {
+	SourceKey   string
+	EntryType   string
+	Fields      map[string]string
+	Fingerprint string // matches the "ignored:<fp>" status in sync_status
+}
+
 // TSyncEntry holds the last-synced state for one entry.
 type TSyncEntry struct {
 	CanonicalKey string
@@ -51,16 +60,16 @@ type TSyncState struct {
 	workingPath string
 	isolated    bool // whether home ≠ working (cache_folder active)
 	db          *sql.DB
-	entries     map[string]*TSyncEntry
-	statuses    map[string]string // source_key → status ("waived", "ignored", …)
-	localGroups TStringSetMap     // entry_key → set of local group names (harvest mode)
-	modified    bool
+	entries      map[string]*TSyncEntry
+	statuses     map[string]string           // source_key → status ("waived", "ignored", …)
+	localGroups  TStringSetMap               // entry_key → set of local group names (harvest mode)
+	weaveEntries map[string]*TSyncWeaveEntry // source_key → verbatim bib entry (follow mode)
+	modified     bool
 }
 
 // Sync status constants used across modes.
 const (
-	SyncStatusWaived  = "waived"  // harvest: never present this entry again
-	SyncStatusIgnored = "ignored" // weave: write verbatim, do not merge
+	SyncStatusIgnored = "ignored" // harvest: write verbatim to follow bib, do not merge
 )
 
 // syncWorkingPath returns the working (cache) path for a given home sync path.
@@ -102,12 +111,13 @@ func openSyncState(keysBasePath string) *TSyncState {
 	}
 
 	s := &TSyncState{
-		homePath:    homePath,
-		workingPath: workingPath,
-		isolated:    isolated,
-		db:          conn,
-		entries:     make(map[string]*TSyncEntry),
-		localGroups: TStringSetMap{},
+		homePath:     homePath,
+		workingPath:  workingPath,
+		isolated:     isolated,
+		db:           conn,
+		entries:      make(map[string]*TSyncEntry),
+		localGroups:  TStringSetMap{},
+		weaveEntries: make(map[string]*TSyncWeaveEntry),
 	}
 	if !s.ensureSchema() {
 		conn.Close()
@@ -223,6 +233,17 @@ CREATE TABLE IF NOT EXISTS local_groups (
     group_name TEXT NOT NULL,
     PRIMARY KEY (entry_key, group_name)
 );
+CREATE TABLE IF NOT EXISTS sync_weave (
+    source_key  TEXT NOT NULL PRIMARY KEY,
+    entry_type  TEXT NOT NULL DEFAULT '',
+    fingerprint TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sync_weave_fields (
+    source_key TEXT NOT NULL,
+    field      TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    PRIMARY KEY (source_key, field)
+);
 `
 
 func (s *TSyncState) ensureSchema() bool {
@@ -320,6 +341,31 @@ func (s *TSyncState) loadAll() {
 			}
 		}
 	}
+
+	// Load weave entries (follow mode: verbatim bib entries from ignored harvest sources).
+	weaveManifest := map[string]*TSyncWeaveEntry{}
+	rows7, err := s.db.Query(`SELECT source_key, entry_type, fingerprint FROM sync_weave`)
+	if err == nil {
+		defer rows7.Close()
+		for rows7.Next() {
+			var we TSyncWeaveEntry
+			rows7.Scan(&we.SourceKey, &we.EntryType, &we.Fingerprint)
+			we.Fields = make(map[string]string)
+			weaveManifest[we.SourceKey] = &we
+		}
+	}
+	rows8, err := s.db.Query(`SELECT source_key, field, value FROM sync_weave_fields`)
+	if err == nil {
+		defer rows8.Close()
+		for rows8.Next() {
+			var key, field, value string
+			rows8.Scan(&key, &field, &value)
+			if we, ok := weaveManifest[key]; ok {
+				we.Fields[field] = value
+			}
+		}
+	}
+	s.weaveEntries = weaveManifest
 }
 
 // --- flush ---
@@ -332,7 +378,7 @@ func (s *TSyncState) flush() error {
 	}
 
 	// Clear all tables and rewrite from memory.
-	for _, tbl := range []string{"sync_manifest", "sync_entries", "sync_groups", "sync_pdfs", "sync_status", "local_groups"} {
+	for _, tbl := range []string{"sync_manifest", "sync_entries", "sync_groups", "sync_pdfs", "sync_status", "local_groups", "sync_weave", "sync_weave_fields"} {
 		if _, err := tx.Exec("DELETE FROM " + tbl); err != nil {
 			tx.Rollback()
 			return err
@@ -406,7 +452,80 @@ func (s *TSyncState) flush() error {
 		}
 	}
 
+	for _, we := range s.weaveEntries {
+		if _, err := tx.Exec(
+			`INSERT INTO sync_weave (source_key, entry_type, fingerprint) VALUES (?, ?, ?)`,
+			we.SourceKey, we.EntryType, we.Fingerprint,
+		); err != nil {
+			tx.Rollback()
+			return err
+		}
+		for field, value := range we.Fields {
+			if value == "" || field == EntryTypeField {
+				continue
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO sync_weave_fields (source_key, field, value) VALUES (?, ?, ?)`,
+				we.SourceKey, field, value,
+			); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+	}
+
 	return tx.Commit()
+}
+
+// SetWeaveEntry records a verbatim bib entry for follow-mode output.
+func (s *TSyncState) SetWeaveEntry(we TSyncWeaveEntry) {
+	if s == nil {
+		return
+	}
+	cp := we
+	cp.Fields = make(map[string]string, len(we.Fields))
+	for k, v := range we.Fields {
+		cp.Fields[k] = v
+	}
+	s.weaveEntries[we.SourceKey] = &cp
+	s.modified = true
+}
+
+// DeleteWeaveEntry removes the weave entry for sourceKey (e.g. when user merges it later).
+func (s *TSyncState) DeleteWeaveEntry(sourceKey string) {
+	if s == nil {
+		return
+	}
+	if _, ok := s.weaveEntries[sourceKey]; ok {
+		delete(s.weaveEntries, sourceKey)
+		s.modified = true
+	}
+}
+
+// ClearWeaveEntries removes all weave entries (called before rebuilding from current run).
+func (s *TSyncState) ClearWeaveEntries() {
+	if s == nil {
+		return
+	}
+	if len(s.weaveEntries) > 0 {
+		s.weaveEntries = make(map[string]*TSyncWeaveEntry)
+		s.modified = true
+	}
+}
+
+// AllWeaveEntries returns all weave entries sorted by source key.
+func (s *TSyncState) AllWeaveEntries() []*TSyncWeaveEntry {
+	if s == nil {
+		return nil
+	}
+	entries := make([]*TSyncWeaveEntry, 0, len(s.weaveEntries))
+	for _, we := range s.weaveEntries {
+		entries = append(entries, we)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].SourceKey < entries[j].SourceKey
+	})
+	return entries
 }
 
 // GetStatus returns the sync status for sourceKey ("waived", "ignored", etc.) or "".

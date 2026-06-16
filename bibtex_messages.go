@@ -68,9 +68,8 @@ const (
 	WarningExtendDblpCandidatesFound        = "Entry %s has no DBLP key — found %d candidate(s)"
 	QuestionExtendDblpCoverageChoose        = "Which DBLP entry matches? (0 = none, k = enter key manually)"
 
-	QuestionHarvestKeyMatch            = "Merge with this library entry?"
 	QuestionHarvestLibraryChoice       = "Which library entry matches? (0 = none)"
-	QuestionHarvestAction              = "No match found — add to library or skip? (a=add, s=skip, w=waive, q=quit)"
+	QuestionHarvestAction              = "No match found — add to library or skip? (a=add, s=skip, i=ignore, q=quit)"
 	QuestionHarvestDblpChoose          = "Which DBLP entry matches? (0 = none, k = enter key manually)"
 	WarningHarvestDblpCandidatesFound  = "No DBLP key on source entry '%s' — found %d candidate(s)"
 	ProgressHarvestParsed              = "harvest: %d entr%s parsed from %s"

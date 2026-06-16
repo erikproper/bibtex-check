@@ -197,7 +197,8 @@ func readKeysFile(fileName string) (pairs []TBibGetPair, modified bool, ok bool)
 					return
 				}
 				if rawCanonicalSeen[canonical] {
-					fmt.Fprintf(os.Stderr, "WARNING: %s: %q appears more than once (first kept)\n", keysPath, canonical)
+					fmt.Fprintf(os.Stderr, "WARNING: %s: %q appears more than once (first kept) — deduplicating\n", keysPath, canonical)
+					modified = true // trigger rewrite to remove the duplicate
 					return
 				}
 				rawCanonicalSeen[canonical] = true
@@ -223,7 +224,8 @@ func readKeysFile(fileName string) (pairs []TBibGetPair, modified bool, ok bool)
 			return
 		}
 		if rawCanonicalSeen[canonical] {
-			fmt.Fprintf(os.Stderr, "WARNING: %s: %q appears more than once (first kept)\n", keysPath, canonical)
+			fmt.Fprintf(os.Stderr, "WARNING: %s: %q appears more than once (first kept) — deduplicating\n", keysPath, canonical)
+			modified = true // trigger rewrite to remove the duplicate
 			return
 		}
 		rawCanonicalSeen[canonical] = true
@@ -1302,13 +1304,28 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		os.Exit(1)
 	}
 
-	// Follow mode: append verbatim entries from the .weave file when present.
+	// Follow mode: emit verbatim weave entries from the .sync DB.
 	if cfg.Mode == "follow" {
-		weavePath := resolveRelative(cfg.FileName) + WeaveFileExtension
-		if weaveData, err := os.ReadFile(weavePath); err == nil && len(weaveData) > 0 {
-			newContent = append(newContent, '\n')
-			newContent = append(newContent, weaveData...)
-			Reporting.Progress("  Weave   : appended %d bytes from %s", len(weaveData), weavePath)
+		keysBase := resolveRelative(cfg.FileName)
+		if followSync := openSyncState(keysBase); followSync != nil {
+			weaves := followSync.AllWeaveEntries()
+			followSync.close()
+			if len(weaves) > 0 {
+				newContent = append(newContent, '\n')
+				for _, we := range weaves {
+					newContent = append(newContent, fmt.Sprintf("@%s{%s,\n", we.EntryType, we.SourceKey)...)
+					fields := make([]string, 0, len(we.Fields))
+					for f := range we.Fields {
+						fields = append(fields, f)
+					}
+					sort.Strings(fields)
+					for _, f := range fields {
+						newContent = append(newContent, fmt.Sprintf("  %-16s = {%s},\n", f, we.Fields[f])...)
+					}
+					newContent = append(newContent, "}\n\n"...)
+				}
+				Reporting.Progress("  Weave   : %d verbatim entries from .sync DB", len(weaves))
+			}
 		}
 	}
 
@@ -1752,12 +1769,8 @@ func doSync(filter string) {
 					allCfgs[j] = f.cfg
 				}
 				cmdHarvestTransferKeysPath = resolveHarvestTransferPath(files[i].cfg, allCfgs)
-				if cmdHarvestTransferKeysPath != "" {
-					cmdHarvestWeavePath = strings.TrimSuffix(cmdHarvestTransferKeysPath, KeysFileExtension) + WeaveFileExtension
-				}
 				runHarvestSync(files[i].cfg, "")
 				cmdHarvestTransferKeysPath = ""
-				cmdHarvestWeavePath = ""
 				cmdHarvestWeaveEntries = nil
 			case "subset":
 				files[i].skipPhase2, files[i].syncState = runSubsetPhase1(files[i].cfg, "")
@@ -1809,17 +1822,23 @@ func resolveHarvestTransferPath(harvestCfg TBibGetConfig, cfgs []TBibGetConfig) 
 	return ""
 }
 
-// appendPairToKeysFile appends localKey;canonicalKey to keysFilePath if the pair
-// is not already present. Creates the file if absent.
+// appendPairToKeysFile appends localKey;canonicalKey to keysFilePath if neither the
+// exact pair nor the canonical key (with any local key) is already present.
+// Creates the file if absent.
 func appendPairToKeysFile(keysFilePath, localKey, canonicalKey string) {
 	if keysFilePath == "" || localKey == "" || canonicalKey == "" {
 		return
 	}
 	line := localKey + csvDelimiter + canonicalKey
-	// Check for existing pair to avoid duplicates.
 	if data, err := os.ReadFile(keysFilePath); err == nil {
 		for _, existing := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(existing) == line {
+			trimmed := strings.TrimSpace(existing)
+			if trimmed == line {
+				return // exact duplicate
+			}
+			// Also skip if this canonical key is already mapped (possibly with a
+			// different local key) — keep the first occurrence.
+			if parts := strings.SplitN(trimmed, csvDelimiter, 2); len(parts) == 2 && parts[1] == canonicalKey {
 				return
 			}
 		}

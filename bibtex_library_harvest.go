@@ -47,8 +47,6 @@ func harvestSkipStatus(e TBibTeXEntry, syncState *TSyncState, l *TBibTeXLibrary)
 		return false, ""
 	}
 	switch {
-	case status == SyncStatusWaived:
-		return true, ""
 	case strings.HasPrefix(status, "skip-content:"):
 		fp := strings.TrimPrefix(status, "skip-content:")
 		return harvestContentFingerprint(e) == fp, ""
@@ -249,39 +247,11 @@ func transferHarvestKey(localKey, finalKey string) {
 	}
 }
 
-// addToHarvestWeave queues e for verbatim inclusion in the harvest_transfer target's .weave file.
+// addToHarvestWeave queues e for verbatim inclusion in the harvest_transfer target's
+// .sync DB weave table. Accumulates in memory; flushed to DB at end of harvest run.
 func addToHarvestWeave(e TBibTeXEntry) {
-	if cmdHarvestWeavePath != "" {
+	if cmdHarvestTransferKeysPath != "" {
 		cmdHarvestWeaveEntries = append(cmdHarvestWeaveEntries, e)
-	}
-}
-
-// writeHarvestWeave writes all queued weave entries to cmdHarvestWeavePath.
-// If no entries are queued but the file exists, it is removed.
-func writeHarvestWeave() {
-	if cmdHarvestWeavePath == "" {
-		return
-	}
-	if len(cmdHarvestWeaveEntries) == 0 {
-		os.Remove(cmdHarvestWeavePath)
-		return
-	}
-	f, err := os.Create(cmdHarvestWeavePath)
-	if err != nil {
-		Library.Warning("weave: cannot write %s: %s", cmdHarvestWeavePath, err)
-		return
-	}
-	defer f.Close()
-	for _, e := range cmdHarvestWeaveEntries {
-		entryType := e.Fields[EntryTypeField]
-		fmt.Fprintf(f, "@%s{%s,\n", entryType, e.Key)
-		for field, value := range e.Fields {
-			if field == EntryTypeField || value == "" {
-				continue
-			}
-			fmt.Fprintf(f, "  %-16s = {%s},\n", field, value)
-		}
-		fmt.Fprintf(f, "}\n\n")
 	}
 }
 
@@ -490,19 +460,22 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 	printEntryFields(e.Fields[EntryTypeField], e.Key, e.Fields)
 
 	// Step 1: key hint / alias match.
+	// The entry is already in the library (matched via KeyToKey alias/oldie or a
+	// previously confirmed HintToKey mapping). No re-merge or re-check needed —
+	// the library entry is already in the correct state from the first harvest.
+	// Just record the mapping and move on; no challenges should fire.
 	if keyMatch := l.harvestKeyMatch(e); keyMatch != "" {
 		fmt.Fprintf(os.Stderr, "Key match:\n")
 		fmt.Fprint(os.Stderr, l.entryDisplayString(keyMatch))
-		if cmdTrustHints || l.ConfirmAction(QuestionHarvestKeyMatch) {
-			finalKey := mergeAndCheck(addHarvestEntry(l, e), keyMatch)
-			maybeCollectKeyHint(l, e.Key, finalKey)
-			l.maybeHarvestPDF(e, finalKey)
-			l.maybeHarvestGroups(e, finalKey, syncState)
-			addToHarvestGroup(l, finalKey)
-			transferHarvestKey(e.Key, finalKey)
-			recordStatus(finalKey)
-			return finalKey, false
-		}
+		finalKey := l.MapEntryKey(keyMatch)
+		l.Progress("Already in library as %s", finalKey)
+		maybeCollectKeyHint(l, e.Key, finalKey)
+		l.maybeHarvestPDF(e, finalKey)
+		l.maybeHarvestGroups(e, finalKey, syncState)
+		addToHarvestGroup(l, finalKey)
+		transferHarvestKey(e.Key, finalKey)
+		recordStatus(finalKey)
+		return finalKey, false // step 1: automatic, no user interaction
 	}
 
 	// Step 2: title match in library (may find multiple).
@@ -543,18 +516,15 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		}
 	}
 
-	// Step 4: no match — offer add, skip, waive, ignore (weave), or quit.
+	// Step 4: no match — offer add, skip, ignore, or quit.
+	// "i" ignores permanently (re-presents only if content changes) and, when
+	// harvest_transfer is configured, also writes the entry verbatim to the
+	// follow bib via the .sync DB weave table.
 	validActions := TStringSetNew()
-	validActions.Add("a").Add("s").Add("w").Add("q")
-	if cmdHarvestWeavePath != "" {
-		validActions.Add("i") // ignore: write verbatim to weave file, do not merge
-	}
+	validActions.Add("a").Add("s").Add("i").Add("q")
 	switch l.WarningQuestion(QuestionHarvestAction, validActions, "") {
 	case "q":
 		return "", true
-	case "w":
-		recordStatus(SyncStatusWaived)
-		return "", false
 	case "i":
 		recordStatus(SyncStatusIgnored + ":" + harvestContentFingerprint(e))
 		addToHarvestWeave(e)
@@ -578,7 +548,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 }
 
 // runHarvestLoop processes entries interactively in source-file order.
-// Entries already handled (resolved, waived, or skip-content unchanged) are silently
+// Entries already handled (resolved, ignored, or skip-content unchanged) are silently
 // skipped when syncState is non-nil. For previously resolved entries, PDF sync and
 // key-hint registration are re-run on each pass.
 func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSyncState) {
@@ -600,17 +570,18 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 				}
 			} else if e.Key != "" && syncState != nil {
 				if strings.HasPrefix(syncState.GetStatus(e.Key), SyncStatusIgnored+":") {
-					addToHarvestWeave(e) // re-queue for verbatim output in .weave
+					addToHarvestWeave(e) // re-queue; flushed to follow .sync DB at end of run
 				}
 			}
 			continue
 		}
+		before := l.QuestionsAnswered()
 		_, quit := l.runHarvestEntry(e, syncState)
 		if quit {
 			return
 		}
 		if stepN > 0 {
-			questionCounter++
+			questionCounter += l.QuestionsAnswered() - before
 			if questionCounter >= stepN {
 				if l.AskContinueOrQuit() {
 					return
@@ -686,7 +657,7 @@ func doHarvest(sourcePath string) {
 }
 
 // runHarvestSync is called from doSync when mode == "harvest". The library is already open.
-// State (resolved/waived/skip-content) is tracked in the .sync DB next to the source bib.
+// State (resolved/ignored/skip-content) is tracked in the .sync DB next to the source bib.
 func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	if cfg.TrustHints {
 		cmdTrustHints = true
@@ -758,7 +729,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	pdfsHarvested := len(Library.PDFFiles) - pdfsBefore
 	hintsAdded := len(Library.newKeyHints) - hintsBefore
 
-	resolved, skippedContent, waived, ignored, stillPending := 0, 0, 0, 0, 0
+	resolved, skippedContent, ignored, stillPending := 0, 0, 0, 0
 	for _, e := range entries {
 		if e.Key == "" {
 			continue
@@ -767,8 +738,6 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		switch {
 		case status == "":
 			stillPending++
-		case status == SyncStatusWaived:
-			waived++
 		case strings.HasPrefix(status, "skip-content:"):
 			skippedContent++
 		case strings.HasPrefix(status, SyncStatusIgnored+":"):
@@ -781,23 +750,29 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	Library.Progress("  Total  : %d source entr%s",
 		len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1])
 	Library.Progress("  Resolved (merged/added) : %d", resolved)
-	Library.Progress("  Ignored (woven verbatim): %d", ignored)
+	Library.Progress("  Ignored                 : %d", ignored)
 	Library.Progress("  Skipped (skip-content)  : %d", skippedContent)
-	Library.Progress("  Waived                  : %d", waived)
 	Library.Progress("  Pending (not yet seen)  : %d", stillPending)
 	Library.Progress("  PDFs harvested          : %d", pdfsHarvested)
 	Library.Progress("  Key hints added         : %d", hintsAdded)
-	writeHarvestWeave()
-
-	// Mirror local groups to the harvest_transfer target's .sync DB so follow mode
-	// can emit them in its output.
-	if cmdHarvestTransferKeysPath != "" && len(syncState.LocalGroups()) > 0 {
+	// Mirror local groups and weave entries into the harvest_transfer target's .sync DB.
+	if cmdHarvestTransferKeysPath != "" {
 		followBase := strings.TrimSuffix(cmdHarvestTransferKeysPath, KeysFileExtension)
 		if followSync := openSyncState(followBase); followSync != nil {
 			for groupName, members := range syncState.LocalGroups() {
 				for entryKey := range members.Elements() {
 					followSync.AddLocalGroup(entryKey, groupName)
 				}
+			}
+			followSync.ClearWeaveEntries()
+			for _, e := range cmdHarvestWeaveEntries {
+				fp := strings.TrimPrefix(syncState.GetStatus(e.Key), SyncStatusIgnored+":")
+				followSync.SetWeaveEntry(TSyncWeaveEntry{
+					SourceKey:   e.Key,
+					EntryType:   e.Fields[EntryTypeField],
+					Fields:      e.Fields,
+					Fingerprint: fp,
+				})
 			}
 			followSync.close()
 		}
@@ -812,7 +787,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 
 // pruneResolvedFromSource rewrites sourcePath keeping only entries that still need
 // processing: those with no status (pending) or a "skip-content:…" status.
-// Resolved, waived, and ignored entries are dropped, shrinking the source queue.
+// Resolved and ignored entries are dropped, shrinking the source queue.
 func pruneResolvedFromSource(sourcePath string, entries []TBibTeXEntry, syncState *TSyncState) {
 	var keep []TBibTeXEntry
 	for _, e := range entries {
@@ -848,7 +823,7 @@ func pruneResolvedFromSource(sourcePath string, entries []TBibTeXEntry, syncStat
 		}
 		fmt.Fprintf(f, "}\n\n")
 	}
-	Library.Progress("  Pruned source: %d resolved/waived removed, %d pending remain in %s",
+	Library.Progress("  Pruned source: %d resolved/ignored removed, %d pending remain in %s",
 		removed, len(keep), sourcePath)
 }
 

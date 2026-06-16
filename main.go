@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.150"
+const AppVersion = "24.161"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -66,10 +66,9 @@ var (
 	cmdNoGarbageCleaning  bool
 	cmdTrustHints              bool   // -trust_hints: auto-accept key-hint matches in harvest
 	cmdCollectKeys             bool   // -collect_keys: add source keys to hints DB when unambiguous
-	cmdHarvestGroup            string // -group: add all resolved harvest entries to this group
+	cmdHarvestGroup            string         // -group: add all resolved harvest entries to this group
 	cmdHarvestTransferKeysPath string         // resolved .keys path for harvest_transfer target; "" = disabled
-	cmdHarvestWeavePath        string         // resolved .weave path for harvest_transfer target; "" = disabled
-	cmdHarvestWeaveEntries     []TBibTeXEntry // ignored entries accumulated during this harvest run
+	cmdHarvestWeaveEntries     []TBibTeXEntry // ignored entries accumulated during this harvest run; flushed to follow .sync DB
 	cmdFix                bool // -fix: apply full per-entry checks when combined with -sync or -harvest
 	cmdPull               bool // -pull: with -sync, skip up-sync (phase 1); only write bib output from DB
 )
@@ -139,10 +138,9 @@ func loadBibFromDb() {
 // tables). After this, normal runs load from DB only; the bib file is not touched
 // again unless -import_bib or -sync is invoked explicitly.
 //
-// Companion (step 14.4 — harvest mode): -upsert_bib will upsert entries from a bib
-// file without clearing existing ones (entries already in DB are updated; new ones
-// are added; nothing is deleted). Unlike -import_bib, -upsert_bib will also accept
-// stdin when no filename is given (to support piping from other tools).
+// Companion: -upsert_bib upserts entries from a bib file without clearing existing
+// ones (entries already in DB are updated; new ones are added; nothing is deleted).
+// Unlike -import_bib, -upsert_bib also accepts stdin when no filename is given.
 func doImportBib(path string) {
 	if !prepareWorkingDatabase() {
 		return
