@@ -1765,19 +1765,6 @@ func maybeMigrateStripLocalURL() {
 	dbInteraction.Progress("Migrated: stripped %d local-url rows from bib_entries (PDF presence now tracked via filesystem)", count)
 }
 
-func maybeMigrateStripShorttitle() {
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = 'shorttitle'`).Scan(&count)
-	if count == 0 {
-		return
-	}
-	if _, err := db.Exec(`DELETE FROM bib_entries WHERE field = 'shorttitle'`); err != nil {
-		dbInteraction.Warning("Could not strip shorttitle rows from bib_entries: %s", err)
-		return
-	}
-	dbInteraction.Progress("Migrated: stripped %d shorttitle rows from bib_entries (BibLaTeX-only field)", count)
-}
-
 // --- entry_warnings table ---
 
 func ensureEntryWarningsTableExists() {
