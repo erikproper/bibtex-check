@@ -107,6 +107,9 @@ func init() {
 	fieldProcessors["abstract"] = processFieldToIgnoreValue
 	fieldProcessors["keywords"] = processFieldToIgnoreValue
 
+	// BibLaTeX-only fields — not stored in our BibTeX library.
+	fieldProcessors["shorttitle"] = processFieldToIgnoreValue
+
 	// Jabref
 	fieldProcessors[JabrefFileField] = processFieldCapturePDFRef // captured during harvest; otherwise ignored
 	fieldProcessors["owner"] = processFieldToIgnoreValue
