@@ -172,11 +172,11 @@ type TBibGetPair struct {
 	canonicalKey string
 }
 
-// bootstrapKeysFromSync generates a .keys file from the sync manifest when no
-// .keys file yet exists but a .sync DB does (e.g. after switching from harvest
-// to follow mode). Reads output_key/canonical_key from sync_manifest, writes
-// the .keys file, and returns the pairs. Returns nil when the .sync is absent
-// or empty.
+// bootstrapKeysFromSync generates a .keys file when none exists but a .sync DB does.
+// First tries sync_manifest (populated by prior follow-mode syncs). If that is empty
+// (harvest→follow transition), falls back to sync_status source keys resolved against
+// the live library — entries that were harvested will resolve; unprocessed ones are skipped.
+// Returns the bootstrapped pairs, or nil when the .sync is absent or yields nothing.
 func bootstrapKeysFromSync(fileName string) []TBibGetPair {
 	syncPath := fileName + SyncDbExtension
 	if !FileExists(syncPath) {
@@ -188,29 +188,61 @@ func bootstrapKeysFromSync(fileName string) []TBibGetPair {
 	}
 	defer sdb.Close()
 
-	rows, err := sdb.Query(`SELECT canonical_key, output_key FROM sync_manifest ORDER BY canonical_key`)
-	if err != nil {
-		return nil
+	writePairs := func(pairs []TBibGetPair, source string) []TBibGetPair {
+		dbInteraction.Progress("Bootstrapping %s from %s (%d entries)",
+			fileName+KeysFileExtension, source, len(pairs))
+		rewriteKeysFile(fileName, pairs, true)
+		return pairs
 	}
-	defer rows.Close()
 
-	seen := map[string]bool{}
-	var pairs []TBibGetPair
-	for rows.Next() {
-		var canonical, output string
-		if rows.Scan(&canonical, &output) != nil || canonical == "" || output == "" || seen[canonical] {
-			continue
+	// Primary: sync_manifest — set during prior follow-mode syncs.
+	if rows, err := sdb.Query(`SELECT canonical_key, output_key FROM sync_manifest ORDER BY canonical_key`); err == nil {
+		seen := map[string]bool{}
+		var pairs []TBibGetPair
+		for rows.Next() {
+			var canonical, output string
+			if rows.Scan(&canonical, &output) != nil || canonical == "" || output == "" || seen[canonical] {
+				continue
+			}
+			seen[canonical] = true
+			pairs = append(pairs, TBibGetPair{output, canonical})
 		}
-		seen[canonical] = true
-		pairs = append(pairs, TBibGetPair{output, canonical})
+		rows.Close()
+		if len(pairs) > 0 {
+			return writePairs(pairs, "sync manifest")
+		}
 	}
-	if len(pairs) == 0 {
-		return nil
+
+	// Fallback: sync_status source keys resolved via the library key mapping.
+	// Handles the harvest→follow transition: source keys that were harvested
+	// will resolve to a canonical key; unprocessed entries are naturally skipped.
+	if rows, err := sdb.Query(`SELECT source_key FROM sync_status ORDER BY source_key`); err == nil {
+		seen := map[string]bool{}
+		var pairs []TBibGetPair
+		for rows.Next() {
+			var sourceKey string
+			if rows.Scan(&sourceKey) != nil || sourceKey == "" {
+				continue
+			}
+			resolved := Library.MapEntryKey(sourceKey)
+			if resolved == sourceKey {
+				if hint, ok := Library.HintToKey[sourceKey]; ok {
+					resolved = Library.MapEntryKey(hint)
+				}
+			}
+			if !bibEntryExists(resolved) || seen[resolved] {
+				continue
+			}
+			seen[resolved] = true
+			pairs = append(pairs, TBibGetPair{sourceKey, resolved})
+		}
+		rows.Close()
+		if len(pairs) > 0 {
+			return writePairs(pairs, "sync status")
+		}
 	}
-	dbInteraction.Progress("Bootstrapping %s from sync state (%d entries)",
-		fileName+KeysFileExtension, len(pairs))
-	rewriteKeysFile(fileName, pairs, true)
-	return pairs
+
+	return nil
 }
 
 // readKeysFile reads <fileName>.keys (local_key;canonical_key CSV).
