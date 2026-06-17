@@ -172,6 +172,47 @@ type TBibGetPair struct {
 	canonicalKey string
 }
 
+// bootstrapKeysFromSync generates a .keys file from the sync manifest when no
+// .keys file yet exists but a .sync DB does (e.g. after switching from harvest
+// to follow mode). Reads output_key/canonical_key from sync_manifest, writes
+// the .keys file, and returns the pairs. Returns nil when the .sync is absent
+// or empty.
+func bootstrapKeysFromSync(fileName string) []TBibGetPair {
+	syncPath := fileName + SyncDbExtension
+	if !FileExists(syncPath) {
+		return nil
+	}
+	sdb, err := openSyncDirect(syncPath)
+	if err != nil {
+		return nil
+	}
+	defer sdb.Close()
+
+	rows, err := sdb.Query(`SELECT canonical_key, output_key FROM sync_manifest ORDER BY canonical_key`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	seen := map[string]bool{}
+	var pairs []TBibGetPair
+	for rows.Next() {
+		var canonical, output string
+		if rows.Scan(&canonical, &output) != nil || canonical == "" || output == "" || seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		pairs = append(pairs, TBibGetPair{output, canonical})
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+	dbInteraction.Progress("Bootstrapping %s from sync state (%d entries)",
+		fileName+KeysFileExtension, len(pairs))
+	rewriteKeysFile(fileName, pairs, true)
+	return pairs
+}
+
 // readKeysFile reads <fileName>.keys (local_key;canonical_key CSV).
 // Lines without a ';' are bare canonical keys; localKey is left empty and
 // the caller must resolve them against the open library.
@@ -181,6 +222,9 @@ func readKeysFile(fileName string) (pairs []TBibGetPair, modified bool, ok bool)
 	keysPath := fileName + KeysFileExtension
 
 	if !FileExists(keysPath) {
+		if bootstrapped := bootstrapKeysFromSync(fileName); bootstrapped != nil {
+			return bootstrapped, false, true
+		}
 		return nil, false, true // absent is valid — treat as empty
 	}
 
