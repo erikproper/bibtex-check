@@ -588,20 +588,20 @@ var hyphenateFields = func() TStringSet {
 	return s
 }()
 
-// biberMonth maps full month names to biber abbreviations.
+// biberMonth maps month names and three-letter abbreviations to BibLaTeX integer strings.
 var biberMonth = map[string]string{
-	"January":   "jan",
-	"February":  "feb",
-	"March":     "mar",
-	"April":     "apr",
-	"May":       "may",
-	"June":      "jun",
-	"July":      "jul",
-	"August":    "aug",
-	"September": "sep",
-	"October":   "oct",
-	"November":  "nov",
-	"December":  "dec",
+	"January": "1", "jan": "1",
+	"February": "2", "feb": "2",
+	"March": "3", "mar": "3",
+	"April": "4", "apr": "4",
+	"May": "5", "may": "5",
+	"June": "6", "jun": "6",
+	"July": "7", "jul": "7",
+	"August": "8", "aug": "8",
+	"September": "9", "sep": "9",
+	"October": "10", "oct": "10",
+	"November": "11", "nov": "11",
+	"December": "12", "dec": "12",
 }
 
 // biberEditionOrdinals maps ordinal strings to numeric strings.
@@ -1304,15 +1304,15 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		os.Exit(1)
 	}
 
-	// Follow mode: emit verbatim weave entries from the .sync DB.
+	// Follow mode: emit verbatim sync_harvest entries from the .sync DB.
 	if cfg.Mode == "follow" {
 		keysBase := resolveRelative(cfg.FileName)
 		if followSync := openSyncState(keysBase); followSync != nil {
-			weaves := followSync.AllWeaveEntries()
+			harvests := followSync.AllHarvestEntries()
 			followSync.close()
-			if len(weaves) > 0 {
+			if len(harvests) > 0 {
 				newContent = append(newContent, '\n')
-				for _, we := range weaves {
+				for _, we := range harvests {
 					newContent = append(newContent, fmt.Sprintf("@%s{%s,\n", we.EntryType, we.SourceKey)...)
 					fields := make([]string, 0, len(we.Fields))
 					for f := range we.Fields {
@@ -1324,7 +1324,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 					}
 					newContent = append(newContent, "}\n\n"...)
 				}
-				Reporting.Progress("  Weave   : %d verbatim entries from .sync DB", len(weaves))
+				Reporting.Progress("  Harvest : %d verbatim entries from .sync DB", len(harvests))
 			}
 		}
 	}

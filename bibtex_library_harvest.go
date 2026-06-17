@@ -764,10 +764,10 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 					followSync.AddLocalGroup(entryKey, groupName)
 				}
 			}
-			followSync.ClearWeaveEntries()
+			followSync.ClearHarvestEntries()
 			for _, e := range cmdHarvestWeaveEntries {
 				fp := strings.TrimPrefix(syncState.GetStatus(e.Key), SyncStatusIgnored+":")
-				followSync.SetWeaveEntry(TSyncWeaveEntry{
+				followSync.SetHarvestEntry(TSyncHarvestEntry{
 					SourceKey:   e.Key,
 					EntryType:   e.Fields[EntryTypeField],
 					Fields:      e.Fields,

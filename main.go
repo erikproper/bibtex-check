@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "24.164"
+const AppVersion = "25.7"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -244,6 +244,8 @@ func openLibraryToUpdate() bool {
 	maybeMigrateTableConstraints()
 	maybeMigrateToLosingFieldValues()
 	maybeMigrateStripLocalURL()
+	preCheckRepair()
+	maybeMigrateToFKSchema()
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
@@ -2306,5 +2308,9 @@ case cmdAlignBooktitleCountries:
 	saveToDB(Library.entryFlagsModified, "entry_flags", saveEntryFlagsToDb)
 	saveToDB(Library.metadataModified, "entry_metadata", saveEntryMetadataToDb)
 
-	finaliseWorkingDatabase()
+	if !postCheckGate() {
+		dbInteraction.Warning("Post-check gate failed — home database not updated")
+	} else {
+		finaliseWorkingDatabase()
+	}
 }

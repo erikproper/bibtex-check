@@ -131,6 +131,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.DOIIndex = TStringSetMap{}
 	l.NonDoubles = TStringSetMap{}
 	l.KeyToKey = TStringMap{}
+	l.HintToKey = TStringMap{}
 	l.KeyIsTemporary = TStringSetNew()
 	l.NameAliasToName = TStringMap{}
 	l.StateAliasToCanonical = TStringMap{}

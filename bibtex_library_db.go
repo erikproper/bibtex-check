@@ -49,8 +49,18 @@ var (
 	entryModTrackingActive bool
 	entryModified          bool
 	dbWriteSessionActive   bool
+	dbWriteFailed          bool  // set when any end-of-run DB write fails; blocks finaliseWorkingDatabase
 	changesAtSessionOpen   int64 // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
 )
+
+// dbExecSave executes a DB statement during the end-of-run save phase. On error it
+// logs msg and sets dbWriteFailed so postCheckGate blocks the home-DB copy.
+func dbExecSave(msg, query string, args ...any) {
+	if _, err := db.Exec(query, args...); err != nil {
+		dbInteraction.Warning("%s: %s", msg, err)
+		dbWriteFailed = true
+	}
+}
 
 // --- entry cache ---
 
@@ -284,6 +294,106 @@ func maybeMigrateTableConstraints() {
 
 }
 
+var fkSchemaMigrated bool
+
+// maybeMigrateToFKSchema recreates bib_groups, losing_field_values, entry_warnings,
+// and entry_metadata with FOREIGN KEY ... ON DELETE CASCADE referencing bib_entry_keys.
+// Cleans orphan rows from each source table before copying so no violations are
+// introduced when FK is re-enabled. Guarded so it runs at most once per process.
+func maybeMigrateToFKSchema() {
+	if fkSchemaMigrated {
+		return
+	}
+	fkSchemaMigrated = true
+
+	type tableSpec struct {
+		table   string
+		cols    string
+		selCols string
+		fkCol   string
+	}
+	tables := []tableSpec{
+		{
+			"bib_groups",
+			`group_name TEXT NOT NULL, entry_key TEXT NOT NULL,
+			 PRIMARY KEY (group_name, entry_key),
+			 FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
+			"group_name, entry_key",
+			"entry_key",
+		},
+		{
+			"losing_field_values",
+			`entry_key TEXT NOT NULL, field TEXT NOT NULL, value TEXT NOT NULL,
+			 PRIMARY KEY (entry_key, field, value),
+			 FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
+			"entry_key, field, value",
+			"entry_key",
+		},
+		{
+			"entry_warnings",
+			`key TEXT NOT NULL, warning TEXT NOT NULL DEFAULT '',
+			 UNIQUE(key, warning),
+			 FOREIGN KEY (key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
+			"key, warning",
+			"key",
+		},
+		{
+			"entry_metadata",
+			`entry_key TEXT NOT NULL, property TEXT NOT NULL, value TEXT NOT NULL,
+			 PRIMARY KEY (entry_key, property),
+			 FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
+			"entry_key, property, value",
+			"entry_key",
+		},
+	}
+
+	needsMigration := false
+	for _, t := range tables {
+		var createSQL string
+		db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, t.table).Scan(&createSQL)
+		if !strings.Contains(strings.ToUpper(createSQL), "REFERENCES") {
+			needsMigration = true
+			break
+		}
+	}
+	if !needsMigration {
+		return
+	}
+
+	dbInteraction.Progress("Migrating schema: adding FK constraints to dependent tables")
+	db.Exec(`PRAGMA foreign_keys = OFF`)
+	for _, t := range tables {
+		var createSQL string
+		db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, t.table).Scan(&createSQL)
+		if strings.Contains(strings.ToUpper(createSQL), "REFERENCES") {
+			continue
+		}
+		db.Exec(fmt.Sprintf(
+			`DELETE FROM %s WHERE %s NOT IN (SELECT entry_key FROM bib_entry_keys)`,
+			t.table, t.fkCol))
+		tmp := t.table + "_fk_migration_tmp"
+		stmts := []string{
+			`DROP TABLE IF EXISTS ` + tmp,
+			`CREATE TABLE ` + tmp + ` (` + t.cols + `)`,
+			fmt.Sprintf(`INSERT OR IGNORE INTO %s (%s) SELECT %s FROM %s`, tmp, t.selCols, t.selCols, t.table),
+			`DROP TABLE ` + t.table,
+			`ALTER TABLE ` + tmp + ` RENAME TO ` + t.table,
+		}
+		ok := true
+		for _, stmt := range stmts {
+			if _, err := db.Exec(stmt); err != nil {
+				dbInteraction.Warning("FK migration of %s failed: %s", t.table, err)
+				ok = false
+				break
+			}
+		}
+		if ok {
+			dbInteraction.Progress("Added FK ON DELETE CASCADE to %s", t.table)
+		}
+	}
+	db.Exec(`PRAGMA foreign_keys = ON`)
+}
+
 // configureDatabasePragmas sets WAL journal mode and a busy timeout on the
 // current db connection. WAL allows a writer to proceed concurrently with open
 // read cursors (eliminating SQLITE_BUSY when setTableDirty is called from
@@ -295,6 +405,9 @@ func configureDatabasePragmas() {
 	}
 	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
 		dbInteraction.Warning("Could not set busy_timeout: %s", err)
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		dbInteraction.Warning("Could not enable FK enforcement: %s", err)
 	}
 }
 
@@ -329,6 +442,7 @@ func connectToDatabase() {
 	maybeBootstrapConfigFromFile()
 	loadBibTeXSettings()
 	ensureShortenMappingsTableExists()
+	ensureBibEntryKeysTableExists()
 	ensureBibTablesExist()
 }
 
@@ -387,6 +501,7 @@ func reopenDb(path string) {
 	ensureLosingFieldValuesTableExists()
 	ensureConfigTableExists()
 	ensureShortenMappingsTableExists()
+	ensureBibEntryKeysTableExists()
 	ensureBibTablesExist()
 }
 
@@ -801,6 +916,73 @@ func finaliseWorkingDatabase() {
 	}
 }
 
+// --- FK pre-check / post-check gate (step 15.1, Phase A) ---
+
+// preCheckRepair syncs the bib_entry_keys anchor table to match bib_entries, then
+// removes any orphan rows from dependent tables whose FK column is not in the anchor.
+// Orphan rows can arrive via migrations run with FK OFF or from writes before FK was
+// enforced; running this before maybeMigrateToFKSchema() ensures clean data is copied.
+func preCheckRepair() {
+	db.Exec(`PRAGMA foreign_keys = OFF`)
+	db.Exec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
+	         SELECT DISTINCT entry_key FROM bib_entries`)
+	res, _ := db.Exec(`DELETE FROM bib_entry_keys
+	                   WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`)
+	if n, _ := res.RowsAffected(); n > 0 {
+		dbInteraction.Warning("Removed %d stale anchor row(s) — cascading to dependent tables", n)
+	}
+	repair := func(table, fkCol string) {
+		res, err := db.Exec(fmt.Sprintf(
+			`DELETE FROM %s WHERE %s NOT IN (SELECT entry_key FROM bib_entry_keys)`,
+			table, fkCol))
+		if err != nil {
+			dbInteraction.Warning("preCheckRepair %s: %s", table, err)
+			return
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			dbInteraction.Warning("Repaired %d orphan row(s) in %s", n, table)
+		}
+	}
+	repair("bib_groups", "entry_key")
+	repair("losing_field_values", "entry_key")
+	repair("entry_warnings", "key")
+	repair("entry_metadata", "entry_key")
+	db.Exec(`PRAGMA foreign_keys = ON`)
+}
+
+// postCheckGate re-syncs bib_entry_keys to the current bib_entries state, then
+// uses PRAGMA foreign_key_check to verify all FK constraints. Returns true when
+// clean. Called from the write tail of main() just before finaliseWorkingDatabase;
+// a false return suppresses the home-DB copy so a bad run cannot corrupt persisted state.
+func postCheckGate() bool {
+	if dbWriteFailed {
+		dbInteraction.Warning("Post-check: DB write failure(s) detected — home database not updated")
+		return false
+	}
+
+	db.Exec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
+	         SELECT DISTINCT entry_key FROM bib_entries`)
+	db.Exec(`DELETE FROM bib_entry_keys
+	         WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`)
+
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		dbInteraction.Warning("Post-check: foreign_key_check failed: %s", err)
+		return false
+	}
+	defer rows.Close()
+
+	ok := true
+	for rows.Next() {
+		var table, parent string
+		var rowid, fkid int64
+		rows.Scan(&table, &rowid, &parent, &fkid) //nolint:errcheck
+		dbInteraction.Warning("Post-check: FK violation in %s (rowid %d → %s)", table, rowid, parent)
+		ok = false
+	}
+	return ok
+}
+
 // writeDatabaseDump writes a SQL dump of the home database to $base.dump using
 // the sqlite3 CLI tool. Skips with a warning if sqlite3 is not available.
 func writeDatabaseDump() {
@@ -1059,6 +1241,7 @@ func saveNameMappingsToDb(l *TBibTeXLibrary) {
 	if _, err := tx.Exec(`DELETE FROM name_mappings`); err != nil {
 		dbInteraction.Warning("Could not clear name_mappings table: %s", err)
 		tx.Rollback()
+		dbWriteFailed = true
 		return
 	}
 	upsert := `INSERT INTO name_mappings (alias, name) VALUES (?, ?)
@@ -1067,12 +1250,14 @@ func saveNameMappingsToDb(l *TBibTeXLibrary) {
 		if alias != name {
 			if _, err := tx.Exec(upsert, alias, name); err != nil {
 				dbInteraction.Warning("Name mapping upsert failed: %s", err)
+				dbWriteFailed = true
 			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		dbInteraction.Warning("Could not commit name_mappings save: %s", err)
 		tx.Rollback()
+		dbWriteFailed = true
 		return
 	}
 
@@ -1116,9 +1301,7 @@ func loadKeyHintsFromDb(l *TBibTeXLibrary) {
 
 // saveKeyHintsToDb writes the filtered key hints directly to the DB without a file roundtrip.
 func saveKeyHintsToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM key_hints;`); err != nil {
-		dbInteraction.Warning("Could not clear key_hints: %s", err)
-	}
+	dbExecSave("Could not clear key_hints", `DELETE FROM key_hints;`)
 	upsert := `INSERT INTO key_hints (hint, key) VALUES (?, ?)
 	             ON CONFLICT(hint) DO UPDATE SET key = excluded.key;`
 	for source, target := range l.HintToKey {
@@ -1126,9 +1309,7 @@ func saveKeyHintsToDb(l *TBibTeXLibrary) {
 		if bibEntryExists(target) &&
 			source != target &&
 			source != KeyForDBLP(l.EntryFieldValueity(target, DBLPField)) {
-			if _, err := db.Exec(upsert, source, target); err != nil {
-				dbInteraction.Warning("key_hints insert failed: %s", err)
-			}
+			dbExecSave("key_hints insert failed", upsert, source, target)
 		}
 	}
 	setTableDate("key_hints", time.Now().UnixMicro())
@@ -1183,17 +1364,13 @@ func loadKeyOldiesFromDb(l *TBibTeXLibrary) {
 
 // saveKeyOldiesToDb writes the filtered key aliases directly to the DB without a file roundtrip.
 func saveKeyOldiesToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM key_oldies;`); err != nil {
-		dbInteraction.Warning("Could not clear key_oldies: %s", err)
-	}
+	dbExecSave("Could not clear key_oldies", `DELETE FROM key_oldies;`)
 	upsert := `INSERT INTO key_oldies (alias, key) VALUES (?, ?)
 	             ON CONFLICT(alias) DO UPDATE SET key = excluded.key;`
 	for source, target := range l.KeyToKey {
 		target = l.MapEntryKey(target)
 		if bibEntryExists(target) && source != target && IsValidKey(source) {
-			if _, err := db.Exec(upsert, source, target); err != nil {
-				dbInteraction.Warning("key_oldies insert failed: %s", err)
-			}
+			dbExecSave("key_oldies insert failed", upsert, source, target)
 		}
 	}
 	setTableDate("key_oldies", time.Now().UnixMicro())
@@ -1242,9 +1419,7 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 // Pairs where one or both keys are unimported DBLP: keys are preserved alongside
 // normal library-entry pairs.
 func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM key_non_doubles;`); err != nil {
-		dbInteraction.Warning("Could not clear key_non_doubles: %s", err)
-	}
+	dbExecSave("Could not clear key_non_doubles", `DELETE FROM key_non_doubles;`)
 	insert := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING;`
 	isValidNonDoubleKey := func(k string) bool {
 		return k == l.MapEntryKey(k) && (l.EntryExists(k) || strings.HasPrefix(k, "DBLP:"))
@@ -1260,9 +1435,7 @@ func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
 			if l.EntryExists(key) && l.EntryExists(nonDouble) && l.EvidenceForBeingDifferentEntries(key, nonDouble) {
 				continue
 			}
-			if _, err := db.Exec(insert, key, nonDouble); err != nil {
-				dbInteraction.Warning("key_non_doubles insert failed: %s", err)
-			}
+			dbExecSave("key_non_doubles insert failed", insert, key, nonDouble)
 		}
 	}
 	setTableDate("key_non_doubles", time.Now().UnixMicro())
@@ -1299,15 +1472,11 @@ func loadDblpParentFromDb(l *TBibTeXLibrary) {
 
 // saveDblpParentToDb writes l.DblpParentOverrides directly to the DB.
 func saveDblpParentToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM dblp_parent;`); err != nil {
-		dbInteraction.Warning("Could not clear dblp_parent: %s", err)
-	}
+	dbExecSave("Could not clear dblp_parent", `DELETE FROM dblp_parent;`)
 	insert := `INSERT INTO dblp_parent (child_key, parent_key) VALUES (?, ?)
 	             ON CONFLICT(child_key) DO UPDATE SET parent_key = excluded.parent_key;`
 	for child, parent := range l.DblpParentOverrides {
-		if _, err := db.Exec(insert, child, parent); err != nil {
-			dbInteraction.Warning("dblp_parent insert failed: %s", err)
-		}
+		dbExecSave("dblp_parent insert failed", insert, child, parent)
 	}
 	setTableDate("dblp_parent", time.Now().UnixMicro())
 }
@@ -1342,14 +1511,10 @@ func loadDblpWaivedFromDb(l *TBibTeXLibrary) {
 
 // saveDblpWaivedToDb writes l.DblpWaived directly to the DB.
 func saveDblpWaivedToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM dblp_waived;`); err != nil {
-		dbInteraction.Warning("Could not clear dblp_waived: %s", err)
-	}
+	dbExecSave("Could not clear dblp_waived", `DELETE FROM dblp_waived;`)
 	insert := `INSERT INTO dblp_waived (key) VALUES (?) ON CONFLICT(key) DO NOTHING;`
 	for key := range l.DblpWaived.Elements() {
-		if _, err := db.Exec(insert, key); err != nil {
-			dbInteraction.Warning("dblp_waived insert failed: %s", err)
-		}
+		dbExecSave("dblp_waived insert failed", insert, key)
 	}
 	setTableDate("dblp_waived", time.Now().UnixMicro())
 }
@@ -1480,9 +1645,7 @@ func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 
 // saveCrossFieldMappingsToDb writes the field mappings directly to the DB without a file roundtrip.
 func saveCrossFieldMappingsToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM cross_field_mappings;`); err != nil {
-		dbInteraction.Warning("Could not clear cross_field_mappings: %s", err)
-	}
+	dbExecSave("Could not clear cross_field_mappings", `DELETE FROM cross_field_mappings;`)
 	upsert := `INSERT INTO cross_field_mappings
 	             (source_field, source_value, target_field, target_value) VALUES (?, ?, ?, ?)
 	             ON CONFLICT(source_field, source_value, target_field)
@@ -1490,9 +1653,7 @@ func saveCrossFieldMappingsToDb(l *TBibTeXLibrary) {
 	for sourceField, sourceFieldMappings := range l.FieldMappings {
 		for sourceValue, targetFieldMappings := range sourceFieldMappings {
 			for targetField, targetValue := range targetFieldMappings {
-				if _, err := db.Exec(upsert, sourceField, sourceValue, targetField, targetValue); err != nil {
-					dbInteraction.Warning("cross_field_mappings insert failed: %s", err)
-				}
+				dbExecSave("cross_field_mappings insert failed", upsert, sourceField, sourceValue, targetField, targetValue)
 			}
 		}
 	}
@@ -1547,9 +1708,7 @@ func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 
 // saveEntryFieldMappingsToDb writes the losing field values to the DB without a file roundtrip.
 func saveEntryFieldMappingsToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM losing_field_values`); err != nil {
-		dbInteraction.Warning("Could not clear losing_field_values: %s", err)
-	}
+	dbExecSave("Could not clear losing_field_values", `DELETE FROM losing_field_values`)
 	upsert := `INSERT INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?)
 	             ON CONFLICT(entry_key, field, value) DO NOTHING`
 	for key, fieldChallenges := range l.EntryFieldSourceToTarget {
@@ -1558,9 +1717,7 @@ func saveEntryFieldMappingsToDb(l *TBibTeXLibrary) {
 				if field != PreferredAliasField {
 					for challenger, winner := range challenges {
 						if l.MapFieldValue(field, challenger) != l.MapEntryFieldValue(key, field, winner) {
-							if _, err := db.Exec(upsert, key, field, challenger); err != nil {
-								dbInteraction.Warning("losing_field_values insert failed: %s", err)
-							}
+							dbExecSave("losing_field_values insert failed", upsert, key, field, challenger)
 						}
 					}
 				}
@@ -1613,9 +1770,7 @@ func loadGenericFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 
 // saveGenericFieldMappingsToDb writes the filtered generic field aliases directly to the DB without a file roundtrip.
 func saveGenericFieldMappingsToDb(l *TBibTeXLibrary) {
-	if _, err := db.Exec(`DELETE FROM generic_field_mappings;`); err != nil {
-		dbInteraction.Warning("Could not clear generic_field_mappings: %s", err)
-	}
+	dbExecSave("Could not clear generic_field_mappings", `DELETE FROM generic_field_mappings;`)
 	upsert := `INSERT INTO generic_field_mappings
 	             (field, winner, challenger) VALUES (?, ?, ?)
 	             ON CONFLICT(field, challenger)
@@ -1624,9 +1779,7 @@ func saveGenericFieldMappingsToDb(l *TBibTeXLibrary) {
 		if field != PreferredAliasField {
 			for challenger, winner := range challenges {
 				if challenger != winner {
-					if _, err := db.Exec(upsert, field, l.MapFieldValue(field, winner), challenger); err != nil {
-						dbInteraction.Warning("generic_field_mappings insert failed: %s", err)
-					}
+					dbExecSave("generic_field_mappings insert failed", upsert, field, l.MapFieldValue(field, winner), challenger)
 				}
 			}
 		}
@@ -1671,7 +1824,8 @@ func ensureEntryMetadataTableExists() {
 		  entry_key TEXT NOT NULL,
 		  property  TEXT NOT NULL,
 		  value     TEXT NOT NULL,
-		  PRIMARY KEY (entry_key, property)
+		  PRIMARY KEY (entry_key, property),
+		  FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE
 		);`)
 }
 func loadEntryMetadataFromDb(l *TBibTeXLibrary) {
@@ -1709,7 +1863,8 @@ func ensureLosingFieldValuesTableExists() {
 		  entry_key TEXT NOT NULL,
 		  field     TEXT NOT NULL,
 		  value     TEXT NOT NULL,
-		  PRIMARY KEY (entry_key, field, value)
+		  PRIMARY KEY (entry_key, field, value),
+		  FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE
 		);`)
 }
 
@@ -1772,7 +1927,8 @@ func ensureEntryWarningsTableExists() {
 		CREATE TABLE IF NOT EXISTS entry_warnings (
 		  key     TEXT NOT NULL,
 		  warning TEXT NOT NULL DEFAULT '',
-		  UNIQUE(key, warning)
+		  UNIQUE(key, warning),
+		  FOREIGN KEY (key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE
 		);`)
 }
 
@@ -1880,6 +2036,13 @@ func loadShortenMappingsFromDb() TShortenMappings {
 
 // --- bib_entries / bib_groups / bib_comments tables ---
 
+func ensureBibEntryKeysTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS bib_entry_keys (
+		  entry_key TEXT PRIMARY KEY
+		);`)
+}
+
 func ensureBibTablesExist() {
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS bib_entries (
@@ -1892,7 +2055,8 @@ func ensureBibTablesExist() {
 		CREATE TABLE IF NOT EXISTS bib_groups (
 		  group_name TEXT NOT NULL,
 		  entry_key  TEXT NOT NULL,
-		  PRIMARY KEY (group_name, entry_key)
+		  PRIMARY KEY (group_name, entry_key),
+		  FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE
 		);`)
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS bib_comments (
@@ -2282,6 +2446,12 @@ func upsertBibEntryField(key, field, value string) {
 	if value == "" {
 		err = bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, key, field)
 	} else {
+		// Keep bib_entry_keys anchor in sync so FK-dependent tables can reference
+		// this entry immediately (e.g. entry_warnings during the same run).
+		// Use bibExec (not db.Exec) so the INSERT runs inside activeTx when a
+		// bib transaction is active — a bare db.Exec competes for a second write
+		// slot and gets SQLITE_BUSY_SNAPSHOT (517) in WAL mode.
+		bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, key) //nolint:errcheck
 		err = bibExec(
 			`INSERT INTO bib_entries (entry_key, field, value) VALUES (?, ?, ?)
 			   ON CONFLICT(entry_key, field) DO UPDATE SET value = excluded.value;`,
@@ -2363,12 +2533,14 @@ func isDeletedEntry(key string) bool {
 	return n > 0
 }
 
-// deleteBibEntry removes all rows for a given entry key from bib_entries.
-// Outside a transaction it checks for an actual change before marking modified.
+// deleteBibEntry removes all rows for a given entry key from bib_entries and the
+// bib_entry_keys anchor. ON DELETE CASCADE propagates the anchor deletion to
+// bib_groups, losing_field_values, entry_warnings, and entry_metadata.
 func deleteBibEntry(key string) {
 	if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ?`, key); err != nil {
 		dbInteraction.Warning("bib_entries delete failed for %s: %s", key, err)
 	}
+	db.Exec(`DELETE FROM bib_entry_keys WHERE entry_key = ?`, key)
 	if entryCache != nil {
 		if _, ok := entryCache[key]; ok {
 			if activeTx == nil {
