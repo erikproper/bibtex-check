@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.7"
+const AppVersion = "25.8"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -785,8 +785,7 @@ func doAddToGroup(args []string) {
 func doRenderAsBibTeX(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
-		key := Library.MapEntryKey(cleanKey(args[0]))
-		fmt.Print(Library.renderAsBibTeX(key))
+		fmt.Print(Library.renderAsBibTeX(resolveInputKey(cleanKey(args[0]))))
 	}
 }
 
@@ -880,24 +879,21 @@ func doListGroupAliases(args []string) {
 func doRenderAsTex(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
-		key := Library.MapEntryKey(cleanKey(args[0]))
-		fmt.Println(Library.renderAsTeX(key))
+		fmt.Println(Library.renderAsTeX(resolveInputKey(cleanKey(args[0]))))
 	}
 }
 
 func doRenderAsHTML(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
-		key := Library.MapEntryKey(cleanKey(args[0]))
-		fmt.Println(Library.renderAsHTML(key))
+		fmt.Println(Library.renderAsHTML(resolveInputKey(cleanKey(args[0]))))
 	}
 }
 
 func doRenderAsText(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
-		key := Library.MapEntryKey(cleanKey(args[0]))
-		fmt.Println(Library.renderAsText(key))
+		fmt.Println(Library.renderAsText(resolveInputKey(cleanKey(args[0]))))
 	}
 }
 
@@ -932,18 +928,22 @@ func doRemoveFromGroup(args []string) {
 	}
 }
 
+// resolveInputKey maps a user-supplied key to its canonical entry key,
+// falling back to HintToKey when MapEntryKey returns the input unchanged.
+func resolveInputKey(raw string) string {
+	resolved := Library.MapEntryKey(raw)
+	if resolved == raw {
+		if hint, ok := Library.HintToKey[raw]; ok {
+			resolved = Library.MapEntryKey(hint)
+		}
+	}
+	return resolved
+}
+
 func doEntryKey(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
-		raw := cleanKey(args[0])
-		resolved := Library.MapEntryKey(raw)
-		if resolved == raw {
-			// Not a canonical alias — check key hints (harvest source keys, preferred aliases).
-			if hint, ok := Library.HintToKey[raw]; ok {
-				resolved = Library.MapEntryKey(hint)
-			}
-		}
-		fmt.Println(resolved)
+		fmt.Println(resolveInputKey(cleanKey(args[0])))
 	}
 }
 
@@ -1143,7 +1143,7 @@ func doRepairGarbledNames(repairBibPath string) {
 func doShowEntry(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
-		fmt.Println(Library.EntryString(Library.MapEntryKey(cleanKey(args[0])), ""))
+		fmt.Println(Library.EntryString(resolveInputKey(cleanKey(args[0])), ""))
 	}
 }
 
