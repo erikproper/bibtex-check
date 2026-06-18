@@ -595,6 +595,72 @@ func (l *TBibTeXLibrary) CheckDOIPresence(entry *TBibTeXEntry) {
 	}
 }
 
+// noteURLPattern matches a \url{...} command embedded in a note field,
+// optionally followed by whitespace-only brackets "[ ]" or "[]" (empty placeholder
+// left by authors who confused \url{} with \href{}{} syntax). Brackets that
+// contain actual text (e.g. "[Accessed: 2023-01-15]") are NOT consumed so that
+// CheckNoteAccessed can still extract the date from what remains.
+// Capturing group 1 is the raw URL content (may have leading/trailing whitespace).
+var noteURLPattern = regexp.MustCompile(`\\url\{([^}]*)\}(?:\s*\[\s*\])?`)
+
+// findNoteURL finds the first \url{...} in s and returns its position plus the trimmed URL.
+// Returns (matchStart, matchEnd, url) where matchStart==-1 means no match, url=="" means
+// the braces were empty (no action needed).
+func findNoteURL(s string) (start, end int, url string) {
+	m := noteURLPattern.FindStringSubmatchIndex(s)
+	if m == nil {
+		return -1, -1, ""
+	}
+	return m[0], m[1], strings.TrimSpace(s[m[2]:m[3]])
+}
+
+// applyNoteURLFix extracts the first \url{...} from the note field of a raw fields map,
+// removes it from the note in-place (reusing stripAccessedSpan for separator cleanup),
+// and returns the trimmed URL. Returns "" when no \url{} is present or the braces are empty.
+func applyNoteURLFix(fields map[string]string) string {
+	note := fields["note"]
+	if note == "" {
+		return ""
+	}
+	start, end, url := findNoteURL(note)
+	if start == -1 || url == "" {
+		return ""
+	}
+	fields["note"] = stripAccessedSpan(note, start, end)
+	return url
+}
+
+// CheckNoteURL detects \url{...} embedded in the note field and handles it:
+//   - No url field set → promote the embedded URL to the url field and clean the note.
+//   - url field matches embedded URL → remove from note (redundant, silent).
+//   - extracted URL is a DOI URL matching the doi field → remove from note (redundant, silent).
+//   - url field differs and not DOI-redundant → remove from note, report warning.
+//
+// Called before CheckURLRedundance so the promoted URL feeds into the redundancy check,
+// and before CheckNoteAccessed so the url field is set when urldate promotion is evaluated.
+func (l *TBibTeXLibrary) CheckNoteURL(entry *TBibTeXEntry) {
+	existingURL := entry.FieldValue("url")
+	extractedURL := applyNoteURLFix(entry.Fields)
+	if extractedURL == "" {
+		return
+	}
+	l.setEntryField(entry, "note", entry.Fields["note"])
+
+	switch {
+	case existingURL == "":
+		l.setEntryField(entry, "url", extractedURL)
+	case strings.EqualFold(existingURL, extractedURL):
+		// Redundant: url field already has this URL; note cleaned above is enough.
+	case l.IsRedundantURL(extractedURL, entry.Key):
+		// The note URL is just the doi field as a URL (https://doi.org/<doi>);
+		// the doi field already captures this information — remove from note silently.
+	default:
+		l.ReportEntryWarning(entry.Key,
+			`note contains \url{%s} but url field already has %s; removed from note`,
+			extractedURL, existingURL)
+	}
+}
+
 // Accessed-date patterns, tried in order.
 // accessedPatternYMD: YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD
 // accessedPatternDMY: DD.MM.YYYY / DD-MM-YYYY / DD/MM/YYYY
@@ -743,14 +809,34 @@ func (l *TBibTeXLibrary) CheckURLDateNeed(entry *TBibTeXEntry) {
 }
 
 func (l *TBibTeXLibrary) CheckBookishTitles(entry *TBibTeXEntry) {
-	// SAFE??
-	entryType := entry.EntryType()
+	if !BibTeXBookish.Contains(entry.EntryType()) {
+		return
+	}
 
-	if BibTeXBookish.Contains(entryType) {
-		newBookTitle := l.MaybeResolveFieldValue(entry.Key, entry.Key, "booktitle", entry.FieldValue(TitleField), entry.FieldValue("booktitle"))
-		l.setEntryField(entry, "booktitle", newBookTitle)
-		l.UpdateEntryFieldAlias(entry.Key, TitleField, entry.FieldValue(TitleField), entry.FieldValue("booktitle"))
-		l.setEntryField(entry, TitleField, entry.FieldValue("booktitle"))
+	title := entry.FieldValue(TitleField)
+	booktitle := entry.FieldValue("booktitle")
+
+	if title == booktitle {
+		return
+	}
+
+	if booktitle == "" {
+		l.setEntryField(entry, "booktitle", title)
+		return
+	}
+
+	if title == "" {
+		l.setEntryField(entry, TitleField, booktitle)
+		return
+	}
+
+	// Both non-empty and different: resolve and assign the winner to both fields.
+	winner := l.MaybeResolveFieldValue(entry.Key, entry.Key, "booktitle", title, booktitle)
+	if winner != booktitle {
+		l.setEntryField(entry, "booktitle", winner)
+	}
+	if winner != title {
+		l.setEntryField(entry, TitleField, winner)
 	}
 	// if strings.Contains(l.EntryFields[key]["booktitle"], "proc.") || strings.Contains(l.EntryFields[key]["booktitle"], "Proc.") ||
 	//
@@ -910,18 +996,31 @@ func (l *TBibTeXLibrary) CheckISBNFromDOI(entry *TBibTeXEntry) {
 func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefEntry, entry *TBibTeXEntry, field string) {
 	if BibTeXMustInheritFields.Contains(field) {
 		if challenge, hasChallenge := entry.Fields[field]; hasChallenge {
-			target := l.MaybeResolveFieldValue(crossrefEntry.Key, entry.Key, field, challenge, crossrefEntry.FieldValue(field))
+			parentValue := crossrefEntry.FieldValue(field)
+			var target string
+			if parentValue == "" {
+				// Parent has no value: silently move child's value up — no question needed.
+				target = challenge
+			} else {
+				target = l.MaybeResolveFieldValue(crossrefEntry.Key, entry.Key, field, challenge, parentValue)
+			}
 
-			l.setEntryField(crossrefEntry, field, target)
+			if target != "" {
+				l.setEntryField(crossrefEntry, field, target)
+			}
 
 			if field == "booktitle" {
 				currentTitle := crossrefEntry.FieldValue(TitleField)
-				newTitle := l.MaybeResolveFieldValue(crossrefEntry.Key, entry.Key, field, target, currentTitle)
+				var newTitle string
+				if currentTitle == "" {
+					newTitle = target
+				} else {
+					newTitle = l.MaybeResolveFieldValue(crossrefEntry.Key, entry.Key, field, target, currentTitle)
+				}
 
 				if currentTitle != newTitle {
 					l.TitleIndex.DeleteValueFromStringSetMap(TeXStringIndexer(currentTitle), crossrefEntry.Key)
 
-					/// Refactor this into a function. We need this more often.
 					l.setEntryField(crossrefEntry, TitleField, newTitle)
 					l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(newTitle), crossrefEntry.Key)
 				}
@@ -931,10 +1030,9 @@ func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefEntry, entry *TBi
 				l.AddEntryFieldAlias(crossrefEntry.Key, field, otherChallenger, target, false)
 			}
 
-			if target != "" {
-				l.deleteEntryField(entry, field)
-				delete(l.EntryFieldSourceToTarget[entry.Key], field)
-			}
+			// Always clear the child's copy — MustInheritFields never belong on the child.
+			l.deleteEntryField(entry, field)
+			delete(l.EntryFieldSourceToTarget[entry.Key], field)
 		}
 	} else if BibTeXMayInheritFields.Contains(field) {
 		if crossrefValue, hasCrossrefValue := crossrefEntry.Fields[field]; hasCrossrefValue {
@@ -1275,6 +1373,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 		// CheckCrossref can lead to a merger of entries for now ...
 		if entry.Exists() && l.EntryExists(entry.Key) {
 			l.NormaliseEntryFields(entry)
+			l.MaybeApplyFieldMappings(entry, true)
 			l.CheckDOIPresence(entry)
 			l.CheckEPrint(entry)
 			l.CheckYearFromURLDate(entry)
@@ -1283,6 +1382,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckBookishTitles(entry)
 			l.CheckISBNFromDOI(entry)
 			l.CheckTitlePresence(entry)
+			l.CheckNoteURL(entry)
 			l.CheckURLRedundance(entry)
 			l.CheckNoteAccessed(entry)
 			l.CheckURLDateNeed(entry)

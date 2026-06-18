@@ -739,17 +739,23 @@ func buildSyncStateSnapshot(cfg TBibGetConfig, writtenPairs []TBibGetPair, sourc
 		if se := syncState.get(p.canonicalKey); se != nil {
 			groups = se.Groups
 		}
-		bibHash := bibHashByLocalKey[p.localKey]
+		// effectiveKey is the key actually written to the bib by entryGetString.
+		// When key_mapping=off, p.localKey is empty and the canonical key is used.
+		effectiveKey := p.localKey
+		if effectiveKey == "" {
+			effectiveKey = p.canonicalKey
+		}
+		bibHash := bibHashByLocalKey[effectiveKey]
 		if bibHash == "" {
 			bibHash = subsetDBFingerprint(p.canonicalKey)
 		}
-		fields := bibFieldsByLocalKey[p.localKey]
+		fields := bibFieldsByLocalKey[effectiveKey]
 		if fields == nil {
 			fields = make(map[string]string)
 		}
 		syncState.set(TSyncEntry{
 			CanonicalKey: p.canonicalKey,
-			OutputKey:    p.localKey,
+			OutputKey:    effectiveKey,
 			Groups:       groups,
 			DBHash:       subsetDBFingerprint(p.canonicalKey),
 			BibHash:      bibHash,
@@ -992,7 +998,11 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath string, syncSta
 			bibChanged = !syncFieldsEqual(syncBibFields(e, outputToCanonical), snapshot.Fields)
 			dbChanged = !syncFieldsEqual(syncDBFields(canonical), snapshot.Fields)
 		} else {
-			bibChanged = subsetBibFingerprint(e, outputToCanonical) != snapshot.BibHash
+			// Hash-based fallback: snapshot has no field data (stale or migrated state).
+			// BibHash may have been written by a different version of subsetBibFingerprint
+			// and cannot be compared reliably. Conservative: treat bib as unchanged so a
+			// stale hash never triggers a spurious challenge. Phase 2 populates Fields for
+			// accurate field-level detection in future syncs.
 			dbChanged = subsetDBFingerprint(canonical) != snapshot.DBHash
 		}
 

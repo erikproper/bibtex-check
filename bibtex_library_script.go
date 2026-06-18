@@ -531,6 +531,21 @@ func (p *scriptParser) parseFieldCond(field string) scriptCond {
 
 // ─── Evaluator ─────────────────────────────────────────────────────────────────
 
+// scriptFieldValue returns the effective value of field for key. For fields in
+// BibTeXMustInheritFields (e.g. year, booktitle, editor), when the field is absent
+// on the entry itself the value is fetched from the crossref parent — matching the
+// library's own normalisation that removes these fields from child entries.
+func scriptFieldValue(l *TBibTeXLibrary, key, field string) string {
+	val := l.EntryFieldValueity(key, field)
+	if val != "" || !BibTeXMustInheritFields.Contains(field) {
+		return val
+	}
+	if crossref := l.EntryFieldValueity(key, "crossref"); crossref != "" {
+		return l.EntryFieldValueity(crossref, field)
+	}
+	return ""
+}
+
 // scriptNameInField returns true when searchName (or any of its aliases) is
 // present as one of the " and "-separated names in fieldVal.
 func scriptNameInField(l *TBibTeXLibrary, fieldVal, searchName string) bool {
@@ -580,17 +595,17 @@ func scriptEvalCond(l *TBibTeXLibrary, key string, prog *scriptProgram, cond scr
 	case *sCondInGroup:
 		return l.GroupEntries[c.group].Set().Contains(key) != c.negated
 	case *sCondFieldIncludes:
-		val := l.EntryFieldValueity(key, c.field)
+		val := scriptFieldValue(l, key, c.field)
 		if c.field == "author" || c.field == "editor" {
 			return scriptNameInField(l, val, c.value)
 		}
 		return strings.Contains(val, c.value)
 	case *sCondFieldEquals:
-		return l.EntryFieldValueity(key, c.field) == c.value
+		return scriptFieldValue(l, key, c.field) == c.value
 	case *sCondFieldEmpty:
-		return (l.EntryFieldValueity(key, c.field) == "") != c.negated
+		return (scriptFieldValue(l, key, c.field) == "") != c.negated
 	case *sCondFieldNumCmp:
-		n, err := strconv.Atoi(l.EntryFieldValueity(key, c.field))
+		n, err := strconv.Atoi(scriptFieldValue(l, key, c.field))
 		if err != nil {
 			return false
 		}
