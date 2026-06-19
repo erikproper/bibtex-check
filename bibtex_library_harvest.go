@@ -130,7 +130,7 @@ func (l *TBibTeXLibrary) harvestKeyMatch(e TBibTeXEntry) string {
 	if canon := l.MapEntryKey(e.Key); l.EntryExists(canon) {
 		return canon
 	}
-	if hint := l.HintToKey[e.Key]; hint != "" {
+	if hint := l.HintToKey.GetValue(e.Key); hint != "" {
 		if canon := l.MapEntryKey(hint); l.EntryExists(canon) {
 			return canon
 		}
@@ -276,7 +276,7 @@ func maybeCollectKeyHint(l *TBibTeXLibrary, sourceKey, finalKey string) {
 	if !cmdCollectKeys || sourceKey == "" || finalKey == "" {
 		return
 	}
-	if existing := l.HintToKey[sourceKey]; existing != "" && l.MapEntryKey(existing) != finalKey {
+	if existing := l.HintToKey.GetValue(sourceKey); existing != "" && l.MapEntryKey(existing) != finalKey {
 		return
 	}
 	l.AddKeyHint(sourceKey, finalKey)

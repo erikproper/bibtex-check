@@ -13,11 +13,16 @@
  * kept in cache_folder during the sync session. On open, the home copy is
  * copied to cache (no recovery prompt on stale working copy — unlike the main
  * DB, an interrupted sync's partial working copy is never meaningful). On
- * close, the working copy is copied back to the home path.
+ * close, the working copy is copied back to the home path when dirty.
+ *
+ * Write model: every mutation writes to SQLite immediately (point-write).
+ * No batch flush. The in-memory maps serve as a read cache only; they are
+ * updated after each successful DB write. If a DB write fails, the in-memory
+ * state remains at its pre-call value (consistent with the DB).
  *
  * Creator: Henderik A. Proper (e.proper@acm.org), Luxembourg, in collaboration with Claude.ai
  *
- * Version of: 15.06.2026
+ * Version of: 18.06.2026
  *
  */
 
@@ -56,15 +61,15 @@ type TSyncEntry struct {
 
 // TSyncState holds the full in-memory sync snapshot for one bib file.
 type TSyncState struct {
-	homePath    string
-	workingPath string
-	isolated    bool // whether home ≠ working (cache_folder active)
-	db          *sql.DB
-	entries      map[string]*TSyncEntry
-	statuses     map[string]string           // source_key → status ("waived", "ignored", …)
-	localGroups  TStringSetMap               // entry_key → set of local group names (harvest mode)
+	homePath       string
+	workingPath    string
+	isolated       bool // whether home ≠ working (cache_folder active)
+	db             *sql.DB
+	entries        map[string]*TSyncEntry
+	statuses       map[string]string            // source_key → status ("waived", "ignored", …)
+	localGroups    TStringSetMap                // entry_key → set of local group names (harvest mode)
 	harvestEntries map[string]*TSyncHarvestEntry // source_key → verbatim bib entry (follow mode)
-	modified     bool
+	dirty          bool // true after any successful DB write; gates home-copy on close
 }
 
 // Sync status constants used across modes.
@@ -111,12 +116,12 @@ func openSyncState(keysBasePath string) *TSyncState {
 	}
 
 	s := &TSyncState{
-		homePath:     homePath,
-		workingPath:  workingPath,
-		isolated:     isolated,
-		db:           conn,
-		entries:      make(map[string]*TSyncEntry),
-		localGroups:  TStringSetMap{},
+		homePath:       homePath,
+		workingPath:    workingPath,
+		isolated:       isolated,
+		db:             conn,
+		entries:        make(map[string]*TSyncEntry),
+		localGroups:    TStringSetMap{},
 		harvestEntries: make(map[string]*TSyncHarvestEntry),
 	}
 	if !s.ensureSchema() {
@@ -127,20 +132,15 @@ func openSyncState(keysBasePath string) *TSyncState {
 	return s
 }
 
-// close flushes the in-memory state to the working SQLite DB, then copies it
-// back to the home path if isolation is active.
+// close closes the DB connection and copies the working DB back to the home
+// path if isolation is active and any writes were made during this session.
 func (s *TSyncState) close() {
 	if s == nil || s.db == nil {
 		return
 	}
-	if s.modified {
-		if err := s.flush(); err != nil {
-			dbInteraction.Warning("sync: flush failed: %s", err)
-		}
-	}
 	s.db.Close()
 	s.db = nil
-	if s.isolated && s.modified {
+	if s.isolated && s.dirty {
 		if err := copyFile(s.workingPath, s.homePath); err != nil {
 			dbInteraction.Warning("sync: cannot copy working sync DB back to %s: %s", s.homePath, err)
 		}
@@ -156,24 +156,131 @@ func (s *TSyncState) get(canonicalKey string) *TSyncEntry {
 }
 
 // set records a snapshot entry (replaces any existing entry for the same key).
+// Writes to SQLite first; updates the in-memory cache only on success.
 func (s *TSyncState) set(e TSyncEntry) {
 	if s == nil {
 		return
 	}
-	copy := e
-	s.entries[e.CanonicalKey] = &copy
-	s.modified = true
+	syncTime := e.SyncTime
+	if syncTime == 0 {
+		syncTime = time.Now().Unix()
+		e.SyncTime = syncTime
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		dbInteraction.Warning("sync: set begin tx failed: %s", err)
+		return
+	}
+
+	if _, err := tx.Exec(
+		`INSERT INTO sync_manifest (canonical_key, output_key, db_hash, bib_hash, sync_time)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(canonical_key) DO UPDATE SET
+		     output_key=excluded.output_key, db_hash=excluded.db_hash,
+		     bib_hash=excluded.bib_hash, sync_time=excluded.sync_time`,
+		e.CanonicalKey, e.OutputKey, e.DBHash, e.BibHash, syncTime,
+	); err != nil {
+		tx.Rollback()
+		dbInteraction.Warning("sync: set manifest failed: %s", err)
+		return
+	}
+
+	if _, err := tx.Exec(`DELETE FROM sync_entries WHERE canonical_key = ?`, e.CanonicalKey); err != nil {
+		tx.Rollback()
+		dbInteraction.Warning("sync: set entries delete failed: %s", err)
+		return
+	}
+	for field, value := range e.Fields {
+		if value == "" {
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO sync_entries (canonical_key, field, value) VALUES (?, ?, ?)`,
+			e.CanonicalKey, field, value,
+		); err != nil {
+			tx.Rollback()
+			dbInteraction.Warning("sync: set entry field insert failed: %s", err)
+			return
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM sync_groups WHERE canonical_key = ?`, e.CanonicalKey); err != nil {
+		tx.Rollback()
+		dbInteraction.Warning("sync: set groups delete failed: %s", err)
+		return
+	}
+	for group := range e.Groups.Elements() {
+		if _, err := tx.Exec(
+			`INSERT INTO sync_groups (canonical_key, group_name) VALUES (?, ?)`,
+			e.CanonicalKey, group,
+		); err != nil {
+			tx.Rollback()
+			dbInteraction.Warning("sync: set group insert failed: %s", err)
+			return
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM sync_pdfs WHERE canonical_key = ?`, e.CanonicalKey); err != nil {
+		tx.Rollback()
+		dbInteraction.Warning("sync: set pdfs delete failed: %s", err)
+		return
+	}
+	if e.PDFMd5 != "" {
+		if _, err := tx.Exec(
+			`INSERT INTO sync_pdfs (canonical_key, pdf_md5) VALUES (?, ?)`,
+			e.CanonicalKey, e.PDFMd5,
+		); err != nil {
+			tx.Rollback()
+			dbInteraction.Warning("sync: set pdf insert failed: %s", err)
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		dbInteraction.Warning("sync: set commit failed: %s", err)
+		return
+	}
+
+	cp := e
+	s.entries[e.CanonicalKey] = &cp
+	s.dirty = true
 }
 
 // delete removes the snapshot for canonicalKey.
+// Writes to SQLite first; updates the in-memory cache only on success.
 func (s *TSyncState) delete(canonicalKey string) {
 	if s == nil {
 		return
 	}
-	if _, ok := s.entries[canonicalKey]; ok {
-		delete(s.entries, canonicalKey)
-		s.modified = true
+	if _, ok := s.entries[canonicalKey]; !ok {
+		return
 	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		dbInteraction.Warning("sync: delete begin tx failed: %s", err)
+		return
+	}
+	for _, stmt := range []string{
+		`DELETE FROM sync_entries WHERE canonical_key = ?`,
+		`DELETE FROM sync_groups WHERE canonical_key = ?`,
+		`DELETE FROM sync_pdfs WHERE canonical_key = ?`,
+		`DELETE FROM sync_manifest WHERE canonical_key = ?`,
+	} {
+		if _, err := tx.Exec(stmt, canonicalKey); err != nil {
+			tx.Rollback()
+			dbInteraction.Warning("sync: delete failed: %s", err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		dbInteraction.Warning("sync: delete commit failed: %s", err)
+		return
+	}
+
+	delete(s.entries, canonicalKey)
+	s.dirty = true
 }
 
 // keys returns all canonical keys in the snapshot, sorted.
@@ -371,149 +478,99 @@ func (s *TSyncState) loadAll() {
 	s.harvestEntries = harvestManifest
 }
 
-// --- flush ---
-
-// flush writes the full in-memory state to the SQLite DB, replacing all tables.
-func (s *TSyncState) flush() error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-
-	// Clear all tables and rewrite from memory.
-	for _, tbl := range []string{"sync_manifest", "sync_entries", "sync_groups", "sync_pdfs", "sync_status", "local_groups", "sync_harvest", "sync_harvest_fields"} {
-		if _, err := tx.Exec("DELETE FROM " + tbl); err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-
-	now := time.Now().Unix()
-	for _, e := range s.entries {
-		syncTime := e.SyncTime
-		if syncTime == 0 {
-			syncTime = now
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO sync_manifest (canonical_key, output_key, db_hash, bib_hash, sync_time) VALUES (?, ?, ?, ?, ?)`,
-			e.CanonicalKey, e.OutputKey, e.DBHash, e.BibHash, syncTime,
-		); err != nil {
-			tx.Rollback()
-			return err
-		}
-		for field, value := range e.Fields {
-			if value == "" {
-				continue
-			}
-			if _, err := tx.Exec(
-				`INSERT INTO sync_entries (canonical_key, field, value) VALUES (?, ?, ?)`,
-				e.CanonicalKey, field, value,
-			); err != nil {
-				tx.Rollback()
-				return err
-			}
-		}
-		for group := range e.Groups.Elements() {
-			if _, err := tx.Exec(
-				`INSERT INTO sync_groups (canonical_key, group_name) VALUES (?, ?)`,
-				e.CanonicalKey, group,
-			); err != nil {
-				tx.Rollback()
-				return err
-			}
-		}
-		if e.PDFMd5 != "" {
-			if _, err := tx.Exec(
-				`INSERT INTO sync_pdfs (canonical_key, pdf_md5) VALUES (?, ?)`,
-				e.CanonicalKey, e.PDFMd5,
-			); err != nil {
-				tx.Rollback()
-				return err
-			}
-		}
-	}
-
-	for sourceKey, status := range s.statuses {
-		if _, err := tx.Exec(
-			`INSERT INTO sync_status (source_key, status, set_time) VALUES (?, ?, ?)`,
-			sourceKey, status, now,
-		); err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-
-	for groupName, members := range s.localGroups {
-		for entryKey := range members.Elements() {
-			if _, err := tx.Exec(
-				`INSERT INTO local_groups (entry_key, group_name) VALUES (?, ?)`,
-				entryKey, groupName,
-			); err != nil {
-				tx.Rollback()
-				return err
-			}
-		}
-	}
-
-	for _, he := range s.harvestEntries {
-		if _, err := tx.Exec(
-			`INSERT INTO sync_harvest (source_key, entry_type, fingerprint) VALUES (?, ?, ?)`,
-			he.SourceKey, he.EntryType, he.Fingerprint,
-		); err != nil {
-			tx.Rollback()
-			return err
-		}
-		for field, value := range he.Fields {
-			if value == "" || field == EntryTypeField {
-				continue
-			}
-			if _, err := tx.Exec(
-				`INSERT INTO sync_harvest_fields (source_key, field, value) VALUES (?, ?, ?)`,
-				he.SourceKey, field, value,
-			); err != nil {
-				tx.Rollback()
-				return err
-			}
-		}
-	}
-
-	return tx.Commit()
-}
-
 // SetHarvestEntry records a verbatim bib entry for follow-mode output.
+// Writes to SQLite first; updates the in-memory cache only on success.
 func (s *TSyncState) SetHarvestEntry(he TSyncHarvestEntry) {
 	if s == nil {
 		return
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		dbInteraction.Warning("sync: SetHarvestEntry begin tx failed: %s", err)
+		return
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO sync_harvest (source_key, entry_type, fingerprint) VALUES (?, ?, ?)
+		 ON CONFLICT(source_key) DO UPDATE SET
+		     entry_type=excluded.entry_type, fingerprint=excluded.fingerprint`,
+		he.SourceKey, he.EntryType, he.Fingerprint,
+	); err != nil {
+		tx.Rollback()
+		dbInteraction.Warning("sync: SetHarvestEntry harvest upsert failed: %s", err)
+		return
+	}
+	if _, err := tx.Exec(`DELETE FROM sync_harvest_fields WHERE source_key = ?`, he.SourceKey); err != nil {
+		tx.Rollback()
+		dbInteraction.Warning("sync: SetHarvestEntry fields delete failed: %s", err)
+		return
+	}
+	for field, value := range he.Fields {
+		if value == "" || field == EntryTypeField {
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO sync_harvest_fields (source_key, field, value) VALUES (?, ?, ?)`,
+			he.SourceKey, field, value,
+		); err != nil {
+			tx.Rollback()
+			dbInteraction.Warning("sync: SetHarvestEntry field insert failed: %s", err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		dbInteraction.Warning("sync: SetHarvestEntry commit failed: %s", err)
+		return
+	}
+
 	cp := he
 	cp.Fields = make(map[string]string, len(he.Fields))
 	for k, v := range he.Fields {
 		cp.Fields[k] = v
 	}
 	s.harvestEntries[he.SourceKey] = &cp
-	s.modified = true
+	s.dirty = true
 }
 
 // DeleteHarvestEntry removes the harvest entry for sourceKey (e.g. when user merges it later).
+// Writes to SQLite first; updates the in-memory cache only on success.
 func (s *TSyncState) DeleteHarvestEntry(sourceKey string) {
 	if s == nil {
 		return
 	}
-	if _, ok := s.harvestEntries[sourceKey]; ok {
-		delete(s.harvestEntries, sourceKey)
-		s.modified = true
+	if _, ok := s.harvestEntries[sourceKey]; !ok {
+		return
 	}
+	if _, err := s.db.Exec(`DELETE FROM sync_harvest_fields WHERE source_key = ?`, sourceKey); err != nil {
+		dbInteraction.Warning("sync: DeleteHarvestEntry fields delete failed: %s", err)
+		return
+	}
+	if _, err := s.db.Exec(`DELETE FROM sync_harvest WHERE source_key = ?`, sourceKey); err != nil {
+		dbInteraction.Warning("sync: DeleteHarvestEntry failed: %s", err)
+		return
+	}
+	delete(s.harvestEntries, sourceKey)
+	s.dirty = true
 }
 
 // ClearHarvestEntries removes all harvest entries (called before rebuilding from current run).
+// Writes to SQLite first; updates the in-memory cache only on success.
 func (s *TSyncState) ClearHarvestEntries() {
 	if s == nil {
 		return
 	}
-	if len(s.harvestEntries) > 0 {
-		s.harvestEntries = make(map[string]*TSyncHarvestEntry)
-		s.modified = true
+	if len(s.harvestEntries) == 0 {
+		return
 	}
+	if _, err := s.db.Exec(`DELETE FROM sync_harvest_fields`); err != nil {
+		dbInteraction.Warning("sync: ClearHarvestEntries fields delete failed: %s", err)
+		return
+	}
+	if _, err := s.db.Exec(`DELETE FROM sync_harvest`); err != nil {
+		dbInteraction.Warning("sync: ClearHarvestEntries failed: %s", err)
+		return
+	}
+	s.harvestEntries = make(map[string]*TSyncHarvestEntry)
+	s.dirty = true
 }
 
 // AllHarvestEntries returns all harvest entries sorted by source key.
@@ -541,25 +598,46 @@ func (s *TSyncState) GetStatus(sourceKey string) string {
 
 // SetStatus sets or clears the sync status for sourceKey.
 // An empty status string removes the entry.
+// Writes to SQLite first; updates the in-memory cache only on success.
 func (s *TSyncState) SetStatus(sourceKey, status string) {
 	if s == nil {
 		return
 	}
 	if status == "" {
+		if _, err := s.db.Exec(`DELETE FROM sync_status WHERE source_key = ?`, sourceKey); err != nil {
+			dbInteraction.Warning("sync: SetStatus delete failed: %s", err)
+			return
+		}
 		delete(s.statuses, sourceKey)
 	} else {
+		if _, err := s.db.Exec(
+			`INSERT INTO sync_status (source_key, status, set_time) VALUES (?, ?, ?)
+			 ON CONFLICT(source_key) DO UPDATE SET status=excluded.status, set_time=excluded.set_time`,
+			sourceKey, status, time.Now().Unix(),
+		); err != nil {
+			dbInteraction.Warning("sync: SetStatus upsert failed: %s", err)
+			return
+		}
 		s.statuses[sourceKey] = status
 	}
-	s.modified = true
+	s.dirty = true
 }
 
 // AddLocalGroup records that entryKey belongs to groupName in the local (non-DB) group set.
+// Writes to SQLite first; updates the in-memory cache only on success.
 func (s *TSyncState) AddLocalGroup(entryKey, groupName string) {
 	if s == nil || entryKey == "" || groupName == "" {
 		return
 	}
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO local_groups (entry_key, group_name) VALUES (?, ?)`,
+		entryKey, groupName,
+	); err != nil {
+		dbInteraction.Warning("sync: AddLocalGroup failed: %s", err)
+		return
+	}
 	s.localGroups.AddValueToStringSetMap(groupName, entryKey)
-	s.modified = true
+	s.dirty = true
 }
 
 // LocalGroups returns the full local-groups map (group → set of entry keys).

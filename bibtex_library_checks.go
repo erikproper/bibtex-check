@@ -209,7 +209,6 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 				delete(l.EntryFieldSourceToTarget[r.entry][r.field], r.challenger)
 			}
 			tx.Commit()
-			l.entryFieldMappingsModified = true
 		}
 	}
 
@@ -226,19 +225,22 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 	l.Progress(ProgressCheckingConsistencyOfKeyOldies)
 
-	for oldie, key := range l.KeyToKey {
+	var ghosts []struct{ oldie, key string }
+	l.KeyOldies.ForEach(func(oldie, key string) {
 		if !l.EntryExists(key) {
 			l.Warning(WarningTargetOfOldieNotExists, key, oldie)
 		}
-
 		if bibEntryExists(oldie) {
-			// Ghost: the oldie key still has rows in bib_entries even though it is
-			// recorded as an alias for key. Merge its fields into the canonical first
-			// (in case the ghost holds data that was never reconciled), then the merge
-			// will delete the ghost row as part of normal cleanup.
-			l.Progress("Auto-repairing ghost entry %s (alias for %s)", oldie, key)
-			l.MergeEntries(oldie, key)
+			ghosts = append(ghosts, struct{ oldie, key string }{oldie, key})
 		}
+	})
+	for _, g := range ghosts {
+		// Ghost: the oldie key still has rows in bib_entries even though it is
+		// recorded as an alias for g.key. Merge its fields into the canonical first
+		// (in case the ghost holds data that was never reconciled), then the merge
+		// will delete the ghost row as part of normal cleanup.
+		l.Progress("Auto-repairing ghost entry %s (alias for %s)", g.oldie, g.key)
+		l.MergeEntries(g.oldie, g.key)
 	}
 }
 
@@ -248,19 +250,17 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 // This can happen after restoring key hints from a backup that mixed the two tables.
 func (l *TBibTeXLibrary) CheckKeyHintsConsistency() {
 	var toMigrate []struct{ hint, key string }
-	for hint, key := range l.HintToKey {
+	l.HintToKey.ForEach(func(hint, key string) {
 		if IsValidKey(hint) {
 			toMigrate = append(toMigrate, struct{ hint, key string }{hint, key})
 		}
-	}
+	})
 	if len(toMigrate) == 0 {
 		return
 	}
 	for _, m := range toMigrate {
 		l.AddKeyAlias(m.hint, m.key)
-		delete(l.HintToKey, m.hint)
-		l.keyHintsModified = true
-		db.Exec(`DELETE FROM key_hints WHERE hint = ?`, m.hint)
+		l.HintToKey.Delete(m.hint)
 	}
 	l.Progress("Migrated %d canonical-key hint(s) from key_hints to key_oldies", len(toMigrate))
 }
@@ -268,11 +268,14 @@ func (l *TBibTeXLibrary) CheckKeyHintsConsistency() {
 // CheckDblpWaivedConsistency removes stale keys from DblpWaived: any key that is
 // now an alias (MapEntryKey(k) != k) or no longer exists as a library entry.
 func (l *TBibTeXLibrary) CheckDblpWaivedConsistency() {
-	for key := range l.DblpWaived.Elements() {
+	var stale []string
+	l.DblpWaived.ForEach(func(key string, _ bool) {
 		if l.MapEntryKey(key) != key || !l.EntryExists(key) {
-			l.DblpWaived.Delete(key)
-			l.dblpWaivedModified = true
+			stale = append(stale, key)
 		}
+	})
+	for _, key := range stale {
+		l.DblpWaived.Delete(key)
 	}
 }
 
@@ -486,7 +489,7 @@ func (l *TBibTeXLibrary) derivePreferredAlias(entry *TBibTeXEntry) string {
 		if !validPreferredKeyAlias.MatchString(candidate) {
 			return "", false
 		}
-		if target, inUse := l.HintToKey[candidate]; inUse && target != entry.Key {
+		if target := l.HintToKey.GetValue(candidate); target != "" && target != entry.Key {
 			return "", false
 		}
 		return candidate, true
@@ -553,7 +556,7 @@ func (l *TBibTeXLibrary) CheckAndEnforcePreferredAlias(entry *TBibTeXEntry) {
 
 	if alias != "" {
 		// Cross-check: alias must be registered as a hint.
-		if _, known := l.HintToKey[alias]; !known {
+		if !l.HintToKey.Contains(alias) {
 			l.AddKeyHint(alias, entry.Key)
 		}
 
@@ -1030,7 +1033,13 @@ func (l *TBibTeXLibrary) CheckCrossrefInheritableField(crossrefEntry, entry *TBi
 				l.AddEntryFieldAlias(crossrefEntry.Key, field, otherChallenger, target, false)
 			}
 
-			// Always clear the child's copy — MustInheritFields never belong on the child.
+			// Always clear the child's copy of a MustInheritField — the child is not
+			// permitted to hold it regardless of how the parent/child resolution went.
+			// The pre-DB-migration code never hit the empty-parent case (both sides were
+			// always populated from the bib file), so `target` was always non-empty and
+			// the guard was never needed. In DB-primary mode entries can be added
+			// individually, so the parent may lack the field → target can be "" →
+			// the guard would wrongly preserve the child's copy.
 			l.deleteEntryField(entry, field)
 			delete(l.EntryFieldSourceToTarget[entry.Key], field)
 		}
@@ -1343,8 +1352,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 					fmt.Fprintf(os.Stderr, "\nChild entry:\n%s\nParent entry:\n%s\n",
 						l.entryDisplayString(childKey), l.entryDisplayString(key))
 					if l.WarningYesNoQuestion(QuestionAddToDblpWaived, "") {
-						l.DblpWaived.Add(childKey)
-						l.dblpWaivedModified = true
+						l.DblpWaived.Set(childKey, true)
 						// Waived: remove from entry_warnings so it doesn't appear in repair.bib.
 						deleteEntryWarning(childKey, msg)
 						deleteEntryWarning(key, "")

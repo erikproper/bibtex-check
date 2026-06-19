@@ -87,8 +87,8 @@ func (l *TBibTeXLibrary) resolveDBLPCrossref(crossrefDblpKey string, allowURLFet
 			// prevents creating a duplicate that would steal crossref children from
 			// a manually-entered proceedings entry and leave it orphaned (lone).
 			if existing := l.findExistingNonDblpProceedings(crossrefDblpKey); existing != "" {
-				l.KeyToKey[dblpAlias] = existing
-				l.HintToKey[dblpAlias] = existing
+				l.KeyOldies.SetTransient(dblpAlias, existing)
+				l.HintToKey.SetTransient(dblpAlias, existing)
 				l.MaybeMergeDBLPEntry(crossrefDblpKey, existing, false)
 				l.Progress("Associated DBLP key %s with existing entry %s (title match)", crossrefDblpKey, existing)
 				return existing
@@ -186,7 +186,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 	// convert the child to @inproceedings, drop the journal field, and drop the child's volume
 	// when the parent already carries the volume (so it is not inherited redundantly).
 	if dblpEntry.Fields[EntryTypeField] == "article" {
-		rawCrossref := l.DblpParentOverrides[DBLPKey]
+		rawCrossref := l.DblpParent.GetValue(DBLPKey)
 		if rawCrossref == "" {
 			rawCrossref = dblpEntry.Fields["crossref"]
 		}
@@ -227,7 +227,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 		// the library key before merging; create the parent entry if it does not exist yet.
 		// A dblp_parent override (from -fix_dblp_hierarchy) takes priority over the raw
 		// DBLP crossref field to handle multi-volume ambiguity (e.g. SCITEPRESS events).
-		crossrefDblpKey := l.DblpParentOverrides[DBLPKey]
+		crossrefDblpKey := l.DblpParent.GetValue(DBLPKey)
 		if crossrefDblpKey == "" {
 			crossrefDblpKey = dblpEntry.Fields["crossref"]
 		}
@@ -241,8 +241,8 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 			if existingCrossref != "" && l.EntryExists(existingCrossref) &&
 				l.EntryFieldValueity(existingCrossref, DBLPField) == "" &&
 				l.LookupDBLPKey(crossrefDblpKey) == "" {
-				l.KeyToKey[KeyForDBLP(crossrefDblpKey)] = existingCrossref
-				l.HintToKey[KeyForDBLP(crossrefDblpKey)] = existingCrossref
+				l.KeyOldies.SetTransient(KeyForDBLP(crossrefDblpKey), existingCrossref)
+				l.HintToKey.SetTransient(KeyForDBLP(crossrefDblpKey), existingCrossref)
 				l.MaybeMergeDBLPEntry(crossrefDblpKey, existingCrossref, false)
 				dblpEntry.Fields["crossref"] = existingCrossref
 				for field := range BibTeXMustInheritFields.Elements() {
@@ -341,10 +341,10 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 
 	// Register the DBLP alias in memory immediately so that any subsequent
 	// LookupDBLPKey call in the same run finds this entry rather than creating
-	// another duplicate. Direct assignment avoids setting keyOldiesModified —
-	// buildKeyAliasesFromDb already rebuilds these from the DB on every startup.
-	l.KeyToKey[KeyForDBLP(DBLPKey)] = key
-	l.HintToKey[KeyForDBLP(DBLPKey)] = key
+	// another duplicate. SetTransient avoids a DB write — buildKeyAliasesFromDb
+	// already rebuilds these from bib_entries on every startup.
+	l.KeyOldies.SetTransient(KeyForDBLP(DBLPKey), key)
+	l.HintToKey.SetTransient(KeyForDBLP(DBLPKey), key)
 
 	// MaybeMergeDBLPEntry writes to the DB but does not update the in-memory
 	// TitleIndex that buildTitleIndexFromDb built at startup. Add the title now
@@ -408,8 +408,8 @@ func (l *TBibTeXLibrary) AssociateDblpKey(key, dblpKey string) {
 	if existing := l.LookupDBLPKey(dblpKey); existing != "" && existing != key {
 		l.MergeEntries(existing, key)
 	}
-	l.KeyToKey[KeyForDBLP(dblpKey)] = key
-	l.HintToKey[KeyForDBLP(dblpKey)] = key
+	l.KeyOldies.SetTransient(KeyForDBLP(dblpKey), key)
+	l.HintToKey.SetTransient(KeyForDBLP(dblpKey), key)
 	if !l.MaybeMergeDBLPEntry(dblpKey, key, true) {
 		l.SetEntryFieldValue(key, DBLPField, dblpKey)
 		bibEntriesModified = true

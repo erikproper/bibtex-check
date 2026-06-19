@@ -64,14 +64,12 @@ func (l *TBibTeXLibrary) SetMetadata(key, prop, value string) {
 		l.Metadata[key] = map[string]string{}
 	}
 	l.Metadata[key][prop] = value
-	l.metadataModified = true
 	db.Exec(`INSERT INTO entry_metadata (entry_key, property, value) VALUES (?, ?, ?)
 	          ON CONFLICT(entry_key, property) DO UPDATE SET value = excluded.value`,
 		key, prop, value)
 }
 
-// DeleteMetadata removes property prop from entry key's metadata, writes through to
-// the DB, and marks metadata modified (for the end-of-run JSON backup).
+// DeleteMetadata removes property prop from entry key's metadata and writes through to the DB.
 func (l *TBibTeXLibrary) DeleteMetadata(key, prop string) {
 	if m, ok := l.Metadata[key]; ok {
 		if _, exists := m[prop]; exists {
@@ -79,7 +77,6 @@ func (l *TBibTeXLibrary) DeleteMetadata(key, prop string) {
 			if len(m) == 0 {
 				delete(l.Metadata, key)
 			}
-			l.metadataModified = true
 			db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, key, prop)
 		}
 	}
@@ -107,7 +104,6 @@ func (l *TBibTeXLibrary) transferMetadata(source, target string) {
 			db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, source, prop) //nolint:errcheck
 		}
 		delete(l.Metadata, source)
-		l.metadataModified = true
 	}
 }
 
@@ -126,15 +122,10 @@ func (l *TBibTeXLibrary) AllEntriesWithProp(prop string) map[string]string {
 // ReadMetadataFile loads entry metadata from the DB.
 func (l *TBibTeXLibrary) ReadMetadataFile() {
 	loadEntryMetadataFromDb(l)
-	l.metadataModified = false
 }
 
-// WriteMetadataFile writes entry metadata to the DB and keeps entry_metadata.json
-// as a human-readable backup.
+// WriteMetadataFile writes a human-readable JSON backup of entry metadata.
 func (l *TBibTeXLibrary) WriteMetadataFile() {
-	if l.NoMetadataFileWriting || !l.metadataModified {
-		return
-	}
 	path := bibTeXFolder + bibTeXBaseName + EntryMetadataFilePath
 	data, err := json.MarshalIndent(l.Metadata, "", "  ")
 	if err != nil {
@@ -144,8 +135,4 @@ func (l *TBibTeXLibrary) WriteMetadataFile() {
 	if writeErr := os.WriteFile(path, data, 0644); writeErr != nil {
 		l.Warning("Could not write %s: %s", path, writeErr)
 	}
-	// Stamp the DB table timestamp after writing so that future -export / -import
-	// cycles can detect whether the on-disk backup is current.
-	saveEntryMetadataToDb(l)
-	l.metadataModified = false
 }

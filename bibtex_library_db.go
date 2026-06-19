@@ -39,18 +39,21 @@ const (
 )
 
 var (
-	dbInteraction          TInteraction
-	db                     *sql.DB
-	entryCache             map[string]*TBibTeXEntry
-	entrySnapshots         map[string]map[string]string
-	bibEntriesModified     bool
-	c2TrackingActive       bool
-	c2EntryModified        bool
-	entryModTrackingActive bool
-	entryModified          bool
-	dbWriteSessionActive   bool
-	dbWriteFailed          bool  // set when any end-of-run DB write fails; blocks finaliseWorkingDatabase
-	changesAtSessionOpen   int64 // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
+	dbInteraction               TInteraction
+	db                          *sql.DB
+	entryCache                  map[string]*TBibTeXEntry
+	entrySnapshots              map[string]map[string]string
+	bibEntriesModified          bool
+	c2TrackingActive            bool
+	c2EntryModified             bool
+	entryModTrackingActive      bool
+	entryModified               bool
+	dbWriteSessionActive        bool
+	dbWriteFailed               bool  // set when any end-of-run DB write fails; blocks finaliseWorkingDatabase
+	changesAtSessionOpen        int64 // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
+	fieldMappingsLoading        bool  // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
+	entryFieldMappingsLoading   bool  // suppresses DB write-through in AddEntryFieldAlias during initial load
+	nameMappingsLoading         bool  // suppresses DB write-through in name-mapping mutations during initial load
 )
 
 // dbExecSave executes a DB statement during the end-of-run save phase. On error it
@@ -430,9 +433,13 @@ func connectToDatabase() {
 	ensureKeyNonDoublesTableExists()
 	ensureDblpParentTableExists()
 	ensureDblpWaivedTableExists()
+	ensureDblpCanonicalTableExists()
+	maybeMigrateDblpCanonical()
 	ensureCrossFieldMappingsTableExists()
 	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
+	ensureFieldMappingsTableExists()
+	maybeMigrateToFieldMappings()
 	ensureURLsIgnoreTableExists()
 	ensureEntryMetadataTableExists()
 	ensureLosingFieldValuesTableExists()
@@ -493,9 +500,11 @@ func reopenDb(path string) {
 	ensureKeyNonDoublesTableExists()
 	ensureDblpParentTableExists()
 	ensureDblpWaivedTableExists()
+	ensureDblpCanonicalTableExists()
 	ensureCrossFieldMappingsTableExists()
 	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
+	ensureFieldMappingsTableExists()
 	ensureURLsIgnoreTableExists()
 	ensureEntryMetadataTableExists()
 	ensureLosingFieldValuesTableExists()
@@ -804,6 +813,7 @@ func prepareWorkingDatabase() bool {
 			dbInteraction.Warning(WarningWorkingDbNewer)
 			answer, _ := dbInteraction.AskForInput("Restore home from working copy? [y/N]")
 			if strings.EqualFold(answer, "y") {
+				db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`) //nolint:errcheck
 				if err := copyFile(working, home); err != nil {
 					dbInteraction.Warning("Could not restore: %s", err)
 					return false
@@ -830,6 +840,8 @@ func prepareWorkingDatabase() bool {
 		dbInteraction.Warning("Could not copy database to working location: %s", err)
 		return false
 	}
+	os.Remove(working + "-wal") //nolint:errcheck
+	os.Remove(working + "-shm") //nolint:errcheck
 	if hNew, err := os.Stat(home); err == nil {
 		os.Chtimes(working, hNew.ModTime(), hNew.ModTime())
 	}
@@ -852,6 +864,24 @@ func flushWorkingDbToHome() {
 	if err := copyFile(dbPath(), dbHomePath()); err != nil {
 		dbInteraction.Warning("Could not flush working database to home: %s", err)
 	}
+}
+
+// abandonWorkingDatabase closes the DB connection and deletes the working copy
+// (including WAL/SHM) from the cache folder. Called when postCheckGate fails
+// so the stale working copy does not trigger a spurious "restore?" prompt on
+// the next run.
+func abandonWorkingDatabase() {
+	if !dbIsolationActive() {
+		return
+	}
+	if db != nil {
+		db.Close()
+		db = nil
+	}
+	working := dbPath()
+	os.Remove(working)
+	os.Remove(working + "-wal")
+	os.Remove(working + "-shm")
 }
 
 // finaliseWorkingDatabase copies the working database back to the home path,
@@ -1177,9 +1207,10 @@ func tryCreateTableIfNeeded(command string) {
 //
 //  8. urls_ignore: loaded on demand by specific commands.
 //
-// Modified flags (e.g. genericFieldMappingsModified) are set by the load functions
-// when normalisation changed stored values. The write tail in
-// main() checks these flags and calls the corresponding Write* functions.
+// All field-mapping and metadata tables use write-through: mutations call db.Exec
+// immediately rather than batching at end-of-run. Load functions use loading flags
+// (fieldMappingsLoading, entryFieldMappingsLoading) to suppress the write-
+// through during the initial DB→memory population pass.
 
 // --- name_mappings table ---
 
@@ -1191,10 +1222,41 @@ func ensureNameMappingsTableExists() {
 		);`)
 }
 
+// upsertNameMapping writes a single alias → name pair to the DB. Suppressed
+// during initial load (nameMappingsLoading) so bulk load does not generate O(n)
+// individual writes.
+func upsertNameMapping(alias, name string) {
+	if nameMappingsLoading {
+		return
+	}
+	if alias == name {
+		return
+	}
+	if err := bibExec(`INSERT INTO name_mappings (alias, name) VALUES (?, ?)
+	                    ON CONFLICT(alias) DO UPDATE SET name = excluded.name`, alias, name); err != nil {
+		dbInteraction.Warning("name_mappings upsert failed: %s", err)
+		dbWriteFailed = true
+	}
+}
+
+// deleteNameMapping removes a single alias from the DB. Suppressed during load.
+func deleteNameMapping(alias string) {
+	if nameMappingsLoading {
+		return
+	}
+	if err := bibExec(`DELETE FROM name_mappings WHERE alias = ?`, alias); err != nil {
+		dbInteraction.Warning("name_mappings delete failed: %s", err)
+		dbWriteFailed = true
+	}
+}
+
 // loadNameMappingsFromDb populates l.NameAliasToName and l.NameToAliases from
 // the DB, then derives additional aliases via FindAliases for each stored pair
 // and for each unique canonical.
 func loadNameMappingsFromDb(l *TBibTeXLibrary) {
+	nameMappingsLoading = true
+	defer func() { nameMappingsLoading = false }()
+
 	rows, err := db.Query(`SELECT alias, name FROM name_mappings`)
 	if err != nil {
 		dbInteraction.Warning("Could not query name_mappings: %s", err)
@@ -1230,40 +1292,6 @@ func loadNameMappingsFromDb(l *TBibTeXLibrary) {
 	}
 }
 
-// saveNameMappingsToDb upserts all non-self alias pairs into the DB and
-// refreshes the table modification time to match the (just-written) flat file.
-func saveNameMappingsToDb(l *TBibTeXLibrary) {
-	tx, err := db.Begin()
-	if err != nil {
-		dbInteraction.Warning("Could not begin name_mappings save transaction: %s", err)
-		return
-	}
-	if _, err := tx.Exec(`DELETE FROM name_mappings`); err != nil {
-		dbInteraction.Warning("Could not clear name_mappings table: %s", err)
-		tx.Rollback()
-		dbWriteFailed = true
-		return
-	}
-	upsert := `INSERT INTO name_mappings (alias, name) VALUES (?, ?)
-	             ON CONFLICT(alias) DO UPDATE SET name = excluded.name;`
-	for alias, name := range l.NameAliasToName {
-		if alias != name {
-			if _, err := tx.Exec(upsert, alias, name); err != nil {
-				dbInteraction.Warning("Name mapping upsert failed: %s", err)
-				dbWriteFailed = true
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		dbInteraction.Warning("Could not commit name_mappings save: %s", err)
-		tx.Rollback()
-		dbWriteFailed = true
-		return
-	}
-
-	setTableDate("name_mappings", time.Now().UnixMicro())
-}
-
 // --- key_hints table ---
 
 func ensureKeyHintsTableExists() {
@@ -1274,45 +1302,22 @@ func ensureKeyHintsTableExists() {
 		);`)
 }
 
-// loadKeyHintsFromDb populates l.HintToKey from the DB.
-func loadKeyHintsFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT hint, key FROM key_hints`)
-	if err != nil {
-		dbInteraction.Warning("Could not query key_hints: %s", err)
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var hint, key string
-		if err := rows.Scan(&hint, &key); err != nil {
-			dbInteraction.Warning("Could not scan key_hints row: %s", err)
-			continue
-		}
-		// Skip stale hints whose target was removed (e.g. by an interrupted merge).
-		// Mark modified so saveKeyHintsToDb will write the clean state at end of run.
-		if resolvedKey := l.MapEntryKey(key); !bibEntryExists(resolvedKey) {
-			l.keyHintsModified = true
-			continue
-		}
-		l.AddKeyHint(hint, key)
-	}
-}
-
-// saveKeyHintsToDb writes the filtered key hints directly to the DB without a file roundtrip.
-func saveKeyHintsToDb(l *TBibTeXLibrary) {
-	dbExecSave("Could not clear key_hints", `DELETE FROM key_hints;`)
-	upsert := `INSERT INTO key_hints (hint, key) VALUES (?, ?)
-	             ON CONFLICT(hint) DO UPDATE SET key = excluded.key;`
-	for source, target := range l.HintToKey {
-		target = l.MapEntryKey(target)
-		if bibEntryExists(target) &&
-			source != target &&
-			source != KeyForDBLP(l.EntryFieldValueity(target, DBLPField)) {
-			dbExecSave("key_hints insert failed", upsert, source, target)
-		}
-	}
-	setTableDate("key_hints", time.Now().UnixMicro())
+// newKeyHintsTable returns a write-through cache backed by the key_hints SQLite table.
+// Stale hints (target entry removed) are deleted from the DB during Load().
+// Transient DBLP-derived hints use SetTransient and are never written to the DB.
+func newKeyHintsTable() *TCachedTable[string, string] {
+	return newCachedTable(&TSQLiteTable[string, string]{
+		upsertSQL: `INSERT INTO key_hints (hint, key) VALUES (?, ?)
+		            ON CONFLICT(hint) DO UPDATE SET key = excluded.key;`,
+		deleteSQL:  `DELETE FROM key_hints WHERE hint = ?`,
+		selectSQL:  `SELECT hint, key FROM key_hints`,
+		upsertArgs: func(k, v string) []any { return []any{k, v} },
+		deleteArgs: func(k string) []any { return []any{k} },
+		scanRow: func(rows *sql.Rows) (string, string, error) {
+			var hint, key string
+			return hint, key, rows.Scan(&hint, &key)
+		},
+	})
 }
 
 // --- key_oldies table ---
@@ -1325,55 +1330,15 @@ func ensureKeyOldiesTableExists() {
 		);`)
 }
 
-// loadKeyOldiesFromDb populates l.KeyToKey from the DB.
-// Rows whose target no longer exists as a bib entry, or whose chain passes through
-// a non-existent intermediate, are skipped and flagged dirty so saveKeyOldiesToDb
-// will write a clean (flattened) state at end of run.
-func loadKeyOldiesFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT alias, key FROM key_oldies`)
-	if err != nil {
-		dbInteraction.Warning("Could not query key_oldies: %s", err)
-		return
+// newKeyOldiesTable returns a TKeyAliasTable backed by the key_oldies SQLite table.
+// Load() flattens any stored chains and deletes stale entries immediately.
+func newKeyOldiesTable() *TKeyAliasTable {
+	return &TKeyAliasTable{
+		upsertSQL: `INSERT INTO key_oldies (alias, key) VALUES (?, ?)
+		            ON CONFLICT(alias) DO UPDATE SET key = excluded.key;`,
+		deleteSQL: `DELETE FROM key_oldies WHERE alias = ?`,
+		selectSQL: `SELECT alias, key FROM key_oldies`,
 	}
-	defer rows.Close()
-
-	type pair struct{ alias, key string }
-	var pairs []pair
-	for rows.Next() {
-		var alias, key string
-		if err := rows.Scan(&alias, &key); err != nil {
-			dbInteraction.Warning("Could not scan key_oldies row: %s", err)
-			continue
-		}
-		pairs = append(pairs, pair{alias, key})
-	}
-
-	for _, p := range pairs {
-		l.AddKeyAlias(p.alias, p.key)
-	}
-
-	// Detect chains that need flattening or targets that no longer exist.
-	for _, p := range pairs {
-		resolved := l.MapEntryKey(p.key)
-		if !bibEntryExists(resolved) || resolved != p.key {
-			l.keyOldiesModified = true
-			break
-		}
-	}
-}
-
-// saveKeyOldiesToDb writes the filtered key aliases directly to the DB without a file roundtrip.
-func saveKeyOldiesToDb(l *TBibTeXLibrary) {
-	dbExecSave("Could not clear key_oldies", `DELETE FROM key_oldies;`)
-	upsert := `INSERT INTO key_oldies (alias, key) VALUES (?, ?)
-	             ON CONFLICT(alias) DO UPDATE SET key = excluded.key;`
-	for source, target := range l.KeyToKey {
-		target = l.MapEntryKey(target)
-		if bibEntryExists(target) && source != target && IsValidKey(source) {
-			dbExecSave("key_oldies insert failed", upsert, source, target)
-		}
-	}
-	setTableDate("key_oldies", time.Now().UnixMicro())
 }
 
 // --- key_non_doubles table ---
@@ -1388,30 +1353,46 @@ func ensureKeyNonDoublesTableExists() {
 }
 
 // loadKeyNonDoublesFromDb populates l.NonDoubles from the DB.
-// Calls resolveNonDoubleKey on both keys so that stale aliases are dropped and
-// unimported DBLP: keys are kept as-is for future matching.
+// Stale pairs (unknown or aliased keys) are deleted from the DB immediately.
+// Alias-resolved pairs are updated to their canonical form in the DB.
+// Unimported DBLP: keys are kept as-is for future matching.
 func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 	rows, err := db.Query(`SELECT key1, key2 FROM key_non_doubles`)
 	if err != nil {
 		dbInteraction.Warning("Could not query key_non_doubles: %s", err)
 		return
 	}
-	defer rows.Close()
-
-	nonDoublesLoadingFromDb = true
-	defer func() { nonDoublesLoadingFromDb = false }()
-
+	type rawPair struct{ k1, k2 string }
+	var pairs []rawPair
 	for rows.Next() {
 		var key1, key2 string
 		if err := rows.Scan(&key1, &key2); err != nil {
 			dbInteraction.Warning("Could not scan key_non_doubles row: %s", err)
 			continue
 		}
-		r1 := l.resolveNonDoubleKey(key1)
-		r2 := l.resolveNonDoubleKey(key2)
-		if r1 != "" && r2 != "" {
-			l.AddNonDoubles(r1, r2)
+		pairs = append(pairs, rawPair{key1, key2})
+	}
+	rows.Close()
+
+	nonDoublesLoadingFromDb = true
+	defer func() { nonDoublesLoadingFromDb = false }()
+
+	deleteSQL := `DELETE FROM key_non_doubles WHERE key1 = ? AND key2 = ?`
+	upsertSQL := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
+
+	for _, p := range pairs {
+		r1 := l.resolveNonDoubleKey(p.k1)
+		r2 := l.resolveNonDoubleKey(p.k2)
+		if r1 == "" || r2 == "" || r1 == r2 {
+			db.Exec(deleteSQL, p.k1, p.k2) //nolint:errcheck
+			continue
 		}
+		if r1 != p.k1 || r2 != p.k2 {
+			db.Exec(deleteSQL, p.k1, p.k2) //nolint:errcheck
+			db.Exec(upsertSQL, r1, r2)     //nolint:errcheck
+			db.Exec(upsertSQL, r2, r1)     //nolint:errcheck
+		}
+		l.AddNonDoubles(r1, r2)
 	}
 }
 
@@ -1451,34 +1432,20 @@ func ensureDblpParentTableExists() {
 		);`)
 }
 
-// loadDblpParentFromDb populates l.DblpParentOverrides from the DB.
-func loadDblpParentFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT child_key, parent_key FROM dblp_parent`)
-	if err != nil {
-		dbInteraction.Warning("Could not query dblp_parent: %s", err)
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var child, parent string
-		if err := rows.Scan(&child, &parent); err != nil {
-			dbInteraction.Warning("Could not scan dblp_parent row: %s", err)
-			continue
-		}
-		l.DblpParentOverrides[child] = parent
-	}
-}
-
-// saveDblpParentToDb writes l.DblpParentOverrides directly to the DB.
-func saveDblpParentToDb(l *TBibTeXLibrary) {
-	dbExecSave("Could not clear dblp_parent", `DELETE FROM dblp_parent;`)
-	insert := `INSERT INTO dblp_parent (child_key, parent_key) VALUES (?, ?)
-	             ON CONFLICT(child_key) DO UPDATE SET parent_key = excluded.parent_key;`
-	for child, parent := range l.DblpParentOverrides {
-		dbExecSave("dblp_parent insert failed", insert, child, parent)
-	}
-	setTableDate("dblp_parent", time.Now().UnixMicro())
+// newDblpParentTable returns a write-through cache backed by the dblp_parent SQLite table.
+func newDblpParentTable() *TCachedTable[string, string] {
+	return newCachedTable(&TSQLiteTable[string, string]{
+		upsertSQL: `INSERT INTO dblp_parent (child_key, parent_key) VALUES (?, ?)
+		            ON CONFLICT(child_key) DO UPDATE SET parent_key = excluded.parent_key;`,
+		deleteSQL: `DELETE FROM dblp_parent WHERE child_key = ?`,
+		selectSQL: `SELECT child_key, parent_key FROM dblp_parent`,
+		upsertArgs: func(k, v string) []any { return []any{k, v} },
+		deleteArgs: func(k string) []any { return []any{k} },
+		scanRow: func(rows *sql.Rows) (string, string, error) {
+			var child, parent string
+			return child, parent, rows.Scan(&child, &parent)
+		},
+	})
 }
 
 // --- dblp_waived table ---
@@ -1490,33 +1457,89 @@ func ensureDblpWaivedTableExists() {
 		);`)
 }
 
-// loadDblpWaivedFromDb populates l.DblpWaived from the DB.
-func loadDblpWaivedFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT key FROM dblp_waived`)
-	if err != nil {
-		dbInteraction.Warning("Could not query dblp_waived: %s", err)
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			dbInteraction.Warning("Could not scan dblp_waived row: %s", err)
-			continue
-		}
-		l.DblpWaived.Add(key)
-	}
+// newDblpWaivedTable returns a write-through cache backed by the dblp_waived SQLite table.
+// The bool value is always true; only key presence matters (set semantics).
+func newDblpWaivedTable() *TCachedTable[string, bool] {
+	return newCachedTable(&TSQLiteTable[string, bool]{
+		upsertSQL:  `INSERT INTO dblp_waived (key) VALUES (?) ON CONFLICT(key) DO NOTHING;`,
+		deleteSQL:  `DELETE FROM dblp_waived WHERE key = ?`,
+		selectSQL:  `SELECT key FROM dblp_waived`,
+		upsertArgs: func(k string, _ bool) []any { return []any{k} },
+		deleteArgs: func(k string) []any { return []any{k} },
+		scanRow: func(rows *sql.Rows) (string, bool, error) {
+			var key string
+			return key, true, rows.Scan(&key)
+		},
+	})
 }
 
-// saveDblpWaivedToDb writes l.DblpWaived directly to the DB.
-func saveDblpWaivedToDb(l *TBibTeXLibrary) {
-	dbExecSave("Could not clear dblp_waived", `DELETE FROM dblp_waived;`)
-	insert := `INSERT INTO dblp_waived (key) VALUES (?) ON CONFLICT(key) DO NOTHING;`
-	for key := range l.DblpWaived.Elements() {
-		dbExecSave("dblp_waived insert failed", insert, key)
+// --- dblp_canonical table ---
+
+func ensureDblpCanonicalTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS dblp_canonical (
+		  dblp_key      TEXT NOT NULL PRIMARY KEY,
+		  canonical_key TEXT NOT NULL
+		    REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE
+		);`)
+}
+
+// maybeMigrateDblpCanonical populates dblp_canonical from bib_entries on first run.
+// Each dblp field value becomes a dblp_key; duplicate dblp values (two entries sharing
+// one DBLP key) are silently skipped — they remain detectable via forEachDuplicateDBLPKey
+// until resolved.
+func maybeMigrateDblpCanonical() {
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM dblp_canonical`).Scan(&count) //nolint:errcheck
+	if count > 0 {
+		return
 	}
-	setTableDate("dblp_waived", time.Now().UnixMicro())
+	var srcCount int
+	db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = ?`, DBLPField).Scan(&srcCount) //nolint:errcheck
+	if srcCount == 0 {
+		return
+	}
+	if _, err := db.Exec(`
+		INSERT OR IGNORE INTO dblp_canonical (dblp_key, canonical_key)
+		SELECT value, entry_key FROM bib_entries WHERE field = ?`, DBLPField); err != nil {
+		dbInteraction.Warning("dblp_canonical migration failed: %s", err)
+		return
+	}
+	dbInteraction.Progress("Migrated: populated dblp_canonical from %d dblp fields in bib_entries", srcCount)
+}
+
+// upsertDblpCanonical writes (dblpKey → canonicalKey) to dblp_canonical.
+// When dblpKey is empty, the call is a no-op.
+func upsertDblpCanonical(dblpKey, canonicalKey string) {
+	if dblpKey == "" {
+		return
+	}
+	db.Exec( //nolint:errcheck
+		`INSERT INTO dblp_canonical (dblp_key, canonical_key) VALUES (?, ?)
+		 ON CONFLICT(dblp_key) DO UPDATE SET canonical_key = excluded.canonical_key`,
+		dblpKey, canonicalKey)
+}
+
+// deleteDblpCanonicalByDblpKey removes the row for dblpKey from dblp_canonical.
+func deleteDblpCanonicalByDblpKey(dblpKey string) {
+	if dblpKey == "" {
+		return
+	}
+	db.Exec(`DELETE FROM dblp_canonical WHERE dblp_key = ?`, dblpKey) //nolint:errcheck
+}
+
+// deleteDblpCanonicalByCanonicalKey removes all rows for canonicalKey from dblp_canonical.
+// Used when an entry's dblp field is cleared (value = "").
+func deleteDblpCanonicalByCanonicalKey(canonicalKey string) {
+	db.Exec(`DELETE FROM dblp_canonical WHERE canonical_key = ?`, canonicalKey) //nolint:errcheck
+}
+
+// LookupDblpCanonical returns the canonical library key for a DBLP key by querying
+// dblp_canonical directly (bypasses the transient KeyOldies alias).
+func LookupDblpCanonical(dblpKey string) string {
+	var canonical string
+	db.QueryRow(`SELECT canonical_key FROM dblp_canonical WHERE dblp_key = ?`, dblpKey).Scan(&canonical) //nolint:errcheck
+	return canonical
 }
 
 // --- entry_flags → entry_metadata (v23.4 merge) ---
@@ -1679,6 +1702,9 @@ func ensureEntryFieldMappingsTableExists() {
 // Returns true when at least one value was remapped by MapFieldValue, so the caller
 // can arrange a write-back.
 func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
+	entryFieldMappingsLoading = true
+	defer func() { entryFieldMappingsLoading = false }()
+
 	rows, err := db.Query(`
 		SELECT lfv.entry_key, lfv.field, lfv.value AS loser, be.value AS winner
 		FROM losing_field_values lfv
@@ -1743,6 +1769,9 @@ func ensureGenericFieldMappingsTableExists() {
 // Normalises challenger and winner via NormaliseFieldValue. Returns true when at least
 // one stored value was changed by normalisation, so the caller can arrange a write-back.
 func loadGenericFieldMappingsFromDb(l *TBibTeXLibrary) bool {
+	fieldMappingsLoading = true
+	defer func() { fieldMappingsLoading = false }()
+
 	rows, err := db.Query(
 		`SELECT field, winner, challenger FROM generic_field_mappings`)
 	if err != nil {
@@ -1786,6 +1815,74 @@ func saveGenericFieldMappingsToDb(l *TBibTeXLibrary) {
 	}
 	setTableDate("generic_field_mappings", time.Now().UnixMicro())
 	setTableDate("losing_field_values", 0)
+}
+
+// --- field_mappings table (unified generic + cross-field) ---
+
+func ensureFieldMappingsTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS field_mappings (
+		  source_field TEXT NOT NULL,
+		  source_value TEXT NOT NULL,
+		  target_field TEXT NOT NULL,
+		  target_value TEXT NOT NULL,
+		  PRIMARY KEY (source_field, source_value, target_field)
+		);`)
+}
+
+// maybeMigrateToFieldMappings populates field_mappings from the two legacy tables on first use.
+// Generic mappings (field, challenger→winner) become (field, challenger, field, winner).
+// Cross-field mappings copy directly. Safe to re-run: INSERT OR IGNORE skips duplicates.
+func maybeMigrateToFieldMappings() {
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM field_mappings`).Scan(&count)
+	if count > 0 {
+		return
+	}
+	db.Exec(`INSERT OR IGNORE INTO field_mappings (source_field, source_value, target_field, target_value)
+	         SELECT field, challenger, field, winner FROM generic_field_mappings`)
+	db.Exec(`INSERT OR IGNORE INTO field_mappings (source_field, source_value, target_field, target_value)
+	         SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings`)
+}
+
+// loadFieldMappingsFromDb populates both l.GenericFieldSourceToTarget and l.FieldMappings
+// from the unified field_mappings table. Rows with source_field == target_field are generic;
+// others are cross-field. Returns true when normalisation changed any stored value.
+func loadFieldMappingsFromDb(l *TBibTeXLibrary) bool {
+	fieldMappingsLoading = true
+	defer func() { fieldMappingsLoading = false }()
+
+	rows, err := db.Query(`SELECT source_field, source_value, target_field, target_value FROM field_mappings`)
+	if err != nil {
+		dbInteraction.Warning("Could not query field_mappings: %s", err)
+		return false
+	}
+	defer rows.Close()
+
+	normalisationChanged := false
+	for rows.Next() {
+		var sourceField, sourceValue, targetField, targetValue string
+		if err := rows.Scan(&sourceField, &sourceValue, &targetField, &targetValue); err != nil {
+			dbInteraction.Warning("Could not scan field_mappings row: %s", err)
+			continue
+		}
+		if sourceField == targetField {
+			normSource := l.MapFieldValue(sourceField, sourceValue)
+			normTarget := l.MapFieldValue(targetField, targetValue)
+			if normSource != sourceValue || normTarget != targetValue {
+				normalisationChanged = true
+			}
+			l.AddGenericFieldAlias(sourceField, normSource, normTarget, true)
+		} else {
+			normSource := l.MapFieldValue(sourceField, sourceValue)
+			normTarget := l.NormaliseFieldValue(targetField, targetValue)
+			if normSource != sourceValue || normTarget != targetValue {
+				normalisationChanged = true
+			}
+			l.AddFieldMapping(sourceField, normSource, targetField, normTarget)
+		}
+	}
+	return normalisationChanged
 }
 
 // --- urls_ignore table ---
@@ -1964,11 +2061,13 @@ func entryWarningTexts(key string) []string {
 	return ws
 }
 
-// forEachDuplicateDBLPKey calls fn for every DBLP value shared by two or more library entries,
-// passing the DBLP key and the slice of affected library entry keys.
+// forEachDuplicateDBLPKey calls fn for every DBLP value shared by two or more library
+// entries, passing the raw dblp field value and the slice of affected canonical keys.
+// New duplicates are prevented by the PRIMARY KEY on dblp_canonical; this function
+// finds legacy conflicts that pre-date the constraint and were skipped during migration.
 func forEachDuplicateDBLPKey(fn func(dblpKey string, keys []string)) {
 	rows, err := db.Query(`
-		SELECT value, GROUP_CONCAT(key, '|')
+		SELECT value, GROUP_CONCAT(entry_key, '|')
 		FROM bib_entries
 		WHERE field = 'dblp'
 		GROUP BY value
@@ -2445,6 +2544,9 @@ func upsertBibEntryField(key, field, value string) {
 	var err error
 	if value == "" {
 		err = bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, key, field)
+		if field == DBLPField {
+			deleteDblpCanonicalByCanonicalKey(key)
+		}
 	} else {
 		// Keep bib_entry_keys anchor in sync so FK-dependent tables can reference
 		// this entry immediately (e.g. entry_warnings during the same run).
@@ -2456,6 +2558,13 @@ func upsertBibEntryField(key, field, value string) {
 			`INSERT INTO bib_entries (entry_key, field, value) VALUES (?, ?, ?)
 			   ON CONFLICT(entry_key, field) DO UPDATE SET value = excluded.value;`,
 			key, field, value)
+		if field == DBLPField {
+			// Remove any stale row (old dblp_key → key) before inserting the new one.
+			// dblp_canonical PK is dblp_key, so changing the dblp value requires
+			// the old row to be removed explicitly.
+			deleteDblpCanonicalByCanonicalKey(key)
+			upsertDblpCanonical(value, key)
+		}
 	}
 	if err != nil {
 		dbInteraction.Warning("bib_entries write failed for %s.%s: %s", key, field, err)
@@ -2553,19 +2662,6 @@ func deleteBibEntry(key string) {
 	}
 }
 
-// deleteHintsByTarget removes all key_hints rows whose resolved target is canonicalKey.
-func deleteHintsByTarget(canonicalKey string) {
-	if _, err := db.Exec(`DELETE FROM key_hints WHERE key = ?`, canonicalKey); err != nil {
-		dbInteraction.Warning("key_hints delete-by-target failed for %s: %s", canonicalKey, err)
-	}
-}
-
-// deleteOldiesByTarget removes all key_oldies rows whose resolved target is canonicalKey.
-func deleteOldiesByTarget(canonicalKey string) {
-	if _, err := db.Exec(`DELETE FROM key_oldies WHERE key = ?`, canonicalKey); err != nil {
-		dbInteraction.Warning("key_oldies delete-by-target failed for %s: %s", canonicalKey, err)
-	}
-}
 
 // loadEntryFromDb returns a TBibTeXEntry snapshot of all fields for key.
 // Returns an entry with an empty Fields map (Exists() == false) when key is absent.
@@ -2803,19 +2899,20 @@ func loadCommentsFromDb(l *TBibTeXLibrary) {
 	}
 }
 
-// buildKeyAliasesFromDb rebuilds the in-memory key alias and hint maps from fields
-// stored in bib_entries that the parser would normally add via processPreferredAliasValue
-// and processDblpValue.  Must be called on the fast path where no parse takes place.
-// addDblpKeyHintTransient adds a DBLP-derived hint directly to HintToKey without
-// setting keyHintsModified. DBLP hints are filtered out by saveKeyHintsToDb
-// (source == KeyForDBLP(entry's dblp)), so persisting them would be wasted work.
-// They are regenerated from bib_entries on every run, so this is safe.
+// addDblpKeyHintTransient adds a DBLP-derived hint to HintToKey and KeyOldies as a
+// transient (in-memory only) entry. DBLP hints are regenerated from bib_entries on
+// every run, so they must not be persisted to the DB.
 func addDblpKeyHintTransient(l *TBibTeXLibrary, dblpHint, key string) {
-	if _, exists := l.HintToKey[dblpHint]; !exists {
-		l.HintToKey[dblpHint] = key
+	if !l.HintToKey.Contains(dblpHint) {
+		l.HintToKey.SetTransient(dblpHint, key)
 	}
 }
 
+// buildKeyAliasesFromDb rebuilds the in-memory key alias and hint maps from fields
+// stored in bib_entries (preferredalias) and dblp_canonical (dblp identity).
+// Must be called on the fast path where no parse takes place.
+// preferredalias entries are persistent (written to key_oldies); DBLP entries are
+// transient (regenerated each run from dblp_canonical, never written to the DB).
 func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 	dbInteraction.Progress(ProgressBuildingKeyAliases)
 	if entryCache != nil {
@@ -2825,40 +2922,46 @@ func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 				l.AddKeyHint(alias, key)
 			}
 			if dblp := e.Fields[DBLPField]; dblp != "" {
-				l.AddKeyAlias(KeyForDBLP(dblp), key)
+				l.KeyOldies.SetTransient(KeyForDBLP(dblp), key)
 				addDblpKeyHintTransient(l, KeyForDBLP(dblp), key)
 			}
 		}
-		l.keyOldiesModified = false
-		// keyHintsModified is NOT reset here: ReadKeyHintsFile owns that reset.
-		// Genuine new preferredalias hints found above must trigger a save.
 		return
 	}
+
 	rows, err := db.Query(
-		`SELECT entry_key, field, value FROM bib_entries WHERE field IN (?, ?)`,
-		PreferredAliasField, DBLPField)
+		`SELECT entry_key, value FROM bib_entries WHERE field = ?`,
+		PreferredAliasField)
 	if err != nil {
-		dbInteraction.Warning("Could not query bib_entries for key aliases: %s", err)
+		dbInteraction.Warning("Could not query bib_entries for preferred aliases: %s", err)
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var key, field, value string
-		if err := rows.Scan(&key, &field, &value); err != nil {
-			dbInteraction.Warning("Could not scan key alias row: %s", err)
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			dbInteraction.Warning("Could not scan preferred alias row: %s", err)
 			continue
 		}
-		switch field {
-		case PreferredAliasField:
-			l.AddKeyAlias(value, key)
-			l.AddKeyHint(value, key)
-		case DBLPField:
-			l.AddKeyAlias(KeyForDBLP(value), key)
-			addDblpKeyHintTransient(l, KeyForDBLP(value), key)
-		}
+		l.AddKeyAlias(value, key)
+		l.AddKeyHint(value, key)
 	}
-	l.keyOldiesModified = false
-	// keyHintsModified is NOT reset here (see cache path comment above).
+
+	dblpRows, err := db.Query(`SELECT dblp_key, canonical_key FROM dblp_canonical`)
+	if err != nil {
+		dbInteraction.Warning("Could not query dblp_canonical for key aliases: %s", err)
+		return
+	}
+	defer dblpRows.Close()
+	for dblpRows.Next() {
+		var dblpKey, canonical string
+		if err := dblpRows.Scan(&dblpKey, &canonical); err != nil {
+			dbInteraction.Warning("Could not scan dblp_canonical row: %s", err)
+			continue
+		}
+		l.KeyOldies.SetTransient(KeyForDBLP(dblpKey), canonical)
+		addDblpKeyHintTransient(l, KeyForDBLP(dblpKey), canonical)
+	}
 }
 
 // buildTitleIndexFromDb rebuilds l.TitleIndex from the title field in bib_entries.

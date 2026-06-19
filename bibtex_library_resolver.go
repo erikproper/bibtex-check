@@ -50,12 +50,18 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	}
 
 	if field == "crossref" {
+		if current == "" {
+			return challenge
+		}
+		if challenge == "" {
+			return current
+		}
 		sourceEntry := l.EntryString(current, "", "  ")
 		targetEntry := l.EntryString(challenge, "", "  ")
 		if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?",
 			"Different crossrefs (%s, %s) for entries (%s, %s) that you want to merge.\nFirst entry:\n%s\nSecond entry:\n%s",
 			current, challenge, key, challengeKey, sourceEntry, targetEntry) {
-			return l.MergeEntries(current, challenge)
+			return l.MergeEntries(challenge, current)
 		}
 		return current
 	}
@@ -184,7 +190,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if field != PreferredAliasField {
 			l.UpdateEntryFieldAlias(key, field, challenge, current)
 		} else {
-			delete(l.KeyToKey, challenge)
+			l.KeyOldies.Delete(challenge)
 		}
 		l.setLineage(key, field, challengeSource, true)
 		return current
@@ -192,7 +198,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if field != PreferredAliasField {
 			l.UpdateEntryFieldAlias(key, field, current, challenge)
 		} else {
-			delete(l.KeyToKey, current)
+			l.KeyOldies.Delete(current)
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge
@@ -200,7 +206,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if field != PreferredAliasField {
 			l.UpdateGenericFieldAlias(field, challenge, current)
 		} else {
-			delete(l.KeyToKey, challenge)
+			l.KeyOldies.Delete(challenge)
 		}
 		l.setLineage(key, field, challengeSource, true)
 		return current
@@ -208,7 +214,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if field != PreferredAliasField {
 			l.UpdateGenericFieldAlias(field, current, challenge)
 		} else {
-			delete(l.KeyToKey, current)
+			l.KeyOldies.Delete(current)
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge

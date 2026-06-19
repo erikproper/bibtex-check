@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.10.h"
+const AppVersion = "25.39"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -110,9 +110,8 @@ func loadMappingFiles() {
 	Library.ReadKeyHintsFile()
 	Library.ReadKeyNonDoublesFile()
 	Library.ReadNameMappingsFile()
-	Library.ReadGenericFieldMappingsFile()
+	Library.ReadFieldMappingsFile()
 	Library.ReadEntryFieldMappingsFile()
-	Library.ReadCrossFieldMappingsFile()
 	Library.ReadDblpParentFile()
 	Library.ReadDblpWaivedFile()
 	Library.ReadMetadataFile()
@@ -933,7 +932,7 @@ func doRemoveFromGroup(args []string) {
 func resolveInputKey(raw string) string {
 	resolved := Library.MapEntryKey(raw)
 	if resolved == raw {
-		if hint, ok := Library.HintToKey[raw]; ok {
+		if hint, ok := Library.HintToKey.Get(raw); ok {
 			resolved = Library.MapEntryKey(hint)
 		}
 	}
@@ -1694,7 +1693,7 @@ func doSetPreferredAlias(args []string) {
 			Library.Error(ErrorSetPreferredAliasInvalidFormat, alias)
 			return
 		}
-		if target, inUse := Library.HintToKey[alias]; inUse && target != key {
+		if target := Library.HintToKey.GetValue(alias); target != "" && target != key {
 			Library.Error(ErrorSetPreferredAliasAlreadyInUse, alias, target)
 			return
 		}
@@ -2290,26 +2289,9 @@ case cmdAlignBooktitleCountries:
 		refreshBibDbTimestamp()
 	}
 
-	saveToDB := func(modified bool, label string, fn func(*TBibTeXLibrary)) {
-		if modified {
-			Library.Progress("Saving %s", label)
-			fn(&Library)
-		}
-	}
-	saveToDB(Library.keyOldiesModified, "key_oldies", saveKeyOldiesToDb)
-	saveToDB(Library.keyHintsModified, "key_hints", saveKeyHintsToDb)
-	saveToDB(Library.keyNonDoublesModified, "key_non_doubles", saveKeyNonDoublesToDb)
-	saveToDB(Library.nameMappingsModified, "name_mappings", saveNameMappingsToDb)
-	saveToDB(Library.entryFieldMappingsModified, "losing_field_values", saveEntryFieldMappingsToDb)
-	saveToDB(Library.genericFieldMappingsModified, "generic_field_mappings", saveGenericFieldMappingsToDb)
-	saveToDB(Library.crossFieldMappingsModified, "cross_field_mappings", saveCrossFieldMappingsToDb)
-	saveToDB(Library.dblpParentModified, "dblp_parent", saveDblpParentToDb)
-	saveToDB(Library.dblpWaivedModified, "dblp_waived", saveDblpWaivedToDb)
-	saveToDB(Library.entryFlagsModified, "entry_flags", saveEntryFlagsToDb)
-	saveToDB(Library.metadataModified, "entry_metadata", saveEntryMetadataToDb)
-
 	if !postCheckGate() {
 		dbInteraction.Warning("Post-check gate failed — home database not updated")
+		abandonWorkingDatabase()
 	} else {
 		finaliseWorkingDatabase()
 	}

@@ -38,16 +38,29 @@ var reKeyNumericSuffix = regexp.MustCompile(`-(\d+)$`)
 // findCandidateDblpParents returns all DBLP keys for proceedings/book entries
 // in the same conference directory as childDBLPKey and with the same year.
 // Returns nil when there is no ambiguity (zero or one candidate).
-// cache maps "parentDir\x00year" to the crossrefs/-scan result; pass nil to skip caching.
-// Rule 0 (child's own crossref) is checked first and bypasses the cache entirely,
+// dirCache maps "parentDir\x00year" to the crossrefs/-scan result.
+// jsonCache maps DBLP keys to their parsed JSON entries; both may be nil to skip caching.
+// Rule 0 (child's own crossref) is checked first and bypasses the dirCache entirely,
 // since different children in the same venue/year may point to different parents.
-func findCandidateDblpParents(childDBLPKey string, cache map[string][]string) []string {
+func findCandidateDblpParents(childDBLPKey string, dirCache map[string][]string, jsonCache map[string]*TDblpJSONEntry) []string {
 	parentDir := path.Dir(childDBLPKey)
 	if parentDir == "." || parentDir == "" {
 		return nil
 	}
 
-	childJe := readDblpJSONEntry(childDBLPKey)
+	cachedJSON := func(key string) *TDblpJSONEntry {
+		if jsonCache == nil {
+			return readDblpJSONEntry(key)
+		}
+		if je, ok := jsonCache[key]; ok {
+			return je
+		}
+		je := readDblpJSONEntry(key)
+		jsonCache[key] = je
+		return je
+	}
+
+	childJe := cachedJSON(childDBLPKey)
 
 	// No DBLP data or no crossref claim → nothing to disambiguate.
 	if childJe == nil {
@@ -61,7 +74,7 @@ func findCandidateDblpParents(childDBLPKey string, cache map[string][]string) []
 	// Rule 0: if the child's data.json claims a specific parent and that parent
 	// exists as a valid parent-type entry, DBLP's own assignment is authoritative.
 	// Do not cache: siblings in the same venue/year may point to different parents.
-	if parentJe := readDblpJSONEntry(ownParent); parentJe != nil {
+	if parentJe := cachedJSON(ownParent); parentJe != nil {
 		if parentJe.EntryType == "proceedings" || parentJe.EntryType == "book" || parentJe.EntryType == "data" {
 			return []string{ownParent}
 		}
@@ -71,8 +84,8 @@ func findCandidateDblpParents(childDBLPKey string, cache map[string][]string) []
 	// Fall back to crossrefs/ scan to find candidates in the same venue/year.
 	childYear := childJe.Fields["year"]
 	cacheKey := parentDir + "\x00" + childYear
-	if cache != nil {
-		if cached, ok := cache[cacheKey]; ok {
+	if dirCache != nil {
+		if cached, ok := dirCache[cacheKey]; ok {
 			return cached
 		}
 	}
@@ -80,8 +93,8 @@ func findCandidateDblpParents(childDBLPKey string, cache map[string][]string) []
 	crossrefsDir := dblpFolder() + "crossrefs/" + parentDir
 	dirEntries, err := os.ReadDir(crossrefsDir)
 	if err != nil {
-		if cache != nil {
-			cache[cacheKey] = nil
+		if dirCache != nil {
+			dirCache[cacheKey] = nil
 		}
 		return nil
 	}
@@ -92,7 +105,7 @@ func findCandidateDblpParents(childDBLPKey string, cache map[string][]string) []
 			continue
 		}
 		key := parentDir + "/" + e.Name()
-		je := readDblpJSONEntry(key)
+		je := cachedJSON(key)
 		if je == nil {
 			continue
 		}
@@ -105,8 +118,8 @@ func findCandidateDblpParents(childDBLPKey string, cache map[string][]string) []
 		candidates = append(candidates, key)
 	}
 
-	if cache != nil {
-		cache[cacheKey] = candidates
+	if dirCache != nil {
+		dirCache[cacheKey] = candidates
 	}
 	return candidates
 }
@@ -278,29 +291,53 @@ func (l *TBibTeXLibrary) FixDblpHierarchy() {
 		}
 	}
 
-	total := countBibEntries()
-	n := 0
+	type entryInfo struct{ key, entryType, dblpKey string }
+	var entries []entryInfo
+	if entryCache != nil {
+		for key, e := range entryCache {
+			et := e.Fields[EntryTypeField]
+			dk := e.Fields[DBLPField]
+			if et != "" && dk != "" && !BibTeXBookish.Contains(et) {
+				entries = append(entries, entryInfo{key, et, dk})
+			}
+		}
+	} else {
+		rows, err := db.Query(`
+			SELECT t.entry_key, t.value, d.value
+			FROM bib_entries t
+			JOIN bib_entries d ON t.entry_key = d.entry_key AND d.field = ?
+			WHERE t.field = ?`, DBLPField, EntryTypeField)
+		if err != nil {
+			dbInteraction.Warning("FixDblpHierarchy query failed: %s", err)
+		} else {
+			for rows.Next() {
+				var key, et, dk string
+				if err := rows.Scan(&key, &et, &dk); err == nil && !BibTeXBookish.Contains(et) {
+					entries = append(entries, entryInfo{key, et, dk})
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	total := len(entries)
 	spinner := l.NewSpinner(ProgressFixingDblpHierarchy)
-	cache := map[string][]string{}
-	forEachBibEntryType(func(key, entryType string) {
-		n++
-		spinner.Update(n, total)
-		if BibTeXBookish.Contains(entryType) {
-			return
+	dirCache := map[string][]string{}
+	jsonCache := map[string]*TDblpJSONEntry{}
+	for n, info := range entries {
+		spinner.Update(n+1, total)
+		if l.DblpParent.Contains(info.dblpKey) {
+			continue
 		}
-		dblpKey := l.EntryFieldValueity(key, DBLPField)
-		if dblpKey == "" {
-			return
-		}
-		candidates := findCandidateDblpParents(dblpKey, cache)
+		candidates := findCandidateDblpParents(info.dblpKey, dirCache, jsonCache)
 		if len(candidates) <= 1 {
-			return
+			continue
 		}
-		existingCrossref := l.EntryFieldValueity(key, "crossref")
-		if resolved := l.ResolveDblpParentAmbiguity(dblpKey, candidates, existingCrossref); resolved != "" {
-			l.SetDblpParentOverride(dblpKey, resolved)
+		existingCrossref := l.EntryFieldValueity(info.key, "crossref")
+		if resolved := l.ResolveDblpParentAmbiguity(info.dblpKey, candidates, existingCrossref); resolved != "" {
+			l.SetDblpParentOverride(info.dblpKey, resolved)
 		}
-	})
+	}
 	spinner.Stop()
 	l.CheckCrossrefAcyclicity()
 
@@ -311,8 +348,7 @@ func (l *TBibTeXLibrary) FixDblpHierarchy() {
 // SetDblpParentOverride records that childDBLPKey's parent is parentDBLPKey,
 // overriding whatever DBLP's data.json says.
 func (l *TBibTeXLibrary) SetDblpParentOverride(childDBLPKey, parentDBLPKey string) {
-	l.DblpParentOverrides[childDBLPKey] = parentDBLPKey
-	l.dblpParentModified = true
+	l.DblpParent.Set(childDBLPKey, parentDBLPKey)
 }
 
 // CheckCrossrefAcyclicity verifies the library's crossref graph is a forest

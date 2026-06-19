@@ -145,45 +145,37 @@ func (l *TBibTeXLibrary) readLibraryFile(fileExtension, message string, reading 
 	return l.readFile(l.FilesRoot+l.BaseName+fileExtension, message, reading)
 }
 
-func (l *TBibTeXLibrary) ReadCrossFieldMappingsFile() {
-	normalisationChanged := loadCrossFieldMappingsFromDb(l)
-	l.crossFieldMappingsModified = normalisationChanged
+func (l *TBibTeXLibrary) ReadFieldMappingsFile() {
+	loadFieldMappingsFromDb(l)
 }
 
 func (l *TBibTeXLibrary) ReadEntryFieldMappingsFile() {
-	normalisationChanged := loadEntryFieldMappingsFromDb(l)
-	l.entryFieldMappingsModified = normalisationChanged
-}
-
-func (l *TBibTeXLibrary) ReadGenericFieldMappingsFile() {
-	normalisationChanged := loadGenericFieldMappingsFromDb(l)
-	l.genericFieldMappingsModified = normalisationChanged
+	loadEntryFieldMappingsFromDb(l)
 }
 
 func (l *TBibTeXLibrary) ReadKeyOldiesFile() {
-	loadKeyOldiesFromDb(l)
-	l.keyOldiesModified = false
+	l.KeyOldies.Load()
+	l.Progress("Key oldies: %d entries", l.KeyOldies.Len())
 }
 
 func (l *TBibTeXLibrary) ReadKeyHintsFile() {
-	loadKeyHintsFromDb(l)
-	l.keyHintsModified = false
+	l.HintToKey.Load()
+	l.Progress("Key hints: %d entries", l.HintToKey.Len())
 }
 
 func (l *TBibTeXLibrary) ReadKeyNonDoublesFile() {
-	l.Progress("Loading key non-doubles")
 	loadKeyNonDoublesFromDb(l)
-	l.keyNonDoublesModified = false
+	l.Progress("Key non-doubles: %d entries", len(l.NonDoubles))
 }
 
 func (l *TBibTeXLibrary) ReadDblpParentFile() {
-	loadDblpParentFromDb(l)
-	l.dblpParentModified = false
+	l.DblpParent.Load()
+	l.Progress("DBLP parent overrides: %d entries", l.DblpParent.Len())
 }
 
 func (l *TBibTeXLibrary) ReadDblpWaivedFile() {
-	loadDblpWaivedFromDb(l)
-	l.dblpWaivedModified = false
+	l.DblpWaived.Load()
+	l.Progress("DBLP waived: %d entries", l.DblpWaived.Len())
 }
 
 func (l *TBibTeXLibrary) ReadURLsIgnoreFile() {
@@ -192,7 +184,11 @@ func (l *TBibTeXLibrary) ReadURLsIgnoreFile() {
 
 func (l *TBibTeXLibrary) ReadEntryFlagsFile() {
 	loadEntryFlagsFromDb(l)
-	l.entryFlagsModified = false
+	total := 0
+	for _, s := range l.EntryFlags {
+		total += len(s.Elements())
+	}
+	l.Progress("Entry flags: %d flags on %d entries", total, len(l.EntryFlags))
 }
 
 func (l *TBibTeXLibrary) ReadAddressMappings() {
@@ -208,5 +204,4 @@ func (l *TBibTeXLibrary) ReadAddressMappings() {
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {
 	loadNameMappingsFromDb(l)
-	l.nameMappingsModified = false
 }

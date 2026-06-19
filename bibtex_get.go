@@ -226,7 +226,7 @@ func bootstrapKeysFromSync(fileName string) []TBibGetPair {
 			}
 			resolved := Library.MapEntryKey(sourceKey)
 			if resolved == sourceKey {
-				if hint, ok := Library.HintToKey[sourceKey]; ok {
+				if hint, ok := Library.HintToKey.Get(sourceKey); ok {
 					resolved = Library.MapEntryKey(hint)
 				}
 			}
@@ -284,7 +284,7 @@ func bootstrapKeysFromBib(fileName string) []TBibGetPair {
 		}
 		resolved := Library.MapEntryKey(localKey)
 		if resolved == localKey {
-			if hint, ok := Library.HintToKey[localKey]; ok {
+			if hint, ok := Library.HintToKey.Get(localKey); ok {
 				resolved = Library.MapEntryKey(hint)
 			}
 		}
@@ -1038,7 +1038,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		resolved := Library.MapEntryKey(p.canonicalKey)
 		if resolved == p.canonicalKey {
 			// Key didn't move through the alias table — try hints (preferred aliases, source keys).
-			if hint, ok := Library.HintToKey[p.canonicalKey]; ok {
+			if hint, ok := Library.HintToKey.Get(p.canonicalKey); ok {
 				resolved = Library.MapEntryKey(hint)
 			}
 		}
@@ -1917,11 +1917,21 @@ func doSync(filter string) {
 			case "subset":
 				files[i].skipPhase2, files[i].syncState = runSubsetPhase1(files[i].cfg, "")
 			}
+			if Library.QuitWasRequested() {
+				break
+			}
 		}
 	}
 
 	// Phase 2: write all output bib files from the (now fully updated) DB.
+	// On quit, skip output but still close any subset sync states opened in Phase 1.
 	for _, f := range files {
+		if Library.QuitWasRequested() {
+			if f.syncState != nil {
+				f.syncState.close()
+			}
+			continue
+		}
 		switch f.cfg.Mode {
 		case "full":
 			if !f.skipPhase2 {

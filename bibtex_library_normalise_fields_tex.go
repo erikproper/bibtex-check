@@ -384,7 +384,6 @@ func (l *TBibTeXLibrary) maybeAddSimpleName(parts int, firstName, lastName, full
 				canonical = redirected
 			}
 			l.AddAlias(fullName, canonical, &l.NameAliasToName, &l.NameToAliases, false)
-			l.nameMappingsModified = true
 			l.FindAliases(canonical, fullName)
 			l.FindAliases(canonical, canonical)
 		}
@@ -415,9 +414,7 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 
 					normalised := NormalisePersonNameValue(l.TBibTeXTeX.library, name)
 					if strings.Contains(normalised, ", ") && !hasGarbledName(normalised) && !hasSingleLetterSurname(normalised) {
-						if l.FindAliases(normalised, normalised) {
-							l.nameMappingsModified = true
-						}
+						l.FindAliases(normalised, normalised)
 					}
 					result += andety + normalised
 					name = ""
@@ -445,9 +442,7 @@ func NormaliseNamesString(l *TBibTeXLibrary, names string) string {
 
 		normalised := NormalisePersonNameValue(l.TBibTeXTeX.library, name)
 		if strings.Contains(normalised, ", ") && !hasGarbledName(normalised) && !hasSingleLetterSurname(normalised) {
-			if l.FindAliases(normalised, normalised) {
-				l.nameMappingsModified = true
-			}
+			l.FindAliases(normalised, normalised)
 		}
 		result += andety + normalised
 	}

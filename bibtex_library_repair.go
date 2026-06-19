@@ -224,7 +224,6 @@ func (l *TBibTeXLibrary) cleanBadNameMappings() int {
 		}
 	}
 
-	l.nameMappingsModified = true
 	return len(bad)
 }
 
