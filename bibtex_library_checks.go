@@ -265,6 +265,47 @@ func (l *TBibTeXLibrary) CheckKeyHintsConsistency() {
 	l.Progress("Migrated %d canonical-key hint(s) from key_hints to key_oldies", len(toMigrate))
 }
 
+// CheckDblpDuplicates finds pairs of live entries that share the same DBLP key and
+// merges them. These arise when dblp_canonical writes fail (SQLITE_BUSY) and a later
+// run creates a second entry for a key already present in the library.
+// Same DBLP key = same paper, so duplicates are merged without prompting.
+func (l *TBibTeXLibrary) CheckDblpDuplicates() {
+	rows, err := db.Query(`
+		SELECT a.entry_key, b.entry_key
+		FROM bib_entries a
+		JOIN bib_entries b ON a.value = b.value AND a.entry_key < b.entry_key
+		WHERE a.field = ? AND b.field = ?
+		  AND EXISTS (SELECT 1 FROM bib_entries WHERE entry_key = a.entry_key AND field = ?)
+		  AND EXISTS (SELECT 1 FROM bib_entries WHERE entry_key = b.entry_key AND field = ?)`,
+		DBLPField, DBLPField, EntryTypeField, EntryTypeField)
+	if err != nil {
+		dbInteraction.Warning("CheckDblpDuplicates: %s", err)
+		return
+	}
+	defer rows.Close()
+
+	type pair struct{ a, b string }
+	var pairs []pair
+	for rows.Next() {
+		var a, b string
+		if err := rows.Scan(&a, &b); err != nil {
+			continue
+		}
+		pairs = append(pairs, pair{a, b})
+	}
+
+	for _, p := range pairs {
+		a := l.MapEntryKey(p.a)
+		b := l.MapEntryKey(p.b)
+		if a != b && l.EntryExists(a) && l.EntryExists(b) {
+			l.Progress("Merging duplicate DBLP entries: %s ← %s", a, b)
+			beginBibTransaction()
+			l.MergeEntries(b, a)
+			commitBibTransaction()
+		}
+	}
+}
+
 // CheckDblpWaivedConsistency removes stale keys from DblpWaived: any key that is
 // now an alias (MapEntryKey(k) != k) or no longer exists as a library entry.
 func (l *TBibTeXLibrary) CheckDblpWaivedConsistency() {

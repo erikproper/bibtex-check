@@ -1508,6 +1508,80 @@ func maybeMigrateDblpCanonical() {
 	dbInteraction.Progress("Migrated: populated dblp_canonical from %d dblp fields in bib_entries", srcCount)
 }
 
+// repairDblpData fixes stale data left by incomplete transactions or aborted runs:
+//
+//  1. Category-A ghosts — entries that are already in key_oldies (properly merged
+//     away) but still carry a stale dblp field in bib_entries. Only the dblp row
+//     is removed; other oldie-related rows (key_hints, losing_field_values, …) stay.
+//
+//  2. Category-B ghosts — entries with a dblp field but no entrytype and not yet in
+//     key_oldies (failed creates). All their rows are removed via CASCADE on
+//     bib_entry_keys.
+//
+//  3. Stale dblp_canonical rows — canonical_key no longer has an entrytype — are
+//     deleted.
+//
+//  4. Missing dblp_canonical rows for live entries are back-filled. When multiple
+//     live entries share the same DBLP key, INSERT OR IGNORE keeps the first; the
+//     rest are caught by CheckDblpDuplicates during startup checks.
+//
+// Must run before initEntryCache so the cache is built from clean data.
+func repairDblpData() {
+	// Category A: remove stale dblp field from properly-merged key_oldies.
+	res, err := db.Exec(`
+		DELETE FROM bib_entries
+		WHERE field = ?
+		  AND entry_key IN     (SELECT alias FROM key_oldies)
+		  AND entry_key NOT IN (SELECT entry_key FROM bib_entries WHERE field = ?)`,
+		DBLPField, EntryTypeField)
+	if err != nil {
+		dbInteraction.Warning("repairDblpData (A): %s", err)
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		dbInteraction.Progress("repairDblpData: removed %d stale dblp field(s) from merged key_oldies", n)
+	}
+
+	// Category B: remove all rows for ghost entries (no entrytype, not in key_oldies).
+	// CASCADE on bib_entry_keys propagates to bib_entries, losing_field_values, etc.
+	db.Exec(`PRAGMA foreign_keys = ON`) //nolint:errcheck
+	res, err = db.Exec(`
+		DELETE FROM bib_entry_keys
+		WHERE entry_key IN (
+			SELECT DISTINCT entry_key FROM bib_entries WHERE field = ?
+			EXCEPT SELECT entry_key FROM bib_entries WHERE field = ?
+			EXCEPT SELECT alias FROM key_oldies
+		)`, DBLPField, EntryTypeField)
+	if err != nil {
+		dbInteraction.Warning("repairDblpData (B): %s", err)
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		dbInteraction.Progress("repairDblpData: removed %d ghost entry rows", n)
+	}
+
+	// Remove stale dblp_canonical rows (target no longer exists as a live entry).
+	res, err = db.Exec(`
+		DELETE FROM dblp_canonical
+		WHERE canonical_key NOT IN (SELECT entry_key FROM bib_entries WHERE field = ?)`,
+		EntryTypeField)
+	if err != nil {
+		dbInteraction.Warning("repairDblpData (stale canonical): %s", err)
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		dbInteraction.Progress("repairDblpData: removed %d stale dblp_canonical rows", n)
+	}
+
+	// Back-fill missing dblp_canonical rows from live entries.
+	res, err = db.Exec(`
+		INSERT OR IGNORE INTO dblp_canonical (dblp_key, canonical_key)
+		SELECT be.value, be.entry_key
+		FROM bib_entries be
+		WHERE be.field = ?
+		  AND EXISTS (SELECT 1 FROM bib_entries WHERE entry_key = be.entry_key AND field = ?)`,
+		DBLPField, EntryTypeField)
+	if err != nil {
+		dbInteraction.Warning("repairDblpData (back-fill): %s", err)
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		dbInteraction.Progress("repairDblpData: back-filled %d missing dblp_canonical rows", n)
+	}
+}
+
 // upsertDblpCanonical writes (dblpKey → canonicalKey) to dblp_canonical.
 // When dblpKey is empty, the call is a no-op.
 func upsertDblpCanonical(dblpKey, canonicalKey string) {

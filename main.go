@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.42"
+const AppVersion = "25.43"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -251,6 +251,7 @@ func openLibraryToUpdate() bool {
 
 	if skipBibValidation || Library.ValidBibDb() {
 		buildTitleIndexFromDb(&Library)
+		repairDblpData()
 		loadBibFromDb()
 		if skipBibValidation {
 			// Crash recovery: bib_entries was dirty on the previous run.
@@ -277,6 +278,7 @@ func openLibraryToUpdate() bool {
 	Library.LoadPDFFiles()
 	Library.ReportLibrarySize()
 	if !skipStartupChecks {
+		Library.CheckDblpDuplicates()
 		Library.CheckKeyOldiesConsistency()
 		Library.CheckKeyHintsConsistency()
 		Library.CheckDblpWaivedConsistency()
