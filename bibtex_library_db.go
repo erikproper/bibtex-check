@@ -1514,7 +1514,7 @@ func upsertDblpCanonical(dblpKey, canonicalKey string) {
 	if dblpKey == "" {
 		return
 	}
-	db.Exec( //nolint:errcheck
+	bibExec( //nolint:errcheck
 		`INSERT INTO dblp_canonical (dblp_key, canonical_key) VALUES (?, ?)
 		 ON CONFLICT(dblp_key) DO UPDATE SET canonical_key = excluded.canonical_key`,
 		dblpKey, canonicalKey)
@@ -1525,13 +1525,13 @@ func deleteDblpCanonicalByDblpKey(dblpKey string) {
 	if dblpKey == "" {
 		return
 	}
-	db.Exec(`DELETE FROM dblp_canonical WHERE dblp_key = ?`, dblpKey) //nolint:errcheck
+	bibExec(`DELETE FROM dblp_canonical WHERE dblp_key = ?`, dblpKey) //nolint:errcheck
 }
 
 // deleteDblpCanonicalByCanonicalKey removes all rows for canonicalKey from dblp_canonical.
 // Used when an entry's dblp field is cleared (value = "").
 func deleteDblpCanonicalByCanonicalKey(canonicalKey string) {
-	db.Exec(`DELETE FROM dblp_canonical WHERE canonical_key = ?`, canonicalKey) //nolint:errcheck
+	bibExec(`DELETE FROM dblp_canonical WHERE canonical_key = ?`, canonicalKey) //nolint:errcheck
 }
 
 // LookupDblpCanonical returns the canonical library key for a DBLP key by querying
