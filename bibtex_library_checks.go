@@ -489,7 +489,7 @@ func (l *TBibTeXLibrary) derivePreferredAlias(entry *TBibTeXEntry) string {
 		if !validPreferredKeyAlias.MatchString(candidate) {
 			return "", false
 		}
-		if target := l.HintToKey.GetValue(candidate); target != "" && target != entry.Key {
+		if target := l.HintToKey.GetValue(candidate); target != "" && l.MapEntryKey(target) != entry.Key {
 			return "", false
 		}
 		return candidate, true
