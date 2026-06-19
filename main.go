@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.43"
+const AppVersion = "25.44"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1623,7 +1623,7 @@ func doAddKeyMapping(args []string) {
 // contains "/"), it is imported via MaybeAddDBLPEntry and *importedCount is
 // incremented. Returns "" when the key cannot be resolved at all.
 func resolveOrImportKey(rawKey string, importedCount *int) string {
-	canon := Library.MapEntryKey(rawKey)
+	canon := resolveInputKey(rawKey)
 	if Library.EntryExists(canon) {
 		return canon
 	}

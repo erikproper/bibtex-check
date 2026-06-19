@@ -66,13 +66,28 @@ func init() {
 				cascadeRenormaliseFields(l, "author", "editor")
 			}},
 
-		// Field mapping tables — all cascade into bib_entries
+		// Field mapping tables — all cascade into bib_entries.
+		// generic_field_mappings and cross_field_mappings import to their legacy tables;
+		// the cascade syncs rows into the unified field_mappings table and reloads the
+		// in-memory maps before renormalising, so newly imported mappings take effect.
 		{"generic_field_mappings", GenericFieldMappingsFilePath,
 			ExportGenericFieldMappings, func() { importGenericFieldMappingsFromCSV(true) },
-			func(l *TBibTeXLibrary) { cascadeRenormaliseAllFields(l) }},
+			func(l *TBibTeXLibrary) {
+				db.Exec(`INSERT OR IGNORE INTO field_mappings
+				           (source_field, source_value, target_field, target_value)
+				         SELECT field, challenger, field, winner FROM generic_field_mappings`)
+				loadFieldMappingsFromDb(l)
+				cascadeRenormaliseAllFields(l)
+			}},
 		{"cross_field_mappings", CrossFieldMappingsFilePath,
 			ExportCrossFieldMappings, func() { importCrossFieldMappingsFromCSV(true) },
-			func(l *TBibTeXLibrary) { cascadeRenormaliseAllFields(l) }},
+			func(l *TBibTeXLibrary) {
+				db.Exec(`INSERT OR IGNORE INTO field_mappings
+				           (source_field, source_value, target_field, target_value)
+				         SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings`)
+				loadFieldMappingsFromDb(l)
+				cascadeRenormaliseAllFields(l)
+			}},
 		{"losing_field_values", LosingFieldValuesFilePath,
 			ExportLosingFieldValues, func() { importLosingFieldValuesFromCSV(true) },
 			func(l *TBibTeXLibrary) { cascadeRenormaliseAllFields(l) }},
@@ -400,8 +415,8 @@ func cascadeRenormaliseAllFields(l *TBibTeXLibrary) {
 	}
 }
 
-// renormaliseField applies NormaliseFieldValue to every bib_entries row for
-// field, writing back changed values in a single transaction.
+// renormaliseField applies NormaliseFieldValue followed by MapFieldValue to every
+// bib_entries row for field, writing back changed values in a single transaction.
 func renormaliseField(l *TBibTeXLibrary, field string) {
 	rows, err := db.Query(
 		`SELECT entry_key, value FROM bib_entries WHERE field = ?`, field)
@@ -413,7 +428,8 @@ func renormaliseField(l *TBibTeXLibrary, field string) {
 	for rows.Next() {
 		var key, oldVal string
 		rows.Scan(&key, &oldVal)
-		if newVal := l.NormaliseFieldValue(field, oldVal); newVal != oldVal {
+		newVal := l.MapFieldValue(field, l.NormaliseFieldValue(field, oldVal))
+		if newVal != oldVal {
 			updates = append(updates, kv{key, newVal})
 		}
 	}
