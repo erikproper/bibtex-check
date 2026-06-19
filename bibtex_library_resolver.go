@@ -172,6 +172,12 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return challengeRaw
 	}
 
+	// If the challenging preferred alias already resolves to this entry via key_oldies,
+	// the resolution was already recorded in a prior run — silently keep the current value.
+	if field == PreferredAliasField && l.MapEntryKey(challenge) == l.MapEntryKey(key) {
+		return current
+	}
+
 	options := TStringSetNew()
 	if field == EntryTypeField || field == "year" || field == "pages" || field == "author" || field == "editor" ||
 		field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {
@@ -190,7 +196,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if field != PreferredAliasField {
 			l.UpdateEntryFieldAlias(key, field, challenge, current)
 		} else {
-			l.KeyOldies.Delete(challenge)
+			l.AddKeyAlias(challenge, key)
 		}
 		l.setLineage(key, field, challengeSource, true)
 		return current
@@ -198,7 +204,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if field != PreferredAliasField {
 			l.UpdateEntryFieldAlias(key, field, current, challenge)
 		} else {
-			l.KeyOldies.Delete(current)
+			l.AddKeyAlias(current, key)
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge
@@ -206,7 +212,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if field != PreferredAliasField {
 			l.UpdateGenericFieldAlias(field, challenge, current)
 		} else {
-			l.KeyOldies.Delete(challenge)
+			l.AddKeyAlias(challenge, key)
 		}
 		l.setLineage(key, field, challengeSource, true)
 		return current
@@ -214,7 +220,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if field != PreferredAliasField {
 			l.UpdateGenericFieldAlias(field, current, challenge)
 		} else {
-			l.KeyOldies.Delete(current)
+			l.AddKeyAlias(current, key)
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge
