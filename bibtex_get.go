@@ -245,6 +245,64 @@ func bootstrapKeysFromSync(fileName string) []TBibGetPair {
 	return nil
 }
 
+// bootstrapKeysFromBib generates a .keys file from the entry keys in an existing
+// .bib output file. Used in follow mode when no .keys file and no .sync DB are present:
+// reads the bib file line by line, extracts @type{key, headers, resolves each key
+// via the live library, and writes the result to <fileName>.keys.
+// Returns the bootstrapped pairs, or nil when no .bib file exists or yields nothing.
+func bootstrapKeysFromBib(fileName string) []TBibGetPair {
+	f, err := os.Open(fileName + BibFileExtension)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	seen := map[string]bool{}
+	var pairs []TBibGetPair
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "@") {
+			continue
+		}
+		braceIdx := strings.IndexByte(line, '{')
+		if braceIdx < 0 {
+			continue
+		}
+		entryType := strings.ToLower(strings.TrimSpace(line[1:braceIdx]))
+		if entryType == "comment" || entryType == "preamble" || entryType == "string" {
+			continue
+		}
+		rest := strings.TrimSpace(line[braceIdx+1:])
+		commaIdx := strings.IndexByte(rest, ',')
+		if commaIdx < 0 {
+			continue
+		}
+		localKey := strings.TrimSpace(rest[:commaIdx])
+		if localKey == "" || seen[localKey] {
+			continue
+		}
+		resolved := Library.MapEntryKey(localKey)
+		if resolved == localKey {
+			if hint, ok := Library.HintToKey[localKey]; ok {
+				resolved = Library.MapEntryKey(hint)
+			}
+		}
+		if !bibEntryExists(resolved) {
+			continue
+		}
+		seen[resolved] = true
+		pairs = append(pairs, TBibGetPair{localKey, resolved})
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+	dbInteraction.Progress("Bootstrapping %s from existing bib file (%d entries)",
+		fileName+KeysFileExtension, len(pairs))
+	rewriteKeysFile(fileName, pairs, true)
+	return pairs
+}
+
 // readKeysFile reads <fileName>.keys (local_key;canonical_key CSV).
 // Lines without a ';' are bare canonical keys; localKey is left empty and
 // the caller must resolve them against the open library.
@@ -962,6 +1020,14 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 	if !ok {
 		fmt.Fprintln(os.Stderr, "Cannot read keys file:", mapFilePath+KeysFileExtension)
 		return nil
+	}
+
+	// Follow mode with no keys file and no sync DB: offer to bootstrap from
+	// the existing bib file so a first follow sync does not produce an empty result.
+	if cfg.Mode == "follow" && len(pairs) == 0 && !FileExists(mapFilePath+KeysFileExtension) {
+		if bootstrapped := bootstrapKeysFromBib(mapFilePath); bootstrapped != nil {
+			pairs = bootstrapped
+		}
 	}
 
 	// Resolve all canonical keys through the key alias / oldies table.

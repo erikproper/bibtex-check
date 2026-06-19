@@ -13,9 +13,10 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
-	// "fmt"
 )
 
 /////// Do we really need the library as parameter?
@@ -190,15 +191,64 @@ func NormaliseISBNValue(l *TBibTeXLibrary, rawISBN string) string {
 	return strings.TrimSpace(rawISBN)
 }
 
+// fixDotSeparatedDate converts a dot-separated date (X.Y.YYYY or YYYY.X.Y) to
+// YYYY-MM-DD. When the month/day order is ambiguous (both ≤ 12), MM.DD is assumed.
+// Returns "" when the format is not recognised or the values are out of range.
+func fixDotSeparatedDate(date string) string {
+	parts := strings.Split(date, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	a := strings.TrimSpace(parts[0])
+	b := strings.TrimSpace(parts[1])
+	c := strings.TrimSpace(parts[2])
+
+	var year, d1, d2 string
+	switch {
+	case IsValidYear(c):
+		year, d1, d2 = c, a, b
+	case IsValidYear(a):
+		year, d1, d2 = a, b, c
+	default:
+		return ""
+	}
+
+	n1, err1 := strconv.Atoi(d1)
+	n2, err2 := strconv.Atoi(d2)
+	if err1 != nil || err2 != nil || n1 < 1 || n2 < 1 {
+		return ""
+	}
+
+	var month, day int
+	switch {
+	case n1 > 12 && n2 >= 1 && n2 <= 12:
+		day, month = n1, n2
+	case n2 > 12 && n1 >= 1 && n1 <= 12:
+		month, day = n1, n2
+	case n1 >= 1 && n1 <= 12 && n2 >= 1 && n2 <= 31:
+		month, day = n1, n2 // ambiguous: assume MM.DD
+	default:
+		return ""
+	}
+
+	if month < 1 || month > 12 || day < 1 || day > 31 {
+		return ""
+	}
+	return fmt.Sprintf("%s-%02d-%02d", year, month, day)
+}
+
 func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
-	// Remove leading/trailing spaces
 	trimmedDate := strings.TrimSpace(rawDate)
 
 	if IsValidDate(trimmedDate) {
 		return trimmedDate
 	}
 
-	return strings.TrimSpace(rawDate)
+	if fixed := fixDotSeparatedDate(trimmedDate); fixed != "" {
+		return fixed
+	}
+
+	return trimmedDate
 }
 
 func NormaliseYearValue(l *TBibTeXLibrary, rawYear string) string {
