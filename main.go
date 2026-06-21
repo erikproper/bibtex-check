@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -54,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.44"
+const AppVersion = "25.45"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -414,8 +413,15 @@ func dblpCandidateInYearRange(c string, entryYear int, hasYear bool) bool {
 	return diff > -3 && diff < 3
 }
 
-// caller can re-run DBLP checks for the now-associated entry.
-func maybeFindDBLPCandidates(key string) bool {
+// maybeFindDBLPCandidatesExcluding searches the DBLP title index for a library
+// entry that has no dblp field and interactively offers the user numbered
+// candidates. extraExclusions contains DBLP path strings (e.g.
+// "conf/foo/Bar2022") already claimed by sibling variations in the same title
+// bucket; those are filtered out so the same DBLP record is never offered to
+// two different variations. Pick 0 → all candidates are recorded as non-doubles
+// with the library entry. Pick N → AssociateDblpKey is called and the function
+// returns true so the caller can re-run DBLP checks for the now-associated entry.
+func maybeFindDBLPCandidatesExcluding(key string, extraExclusions TStringSet) bool {
 	if Library.EntryFieldValueity(key, DBLPField) != "" {
 		return false
 	}
@@ -431,6 +437,9 @@ func maybeFindDBLPCandidates(key string) bool {
 	var yearFiltered []string
 	for _, c := range allCandidates {
 		if existing.Contains(KeyForDBLP(c)) {
+			continue
+		}
+		if extraExclusions.Contains(c) {
 			continue
 		}
 		if !dblpCandidateInYearRange(c, entryYear, hasYear) {
@@ -460,6 +469,7 @@ func maybeFindDBLPCandidates(key string) bool {
 			if ce := dblpEntryFromFile(c); ce != nil {
 				if crossref := ce.Fields["crossref"]; crossref != "" &&
 					!existing.Contains(KeyForDBLP(crossref)) &&
+					!extraExclusions.Contains(crossref) &&
 					!parentsSeen[crossref] {
 					parentsSeen[crossref] = true
 					parentKeys = append(parentKeys, crossref)
@@ -482,6 +492,42 @@ func maybeFindDBLPCandidates(key string) bool {
 	}
 	Library.AssociateDblpKey(key, chosen)
 	return true
+}
+
+func maybeFindDBLPCandidates(key string) bool {
+	return maybeFindDBLPCandidatesExcluding(key, TStringSetNew())
+}
+
+// doVariationSetDblpLinking links each variation in the list to DBLP, excluding
+// DBLP keys already claimed by other variations in the same title bucket. After a
+// successful link, the newly claimed key is added to the exclusion set so it cannot
+// be offered to a later variation.
+func doVariationSetDblpLinking(variations []string) {
+	usedDblp := TStringSetNew()
+	for _, v := range variations {
+		if d := Library.EntryFieldValueity(Library.MapEntryKey(v), DBLPField); d != "" {
+			usedDblp.Add(d)
+		}
+	}
+	for _, v := range variations {
+		v = Library.MapEntryKey(v)
+		if !Library.EntryExists(v) {
+			continue
+		}
+		if Library.EntryFieldValueity(v, DBLPField) != "" {
+			continue
+		}
+		found := findLibraryEqualWithDblp(v)
+		if !found {
+			found = maybeFindDBLPCandidatesExcluding(v, usedDblp)
+		}
+		v = Library.MapEntryKey(v)
+		if found {
+			if d := Library.EntryFieldValueity(v, DBLPField); d != "" {
+				usedDblp.Add(d)
+			}
+		}
+	}
 }
 
 func doAllChecks(key string) {
@@ -665,25 +711,53 @@ func reportHomework() {
 		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked)
 }
 
-// doFixCandidates interactively links library entries that have no DBLP key yet to
-// DBLP records, using peer detection and title-index lookup.
+// doFixCandidates interactively links library entries that have no DBLP key yet
+// to DBLP records. Entries are processed per title-index bucket so that DBLP
+// keys already claimed by one variation in the bucket are not offered to another
+// (variation-aware exclusion). Within each bucket, entries that have no DBLP key
+// are offered candidates; entries that already have one are skipped.
 func doFixCandidates() {
 	if openLibraryToUpdate() {
 		defer reportHomework()
 		stepN := Reporting.StepSize()
 		questionCounter := 0
 		entryCountAtStepStart := countBibEntries()
-		forEachBibEntryKey(func(key string) bool {
-			if Library.EntryFieldValueity(key, DBLPField) != "" {
-				return true
+	outer:
+		for _, keySet := range Library.TitleIndex {
+			// Collect canonicals that still need a DBLP key; build exclusion set
+			// from canonicals that already have one.
+			exclusions := TStringSetNew()
+			var needDblp []string
+			for _, k := range keySet.ElementsSorted() {
+				if k != Library.MapEntryKey(k) {
+					continue
+				}
+				if d := Library.EntryFieldValueity(k, DBLPField); d != "" {
+					exclusions.Add(d)
+				} else {
+					needDblp = append(needDblp, k)
+				}
+			}
+			if len(needDblp) == 0 {
+				continue
 			}
 			Library.ResetQuestionFlag()
-			found := findLibraryEqualWithDblp(key)
-			if !found {
-				found = maybeFindDBLPCandidates(key)
-			}
-			if found {
-				doAllChecks(Library.MapEntryKey(key))
+			for _, key := range needDblp {
+				key = Library.MapEntryKey(key)
+				if !Library.EntryExists(key) {
+					continue
+				}
+				found := findLibraryEqualWithDblp(key)
+				if !found {
+					found = maybeFindDBLPCandidatesExcluding(key, exclusions)
+				}
+				key = Library.MapEntryKey(key)
+				if found {
+					doAllChecks(key)
+					if d := Library.EntryFieldValueity(key, DBLPField); d != "" {
+						exclusions.Add(d)
+					}
+				}
 			}
 			if stepN > 0 && Library.QuestionWasAsked() {
 				questionCounter++
@@ -694,14 +768,13 @@ func doFixCandidates() {
 							map[bool]string{true: "y", false: "ies"}[added == 1])
 					}
 					if Library.AskContinueOrQuit() {
-						return false
+						break outer
 					}
 					entryCountAtStepStart = countBibEntries()
 					questionCounter = 0
 				}
 			}
-			return true
-		})
+		}
 	}
 }
 
@@ -1158,71 +1231,54 @@ func doFixEntries(args []string) {
 	}
 }
 
-// unresolvedDuplicateKeys returns all canonical keys that appear in a title group
-// with at least one unresolved potential-duplicate pair (not in non-doubles, no
-// divergent DBLP/DOI evidence).
-func unresolvedDuplicateKeys() []string {
-	seen := map[string]bool{}
-	for _, keySet := range Library.TitleIndex {
-		var canonicals []string
-		for _, k := range keySet.ElementsSorted() {
-			if k == Library.MapEntryKey(k) {
-				canonicals = append(canonicals, k)
+// hasUnresolvedPairs reports whether the canonical list contains at least one
+// pair that is not yet recorded as a non-double and shows no contradicting
+// evidence (different DBLP or DOI). Used to skip fully-resolved buckets quickly.
+func hasUnresolvedPairs(canonicals []string) bool {
+	for i, a := range canonicals {
+		for _, b := range canonicals[i+1:] {
+			if Library.NonDoubles[a].Set().Contains(b) {
+				continue
 			}
-		}
-		groupUnresolved := false
-		for i, a := range canonicals {
-			for _, b := range canonicals[i+1:] {
-				if Library.NonDoubles[a].Set().Contains(b) {
-					continue
-				}
-				if Library.EvidenceForBeingDifferentEntries(a, b) {
-					continue
-				}
-				groupUnresolved = true
-				break
+			if Library.EvidenceForBeingDifferentEntries(a, b) {
+				continue
 			}
-			if groupUnresolved {
-				break
-			}
-		}
-		if groupUnresolved {
-			for _, k := range canonicals {
-				seen[k] = true
-			}
+			return true
 		}
 	}
-	result := make([]string, 0, len(seen))
-	for k := range seen {
-		result = append(result, k)
-	}
-	sort.Strings(result)
-	return result
+	return false
 }
 
-// doFixDuplicates interactively resolves title-duplicate pairs. Only entries that
-// appear in at least one unresolved title group are processed, making the loop
-// much faster than a full -fix_all_entries pass over the entire library.
+// doFixDuplicates processes each title-index bucket that contains at least one
+// unresolved duplicate pair. Within each bucket it runs ResolveVariationSet
+// (fixed-point content-equal auto-merge + interactive merge/non-double for
+// differing pairs) and then links each surviving variation to DBLP while
+// honouring the invariant that no two variations share a DBLP key.
 func doFixDuplicates() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
-		keys := unresolvedDuplicateKeys()
-		total := len(keys)
 		stepN := int(cmdStep)
 		questionCounter := 0
-		for i, key := range keys {
-			Library.Progress(ProgressEntryProgress, i+1, total, float64(i+1)*100/float64(total))
-			Library.ResetQuestionFlag()
-			if Library.EntryFieldValueity(key, DBLPField) == "" {
-				findLibraryEqualWithDblp(key)
+	outer:
+		for _, keySet := range Library.TitleIndex {
+			var canonicals []string
+			for _, k := range keySet.ElementsSorted() {
+				if k == Library.MapEntryKey(k) {
+					canonicals = append(canonicals, k)
+				}
 			}
-			doAllChecks(Library.MapEntryKey(key))
+			if len(canonicals) < 2 || !hasUnresolvedPairs(canonicals) {
+				continue
+			}
+			Library.ResetQuestionFlag()
+			variations := Library.ResolveVariationSet(canonicals)
+			doVariationSetDblpLinking(variations)
 			if stepN > 0 && Library.QuestionWasAsked() {
 				questionCounter++
 				if questionCounter >= stepN {
 					if Library.AskContinueOrQuit() {
-						break
+						break outer
 					}
 					questionCounter = 0
 				}

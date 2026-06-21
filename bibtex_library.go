@@ -1437,6 +1437,11 @@ func (l *TBibTeXLibrary) resolveNonDoubleKey(rawKey string) string {
 var nonDoublesLoadingFromDb bool
 
 func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
+	a = l.MapEntryKey(a)
+	b = l.MapEntryKey(b)
+	if a == b {
+		return
+	}
 	existing := l.NonDoubles[a]
 	if existing.Contains(b) {
 		return
@@ -1461,6 +1466,96 @@ func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
 			}
 		}
 	}
+}
+
+// latexVisibleFields are the entry fields that affect how an entry renders in LaTeX.
+// Used by ContentEqual to determine whether two entries represent the same publication.
+// Internal-only fields (dblp, repositum, preferredalias, groups, etc.) are excluded.
+var latexVisibleFields = []string{
+	"author", "editor", "title", "booktitle", "journal",
+	"year", "month", "volume", "number", "series", "pages", "chapter",
+	"edition", "publisher", "address", "school", "institution", "type",
+	"howpublished", "doi", "url", "note", "isbn", "issn", "eprint", "crossref",
+}
+
+// latexNormFieldValue returns the fully-normalised value of field for the given
+// DB entry key. Applying both NormaliseFieldValue and MapFieldValue gives the
+// same representation used during merge challenges, so comparisons stay consistent
+// even as new losers are recorded during the same resolution pass (lazy normalisation).
+func (l *TBibTeXLibrary) latexNormFieldValue(key, field string) string {
+	return l.MapFieldValue(field, l.NormaliseFieldValue(field, l.EntryFieldValueity(key, field)))
+}
+
+// ContentEqual reports whether two DB entries are content-wise identical: every
+// LaTeX-visible field normalises to the same value in both entries.
+func (l *TBibTeXLibrary) ContentEqual(a, b string) bool {
+	for _, field := range latexVisibleFields {
+		if l.latexNormFieldValue(a, field) != l.latexNormFieldValue(b, field) {
+			return false
+		}
+	}
+	return true
+}
+
+// ResolveVariationSet runs a fixed-point loop over a list of entry IDs sharing
+// the same title index. Content-equal pairs that show no evidence of being
+// different publications are auto-merged silently. Pairs that differ but show
+// no contradicting evidence are offered to the user; declining records a
+// non-double so the pair is skipped on future passes. The loop repeats until
+// a complete pass produces no merges (merge can expose new content-equal pairs
+// because field challenges during MergeEntries may update the mapping tables).
+// Returns the list of distinct live canonical keys that remain after resolution.
+func (l *TBibTeXLibrary) ResolveVariationSet(list []string) []string {
+	changed := true
+	for changed {
+		changed = false
+		for i := range list {
+			list[i] = l.MapEntryKey(list[i])
+		}
+		for i, e := range list {
+			if !l.EntryExists(e) {
+				continue
+			}
+			for j := i + 1; j < len(list); j++ {
+				f := l.MapEntryKey(list[j])
+				list[j] = f
+				if !l.EntryExists(f) || e == f {
+					continue
+				}
+				if l.NonDoubles[e].Set().Contains(f) {
+					continue
+				}
+				if l.ContentEqual(e, f) && !l.EvidenceForBeingDifferentEntries(e, f) {
+					l.Progress("Auto-merging content-equal entries: %s ← %s", e, f)
+					l.MergeEntries(f, e)
+					e = l.MapEntryKey(e)
+					list[i] = e
+					list[j] = l.MapEntryKey(f)
+					changed = true
+				} else if !l.EvidenceForBeingDifferentEntries(e, f) {
+					l.MaybeMergeEntries(e, f)
+					newE := l.MapEntryKey(e)
+					newF := l.MapEntryKey(f)
+					list[i] = newE
+					list[j] = newF
+					if newE == newF {
+						e = newE
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var result []string
+	for _, e := range list {
+		c := l.MapEntryKey(e)
+		if c != "" && l.EntryExists(c) && !seen[c] {
+			seen[c] = true
+			result = append(result, c)
+		}
+	}
+	return result
 }
 
 func init() {

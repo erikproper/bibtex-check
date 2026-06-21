@@ -117,6 +117,71 @@ func (l *TBibTeXLibrary) parseHarvestBib(path string) ([]TBibTeXEntry, bool) {
 	return entries, true
 }
 
+// --- Source-file pre-deduplication ---
+
+// harvestNormFieldValue returns the fully-normalised value of field for the
+// given in-memory harvest entry, applying NormaliseFieldValue + MapFieldValue.
+// Mirrors latexNormFieldValue but operates on TBibTeXEntry rather than a DB key.
+func (l *TBibTeXLibrary) harvestNormFieldValue(e TBibTeXEntry, field string) string {
+	return l.MapFieldValue(field, l.NormaliseFieldValue(field, e.Fields[field]))
+}
+
+// harvestContentEqual reports whether two in-memory harvest entries are
+// content-wise identical across all LaTeX-visible fields.
+func (l *TBibTeXLibrary) harvestContentEqual(a, b TBibTeXEntry) bool {
+	for _, field := range latexVisibleFields {
+		if l.harvestNormFieldValue(a, field) != l.harvestNormFieldValue(b, field) {
+			return false
+		}
+	}
+	return true
+}
+
+// preDeduplicateHarvestEntries removes content-equal duplicates within the
+// source entries before they enter the interactive harvest pipeline. When two
+// entries share the same normalised title index and are content-wise equal, the
+// later one is eliminated and a progress message is emitted. The earlier entry
+// (lower source-file position) is always kept. No user interaction occurs.
+func (l *TBibTeXLibrary) preDeduplicateHarvestEntries(entries []TBibTeXEntry) []TBibTeXEntry {
+	byTitle := map[string][]int{}
+	for i, e := range entries {
+		idx := TeXStringIndexer(l.harvestNormFieldValue(e, TitleField))
+		if idx != "" {
+			byTitle[idx] = append(byTitle[idx], i)
+		}
+	}
+	eliminated := map[int]bool{}
+	for _, group := range byTitle {
+		if len(group) < 2 {
+			continue
+		}
+		for gi, ai := range group {
+			if eliminated[ai] {
+				continue
+			}
+			for _, bi := range group[gi+1:] {
+				if eliminated[bi] {
+					continue
+				}
+				if l.harvestContentEqual(entries[ai], entries[bi]) {
+					l.Progress("Source file duplicate: skipping %s (same as %s)", entries[bi].Key, entries[ai].Key)
+					eliminated[bi] = true
+				}
+			}
+		}
+	}
+	if len(eliminated) == 0 {
+		return entries
+	}
+	result := make([]TBibTeXEntry, 0, len(entries)-len(eliminated))
+	for i, e := range entries {
+		if !eliminated[i] {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 // --- Entry matching pipeline ---
 
 // harvestKeyMatch returns the canonical library key matching e's source key via
@@ -653,6 +718,7 @@ func doHarvest(sourcePath string) {
 	}
 	Library.Progress(ProgressHarvestParsed, len(entries), plural, sourcePath)
 
+	entries = Library.preDeduplicateHarvestEntries(entries)
 	Library.runHarvestLoop(entries, nil)
 }
 
@@ -711,6 +777,8 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		Library.Progress("  Source: no entries found")
 		return
 	}
+
+	entries = Library.preDeduplicateHarvestEntries(entries)
 
 	skipped := 0
 	for _, e := range entries {
