@@ -446,6 +446,7 @@ func maybeFindDBLPCandidatesExcluding(key string, extraExclusions TStringSet) bo
 			continue
 		}
 		if extraExclusions.Contains(c) {
+			Library.AddNonDoubles(key, KeyForDBLP(c))
 			continue
 		}
 		if !dblpCandidateInYearRange(c, entryYear, hasYear) {
@@ -492,6 +493,7 @@ func maybeFindDBLPCandidatesExcluding(key string, extraExclusions TStringSet) bo
 	if chosen == "" {
 		for _, c := range candidates {
 			Library.AddNonDoubles(key, KeyForDBLP(c))
+			extraExclusions.Add(c)
 		}
 		flushWorkingDbToHome()
 		return false
