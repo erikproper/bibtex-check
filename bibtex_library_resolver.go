@@ -202,8 +202,11 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	case "n":
 		l.UpdateEntryFieldAlias(key, field, current, challenge)
 		if field == PreferredAliasField {
-			// Also demote the old alias to a key oldie so lookups still find this entry.
-			l.AddKeyAlias(current, key)
+			// Demote the old alias to a key oldie only when it is not already claimed
+			// by a different entry — otherwise AddKeyAlias would warn "Ambiguous key oldie".
+			if ex := l.KeyOldies.Get(current); ex == "" || l.MapEntryKey(ex) == l.MapEntryKey(key) {
+				l.AddKeyAlias(current, key)
+			}
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge
@@ -214,7 +217,9 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	case "N":
 		l.UpdateGenericFieldAlias(field, current, challenge)
 		if field == PreferredAliasField {
-			l.AddKeyAlias(current, key)
+			if ex := l.KeyOldies.Get(current); ex == "" || l.MapEntryKey(ex) == l.MapEntryKey(key) {
+				l.AddKeyAlias(current, key)
+			}
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge
