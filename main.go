@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.56"
+const AppVersion = "25.57"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -88,7 +88,13 @@ func initialiseLibrary() {
 			return
 		}
 		maybeFindDBLPCandidates(source)
-		maybeFindDBLPCandidates(target)
+		// If source just acquired a DBLP key, exclude it from target's search so the
+		// same candidate is not offered twice in one PreMergeCheck call.
+		excl := TStringSetNew()
+		if d := Library.EntryFieldValueity(Library.MapEntryKey(source), DBLPField); d != "" {
+			excl.Add(normalizeDblpKey(d))
+		}
+		maybeFindDBLPCandidatesExcluding(target, excl)
 	}
 
 	// If bib_entries was dirty on the previous run (crash mid-write), advance its
@@ -754,6 +760,9 @@ func doFixCandidates() {
 				key = Library.MapEntryKey(key)
 				if found {
 					doAllChecks(key)
+					// Re-resolve: doAllChecks may have merged key into another entry,
+					// making key a loser whose DB row is gone. Use the surviving canonical.
+					key = Library.MapEntryKey(key)
 					if d := Library.EntryFieldValueity(key, DBLPField); d != "" {
 						exclusions.Add(normalizeDblpKey(d))
 					}

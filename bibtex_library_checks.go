@@ -1444,6 +1444,11 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		// Check that every library child of this DBLP-keyed parent also has a DBLP key.
 		if entryDBLP != "" {
 			forEachLibraryChildOf(key, func(childKey string) {
+				// Re-resolve: the child may have been merged during the child-import loop above.
+				childKey = l.MapEntryKey(childKey)
+				if !l.EntryExists(childKey) {
+					return
+				}
 				if l.EntryFieldValueity(childKey, DBLPField) == "" && !l.DblpWaived.Contains(childKey) {
 					msg := fmt.Sprintf(WarningNoDblpKeyForChild, key, entryDBLP)
 					l.ReportEntryWarning(childKey, "%s", msg)
