@@ -633,7 +633,7 @@ func (l *TBibTeXLibrary) CheckDOIPresence(entry *TBibTeXEntry) {
 
 	if foundDOI == "" {
 		if l.tryGetDOIFromURL(entry.Key, "url", &foundDOI) {
-			l.ReportEntryWarning(entry.Key, "Found DOI in URL: %s", foundDOI)
+			l.Progress("Entry %s: extracted DOI from URL: %s", entry.Key, foundDOI)
 			l.setEntryField(entry, "doi", foundDOI)
 		}
 	}

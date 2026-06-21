@@ -193,33 +193,27 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 
 	switch answer {
 	case "y":
-		if field != PreferredAliasField {
-			l.UpdateEntryFieldAlias(key, field, challenge, current)
-		} else {
-			l.AddKeyAlias(challenge, key)
-		}
+		// Record challenge→current in losing_field_values. For PreferredAliasField, do NOT
+		// call AddKeyAlias(challenge, key): challenge may already be an alias of another entry
+		// and adding it here would produce a spurious "Ambiguous key oldie" warning.
+		l.UpdateEntryFieldAlias(key, field, challenge, current)
 		l.setLineage(key, field, challengeSource, true)
 		return current
 	case "n":
-		if field != PreferredAliasField {
-			l.UpdateEntryFieldAlias(key, field, current, challenge)
-		} else {
+		l.UpdateEntryFieldAlias(key, field, current, challenge)
+		if field == PreferredAliasField {
+			// Also demote the old alias to a key oldie so lookups still find this entry.
 			l.AddKeyAlias(current, key)
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge
 	case "Y":
-		if field != PreferredAliasField {
-			l.UpdateGenericFieldAlias(field, challenge, current)
-		} else {
-			l.AddKeyAlias(challenge, key)
-		}
+		l.UpdateGenericFieldAlias(field, challenge, current)
 		l.setLineage(key, field, challengeSource, true)
 		return current
 	case "N":
-		if field != PreferredAliasField {
-			l.UpdateGenericFieldAlias(field, current, challenge)
-		} else {
+		l.UpdateGenericFieldAlias(field, current, challenge)
+		if field == PreferredAliasField {
 			l.AddKeyAlias(current, key)
 		}
 		l.setLineage(key, field, challengeSource, false)

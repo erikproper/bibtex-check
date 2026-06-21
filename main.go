@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.52"
+const AppVersion = "25.55"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -506,7 +506,7 @@ func doVariationSetDblpLinking(variations []string) {
 	usedDblp := TStringSetNew()
 	for _, v := range variations {
 		if d := Library.EntryFieldValueity(Library.MapEntryKey(v), DBLPField); d != "" {
-			usedDblp.Add(d)
+			usedDblp.Add(normalizeDblpKey(d))
 		}
 	}
 	for _, v := range variations {
@@ -524,7 +524,7 @@ func doVariationSetDblpLinking(variations []string) {
 		v = Library.MapEntryKey(v)
 		if found {
 			if d := Library.EntryFieldValueity(v, DBLPField); d != "" {
-				usedDblp.Add(d)
+				usedDblp.Add(normalizeDblpKey(d))
 			}
 		}
 	}
@@ -733,7 +733,7 @@ func doFixCandidates() {
 					continue
 				}
 				if d := Library.EntryFieldValueity(k, DBLPField); d != "" {
-					exclusions.Add(d)
+					exclusions.Add(normalizeDblpKey(d))
 				} else {
 					needDblp = append(needDblp, k)
 				}
@@ -755,7 +755,7 @@ func doFixCandidates() {
 				if found {
 					doAllChecks(key)
 					if d := Library.EntryFieldValueity(key, DBLPField); d != "" {
-						exclusions.Add(d)
+						exclusions.Add(normalizeDblpKey(d))
 					}
 				}
 			}
