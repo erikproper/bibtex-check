@@ -16,8 +16,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	stdlib_html "html"
 	"io"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -211,6 +215,97 @@ func (l *TBibTeXLibrary) CheckURLPlausibility(entry *TBibTeXEntry) {
 	}
 	l.Warning(WarningURLDead, reason, url, urldate)
 	l.setEntryField(entry, "urldate", urldate)
+}
+
+// htmlTitlePattern matches a <title>...</title> block (case-insensitive, dotall).
+var htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+
+// htmlOgTitlePattern matches <meta property="og:title" content="..."> in either attribute order.
+var htmlOgTitlePattern = regexp.MustCompile(`(?i)<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']`)
+var htmlOgTitlePatternFlipped = regexp.MustCompile(`(?i)<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']`)
+
+// fetchHTMLTitle fetches rawURL and returns the page title extracted from the HTML.
+// Returns ("", nil) when the URL is non-HTML (e.g. PDF) or the title cannot be found.
+func fetchHTMLTitle(rawURL string) (string, error) {
+	if strings.HasSuffix(strings.ToLower(rawURL), ".pdf") {
+		return "", nil
+	}
+
+	client := newBibCheckHTTPClient()
+	req, err := newBibCheckHTTPRequest(rawURL)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.Contains(ct, "text/html") && !strings.Contains(ct, "application/xhtml") {
+		return "", nil
+	}
+
+	// 32 KB is enough to cover <head> for any reasonable page.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32*1024))
+	if err != nil {
+		return "", err
+	}
+	html := string(body)
+
+	// og:title is more descriptive than <title> (often includes site suffix).
+	for _, pat := range []*regexp.Regexp{htmlOgTitlePattern, htmlOgTitlePatternFlipped} {
+		if m := pat.FindStringSubmatch(html); m != nil {
+			return stdlib_html.UnescapeString(strings.TrimSpace(m[1])), nil
+		}
+	}
+	if m := htmlTitlePattern.FindStringSubmatch(html); m != nil {
+		raw := strings.Join(strings.Fields(m[1]), " ") // collapse whitespace
+		return stdlib_html.UnescapeString(raw), nil
+	}
+	return "", nil
+}
+
+// CheckTitleFromURL fetches the URL of a title-less entry and offers the page
+// title as a candidate. The user can accept it (y), skip it (n), or type an
+// alternative title directly. Only runs when title is empty, url is set, and
+// the entry has no crossref (a crossref parent may supply the title later).
+func (l *TBibTeXLibrary) CheckTitleFromURL(entry *TBibTeXEntry) {
+	if entry.FieldValue("title") != "" || entry.FieldValue("url") == "" {
+		return
+	}
+	if entry.FieldValue("crossref") != "" {
+		return
+	}
+
+	fetchedTitle, err := fetchHTMLTitle(entry.FieldValue("url"))
+	if err != nil || fetchedTitle == "" {
+		return
+	}
+
+	l.Warning("Entry %s has no title; fetched from URL: %s", entry.Key, fetchedTitle)
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprint(os.Stderr, "QUESTION: Accept title (y), skip (n), or type alternative: ")
+	for {
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		switch input {
+		case "y":
+			entry.Fields["title"] = fetchedTitle
+			l.setEntryField(entry, "title", fetchedTitle)
+			return
+		case "n", "":
+			return
+		default:
+			entry.Fields["title"] = input
+			l.setEntryField(entry, "title", input)
+			return
+		}
+	}
 }
 
 // URLCheckNeeded reports whether entry qualifies for a URL plausibility check.

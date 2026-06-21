@@ -727,6 +727,17 @@ func (l *TBibTeXLibrary) CheckHowPublishedURL(entry *TBibTeXEntry) {
 		return
 	}
 	cleaned := stripAccessedSpan(how, start, end)
+
+	// If an access date remains in howpublished after the URL is stripped, promote it
+	// to urldate (when not already set) and remove it from howpublished.
+	if aStart, aEnd, isoDate := findAccessedDate(cleaned); aStart != -1 {
+		cleaned = stripAccessedSpan(cleaned, aStart, aEnd)
+		if entry.Fields["urldate"] == "" {
+			entry.Fields["urldate"] = isoDate
+			l.setEntryField(entry, "urldate", isoDate)
+		}
+	}
+
 	entry.Fields["howpublished"] = cleaned
 	l.setEntryField(entry, "howpublished", cleaned)
 
@@ -748,16 +759,19 @@ func (l *TBibTeXLibrary) CheckHowPublishedURL(entry *TBibTeXEntry) {
 // accessedPatternYMD: YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD
 // accessedPatternDMY: DD.MM.YYYY / DD-MM-YYYY / DD/MM/YYYY
 // accessedPatternWords: DD MonthName YYYY  (e.g. "14 June 2013")
-// All accept an optional "Last " prefix before "Accessed".
+// All accept an optional "Last " prefix before "Accessed", or the German "abgerufen am".
+// An optional surrounding [...] is consumed so the bracket residue is removed.
 var (
+	accessedPrefix = `(?i)\[?\s*(?:(?:last\s+)?accessed\s*:?|abgerufen\s+am)\s*`
+
 	accessedPatternYMD = regexp.MustCompile(
-		`(?i)(?:last\s+)?accessed\s*:?\s*(\d{4})[./-](\d{2})[./-](\d{2})`,
+		accessedPrefix + `(\d{4})[./-](\d{2})[./-](\d{2})\s*\]?`,
 	)
 	accessedPatternDMY = regexp.MustCompile(
-		`(?i)(?:last\s+)?accessed\s*:?\s*(\d{1,2})[./-](\d{1,2})[./-](\d{4})`,
+		accessedPrefix + `(\d{1,2})[./-](\d{1,2})[./-](\d{4})\s*\]?`,
 	)
 	accessedPatternWords = regexp.MustCompile(
-		`(?i)(?:last\s+)?accessed\s+(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\.?\s+(\d{4})`,
+		accessedPrefix + `(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\.?\s+(\d{4})\s*\]?`,
 	)
 )
 
@@ -1474,6 +1488,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckNoteAccessed(entry)
 			l.CheckURLPlausibility(entry)
 			l.CheckYearFromURLDate(entry)
+			l.CheckTitleFromURL(entry)
 			l.CheckCrossref(entry)
 			l.CheckAndEnforcePreferredAlias(entry)
 			l.CheckBookishTitles(entry)
