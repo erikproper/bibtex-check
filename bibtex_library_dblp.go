@@ -243,7 +243,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 				l.LookupDBLPKey(crossrefDblpKey) == "" {
 				l.KeyOldies.SetTransient(KeyForDBLP(crossrefDblpKey), existingCrossref)
 				l.HintToKey.SetTransient(KeyForDBLP(crossrefDblpKey), existingCrossref)
-				l.MaybeMergeDBLPEntry(crossrefDblpKey, existingCrossref, false)
+				l.MaybeMergeDBLPEntry(crossrefDblpKey, existingCrossref, allowURLFetch)
 				dblpEntry.Fields["crossref"] = existingCrossref
 				for field := range BibTeXMustInheritFields.Elements() {
 					delete(dblpEntry.Fields, field)
