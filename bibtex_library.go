@@ -1344,7 +1344,7 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 func (l *TBibTeXLibrary) applyMappingsForKey(entry *TBibTeXEntry, key, sourceValue string, fieldIsChanged map[string]bool, writeToDb bool) bool {
 	changed := false
 	for targetField, targetValue := range l.FieldMappings[key][sourceValue] {
-		if entry.Fields[targetField] != targetValue && !fieldIsChanged[targetField] {
+		if entry.Fields[targetField] == "" && !fieldIsChanged[targetField] {
 			if writeToDb {
 				l.setEntryField(entry, targetField, targetValue)
 			}
@@ -1357,10 +1357,9 @@ func (l *TBibTeXLibrary) applyMappingsForKey(entry *TBibTeXEntry, key, sourceVal
 }
 
 // MaybeApplyFieldMappings applies cross-field mappings to entry until no new fields
-// are derived (saturation). Each target field is assigned at most once across all
-// iterations, which allows mappings to override non-empty fields while still
-// guaranteeing termination. Conflicting rules for an already-assigned field are
-// silently skipped.
+// are derived (saturation). Each target field is set only when currently empty, and
+// at most once per iteration, guaranteeing termination. Conflicting rules for an
+// already-assigned field are silently skipped.
 //
 // Mappings stored with a plain source_field (e.g. "author") apply to every entry
 // type. Mappings stored with an entrytype-qualified source_field (e.g.
