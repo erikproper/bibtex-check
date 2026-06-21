@@ -1712,6 +1712,10 @@ func ensureCrossFieldMappingsTableExists() {
 
 // loadCrossFieldMappingsFromDb populates l.FieldMappings from the DB.
 // Normalises source and target values via MapFieldValue / NormaliseFieldValue.
+// When source_field contains "field:entrytype" (e.g. "author:techreport"), only
+// the field part (left of ":") is used for source-value normalisation; the full
+// "field:entrytype" string is kept as the FieldMappings key so
+// MaybeApplyFieldMappings can match it by entry type.
 // Returns true when at least one stored value was changed by normalisation, so
 // the caller can arrange a write-back to persist the canonical form.
 func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) bool {
@@ -1730,7 +1734,8 @@ func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 			dbInteraction.Warning("Could not scan cross_field_mappings row: %s", err)
 			continue
 		}
-		normSourceValue := l.MapFieldValue(sourceField, sourceValue)
+		normField, _, _ := strings.Cut(sourceField, ":")
+		normSourceValue := l.MapFieldValue(normField, sourceValue)
 		normTargetValue := l.NormaliseFieldValue(targetField, targetValue)
 		if normSourceValue != sourceValue || normTargetValue != targetValue {
 			normalisationChanged = true
@@ -1948,7 +1953,10 @@ func loadFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 			}
 			l.AddGenericFieldAlias(sourceField, normSource, normTarget, true)
 		} else {
-			normSource := l.MapFieldValue(sourceField, sourceValue)
+			// For entry-type-qualified source fields (e.g. "author:techreport"), use
+			// only the field part (left of ":") for source-value normalisation.
+			normField, _, _ := strings.Cut(sourceField, ":")
+			normSource := l.MapFieldValue(normField, sourceValue)
 			normTarget := l.NormaliseFieldValue(targetField, targetValue)
 			if normSource != sourceValue || normTarget != targetValue {
 				normalisationChanged = true

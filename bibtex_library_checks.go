@@ -707,6 +707,43 @@ func (l *TBibTeXLibrary) CheckNoteURL(entry *TBibTeXEntry) {
 	}
 }
 
+// CheckHowPublishedURL detects \url{...} embedded in the howpublished field and
+// handles it the same way CheckNoteURL handles the note field:
+//   - No url field set → promote the embedded URL to the url field and clean howpublished.
+//   - url field matches embedded URL → remove from howpublished (redundant, silent).
+//   - extracted URL is a DOI URL matching the doi field → remove silently.
+//   - url field differs and not DOI-redundant → remove from howpublished, report warning.
+//
+// Called before CheckNoteAccessed and CheckURLPlausibility so that the extracted
+// URL is established before urldate derivation occurs.
+func (l *TBibTeXLibrary) CheckHowPublishedURL(entry *TBibTeXEntry) {
+	how := entry.Fields["howpublished"]
+	if how == "" {
+		return
+	}
+	existingURL := entry.FieldValue("url")
+	start, end, extractedURL := findNoteURL(how)
+	if start == -1 || extractedURL == "" {
+		return
+	}
+	cleaned := stripAccessedSpan(how, start, end)
+	entry.Fields["howpublished"] = cleaned
+	l.setEntryField(entry, "howpublished", cleaned)
+
+	switch {
+	case existingURL == "":
+		l.setEntryField(entry, "url", extractedURL)
+	case strings.EqualFold(existingURL, extractedURL):
+		// Redundant: url field already has this URL; howpublished cleaned above is enough.
+	case l.IsRedundantURL(extractedURL, entry.Key):
+		// The howpublished URL is just the doi field as a URL; remove silently.
+	default:
+		l.ReportEntryWarning(entry.Key,
+			`howpublished contains \url{%s} but url field already has %s; removed from howpublished`,
+			extractedURL, existingURL)
+	}
+}
+
 // Accessed-date patterns, tried in order.
 // accessedPatternYMD: YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD
 // accessedPatternDMY: DD.MM.YYYY / DD-MM-YYYY / DD/MM/YYYY
@@ -1433,7 +1470,9 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckDOIPresence(entry)
 			l.CheckEPrint(entry)
 			l.CheckNoteURL(entry)
+			l.CheckHowPublishedURL(entry)
 			l.CheckNoteAccessed(entry)
+			l.CheckURLPlausibility(entry)
 			l.CheckYearFromURLDate(entry)
 			l.CheckCrossref(entry)
 			l.CheckAndEnforcePreferredAlias(entry)

@@ -333,6 +333,9 @@ func importLosingFieldValuesFromCSV(replace bool) {
 
 // ── cross_field_mappings ─────────────────────────────────────────────────────
 // CSV format: source_field;source_value;target_field;target_value
+// source_field may be "field:entrytype" (e.g. "author:techreport") to restrict
+// the rule to entries of the given type. This keeps all rules for a given field
+// grouped together when the CSV is sorted by source_field.
 
 func ExportCrossFieldMappings() {
 	ensureTablesDir()

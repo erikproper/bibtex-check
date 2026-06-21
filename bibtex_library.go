@@ -1339,29 +1339,48 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 	return true
 }
 
+// applyMappingsForKey applies all target rules in l.FieldMappings[key][sourceValue]
+// to entry, updating fieldIsChanged and returning whether any field was changed.
+func (l *TBibTeXLibrary) applyMappingsForKey(entry *TBibTeXEntry, key, sourceValue string, fieldIsChanged map[string]bool, writeToDb bool) bool {
+	changed := false
+	for targetField, targetValue := range l.FieldMappings[key][sourceValue] {
+		if entry.Fields[targetField] != targetValue && !fieldIsChanged[targetField] {
+			if writeToDb {
+				l.setEntryField(entry, targetField, targetValue)
+			}
+			entry.Fields[targetField] = targetValue
+			fieldIsChanged[targetField] = true
+			changed = true
+		}
+	}
+	return changed
+}
+
 // MaybeApplyFieldMappings applies cross-field mappings to entry until no new fields
 // are derived (saturation). Each target field is assigned at most once across all
 // iterations, which allows mappings to override non-empty fields while still
 // guaranteeing termination. Conflicting rules for an already-assigned field are
 // silently skipped.
+//
+// Mappings stored with a plain source_field (e.g. "author") apply to every entry
+// type. Mappings stored with an entrytype-qualified source_field (e.g.
+// "techreport:author") apply only when the entry's type matches.
+//
 // Pass writeToDb=true for library entries (field value persisted via setEntryField);
 // false for temporary in-memory entries such as DBLP file-store entries, to avoid
 // writing under a foreign key inside an outer transaction.
 func (l *TBibTeXLibrary) MaybeApplyFieldMappings(entry *TBibTeXEntry, writeToDb bool) {
+	entryType := entry.Fields[EntryTypeField]
 	fieldIsChanged := map[string]bool{}
 	for {
 		changed := false
 		for sourceField, sourceValue := range entry.Fields {
-			for targetField, targetValue := range l.FieldMappings[sourceField][sourceValue] {
-				if entry.Fields[targetField] != targetValue {
-					if !fieldIsChanged[targetField] {
-						if writeToDb {
-							l.setEntryField(entry, targetField, targetValue)
-						}
-						entry.Fields[targetField] = targetValue
-						fieldIsChanged[targetField] = true
-						changed = true
-					}
+			if l.applyMappingsForKey(entry, sourceField, sourceValue, fieldIsChanged, writeToDb) {
+				changed = true
+			}
+			if entryType != "" {
+				if l.applyMappingsForKey(entry, sourceField+":"+entryType, sourceValue, fieldIsChanged, writeToDb) {
+					changed = true
 				}
 			}
 		}
