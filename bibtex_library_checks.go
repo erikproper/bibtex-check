@@ -680,8 +680,10 @@ func applyNoteURLFix(fields map[string]string) string {
 //   - extracted URL is a DOI URL matching the doi field → remove from note (redundant, silent).
 //   - url field differs and not DOI-redundant → remove from note, report warning.
 //
-// Called before CheckURLRedundance so the promoted URL feeds into the redundancy check,
-// and before CheckNoteAccessed so the url field is set when urldate promotion is evaluated.
+// Called before CheckNoteAccessed (so the url field is set when urldate promotion is
+// evaluated), before CheckURLRedundance (so the promoted URL feeds into the redundancy
+// check), and before CheckYearFromURLDate (so the url field is established before the
+// year is derived).
 func (l *TBibTeXLibrary) CheckNoteURL(entry *TBibTeXEntry) {
 	existingURL := entry.FieldValue("url")
 	extractedURL := applyNoteURLFix(entry.Fields)
@@ -810,7 +812,9 @@ func applyNoteAccessedFix(fields map[string]string) string {
 
 // CheckNoteAccessed detects "Accessed: YYYY-MM-DD" (and variants) in the note field,
 // promotes the date to urldate when appropriate, and removes the accessed span from
-// the note. Called before CheckURLDateNeed so the derived urldate feeds into that check.
+// the note. Called before CheckURLDateNeed so the derived urldate feeds into that
+// check, and before CheckYearFromURLDate so the promoted urldate is available for
+// year derivation.
 func (l *TBibTeXLibrary) CheckNoteAccessed(entry *TBibTeXEntry) {
 	existing := entry.FieldValue("urldate")
 	isoDate := applyNoteAccessedFix(entry.Fields)
@@ -1190,15 +1194,18 @@ func (l *TBibTeXLibrary) CheckChapter(entry *TBibTeXEntry) {
 	l.ReportEntryWarning(entry.Key, "Non-numeric chapter %q (must be Arabic or Roman numeral)", chapter)
 }
 
-// CheckYearFromURLDate derives the year from the urldate when the year field is absent,
-// but only for standalone entries (no crossref). For crossref children, urldate is an
-// access date — publication year must come from the parent.
+// CheckYearFromURLDate derives the year from the urldate when the year field is
+// absent or invalid, but only for standalone entries (no crossref). For crossref
+// children, urldate is an access date — publication year must come from the parent.
+// Must run after CheckNoteAccessed so that a urldate promoted from the note field
+// is available here.
 func (l *TBibTeXLibrary) CheckYearFromURLDate(entry *TBibTeXEntry) {
 	if entry.FieldValue("crossref") != "" {
 		return
 	}
 
-	if entry.FieldValue("year") != "" {
+	year := entry.FieldValue("year")
+	if year != "" && IsValidYear(year) {
 		return
 	}
 
@@ -1425,15 +1432,15 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.MaybeApplyFieldMappings(entry, true)
 			l.CheckDOIPresence(entry)
 			l.CheckEPrint(entry)
+			l.CheckNoteURL(entry)
+			l.CheckNoteAccessed(entry)
 			l.CheckYearFromURLDate(entry)
 			l.CheckCrossref(entry)
 			l.CheckAndEnforcePreferredAlias(entry)
 			l.CheckBookishTitles(entry)
 			l.CheckISBNFromDOI(entry)
 			l.CheckTitlePresence(entry)
-			l.CheckNoteURL(entry)
 			l.CheckURLRedundance(entry)
-			l.CheckNoteAccessed(entry)
 			l.CheckURLDateNeed(entry)
 			l.CheckISSN(entry)
 			l.CheckISBN(entry)
