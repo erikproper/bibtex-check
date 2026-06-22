@@ -289,6 +289,7 @@ func openLibraryToUpdate() bool {
 		Library.CheckDblpWaivedConsistency()
 		Library.CheckEntryFieldMappingWinners()
 	}
+	retireResolvedAuthorEditorLosers()
 	return true
 }
 
@@ -605,6 +606,77 @@ func cleanKeys(args []string) []string {
 		}
 	}
 	return result
+}
+
+// retireResolvedAuthorEditorLosers deletes losing_field_values rows for author/editor
+// fields where the loser value is equal to the current entry winner after applying
+// name mappings. Called at startup so that name mappings added outside of triage
+// automatically cascade to clean up resolved pairs.
+func retireResolvedAuthorEditorLosers() {
+	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`)
+	if err != nil {
+		return
+	}
+	type loserRow struct{ key, field, loser string }
+	var pairs []loserRow
+	for rows.Next() {
+		var r loserRow
+		if rows.Scan(&r.key, &r.field, &r.loser) == nil {
+			pairs = append(pairs, r)
+		}
+	}
+	rows.Close()
+
+	splitAndFilter := func(value string) []string {
+		var out []string
+		for _, n := range strings.Split(value, " and ") {
+			n = strings.TrimSpace(n)
+			lc := strings.ToLower(n)
+			if n != "" && lc != "others" && lc != "et.al." && lc != "et al." {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+
+	normList := func(names []string) []string {
+		result := make([]string, len(names))
+		for i, n := range names {
+			if canonical, ok := Library.NameAliasToName[n]; ok {
+				result[i] = canonical
+			} else {
+				result[i] = n
+			}
+		}
+		return result
+	}
+
+	sliceEqual := func(a, b []string) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	retired := 0
+	for _, p := range pairs {
+		winner := Library.EntryFieldValueity(p.key, p.field)
+		if winner == "" {
+			continue
+		}
+		if sliceEqual(normList(splitAndFilter(winner)), normList(splitAndFilter(p.loser))) {
+			db.Exec(`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.loser) //nolint:errcheck
+			retired++
+		}
+	}
+	if retired > 0 {
+		Library.Progress("Retired %d resolved author/editor loser(s) via name mappings", retired)
+	}
 }
 
 // --- Command functions ---
