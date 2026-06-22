@@ -704,6 +704,14 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 					updated.Groups.Add(localGroup)
 					syncState.set(updated)
 				}
+			case bibHas && !dbHas && snapHas:
+				// DB removed this entry from the group since the last sync (e.g. via entry_actions).
+				// Remove from sync state so phase 2 omits the stale membership from the written bib.
+				if se := syncState.get(canon); se != nil {
+					updated := *se
+					updated.Groups.Delete(localGroup)
+					syncState.set(updated)
+				}
 			}
 		}
 	}
