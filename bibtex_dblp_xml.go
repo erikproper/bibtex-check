@@ -1276,10 +1276,34 @@ func doAbsorbDblpNames() {
 		}
 	}
 
+	// isKnown returns true if any of the supplied name forms is already a known contributor.
+	isKnown := func(forms ...string) bool {
+		for _, form := range forms {
+			if form != "" {
+				if _, ok := Library.NameToContributorID[form]; ok {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
 	absorbed := 0
 	for canonicalLaTeX, aliases := range groups {
 		surname, generation := parseSurnameGeneration(canonicalLaTeX)
 		naturalCanonical := swapBibTeXNameFormat(canonicalLaTeX)
+
+		// Skip groups where none of the DBLP name forms matches an existing contributor.
+		// Absorbing unknown persons would create spurious contributors not grounded in
+		// any of our bib entries.
+		allForms := []string{canonicalLaTeX, naturalCanonical}
+		for _, alias := range aliases {
+			allForms = append(allForms, alias, swapBibTeXNameFormat(alias),
+				naturalOrderToSurnameFirst(alias, surname, generation))
+		}
+		if !isKnown(allForms...) {
+			continue
+		}
 
 		// Merge any existing library group whose name is a format variant of the canonical.
 		mergeIfKnown(canonicalLaTeX, naturalCanonical)
