@@ -204,5 +204,6 @@ func (l *TBibTeXLibrary) ReadAddressMappings() {
 
 func (l *TBibTeXLibrary) ReadNameMappingsFile() {
 	maybeMigrateNameMappingsToContributors(l)
+	maybeMergeSpuriousContributors()
 	loadContributorsFromDb(l)
 }

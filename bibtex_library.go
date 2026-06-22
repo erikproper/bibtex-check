@@ -1248,7 +1248,8 @@ func KeyFromTime(KeyTime time.Time) string {
 
 // ////// Place me somehwere
 func (l *TBibTeXLibrary) IsKnownKey(key string) bool {
-	return bibEntryExists(key) || l.KeyOldies.Has(key) || contributorIDExists(key)
+	_, isContributor := l.ContributorByID[key]
+	return bibEntryExists(key) || l.KeyOldies.Has(key) || isContributor
 }
 
 // Generate a new key based on the ForwardKeyTime.

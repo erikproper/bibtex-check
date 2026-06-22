@@ -1238,11 +1238,6 @@ func ensureContributorNamesTableExists() {
 		);`)
 }
 
-func contributorIDExists(id string) bool {
-	var n int
-	db.QueryRow(`SELECT COUNT(*) FROM contributors WHERE id = ?`, id).Scan(&n) //nolint:errcheck
-	return n > 0
-}
 
 func upsertContributorToDB(id, name, orcid string) {
 	if err := bibExec(`INSERT INTO contributors (id, name, orcid) VALUES (?, ?, ?)
@@ -1387,30 +1382,145 @@ func maybeMigrateNameMappingsToContributors(l *TBibTeXLibrary) {
 
 	dbInteraction.Progress("Migrating name_mappings → contributors / contributor_names...")
 
-	// Build canonical → []aliases map.
-	canonicalAliases := map[string][]string{}
+	// Build a direct alias→name map from every non-trivial pair.
+	directMap := map[string]string{}
 	for _, p := range pairs {
 		if p.alias != p.name {
-			canonicalAliases[p.name] = append(canonicalAliases[p.name], p.alias)
+			directMap[p.alias] = p.name
 		}
 	}
 
-	// Create one contributor per canonical.
+	// resolve follows the direct chain to the ultimate canonical (cycle-safe).
+	resolve := func(start string) string {
+		seen := map[string]bool{}
+		current := start
+		for {
+			seen[current] = true
+			next, ok := directMap[current]
+			if !ok || seen[next] {
+				return current
+			}
+			current = next
+		}
+	}
+
+	// Collect every name that appeared as alias or canonical, then group all
+	// non-ultimate forms under their ultimate canonical.
+	allNames := map[string]bool{}
+	for _, p := range pairs {
+		allNames[p.alias] = true
+		allNames[p.name] = true
+	}
+	canonicalAliases := map[string][]string{}
+	for name := range allNames {
+		ultimate := resolve(name)
+		if _, exists := canonicalAliases[ultimate]; !exists {
+			canonicalAliases[ultimate] = nil
+		}
+		if name != ultimate {
+			canonicalAliases[ultimate] = append(canonicalAliases[ultimate], name)
+		}
+	}
+
+	// Batch all inserts into a single transaction for performance.
+	// IsKnownKey checks ContributorByID in memory so key uniqueness is maintained
+	// even though writes are deferred until the final commit.
+	tx, txErr := db.Begin()
+	if txErr != nil {
+		dbInteraction.Warning("Could not begin migration transaction: %s", txErr)
+		return
+	}
+	spinner := dbInteraction.NewSpinner("Migrating contributors")
+	done := 0
+	total := len(canonicalAliases)
 	for canonical, aliases := range canonicalAliases {
 		id := l.NewKey()
 		l.ContributorByID[id] = &TContributor{Name: canonical}
 		l.NameToContributorID[canonical] = id
-		upsertContributorToDB(id, canonical, "")
-		upsertContributorNameToDB(id, canonical)
+		tx.Exec(`INSERT INTO contributors (id, name, orcid) VALUES (?, ?, '')
+		           ON CONFLICT(id) DO UPDATE SET name = excluded.name`, id, canonical) //nolint:errcheck
+		tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, id, canonical) //nolint:errcheck
 		for _, alias := range aliases {
-			upsertContributorNameToDB(id, alias)
+			tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, id, alias) //nolint:errcheck
 			l.NameToContributorID[alias] = id
 		}
+		done++
+		spinner.Update(done, total)
+	}
+	spinner.Stop()
+	if err := tx.Commit(); err != nil {
+		dbInteraction.Warning("Could not commit migration: %s", err)
+		tx.Rollback() //nolint:errcheck
+		return
 	}
 
 	// Drop name_mappings.
 	db.Exec(`DROP TABLE IF EXISTS name_mappings`) //nolint:errcheck
 	dbInteraction.Progress("  Migration complete: %d contributors created.", len(canonicalAliases))
+}
+
+// maybeMergeSpuriousContributors detects and merges contributors whose canonical
+// name appears as a non-canonical entry in another contributor's name list.
+// This repairs data produced by the transitivity-blind migration: chains like
+// A→B→C produced two contributors (B and C) instead of one; B's canonical
+// appears in C's name list, identifying B as spurious.
+func maybeMergeSpuriousContributors() {
+	rows, err := db.Query(`
+		SELECT c1.id, c1.name, c2.id, c2.name
+		FROM contributors c1
+		JOIN contributor_names cn ON cn.name = c1.name AND cn.id != c1.id
+		JOIN contributors c2 ON c2.id = cn.id
+		WHERE c2.name != c1.name`)
+	if err != nil {
+		return
+	}
+	type mergeOp struct{ fromID, fromName, intoID, intoName string }
+	var ops []mergeOp
+	seen := map[string]bool{}
+	for rows.Next() {
+		var fromID, fromName, intoID, intoName string
+		if err := rows.Scan(&fromID, &fromName, &intoID, &intoName); err != nil {
+			continue
+		}
+		if !seen[fromID] {
+			seen[fromID] = true
+			ops = append(ops, mergeOp{fromID, fromName, intoID, intoName})
+		}
+	}
+	rows.Close()
+	if len(ops) == 0 {
+		return
+	}
+	dbInteraction.Progress("Merging %d spurious contributor duplicate(s)...", len(ops))
+	for _, op := range ops {
+		nameRows, qErr := db.Query(`SELECT name FROM contributor_names WHERE id = ?`, op.fromID)
+		if qErr != nil {
+			continue
+		}
+		var names []string
+		for nameRows.Next() {
+			var name string
+			nameRows.Scan(&name) //nolint:errcheck
+			names = append(names, name)
+		}
+		nameRows.Close()
+
+		tx, txErr := db.Begin()
+		if txErr != nil {
+			dbInteraction.Warning("Could not begin merge transaction: %s", txErr)
+			continue
+		}
+		for _, name := range names {
+			tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, op.intoID, name) //nolint:errcheck
+		}
+		tx.Exec(`DELETE FROM contributors WHERE id = ?`, op.fromID) //nolint:errcheck
+		if commitErr := tx.Commit(); commitErr != nil {
+			tx.Rollback() //nolint:errcheck
+			dbInteraction.Warning("Could not commit contributor merge for %q: %s", op.fromName, commitErr)
+			continue
+		}
+		dbInteraction.Progress("  Merged %q into %q", op.fromName, op.intoName)
+	}
 }
 
 // derivableNameForms returns the complete set of name forms derivable from
