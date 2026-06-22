@@ -3465,6 +3465,21 @@ func loadGroupsFromDb(l *TBibTeXLibrary) {
 	}
 }
 
+// resolveGroupEntriesKeys rewrites any alias or hint key in GroupEntries to the
+// canonical key. Called after buildKeyAliasesFromDb so that MapEntryKey works.
+// This handles preferred-alias cite keys stored in bib_groups during BibDesk import.
+func resolveGroupEntriesKeys(l *TBibTeXLibrary) {
+	for group, entries := range l.GroupEntries {
+		for key := range entries.Elements() {
+			canonical := l.MapEntryKey(key)
+			if canonical != key {
+				l.GroupEntries.DeleteValueFromStringSetMap(group, key)
+				l.GroupEntries.AddValueToStringSetMap(group, canonical)
+			}
+		}
+	}
+}
+
 // loadCommentsFromDb populates l.Comments from the bib_comments table.
 func loadCommentsFromDb(l *TBibTeXLibrary) {
 	rows, err := db.Query(`SELECT content FROM bib_comments ORDER BY position`)

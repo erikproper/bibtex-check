@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.14"
+const AppVersion = "26.15"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -129,6 +129,7 @@ func loadBibFromDb() {
 	loadGroupsFromDb(&Library)
 	loadCommentsFromDb(&Library)
 	buildKeyAliasesFromDb(&Library)
+	resolveGroupEntriesKeys(&Library)
 	initEntryCache()
 	reportCacheMode()
 }
