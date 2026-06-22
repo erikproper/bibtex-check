@@ -1275,6 +1275,8 @@ func ensureNameMappingsTableExists() {
 // upsertNameMapping records alias as a non-derived name form for the contributor
 // whose canonical name is `name`. Suppressed during load. If no contributor
 // exists yet for `name` a new one is created on the fly.
+// If the alias is itself the canonical of another contributor, that contributor
+// is absorbed into the target contributor in-place (DB + in-memory).
 func upsertNameMapping(alias, name string) {
 	if contributorsLoading {
 		return
@@ -1290,6 +1292,30 @@ func upsertNameMapping(alias, name string) {
 		upsertContributorToDB(id, name, "")
 		upsertContributorNameToDB(id, name)
 	}
+
+	// If alias is the canonical of a different contributor, absorb it.
+	if aliasID, mapped := Library.NameToContributorID[alias]; mapped && aliasID != id {
+		if aliasContrib, isContrib := Library.ContributorByID[aliasID]; isContrib && aliasContrib.Name == alias {
+			// Collect all names belonging to the spurious contributor from the DB.
+			nameRows, qErr := db.Query(`SELECT name FROM contributor_names WHERE id = ?`, aliasID)
+			if qErr == nil {
+				var toMove []string
+				for nameRows.Next() {
+					var n string
+					nameRows.Scan(&n) //nolint:errcheck
+					toMove = append(toMove, n)
+				}
+				nameRows.Close()
+				for _, n := range toMove {
+					upsertContributorNameToDB(id, n)
+					Library.NameToContributorID[n] = id
+				}
+			}
+			db.Exec(`DELETE FROM contributors WHERE id = ?`, aliasID) //nolint:errcheck
+			delete(Library.ContributorByID, aliasID)
+		}
+	}
+
 	upsertContributorNameToDB(id, alias)
 	Library.NameToContributorID[alias] = id
 }
