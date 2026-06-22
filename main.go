@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.2"
+const AppVersion = "26.3"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -644,10 +644,15 @@ func doTriageAuthorMappings() {
 
 	splitOnAnd := func(value string) []string {
 		parts := strings.Split(value, " and ")
-		for i, p := range parts {
-			parts[i] = strings.TrimSpace(p)
+		var out []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			lc := strings.ToLower(p)
+			if lc != "others" && lc != "et.al." && lc != "et al." {
+				out = append(out, p)
+			}
 		}
-		return parts
+		return out
 	}
 
 	normalizeName := func(name string) string {
@@ -795,6 +800,7 @@ outer:
 //   - number of entries without a dblp field that have at least one unresolved DBLP
 //     title-index candidate (not already in non_doubles)
 func reportHomework() {
+	Library.Progress("Computing homework summary...")
 	// A title group is unresolved when it contains at least two canonical keys
 	// whose pair has neither a non_doubles declaration nor field-value evidence
 	// of being different entries (divergent DBLP key or DOI).
