@@ -104,74 +104,6 @@ func importReport(verb, path string, rows int) {
 	dbInteraction.Progress("%s %d rows from %s", verb, rows, path)
 }
 
-// ── name_mappings ────────────────────────────────────────────────────────────
-// CSV format: name;alias  (elements[0]=name, elements[1]=alias)
-
-func ExportNameMappings() {
-	ensureTablesDir()
-	path := tablesFilePath(NameMappingsFilePath)
-	rows, err := db.Query(`SELECT name, alias FROM name_mappings ORDER BY name, alias`)
-	if err != nil {
-		dbInteraction.Warning("Could not query name_mappings: %s", err)
-		return
-	}
-	defer rows.Close()
-	writeCSVExport(path, rows, 2)
-}
-
-// importNameMappingsFromCSV uses processFile (plain line-by-line) rather than
-// processCSVFile (encoding/csv) because name aliases can contain bare " characters
-// (e.g. Bui, Quang "Neo") that cause encoding/csv with LazyQuotes to misparse
-// subsequent lines as continuations of a quoted field.
-func importNameMappingsFromCSV(replace bool) {
-	path := tablesFilePath(NameMappingsFilePath)
-	upsert := `INSERT INTO name_mappings (alias, name) VALUES (?, ?)
-	             ON CONFLICT(alias) DO UPDATE SET name = excluded.name`
-	validate := func(elements []string) bool {
-		if len(elements) < 2 {
-			return false
-		}
-		return csvUnquoteField(elements[0]) != "" && csvUnquoteField(elements[1]) != ""
-	}
-
-	var rowCount, errors int
-	processFile(path, func(line string) {
-		elements := strings.Split(line, csvDelimiter)
-		if validate(elements) {
-			rowCount++
-		} else {
-			errors++
-		}
-	})
-	if errors > 0 {
-		dbInteraction.Warning("Import aborted: %d invalid rows in %s — table unchanged", errors, path)
-		return
-	}
-	if rowCount == 0 {
-		dbInteraction.Warning("Nothing to import from %s", path)
-		return
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		dbInteraction.Warning("Could not begin import transaction: %s", err)
-		return
-	}
-	if replace {
-		tx.Exec(`DELETE FROM name_mappings`)
-	}
-	processFile(path, func(line string) {
-		elements := strings.Split(line, csvDelimiter)
-		if validate(elements) {
-			tx.Exec(upsert, ApplyLaTeXMap(csvUnquoteField(elements[1])), ApplyLaTeXMap(csvUnquoteField(elements[0])))
-		}
-	})
-	if err := tx.Commit(); err != nil {
-		dbInteraction.Warning("Could not commit import: %s", err)
-		return
-	}
-	importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, rowCount)
-}
-
 // ── contributors ─────────────────────────────────────────────────────────────
 // CSV format: id;name;orcid  (orcid may be empty)
 
@@ -847,7 +779,6 @@ func ImportAllCSVExchangeFiles() bool {
 		fn   func(bool)
 	}
 	tables := []importFn{
-		{"name_mappings", tablesFilePath(NameMappingsFilePath), importNameMappingsFromCSV},
 		{"key_hints", tablesFilePath(KeyHintsFilePath), importKeyHintsFromCSV},
 		{"key_oldies", tablesFilePath(KeyOldiesFilePath), importKeyOldiesFromCSV},
 		{"non_double_entries", tablesFilePath(KeyNonDoublesFilePath), importKeyNonDoublesFromCSV},

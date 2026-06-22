@@ -53,7 +53,6 @@ var (
 	changesAtSessionOpen        int64 // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
 	fieldMappingsLoading        bool  // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
 	entryFieldMappingsLoading   bool  // suppresses DB write-through in AddEntryFieldAlias during initial load
-	nameMappingsLoading         bool  // suppresses DB write-through in name-mapping mutations during initial load
 	contributorsLoading         bool  // suppresses DB write-through while loading contributors table
 )
 
@@ -168,8 +167,6 @@ func maybeMigrateTablesFolder() {
 		}
 	}
 
-	// Rename filter_name_mappings.csv → name_mappings.csv (v23.0 file rename).
-	maybeRenameInTablesDir("filter_name_mappings.csv", "name_mappings.csv")
 	// Convert entry_metadata.json → entry_metadata.csv (v23.0 format change).
 	maybeConvertEntryMetadataToCSV()
 }
@@ -263,7 +260,6 @@ func maybeMigrateTableConstraints() {
 		selCols string // explicit column list for INSERT ... SELECT
 	}
 	tables := []tableSpec{
-		{"name_mappings", "alias", "alias TEXT PRIMARY KEY, name TEXT NOT NULL", "alias, name"},
 		{"key_hints",     "hint",  "hint TEXT PRIMARY KEY, key TEXT NOT NULL",   "hint, key"},
 		{"key_oldies",    "alias", "alias TEXT PRIMARY KEY, key TEXT NOT NULL",  "alias, key"},
 	}
@@ -428,7 +424,6 @@ func connectToDatabase() {
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
 	maybeConsolidateEntryFlags()
-	ensureNameMappingsTableExists()
 	ensureContributorsTableExists()
 	ensureContributorNamesTableExists()
 	ensureKeyHintsTableExists()
@@ -498,7 +493,6 @@ func reopenDb(path string) {
 	configureDatabasePragmas()
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
-	ensureNameMappingsTableExists()
 	ensureContributorsTableExists()
 	ensureContributorNamesTableExists()
 	ensureKeyHintsTableExists()
@@ -1266,14 +1260,6 @@ func deleteContributorNameFromDB(id, name string) {
 
 // --- name_mappings table ---
 
-func ensureNameMappingsTableExists() {
-	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS name_mappings (
-		  alias TEXT PRIMARY KEY,
-		  name  TEXT NOT NULL
-		);`)
-}
-
 // upsertNameMapping records alias as a non-derived name form for the contributor
 // whose canonical name is `name`. Suppressed during load. If no contributor
 // exists yet for `name` a new one is created on the fly.
@@ -1332,159 +1318,6 @@ func deleteNameMapping(alias string) {
 		deleteContributorNameFromDB(id, alias)
 		delete(Library.NameToContributorID, alias)
 	}
-}
-
-// loadNameMappingsFromDb populates l.NameAliasToName and l.NameToAliases from
-// the DB, then derives additional aliases via FindAliases for each stored pair
-// and for each unique canonical.
-func loadNameMappingsFromDb(l *TBibTeXLibrary) {
-	nameMappingsLoading = true
-	defer func() { nameMappingsLoading = false }()
-
-	rows, err := db.Query(`SELECT alias, name FROM name_mappings`)
-	if err != nil {
-		dbInteraction.Warning("Could not query name_mappings: %s", err)
-		return
-	}
-	defer rows.Close()
-
-	type pair struct{ alias, name string }
-	var pairs []pair
-	for rows.Next() {
-		var alias, name string
-		if err := rows.Scan(&alias, &name); err != nil {
-			dbInteraction.Warning("Could not scan name_mappings row: %s", err)
-			continue
-		}
-		pairs = append(pairs, pair{alias, name})
-	}
-
-	for _, p := range pairs {
-		l.AddAlias(p.alias, p.name, &l.NameAliasToName, &l.NameToAliases, true)
-	}
-
-	for _, p := range pairs {
-		l.FindAliases(p.name, p.alias)
-	}
-
-	canonicals := map[string]bool{}
-	for _, p := range pairs {
-		canonicals[p.name] = true
-	}
-	for canonical := range canonicals {
-		l.FindAliases(canonical, canonical)
-	}
-}
-
-// maybeMigrateNameMappingsToContributors runs once when the contributors table
-// is empty but name_mappings has data. It creates one contributor per unique
-// canonical name in name_mappings, writes the canonical and all its aliases to
-// contributor_names, then drops the name_mappings table. Subsequent starts use
-// loadContributorsFromDb exclusively.
-func maybeMigrateNameMappingsToContributors(l *TBibTeXLibrary) {
-	// Skip when contributors already has data.
-	var n int
-	db.QueryRow(`SELECT COUNT(*) FROM contributors`).Scan(&n) //nolint:errcheck
-	if n > 0 {
-		return
-	}
-
-	// Check whether name_mappings exists and has data.
-	rows, err := db.Query(`SELECT alias, name FROM name_mappings`)
-	if err != nil {
-		return // table gone or empty — nothing to migrate
-	}
-	type pair struct{ alias, name string }
-	var pairs []pair
-	for rows.Next() {
-		var alias, name string
-		if err := rows.Scan(&alias, &name); err != nil {
-			continue
-		}
-		pairs = append(pairs, pair{alias, name})
-	}
-	rows.Close()
-	if len(pairs) == 0 {
-		return
-	}
-
-	dbInteraction.Progress("Migrating name_mappings → contributors / contributor_names...")
-
-	// Build a direct alias→name map from every non-trivial pair.
-	directMap := map[string]string{}
-	for _, p := range pairs {
-		if p.alias != p.name {
-			directMap[p.alias] = p.name
-		}
-	}
-
-	// resolve follows the direct chain to the ultimate canonical (cycle-safe).
-	resolve := func(start string) string {
-		seen := map[string]bool{}
-		current := start
-		for {
-			seen[current] = true
-			next, ok := directMap[current]
-			if !ok || seen[next] {
-				return current
-			}
-			current = next
-		}
-	}
-
-	// Collect every name that appeared as alias or canonical, then group all
-	// non-ultimate forms under their ultimate canonical.
-	allNames := map[string]bool{}
-	for _, p := range pairs {
-		allNames[p.alias] = true
-		allNames[p.name] = true
-	}
-	canonicalAliases := map[string][]string{}
-	for name := range allNames {
-		ultimate := resolve(name)
-		if _, exists := canonicalAliases[ultimate]; !exists {
-			canonicalAliases[ultimate] = nil
-		}
-		if name != ultimate {
-			canonicalAliases[ultimate] = append(canonicalAliases[ultimate], name)
-		}
-	}
-
-	// Batch all inserts into a single transaction for performance.
-	// IsKnownKey checks ContributorByID in memory so key uniqueness is maintained
-	// even though writes are deferred until the final commit.
-	tx, txErr := db.Begin()
-	if txErr != nil {
-		dbInteraction.Warning("Could not begin migration transaction: %s", txErr)
-		return
-	}
-	spinner := dbInteraction.NewSpinner("Migrating contributors")
-	done := 0
-	total := len(canonicalAliases)
-	for canonical, aliases := range canonicalAliases {
-		id := l.NewKey()
-		l.ContributorByID[id] = &TContributor{Name: canonical}
-		l.NameToContributorID[canonical] = id
-		tx.Exec(`INSERT INTO contributors (id, name, orcid) VALUES (?, ?, '')
-		           ON CONFLICT(id) DO UPDATE SET name = excluded.name`, id, canonical) //nolint:errcheck
-		tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, id, canonical) //nolint:errcheck
-		for _, alias := range aliases {
-			tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, id, alias) //nolint:errcheck
-			l.NameToContributorID[alias] = id
-		}
-		done++
-		spinner.Update(done, total)
-	}
-	spinner.Stop()
-	if err := tx.Commit(); err != nil {
-		dbInteraction.Warning("Could not commit migration: %s", err)
-		tx.Rollback() //nolint:errcheck
-		return
-	}
-
-	// Drop name_mappings.
-	db.Exec(`DROP TABLE IF EXISTS name_mappings`) //nolint:errcheck
-	dbInteraction.Progress("  Migration complete: %d contributors created.", len(canonicalAliases))
 }
 
 // maybeMergeSpuriousContributors detects and merges contributors whose canonical
@@ -1575,7 +1408,7 @@ func derivableNameForms(baseNames []string) map[string]bool {
 	return derived
 }
 
-// loadContributorsFromDb replaces loadNameMappingsFromDb. It reads the
+// loadContributorsFromDb reads the
 // contributors and contributor_names tables, builds NameAliasToName,
 // NameToAliases, NameToContributorID, and ContributorByID, then prunes any
 // derivable name forms from contributor_names (so the table converges to only
@@ -2575,7 +2408,7 @@ func maybeMigrateToLosingFieldValues() {
 	maxT := tableModTime("filter_entry_field_mappings")
 	for _, dep := range []string{
 		"state_names", "state_countries", "country_names",
-		"name_mappings", "generic_field_mappings",
+		"generic_field_mappings",
 	} {
 		if t := tableModTime(dep); t > maxT {
 			maxT = t
@@ -2966,8 +2799,8 @@ func writeRepairCSV(filePath string, lines []string) bool {
 // repairDirtyMappingTables writes any mapping table whose dirty bit is set from
 // the current SQLite state back to its CSV file. Called from initialiseLibrary
 // before any file reads so that loadMappingFiles picks up repaired files.
-// Returns which tables were written so the caller can apply cascade re-read rules.
-func repairDirtyMappingTables() (nameMappingsRepaired, entryFieldMappingsRepaired bool) {
+// Returns whether entry_field_mappings was written (caller may apply cascade re-read).
+func repairDirtyMappingTables() (entryFieldMappingsRepaired bool) {
 	base := bibTeXFolder + bibTeXBaseName
 
 	repair := func(tableName, filePath string) bool {
@@ -2982,25 +2815,6 @@ func repairDirtyMappingTables() (nameMappingsRepaired, entryFieldMappingsRepaire
 		setTableDate(tableName, time.Now().UnixMicro())
 		clearTableDirty(tableName)
 		setTableLastWritten(tableName)
-	}
-
-	// name_mappings: "name;alias" per non-self pair
-	if repair("name_mappings", base+NameMappingsFilePath) {
-		rows, err := db.Query(`SELECT name, alias FROM name_mappings WHERE name != alias`)
-		if err == nil {
-			var lines []string
-			for rows.Next() {
-				var name, alias string
-				if rows.Scan(&name, &alias) == nil {
-					lines = append(lines, name+csvDelimiter+alias)
-				}
-			}
-			rows.Close()
-			if writeRepairCSV(base+NameMappingsFilePath, lines) {
-				finishRepair("name_mappings")
-				nameMappingsRepaired = true
-			}
-		}
 	}
 
 	// key_hints: "key;hint"

@@ -59,7 +59,6 @@ const (
 	WarningFieldMappingsTooShort            = "Line in field mappings file is too short: %s"
 	WarningEntryFieldMappingsLineTooShort   = "Line in entry field mappings file is too short: %s"
 	WarningGenericFieldMappingsLineTooShort = "Line in generic field mappings file is too short: %s"
-	WarningNameMappingsLineTooShort         = "Line in name mappings file is too short: %s"
 	WarningKeyAliasesLineTooShort           = "Line in key aliases file is too short: %s"
 	WarningKeyHintsLineTooShort             = "Line in key hints file is too short: %s"
 	WarningNonDoublesLineTooShort           = "Line in non doubles file is too short: %s"
@@ -101,7 +100,6 @@ const (
 	ProgressWritingEntryLineageFile        = "Writing entry lineage file %s"
 	ProgressWritingGenericFieldMappingsFile = "Writing generic field mappings file %s"
 	ProgressWritingEntryFieldMappingsFile   = "Writing entry field mappings file %s"
-	ProgressWritingNameMappingsFile        = "Writing name aliases file %s"
 	ProgressWritingFieldMappingsFile       = "Writing field mappings file %s"
 	ProgressWritingKeyOldiesFile           = "Writing key aliases file %s"
 	ProgressWritingKeyHintsFile            = "Writing key hints file %s"
@@ -138,7 +136,6 @@ const (
 	ProgressReadingEntryFieldMappingsFile   = "Reading entry field mappings file %s"
 	ProgressReadingKeyOldiesFile           = "Reading key oldies file %s"
 	ProgressReadingKeyHintsFile            = "Reading key hints file %s"
-	ProgressReadingNameMappingsFile        = "Reading name aliases file %s"
 	ProgressReadingFieldMappingsFile       = "Reading field mappings file %s"
 
 	ProgressEntryCacheLoaded  = "Entry access: in-memory cache (%d entries)"

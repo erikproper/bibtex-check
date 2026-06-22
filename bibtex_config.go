@@ -51,7 +51,6 @@ const (
 
 	// All exportable/importable tables live in <basename>.tables/ as CSV files,
 	// named after their DB table (or "folders" for the bootstrap settings).
-	NameMappingsFilePath          = tablesFolderSuffix + "/name_mappings.csv"
 	ContributorsFilePath          = tablesFolderSuffix + "/contributors.csv"
 	ContributorNamesFilePath      = tablesFolderSuffix + "/contributor_names.csv"
 	EntryFieldMappingsFilePath    = tablesFolderSuffix + "/filter_entry_field_mappings.csv" // legacy; superseded by LosingFieldValuesFilePath

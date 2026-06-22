@@ -2,15 +2,10 @@
  *
  * Module: bibtex_library_repair
  *
- * Repairs garbled author/editor fields in bib_entries and cleans polluted
- * name_mappings.  Garbling (e.g. "Ae, Chun, Soon" instead of "Chun, Soon Ae")
- * is caused by bad name_mapping canonicals derived from a corrupt CSV import.
- * This module:
- *   1. Removes name_mappings rows whose canonical or alias form is garbled
- *      (≥3 commas, 2 commas with non-suffix middle part, or contains
- *      parentheses/braces — see hasGarbledName and isBadNameMappingCanonical).
- *   2. Re-derives the correct author/editor value from DBLP (for entries with
- *      a dblp field) or from a reference .bib file (for entries without one).
+ * Repairs garbled author/editor fields in bib_entries.  Garbling (e.g.
+ * "Ae, Chun, Soon" instead of "Chun, Soon Ae") is repaired by re-deriving
+ * the correct author/editor value from DBLP (for entries with a dblp field)
+ * or from a reference .bib file (for entries without one).
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
@@ -91,140 +86,6 @@ func hasStrayBrace(s string) bool {
 		return true
 	}
 	return strings.Contains(s, "} {")
-}
-
-// isBadNameMappingCanonical returns true for canonical forms that were created
-// by the auto-harvesting bugs and should not exist in name_mappings:
-//   - garbled multi-comma forms (e.g. "Ae, Chun, Soon") — via hasGarbledName
-//   - forms with parentheticals (e.g. "), Hilgartner, C.A.") — from (Andy)-style names
-//   - brace-wrapped tokens or stray braces — via hasStrayBrace
-//   - single-letter surname forms (e.g. "A, Prajith C.") — from wrongly inverting
-//     a trailing initial; not in hasGarbledName to avoid auto-correcting bib entries
-func isBadNameMappingCanonical(name string) bool {
-	if hasGarbledName(name) {
-		return true
-	}
-	if strings.ContainsAny(name, "()") {
-		return true
-	}
-	if hasStrayBrace(name) {
-		return true
-	}
-	if idx := strings.Index(name, ","); idx >= 0 {
-		if len(strings.TrimRight(strings.TrimSpace(name[:idx]), ".")) == 1 {
-			return true
-		}
-	}
-	return false
-}
-
-// cleanBadNameMappings removes name_mappings entries whose canonical or alias
-// form was created by auto-harvesting bugs.  Two patterns are cleaned:
-//   1. Garbled canonicals (≥3 commas, or 2 commas with non-suffix middle part).
-//   2. Canonicals/aliases containing parentheses or braces (from names like "C. A. (Andy)").
-//
-// Both the DB rows and the in-memory maps are purged.
-// Returns the number of distinct bad canonicals removed.
-func (l *TBibTeXLibrary) cleanBadNameMappings() int {
-	// Pattern 1: bad canonicals — ≥2 commas (garbled), OR single-letter surname
-	// (e.g. "A, Prajith C." from wrongly inverting "Prajith C. A").
-	// Single-letter surnames are kept out of hasGarbledName to avoid auto-correcting
-	// bib entries, but they should still be purged from name_mappings.
-	rows, err := db.Query(
-		`SELECT DISTINCT name FROM name_mappings
-		 WHERE (LENGTH(name) - LENGTH(REPLACE(name, ',', ''))) >= 2
-		    OR name LIKE '_, %' OR name LIKE '_., %'`)
-	if err != nil {
-		dbInteraction.Warning("Could not query name_mappings for cleanup: %s", err)
-		return 0
-	}
-	var bad []string
-	seen := map[string]bool{}
-	for rows.Next() {
-		var name string
-		if rows.Scan(&name) == nil && isBadNameMappingCanonical(name) && !seen[name] {
-			bad = append(bad, name)
-			seen[name] = true
-		}
-	}
-	rows.Close()
-
-	// Pattern 2: parentheticals, brace-wrapped tokens ({...}), or stray "} {" brace pairs.
-	// Deliberately avoids '%{%' which would match valid TeX encoding like B{\"o}hm.
-	rows2, err := db.Query(`SELECT DISTINCT alias, name FROM name_mappings
-		WHERE alias LIKE '%(%' OR alias LIKE '%)%'
-		   OR name  LIKE '%(%' OR name  LIKE '%)%'
-		   OR alias LIKE '{%'  OR name  LIKE '{%'
-		   OR alias LIKE '%} {%'`)
-	if err == nil {
-		for rows2.Next() {
-			var alias, name string
-			if rows2.Scan(&alias, &name) != nil {
-				continue
-			}
-			if !seen[name] {
-				bad = append(bad, name)
-				seen[name] = true
-			}
-		}
-		rows2.Close()
-	}
-	if len(bad) == 0 {
-		return 0
-	}
-
-	// Clean in-memory maps for bad canonicals.
-	for _, canonical := range bad {
-		if aliasSet, ok := l.NameToAliases[canonical]; ok {
-			for alias := range aliasSet.Elements() {
-				delete(l.NameAliasToName, alias)
-			}
-			delete(l.NameToAliases, canonical)
-		}
-		delete(l.NameAliasToName, canonical)
-	}
-
-	// Collect stray aliases (parentheticals / brace-wrapped) before the transaction.
-	var strayAliases []string
-	aliasRows, err := db.Query(`SELECT alias FROM name_mappings
-		WHERE alias LIKE '%(%' OR alias LIKE '%)%'
-		   OR alias LIKE '{%'  OR alias LIKE '%} {%'`)
-	if err == nil {
-		for aliasRows.Next() {
-			var alias string
-			if aliasRows.Scan(&alias) == nil {
-				strayAliases = append(strayAliases, alias)
-			}
-		}
-		aliasRows.Close()
-	}
-
-	// Clean in-memory maps for stray aliases.
-	for _, alias := range strayAliases {
-		if canonical, ok := l.NameAliasToName[alias]; ok {
-			l.NameToAliases.DeleteValueFromStringSetMap(canonical, alias)
-		}
-		delete(l.NameAliasToName, alias)
-	}
-
-	// Batch all DB deletes into one transaction.
-	tx, txErr := db.Begin()
-	if txErr != nil {
-		dbInteraction.Warning("Could not begin name_mappings cleanup transaction: %s", txErr)
-	} else {
-		for _, canonical := range bad {
-			tx.Exec(`DELETE FROM name_mappings WHERE name = ?`, canonical)
-		}
-		for _, alias := range strayAliases {
-			tx.Exec(`DELETE FROM name_mappings WHERE alias = ?`, alias)
-		}
-		if err := tx.Commit(); err != nil {
-			dbInteraction.Warning("Could not commit name_mappings cleanup: %s", err)
-			tx.Rollback()
-		}
-	}
-
-	return len(bad)
 }
 
 // bibEntryRe matches the opening line of a BibTeX entry and captures the key.
