@@ -1494,6 +1494,63 @@ func loadContributorsFromDb(l *TBibTeXLibrary) {
 	}
 }
 
+// seedContributorsFromEntries ensures that every author/editor name currently
+// stored in bib_entries has a corresponding contributor record. Names already
+// reachable via NameToContributorID (exact stored or canonical match) or via
+// NameAliasToName (derivable form of a known contributor) are skipped. For each
+// truly new name a standalone contributor is created and its derivable forms are
+// added to the in-memory maps so duplicate contributors are not created for
+// variant spellings encountered later in the same pass.
+// Called after loadContributorsFromDb so the in-memory maps are complete.
+func seedContributorsFromEntries(l *TBibTeXLibrary) {
+	rows, err := db.Query(
+		`SELECT DISTINCT value FROM bib_entries WHERE field IN ('author', 'editor')`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	seeded := 0
+	for rows.Next() {
+		var value string
+		if rows.Scan(&value) != nil {
+			continue
+		}
+		for _, raw := range strings.Split(value, " and ") {
+			name := strings.TrimSpace(raw)
+			lc := strings.ToLower(name)
+			if name == "" || lc == "others" || lc == "et.al." || lc == "et al." {
+				continue
+			}
+			if strings.HasPrefix(name, "{") {
+				continue // brace-wrapped: organisation name, skip
+			}
+			if _, ok := l.NameToContributorID[name]; ok {
+				continue // already a known contributor or registered derived form
+			}
+			if _, ok := l.NameAliasToName[name]; ok {
+				continue // derivable form of a known contributor
+			}
+			// New contributor: create with this name as the canonical.
+			id := l.NewKey()
+			l.ContributorByID[id] = &TContributor{Name: name}
+			l.NameToContributorID[name] = id
+			upsertContributorToDB(id, name, "")
+			upsertContributorNameToDB(id, name)
+			// Register derived forms in-memory only to avoid same-pass duplicates.
+			for derived := range derivableNameForms([]string{name}) {
+				if _, exists := l.NameToContributorID[derived]; !exists {
+					l.NameToContributorID[derived] = id
+				}
+			}
+			seeded++
+		}
+	}
+	if seeded > 0 {
+		l.Progress("Seeded %d new contributor(s) from author/editor fields.", seeded)
+	}
+}
+
 // --- key_hints table ---
 
 func ensureKeyHintsTableExists() {

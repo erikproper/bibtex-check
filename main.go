@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.18"
+const AppVersion = "26.19"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -254,6 +254,7 @@ func openLibraryToUpdate() bool {
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
+	seedContributorsFromEntries(&Library)
 
 	if skipBibValidation || Library.ValidBibDb() {
 		buildTitleIndexFromDb(&Library)
