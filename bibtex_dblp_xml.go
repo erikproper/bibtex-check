@@ -589,23 +589,26 @@ func doRebuildDblpCrossrefIndex() {
 // --- First pass: name map ---
 
 // dblpBuildNameMap does a first streaming pass over the DBLP XML, collecting
-// only www (person homepage) entries to build a plain-name → canonical-name map.
-// The canonical name comes from the bibtex= attribute of the first author that
-// carries one; the disambiguation suffix (e.g. " 0001") is stripped.
-func dblpBuildNameMap(r io.Reader) (map[string]string, error) {
+// only www (person homepage) entries to build a plain-name → canonical-name map
+// and a canonical-name → ORCID map. The canonical name comes from the bibtex=
+// attribute of the first author that carries one; the disambiguation suffix
+// (e.g. " 0001") is stripped. The orcid= attribute of that same author element
+// is stored in the returned orcidMap.
+func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err error) {
 	d := newDblpDecoder(r)
 	if err := advanceToDblpRoot(d); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	nameMap := make(map[string]string)
+	nameMap = make(map[string]string)
+	orcidMap = make(map[string]string)
 	for {
 		tok, err := d.Token()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nameMap, fmt.Errorf("building name map: %w", err)
+			return nameMap, orcidMap, fmt.Errorf("building name map: %w", err)
 		}
 		se, ok := tok.(xml.StartElement)
 		if !ok {
@@ -629,27 +632,34 @@ func dblpBuildNameMap(r io.Reader) (map[string]string, error) {
 					d.Skip()
 					continue
 				}
-				var bibtex string
+				var bibtex, orcid string
 				for _, a := range ct.Attr {
-					if a.Name.Local == "bibtex" {
+					switch a.Name.Local {
+					case "bibtex":
 						bibtex = a.Value
+					case "orcid":
+						orcid = a.Value
 					}
 				}
 				text, _ := xmlCollectText(d)
-				authors = append(authors, dblpXMLPerson{Name: text, Bibtex: bibtex})
+				authors = append(authors, dblpXMLPerson{Name: text, Bibtex: bibtex, ORCID: orcid})
 			case xml.EndElement:
 				break childLoop
 			}
 		}
 
-		var canonicalName string
+		var canonicalName, canonicalORCID string
 		for _, p := range authors {
 			if p.Bibtex != "" {
 				canonicalName = dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(p.Bibtex), "")
+				canonicalORCID = p.ORCID
 				break
 			}
 		}
 		if canonicalName != "" {
+			if canonicalORCID != "" {
+				orcidMap[canonicalName] = canonicalORCID
+			}
 			for _, p := range authors {
 				if p.Name != canonicalName {
 					nameMap[p.Name] = canonicalName
@@ -657,7 +667,74 @@ func dblpBuildNameMap(r io.Reader) (map[string]string, error) {
 			}
 		}
 	}
-	return nameMap, nil
+	return nameMap, orcidMap, nil
+}
+
+// saveDblpNameFiles writes the DBLP name maps from Pass 1 to two CSV files in
+// globalFolder: dblp_name_bibtex.csv (alias;canonical) and dblp_name_orcid.csv
+// (canonical;orcid). Names are converted to LaTeX format before writing.
+func saveDblpNameFiles(nameMap, orcidMap map[string]string) {
+	namePath := globalFolder + "dblp_name_bibtex.csv"
+	orcidPath := globalFolder + "dblp_name_orcid.csv"
+
+	nameLines := make([]string, 0, len(nameMap))
+	for rawAlias, rawCanon := range nameMap {
+		al := dblpPersonNameToLaTeX(rawAlias)
+		cl := dblpPersonNameToLaTeX(rawCanon)
+		if al == "" || cl == "" || al == cl {
+			continue
+		}
+		nameLines = append(nameLines, al+";"+cl)
+	}
+	sort.Strings(nameLines)
+	if err := os.WriteFile(namePath, []byte(strings.Join(nameLines, "\n")+"\n"), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write %s: %s\n", namePath, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "  Saved %d name mappings to %s\n", len(nameLines), namePath)
+	}
+
+	orcidLines := make([]string, 0, len(orcidMap))
+	for rawCanon, orcid := range orcidMap {
+		cl := dblpPersonNameToLaTeX(rawCanon)
+		if cl == "" || orcid == "" {
+			continue
+		}
+		orcidLines = append(orcidLines, cl+";"+orcid)
+	}
+	sort.Strings(orcidLines)
+	if err := os.WriteFile(orcidPath, []byte(strings.Join(orcidLines, "\n")+"\n"), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write %s: %s\n", orcidPath, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "  Saved %d ORCIDs to %s\n", len(orcidLines), orcidPath)
+	}
+}
+
+// loadDblpNameFiles reads the two DBLP name CSV files from globalFolder and
+// returns (alias→canonical, canonical→orcid) maps, both in LaTeX name format.
+// Returns ok=false when either file is absent or unreadable.
+func loadDblpNameFiles() (nameMapLatex, orcidMapLatex map[string]string, ok bool) {
+	namePath := globalFolder + "dblp_name_bibtex.csv"
+	orcidPath := globalFolder + "dblp_name_orcid.csv"
+
+	if !FileExists(namePath) || !FileExists(orcidPath) {
+		return nil, nil, false
+	}
+
+	nameMapLatex = make(map[string]string)
+	processCSVFile(namePath, func(rec []string) {
+		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
+			nameMapLatex[rec[0]] = rec[1]
+		}
+	})
+
+	orcidMapLatex = make(map[string]string)
+	processCSVFile(orcidPath, func(rec []string) {
+		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
+			orcidMapLatex[rec[0]] = rec[1]
+		}
+	})
+
+	return nameMapLatex, orcidMapLatex, true
 }
 
 // --- Second pass: main import ---
@@ -944,13 +1021,14 @@ func doLoadDblpXml(args []string) {
 		fmt.Fprintf(os.Stderr, "Could not read gzip from %s: %s\n", xmlGzPath, err)
 		os.Exit(1)
 	}
-	nameMap, err := dblpBuildNameMap(gz1)
+	nameMap, orcidMap, err := dblpBuildNameMap(gz1)
 	gz1.Close()
 	f1.Close()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: name map build error: %s\n", err)
 	}
 	fmt.Fprintf(os.Stderr, "  %d name mappings collected (%.0fs).\n", len(nameMap), time.Since(start).Seconds())
+	saveDblpNameFiles(nameMap, orcidMap)
 
 	// Second pass: import all entries.
 	fmt.Fprintf(os.Stderr, "Pass 2: importing DBLP XML from %s...\n", xmlGzPath)
@@ -1219,45 +1297,63 @@ func doAbsorbDblpNames() {
 	if !openLibraryToUpdate() {
 		return
 	}
-	xmlFilename := readDblpCurrentXML()
-	if xmlFilename == "" {
-		Library.Error("No DBLP import on record; run -load_dblp_xml first.")
-		return
-	}
-	xmlGzPath := dblpFolder() + xmlFilename
-	if !FileExists(xmlGzPath) {
-		Library.Error("DBLP XML file not found: %s", xmlGzPath)
-		return
-	}
-	f, err := os.Open(xmlGzPath)
-	if err != nil {
-		Library.Error("Cannot open DBLP XML: %s", err)
-		return
-	}
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		f.Close()
-		Library.Error("Cannot read DBLP XML gzip: %s", err)
-		return
-	}
-
-	Library.Progress("Building DBLP name map from %s ...", xmlFilename)
-	nameMap, err := dblpBuildNameMap(gz)
-	gz.Close()
-	f.Close()
-	if err != nil {
-		Library.Warning("DBLP name map build partial: %s", err)
-	}
-	Library.Progress("  %d DBLP name variant→canonical pairs found.", len(nameMap))
-
-	// Group aliases by their DBLP canonical.
-	groups := make(map[string][]string) // canonicalLaTeX → []aliasLaTeX
-	for rawAlias, rawCanonical := range nameMap {
-		aliasLaTeX := dblpPersonNameToLaTeX(rawAlias)
-		canonicalLaTeX := dblpPersonNameToLaTeX(rawCanonical)
-		if aliasLaTeX == "" || canonicalLaTeX == "" || aliasLaTeX == canonicalLaTeX {
-			continue
+	// Load name and ORCID maps. Fast path: pre-built CSV files from Pass 1 of
+	// -load_dblp_xml. Fallback: re-scan the gz (slow, for first run or missing files).
+	nameMapLatex, orcidMapLatex, filesOK := loadDblpNameFiles()
+	if filesOK {
+		Library.Progress("Loaded DBLP name maps from cache (%d aliases, %d ORCIDs).",
+			len(nameMapLatex), len(orcidMapLatex))
+	} else {
+		xmlFilename := readDblpCurrentXML()
+		if xmlFilename == "" {
+			Library.Error("No DBLP import on record; run -load_dblp_xml first.")
+			return
 		}
+		xmlGzPath := dblpFolder() + xmlFilename
+		if !FileExists(xmlGzPath) {
+			Library.Error("DBLP XML file not found: %s", xmlGzPath)
+			return
+		}
+		f, err := os.Open(xmlGzPath)
+		if err != nil {
+			Library.Error("Cannot open DBLP XML: %s", err)
+			return
+		}
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			f.Close()
+			Library.Error("Cannot read DBLP XML gzip: %s", err)
+			return
+		}
+		Library.Progress("Building DBLP name map from %s ...", xmlFilename)
+		rawNameMap, rawOrcidMap, buildErr := dblpBuildNameMap(gz)
+		gz.Close()
+		f.Close()
+		if buildErr != nil {
+			Library.Warning("DBLP name map build partial: %s", buildErr)
+		}
+		Library.Progress("  %d DBLP name variant→canonical pairs found.", len(rawNameMap))
+
+		nameMapLatex = make(map[string]string, len(rawNameMap))
+		for rawAlias, rawCanon := range rawNameMap {
+			al := dblpPersonNameToLaTeX(rawAlias)
+			cl := dblpPersonNameToLaTeX(rawCanon)
+			if al != "" && cl != "" && al != cl {
+				nameMapLatex[al] = cl
+			}
+		}
+		orcidMapLatex = make(map[string]string, len(rawOrcidMap))
+		for rawCanon, orcid := range rawOrcidMap {
+			cl := dblpPersonNameToLaTeX(rawCanon)
+			if cl != "" && orcid != "" {
+				orcidMapLatex[cl] = orcid
+			}
+		}
+	}
+
+	// Group aliases by their DBLP canonical (names already in LaTeX format).
+	groups := make(map[string][]string) // canonicalLaTeX → []aliasLaTeX
+	for aliasLaTeX, canonicalLaTeX := range nameMapLatex {
 		groups[canonicalLaTeX] = append(groups[canonicalLaTeX], aliasLaTeX)
 	}
 
@@ -1327,6 +1423,28 @@ func doAbsorbDblpNames() {
 		}
 	}
 	Library.Progress("Absorbed %d DBLP name mappings.", absorbed)
+
+	// Set ORCIDs for known contributors that do not yet have one.
+	orcidsSet := 0
+	for canonicalLaTeX, orcid := range orcidMapLatex {
+		for _, form := range []string{canonicalLaTeX, swapBibTeXNameFormat(canonicalLaTeX)} {
+			id, ok := Library.NameToContributorID[form]
+			if !ok {
+				continue
+			}
+			contrib := Library.ContributorByID[id]
+			if contrib.ORCID != "" {
+				break
+			}
+			contrib.ORCID = orcid
+			upsertContributorToDB(id, contrib.Name, orcid)
+			orcidsSet++
+			break
+		}
+	}
+	if orcidsSet > 0 {
+		Library.Progress("Set ORCID for %d contributor(s) from DBLP.", orcidsSet)
+	}
 
 	Library.Progress("Re-normalising author/editor fields...")
 	Library.RenormaliseNameFields()
