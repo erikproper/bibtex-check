@@ -2099,6 +2099,67 @@ func maybeMigrateStripLocalURL() {
 	dbInteraction.Progress("Migrated: stripped %d local-url rows from bib_entries (PDF presence now tracked via filesystem)", count)
 }
 
+// maybeMigrateIncollectionTypes repairs two known structural errors that originate
+// from DBLP data or from historical manual entry:
+//
+//  1. incollection children of proceedings parents → inproceedings.
+//     DBLP sometimes emits incollection for conference papers; the proceedings parent
+//     is correct, so the child type is wrong.
+//
+//  2. book entries that are Springer Lecture Notes series → proceedings.
+//     LNCS volumes are conference proceedings; classifying them as book causes their
+//     children (inproceedings) to appear as incollection to DBLP importers.
+func maybeMigrateIncollectionTypes() {
+	// Fix 1: incollection → inproceedings when parent is proceedings.
+	rows, err := db.Query(`
+		SELECT child_type.entry_key
+		FROM bib_entries child_type
+		JOIN bib_entries child_cr  ON child_cr.entry_key  = child_type.entry_key AND child_cr.field  = 'crossref'
+		JOIN bib_entries parent_type ON parent_type.entry_key = child_cr.value   AND parent_type.field = 'entrytype'
+		                                                                          AND parent_type.value = 'proceedings'
+		WHERE child_type.field = 'entrytype' AND child_type.value = 'incollection'`)
+	if err == nil {
+		defer rows.Close()
+		var childKeys []string
+		for rows.Next() {
+			var key string
+			if rows.Scan(&key) == nil {
+				childKeys = append(childKeys, key)
+			}
+		}
+		for _, key := range childKeys {
+			if _, err := db.Exec(`UPDATE bib_entries SET value = 'inproceedings'
+				WHERE entry_key = ? AND field = 'entrytype' AND value = 'incollection'`, key); err == nil {
+				dbInteraction.Progress("Migrated: fixed entry type for %s: incollection → inproceedings (parent is proceedings)", key)
+			}
+		}
+	}
+
+	// Fix 2: book → proceedings for Springer Lecture Notes series entries.
+	rows2, err := db.Query(`
+		SELECT et.entry_key
+		FROM bib_entries et
+		JOIN bib_entries s ON s.entry_key = et.entry_key AND s.field = 'series'    AND LOWER(s.value) LIKE '%lecture notes in%'
+		JOIN bib_entries p ON p.entry_key = et.entry_key AND p.field = 'publisher' AND LOWER(p.value) LIKE '%springer%'
+		WHERE et.field = 'entrytype' AND et.value = 'book'`)
+	if err == nil {
+		defer rows2.Close()
+		var bookKeys []string
+		for rows2.Next() {
+			var key string
+			if rows2.Scan(&key) == nil {
+				bookKeys = append(bookKeys, key)
+			}
+		}
+		for _, key := range bookKeys {
+			if _, err := db.Exec(`UPDATE bib_entries SET value = 'proceedings'
+				WHERE entry_key = ? AND field = 'entrytype' AND value = 'book'`, key); err == nil {
+				dbInteraction.Progress("Migrated: fixed entry type for %s: book → proceedings (Springer Lecture Notes series)", key)
+			}
+		}
+	}
+}
+
 // --- entry_warnings table ---
 
 func ensureEntryWarningsTableExists() {

@@ -892,13 +892,11 @@ func (l *TBibTeXLibrary) CheckNoteAccessed(entry *TBibTeXEntry) {
 	l.setEntryField(entry, "note", entry.Fields["note"])
 
 	if existing != "" && existing != isoDate {
-		// Challenge: note says isoDate, but urldate is already a different value.
-		q := fmt.Sprintf("Keep existing urldate %s (y) or replace with %s from note (n)?", existing, isoDate)
-		if l.WarningYesNoQuestion(q, "Entry %s: note Accessed date %s conflicts with urldate %s", entry.Key, isoDate, existing) {
-			entry.Fields["urldate"] = existing // user kept existing — restore in-memory map
-		} else {
+		// Auto-accept the later date: YYYY-MM-DD strings order lexicographically.
+		if isoDate > existing {
 			l.setEntryField(entry, "urldate", isoDate)
 		}
+		// existing >= isoDate: keep existing (already in DB; in-memory map correct).
 		return
 	}
 

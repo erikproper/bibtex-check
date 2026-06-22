@@ -89,6 +89,7 @@ const (
 
 	ProgressFixedParentType                 = "Auto-fixed parent type for %s: %s → %s (required by child %s)"
 	ProgressFixedChildYear                  = "Auto-fixed year for %s: %s → %s (aligned to parent)"
+	ProgressFixedChildType                  = "Auto-fixed child type for %s: %s → %s (parent is proceedings)"
 
 	// Progress reports for reading/writing files"Line in aliases file is too short: %s"
 	ProgressWritingBibFile                 = "Writing bib file %s"

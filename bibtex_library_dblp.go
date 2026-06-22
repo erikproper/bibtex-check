@@ -269,11 +269,17 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 		childType := dblpEntry.Fields[EntryTypeField]
 		if expectedParentType, ok := BibTeXCrossrefType[childType]; ok {
 			currentParentType := l.EntryFieldValueity(resolvedCrossref, EntryTypeField)
-			if currentParentType != "" && currentParentType != expectedParentType &&
-				!l.EntryFieldAliasHasTarget(resolvedCrossref, EntryTypeField, expectedParentType, currentParentType) {
-				l.Progress(ProgressFixedParentType, resolvedCrossref, currentParentType, expectedParentType, key)
-				l.SetEntryFieldValue(resolvedCrossref, EntryTypeField, expectedParentType)
-				l.UpdateEntryFieldAlias(resolvedCrossref, EntryTypeField, currentParentType, expectedParentType)
+			if currentParentType != "" && currentParentType != expectedParentType {
+				if childType == "incollection" && currentParentType == "proceedings" {
+					// DBLP structural error: the parent is correctly proceedings; fix
+					// the child type to inproceedings rather than demoting the parent.
+					l.Progress(ProgressFixedChildType, key, "incollection", "inproceedings")
+					dblpEntry.Fields[EntryTypeField] = "inproceedings"
+				} else if !l.EntryFieldAliasHasTarget(resolvedCrossref, EntryTypeField, expectedParentType, currentParentType) {
+					l.Progress(ProgressFixedParentType, resolvedCrossref, currentParentType, expectedParentType, key)
+					l.SetEntryFieldValue(resolvedCrossref, EntryTypeField, expectedParentType)
+					l.UpdateEntryFieldAlias(resolvedCrossref, EntryTypeField, currentParentType, expectedParentType)
+				}
 			}
 		}
 		parentYear := l.EntryFieldValueity(resolvedCrossref, "year")
