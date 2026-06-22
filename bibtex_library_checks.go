@@ -759,6 +759,7 @@ func (l *TBibTeXLibrary) CheckHowPublishedURL(entry *TBibTeXEntry) {
 // accessedPatternYMD: YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD
 // accessedPatternDMY: DD.MM.YYYY / DD-MM-YYYY / DD/MM/YYYY
 // accessedPatternWords: DD MonthName YYYY  (e.g. "14 June 2013")
+// accessedPatternWordsAmerican: MonthName DD, YYYY  (e.g. "February 24, 2025")
 // All accept an optional "Last " prefix before "Accessed", or the German "abgerufen am".
 // An optional surrounding [...] is consumed so the bracket residue is removed.
 var (
@@ -772,6 +773,10 @@ var (
 	)
 	accessedPatternWords = regexp.MustCompile(
 		accessedPrefix + `(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\.?\s+(\d{4})\s*\]?`,
+	)
+	// accessedPatternWordsAmerican: MonthName DD, YYYY  (e.g. "February 24, 2025")
+	accessedPatternWordsAmerican = regexp.MustCompile(
+		accessedPrefix + `(january|february|march|april|may|june|july|august|september|october|november|december)\.?\s+(\d{1,2}),?\s+(\d{4})\s*\]?`,
 	)
 )
 
@@ -792,6 +797,16 @@ func findAccessedDate(s string) (start, end int, isoDate string) {
 	// DD MonthName YYYY  — try before DMY so "14 June 2013" doesn't partially match DMY
 	if m := accessedPatternWords.FindStringSubmatchIndex(s); m != nil {
 		d, monName, y := s[m[2]:m[3]], strings.ToLower(s[m[4]:m[5]]), s[m[6]:m[7]]
+		if mon, ok := monthNameToNumber[monName]; ok {
+			if len(d) == 1 {
+				d = "0" + d
+			}
+			return m[0], m[1], y + "-" + mon + "-" + d
+		}
+	}
+	// MonthName DD, YYYY  (American order — e.g. "February 24, 2025")
+	if m := accessedPatternWordsAmerican.FindStringSubmatchIndex(s); m != nil {
+		monName, d, y := strings.ToLower(s[m[2]:m[3]]), s[m[4]:m[5]], s[m[6]:m[7]]
 		if mon, ok := monthNameToNumber[monName]; ok {
 			if len(d) == 1 {
 				d = "0" + d
