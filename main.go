@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.4"
+const AppVersion = "26.5"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -613,7 +613,7 @@ func cleanKeys(args []string) []string {
 // name mappings. Called at startup so that name mappings added outside of triage
 // automatically cascade to clean up resolved pairs.
 func retireResolvedAuthorEditorLosers() {
-	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`)
+	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor')`)
 	if err != nil {
 		return
 	}
