@@ -11,7 +11,7 @@
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
- * Version of: 11.05.2026
+ * Version of: 22.06.2026
  *
  */
 
@@ -485,13 +485,78 @@ func (l *TBibTeXLibrary) checkOnePDF(key, fullPath string) string {
 	return ""
 }
 
-// CheckPDFHealth walks the library files folder and performs all PDF checks in
-// one pass: orphaned files (no library entry), duplicate-content detection
-// (via MD5), and PDF health checks (magic bytes, content).
+// isParentChildPair reports whether key1 and key2 form a crossref parent-child pair.
+// Returns (child, parent, true) when one entry's crossref field resolves to the other.
+func (l *TBibTeXLibrary) isParentChildPair(key1, key2 string) (child, parent string, ok bool) {
+	if cr := l.EntryFieldValueity(key1, "crossref"); cr != "" && l.MapEntryKey(cr) == key2 {
+		return key1, key2, true
+	}
+	if cr := l.EntryFieldValueity(key2, "crossref"); cr != "" && l.MapEntryKey(cr) == key1 {
+		return key2, key1, true
+	}
+	return "", "", false
+}
+
+// checkParentChildSharedPDF handles the case where a child entry's PDF has the same
+// content (MD5) as its crossref parent's PDF. The child's PDF is moved to trash.
+// If the child has a URL that is not on the ignore list, a fresh copy is downloaded:
+//   - If it still matches the parent's MD5: the fresh download is discarded, the child's
+//     URL is challenged against the parent's URL (Y/N/y/n to record the equivalence),
+//     and the child's URL field is cleared.
+//   - If it differs from the parent's MD5: it is installed as the child's own PDF.
+func (l *TBibTeXLibrary) checkParentChildSharedPDF(childKey, parentKey string) {
+	filesDir := l.FilesRoot + l.FilesFolder
+	childPath := filesDir + childKey + ".pdf"
+	parentPath := filesDir + parentKey + ".pdf"
+	parentMD5 := MD5ForFile(parentPath)
+
+	if !trashPDF(childPath) {
+		l.Warning("Could not trash shared child PDF for %s.", childKey)
+		return
+	}
+	l.Progress("Trashed shared child PDF for %s (same content as parent %s).", childKey, parentKey)
+
+	childURL := l.EntryFieldValueity(childKey, "url")
+	if childURL == "" || l.URLsIgnore.Contains(childURL) {
+		return
+	}
+
+	tmpPath := filesDir + childKey + ".tmp"
+	l.Progress("Re-downloading PDF for %s.", childKey)
+	if err := downloadPDF(childURL, tmpPath); err != nil {
+		l.Warning("Re-download failed for %s (%s): %s", childKey, childURL, err)
+		os.Remove(tmpPath)
+		return
+	}
+
+	if MD5ForFile(tmpPath) == parentMD5 {
+		os.Remove(tmpPath)
+		parentURL := l.EntryFieldValueity(parentKey, "url")
+		if parentURL != "" && parentURL != childURL {
+			l.ResolveFieldValue(childKey, parentKey, "url", parentURL, childURL)
+		}
+		l.SetEntryFieldValue(childKey, "url", "")
+	} else {
+		if err := os.Rename(tmpPath, childPath); err != nil {
+			l.Warning("Could not install fresh PDF for %s: %s", childKey, err)
+			os.Remove(tmpPath)
+			return
+		}
+		l.Progress("Child %s now has a distinct PDF from parent %s.", childKey, parentKey)
+	}
+}
+
+// CheckPDFHealth walks the library files folder and performs all PDF checks in one pass:
+// orphaned files (no library entry), duplicate-content detection (via MD5), and per-file
+// health checks (magic bytes, content).
 //
 // For each .pdf file:
 //   - No matching library entry → warned as orphaned.
-//   - Duplicate content (same MD5 as another file) → prompts to merge entries.
+//   - Duplicate content (same MD5 as another file):
+//       - Parent-child crossref pair → child PDF is trashed; if child has a URL a fresh
+//         copy is downloaded and compared; if still identical the URL is challenged and
+//         cleared; if different the fresh copy becomes the child's own PDF.
+//       - Other duplicates → interactive w(aive)/m(erge)/s(kip) prompt.
 //   - HTML disguised as PDF → deleted automatically (no prompt).
 //   - PostScript disguised as PDF → converted via ps2pdf, then re-checked.
 //   - Valid PDF with no content (pdftotext + OCR both empty) → interactive prompt.
@@ -556,9 +621,32 @@ func (l *TBibTeXLibrary) CheckPDFHealth() {
 			continue
 		}
 
-		// Skip when every entry in the group has already waived this exact PDF.
+		// Handle parent-child pairs first: child has the same PDF as its crossref parent.
+		sortedKeys := keys.ElementsSorted()
+		handledChildren := TStringSetNew()
+		for i, k1 := range sortedKeys {
+			for _, k2 := range sortedKeys[i+1:] {
+				if child, parent, ok := l.isParentChildPair(k1, k2); ok && !handledChildren.Contains(child) {
+					l.checkParentChildSharedPDF(child, parent)
+					handledChildren.Add(child)
+				}
+			}
+		}
+
+		// Build remaining set — entries not consumed as a child above.
+		remaining := TStringSetNew()
+		for _, k := range sortedKeys {
+			if !handledChildren.Contains(k) {
+				remaining.Add(k)
+			}
+		}
+		if remaining.Size() <= 1 {
+			continue
+		}
+
+		// Skip when every remaining entry has already waived this exact PDF.
 		allWaived := true
-		for key := range keys.Elements() {
+		for key := range remaining.Elements() {
 			if l.GetMetadata(key, MetaPropWaivedDoublePdf) != md5hash {
 				allWaived = false
 				break
@@ -568,14 +656,14 @@ func (l *TBibTeXLibrary) CheckPDFHealth() {
 			continue
 		}
 
-		l.Warning(WarningDuplicateFileContent, keys.String())
+		l.Warning(WarningDuplicateFileContent, remaining.String())
 		switch l.WarningQuestion(QuestionDoublePdfWaive, validAnswers, "") {
 		case "w":
-			for key := range keys.Elements() {
+			for key := range remaining.Elements() {
 				l.SetMetadata(key, MetaPropWaivedDoublePdf, md5hash)
 			}
 		case "m":
-			l.MaybeMergeEntrySet(keys)
+			l.MaybeMergeEntrySet(remaining)
 		}
 	}
 }

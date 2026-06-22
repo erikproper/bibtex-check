@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.57"
+const AppVersion = "25.59"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -823,6 +823,7 @@ func doDefaultRun() {
 func doCheckPDFs() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
+		Library.ReadURLsIgnoreFile()
 		Library.CheckPDFHealth()
 	}
 }
