@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.3"
+const AppVersion = "26.4"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -714,6 +714,10 @@ func doTriageAuthorMappings() {
 		db.Exec(`UPDATE losing_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
 	}
 
+	markSkipped := func(key, field, loser string) {
+		db.Exec(`UPDATE losing_field_values SET triage_status='skipped' WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
+	}
+
 	splitOnAnd := func(value string) []string {
 		parts := strings.Split(value, " and ")
 		var out []string
@@ -809,9 +813,9 @@ outer:
 			if len(diffPos) == 1 {
 				pos := diffPos[0]
 				options := TStringSetNew()
-				options.Add("w", "l", "s", "q")
+				options.Add("w", "l", "e", "s", "q")
 				answer := Library.WarningQuestion(
-					"Map to winner-canonical (w), loser-canonical (l), skip (s), quit (q)?",
+					"Map to winner-canonical (w), loser-canonical (l), edit canonical (e), skip (s), quit (q)?",
 					options,
 					"Entry: %s / field: %s\n  Winner: %s\n  Loser:  %s\n  Pos %d: winner=%q loser=%q",
 					p.key, p.field, winner, p.loser, pos+1, wNames[pos], lNames[pos])
@@ -822,6 +826,15 @@ outer:
 				case "l":
 					Library.AddNameMapping(lNames[pos], wNames[pos])
 					retireLoser(p.key, p.field, p.loser)
+				case "e":
+					canonical, err := Library.AskForInput("Enter canonical name")
+					if err == nil && canonical != "" {
+						Library.AddNameMapping(canonical, wNames[pos])
+						Library.AddNameMapping(canonical, lNames[pos])
+						retireLoser(p.key, p.field, p.loser)
+					}
+				case "s":
+					markSkipped(p.key, p.field, p.loser)
 				case "q":
 					break outer
 				}
@@ -849,8 +862,7 @@ outer:
 			if isSubset(lSet, wSet) || isSubset(wSet, lSet) {
 				markKept(p.key, p.field, p.loser)
 			} else {
-				Library.Warning("Unclassifiable pair for %s %s — flag for manual review\n  Winner: %s\n  Loser:  %s",
-					p.key, p.field, winner, p.loser)
+				markKept(p.key, p.field, p.loser)
 			}
 		}
 
