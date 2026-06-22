@@ -188,4 +188,6 @@ const (
 	WarningEntryFieldMappingWinnerMismatch    = "Entry-field mapping winner mismatch: entry=%s field=%s winner=%q actual=%q"
 	WarningEntryFieldMappingDeletedEntry      = "Entry-field mapping references deleted entry %s — field=%s challenger=%q winner=%q"
 	ProgressEntryFieldMappingWinnersResult    = "Entry-field mapping winner check: %d fixed, %d mapping(s) for deleted entries"
+
+	WarningGenericFieldMappingAuthorEditor = "generic_field_mappings: field %q not allowed (winner=%q, challenger=%q) — use losing_field_values instead"
 )

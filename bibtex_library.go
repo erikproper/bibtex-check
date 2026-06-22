@@ -341,6 +341,11 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 		return
 	}
 
+	if field == "author" || field == "editor" {
+		l.Warning(WarningGenericFieldMappingAuthorEditor, field, target, alias)
+		return
+	}
+
 	if alias == target {
 		return
 	}

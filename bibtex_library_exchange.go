@@ -287,11 +287,25 @@ func importGenericFieldMappingsFromCSV(replace bool) {
 	upsert := `INSERT INTO generic_field_mappings (field, winner, challenger) VALUES (?, ?, ?)
 	             ON CONFLICT(field, challenger) DO UPDATE SET winner = excluded.winner`
 	validate := func(f []string) bool { return len(f) >= 3 && f[0] != "" && f[1] != "" && f[2] != "" }
+	skip := func(f []string) bool {
+		if len(f) < 1 || (f[0] != "author" && f[0] != "editor") {
+			return false
+		}
+		winner, challenger := "", ""
+		if len(f) >= 2 {
+			winner = f[1]
+		}
+		if len(f) >= 3 {
+			challenger = f[2]
+		}
+		dbInteraction.Warning(WarningGenericFieldMappingAuthorEditor, f[0], winner, challenger)
+		return true
+	}
 	var clearFn func()
 	if replace {
 		clearFn = func() { db.Exec(`DELETE FROM generic_field_mappings`) }
 	}
-	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
+	n, ok := importTwoPhaseFiltered(path, skip, validate, clearFn, func(tx *sql.Tx, f []string) {
 		tx.Exec(upsert, f[0], f[1], f[2])
 	})
 	if ok {

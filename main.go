@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.62"
+const AppVersion = "26.1"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -609,6 +609,185 @@ func cleanKeys(args []string) []string {
 
 // --- Command functions ---
 
+// doTriageAuthorMappings interactively reviews all author/editor pairs in losing_field_values.
+// Each pair is classified and resolved: brace-wrap (auto-fixed), name-equal-after-mapping
+// (auto-retired), single-name variant (name-mapping offered), missing-authors (prompt),
+// multi-name variant (kept), or unclassifiable (flagged).
+func doTriageAuthorMappings() {
+	if !openLibraryToUpdate() {
+		return
+	}
+	defer reportHomework()
+
+	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') ORDER BY entry_key, field`)
+	if err != nil {
+		Library.Warning("Could not query losing_field_values: %s", err)
+		return
+	}
+	type triagePair struct{ key, field, loser string }
+	var pairs []triagePair
+	for rows.Next() {
+		var p triagePair
+		if scanErr := rows.Scan(&p.key, &p.field, &p.loser); scanErr == nil {
+			pairs = append(pairs, p)
+		}
+	}
+	rows.Close()
+
+	retireLoser := func(key, field, loser string) {
+		db.Exec(`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
+	}
+
+	splitOnAnd := func(value string) []string {
+		parts := strings.Split(value, " and ")
+		for i, p := range parts {
+			parts[i] = strings.TrimSpace(p)
+		}
+		return parts
+	}
+
+	normalizeName := func(name string) string {
+		if canonical, ok := Library.NameAliasToName[name]; ok {
+			return canonical
+		}
+		return name
+	}
+
+	isBraceWrapped := func(value string) bool {
+		return len(value) >= 2 && value[0] == '{' && value[len(value)-1] == '}' &&
+			strings.Contains(value[1:len(value)-1], " and ")
+	}
+
+	normList := func(names []string) []string {
+		result := make([]string, len(names))
+		for i, n := range names {
+			result[i] = normalizeName(n)
+		}
+		return result
+	}
+
+	sliceEqual := func(a, b []string) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	for _, p := range pairs {
+		winner := Library.EntryFieldValueity(p.key, p.field)
+		if winner == "" {
+			continue
+		}
+
+		// Re-check: a name mapping added during this run may have already equated them.
+		wNames := splitOnAnd(winner)
+		lNames := splitOnAnd(p.loser)
+		if sliceEqual(normList(wNames), normList(lNames)) {
+			retireLoser(p.key, p.field, p.loser)
+			continue
+		}
+
+		// Brace-wrap: either side has outer braces containing " and "
+		if isBraceWrapped(winner) {
+			fixed := winner[1 : len(winner)-1]
+			Library.SetEntryFieldValue(p.key, p.field, fixed)
+			Library.Progress("Auto-fixed brace-wrap for %s %s", p.key, p.field)
+			retireLoser(p.key, p.field, p.loser)
+			continue
+		}
+		if isBraceWrapped(p.loser) {
+			Library.Progress("Auto-retired brace-wrap loser for %s %s", p.key, p.field)
+			retireLoser(p.key, p.field, p.loser)
+			continue
+		}
+
+		normW := normList(wNames)
+		normL := normList(lNames)
+
+		if len(wNames) == len(lNames) {
+			var diffPos []int
+			for i := range normW {
+				if normW[i] != normL[i] {
+					diffPos = append(diffPos, i)
+				}
+			}
+			if len(diffPos) == 0 {
+				retireLoser(p.key, p.field, p.loser)
+				continue
+			}
+			if len(diffPos) == 1 {
+				pos := diffPos[0]
+				options := TStringSetNew()
+				options.Add("w", "l", "s", "q")
+				answer := Library.WarningQuestion(
+					"Map to winner-canonical (w), loser-canonical (l), skip (s), quit (q)?",
+					options,
+					"Entry: %s / field: %s\n  Winner: %s\n  Loser:  %s\n  Pos %d: winner=%q loser=%q",
+					p.key, p.field, winner, p.loser, pos+1, wNames[pos], lNames[pos])
+				switch answer {
+				case "w":
+					Library.AddNameMapping(wNames[pos], lNames[pos])
+					retireLoser(p.key, p.field, p.loser)
+				case "l":
+					Library.AddNameMapping(lNames[pos], wNames[pos])
+					retireLoser(p.key, p.field, p.loser)
+				case "q":
+					return
+				}
+			} else {
+				Library.Progress("Multi-name variant (%d diffs) kept: %s %s", len(diffPos), p.key, p.field)
+			}
+		} else {
+			wSet := make(map[string]bool, len(normW))
+			for _, n := range normW {
+				wSet[n] = true
+			}
+			lSet := make(map[string]bool, len(normL))
+			for _, n := range normL {
+				lSet[n] = true
+			}
+			isSubset := func(smaller, larger map[string]bool) bool {
+				for k := range smaller {
+					if !larger[k] {
+						return false
+					}
+				}
+				return true
+			}
+			if isSubset(lSet, wSet) || isSubset(wSet, lSet) {
+				longer, shorter := winner, p.loser
+				if len(lNames) > len(wNames) {
+					longer, shorter = p.loser, winner
+				}
+				options := TStringSetNew()
+				options.Add("a", "s", "w", "q")
+				answer := Library.WarningQuestion(
+					"Accept longer (a), skip (s), waive/retire (w), quit (q)?",
+					options,
+					"Entry: %s / field: %s\n  Longer:  %s\n  Shorter: %s",
+					p.key, p.field, longer, shorter)
+				switch answer {
+				case "a":
+					Library.SetEntryFieldValue(p.key, p.field, longer)
+					retireLoser(p.key, p.field, p.loser)
+				case "w":
+					retireLoser(p.key, p.field, p.loser)
+				case "q":
+					return
+				}
+			} else {
+				Library.Warning("Unclassifiable pair for %s %s — flag for manual review\n  Winner: %s\n  Loser:  %s",
+					p.key, p.field, winner, p.loser)
+			}
+		}
+	}
+}
+
 // reportHomework prints a summary of remaining work:
 //   - number of title-hash groups that contain at least one unresolved potential
 //     duplicate pair (title-equal, not in non_doubles, no divergent DBLP/DOI evidence)
@@ -715,8 +894,11 @@ func reportHomework() {
 		return true
 	})
 
-	Library.Progress("Homework: %d title group(s) with unresolved duplicate(s), %d entry/ies with unresolved DBLP candidate(s), %d lone proceedings, %d url(s) not yet checked",
-		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked)
+	authorEditorPairs := 0
+	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor')`).Scan(&authorEditorPairs)
+
+	Library.Progress("Homework:\n  %d title group(s) with unresolved duplicate(s)\n  %d entry/ies with unresolved DBLP candidate(s)\n  %d lone proceedings\n  %d url(s) not yet checked\n  %d author/editor value(s) needing triage",
+		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked, authorEditorPairs)
 }
 
 // doFixCandidates interactively links library entries that have no DBLP key yet
@@ -1813,8 +1995,9 @@ func main() {
 		cmdEntryKeyAlias      bool
 		cmdShowEntry          bool
 		cmdFixEntries         bool
-		cmdFixDuplicates  bool // -fix_duplicates: fix entries in unresolved title groups
-		cmdFixCandidates  bool // -fix_candidates: link unmatched entries to DBLP
+		cmdFixDuplicates        bool // -fix_duplicates: fix entries in unresolved title groups
+		cmdFixCandidates        bool // -fix_candidates: link unmatched entries to DBLP
+		cmdTriageAuthorMappings bool // -triage_author_mappings: triage author/editor losing_field_values
 		cmdAddDblpEntry   bool
 		cmdAddDblpEntries bool
 		cmdWatch             bool
@@ -1872,6 +2055,7 @@ func main() {
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
 	flag.BoolVar(&cmdFixDuplicates, "fix_duplicates", false, "interactively resolve title-duplicate pairs in the library")
 	flag.BoolVar(&cmdFixDuplicates, "fix_all_entries", false, "alias for -fix_duplicates")
+	flag.BoolVar(&cmdTriageAuthorMappings, "triage_author_mappings", false, "triage author/editor entries in losing_field_values")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
 	flag.BoolVar(&cmdFixCandidates, "fix_candidates", false, "interactively link library entries without a DBLP key to DBLP records")
 	flag.BoolVar(&cmdFixCandidates, "extend_dblp_coverage", false, "alias for -fix_candidates")
@@ -2120,6 +2304,9 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 
 	case cmdFixDuplicates:
 		doFixDuplicates()
+
+	case cmdTriageAuthorMappings:
+		doTriageAuthorMappings()
 
 	case cmdRestoreKeyHints:
 		doRestoreKeyHints(restoreKeyHintsPath)
