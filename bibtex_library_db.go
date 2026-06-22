@@ -2110,44 +2110,21 @@ func maybeMigrateStripLocalURL() {
 //     LNCS volumes are conference proceedings; classifying them as book causes their
 //     children (inproceedings) to appear as incollection to DBLP importers.
 func maybeMigrateIncollectionTypes() {
-	// Fix 1: incollection → inproceedings when parent is proceedings.
+	// Step 1: book → proceedings for Springer Lecture Notes series entries.
+	// Must run before step 2 so that the newly-converted proceedings parents are
+	// visible when we scan for incollection children.
 	rows, err := db.Query(`
-		SELECT child_type.entry_key
-		FROM bib_entries child_type
-		JOIN bib_entries child_cr  ON child_cr.entry_key  = child_type.entry_key AND child_cr.field  = 'crossref'
-		JOIN bib_entries parent_type ON parent_type.entry_key = child_cr.value   AND parent_type.field = 'entrytype'
-		                                                                          AND parent_type.value = 'proceedings'
-		WHERE child_type.field = 'entrytype' AND child_type.value = 'incollection'`)
-	if err == nil {
-		defer rows.Close()
-		var childKeys []string
-		for rows.Next() {
-			var key string
-			if rows.Scan(&key) == nil {
-				childKeys = append(childKeys, key)
-			}
-		}
-		for _, key := range childKeys {
-			if _, err := db.Exec(`UPDATE bib_entries SET value = 'inproceedings'
-				WHERE entry_key = ? AND field = 'entrytype' AND value = 'incollection'`, key); err == nil {
-				dbInteraction.Progress("Migrated: fixed entry type for %s: incollection → inproceedings (parent is proceedings)", key)
-			}
-		}
-	}
-
-	// Fix 2: book → proceedings for Springer Lecture Notes series entries.
-	rows2, err := db.Query(`
 		SELECT et.entry_key
 		FROM bib_entries et
 		JOIN bib_entries s ON s.entry_key = et.entry_key AND s.field = 'series'    AND LOWER(s.value) LIKE '%lecture notes in%'
 		JOIN bib_entries p ON p.entry_key = et.entry_key AND p.field = 'publisher' AND LOWER(p.value) LIKE '%springer%'
 		WHERE et.field = 'entrytype' AND et.value = 'book'`)
 	if err == nil {
-		defer rows2.Close()
+		defer rows.Close()
 		var bookKeys []string
-		for rows2.Next() {
+		for rows.Next() {
 			var key string
-			if rows2.Scan(&key) == nil {
+			if rows.Scan(&key) == nil {
 				bookKeys = append(bookKeys, key)
 			}
 		}
@@ -2155,6 +2132,32 @@ func maybeMigrateIncollectionTypes() {
 			if _, err := db.Exec(`UPDATE bib_entries SET value = 'proceedings'
 				WHERE entry_key = ? AND field = 'entrytype' AND value = 'book'`, key); err == nil {
 				dbInteraction.Progress("Migrated: fixed entry type for %s: book → proceedings (Springer Lecture Notes series)", key)
+			}
+		}
+	}
+
+	// Step 2: incollection → inproceedings when parent is proceedings.
+	// Catches both DBLP structural errors and children of parents fixed in step 1.
+	rows2, err := db.Query(`
+		SELECT child_type.entry_key
+		FROM bib_entries child_type
+		JOIN bib_entries child_cr    ON child_cr.entry_key    = child_type.entry_key AND child_cr.field    = 'crossref'
+		JOIN bib_entries parent_type ON parent_type.entry_key = child_cr.value       AND parent_type.field = 'entrytype'
+		                                                                              AND parent_type.value = 'proceedings'
+		WHERE child_type.field = 'entrytype' AND child_type.value = 'incollection'`)
+	if err == nil {
+		defer rows2.Close()
+		var childKeys []string
+		for rows2.Next() {
+			var key string
+			if rows2.Scan(&key) == nil {
+				childKeys = append(childKeys, key)
+			}
+		}
+		for _, key := range childKeys {
+			if _, err := db.Exec(`UPDATE bib_entries SET value = 'inproceedings'
+				WHERE entry_key = ? AND field = 'entrytype' AND value = 'incollection'`, key); err == nil {
+				dbInteraction.Progress("Migrated: fixed entry type for %s: incollection → inproceedings (parent is proceedings)", key)
 			}
 		}
 	}
