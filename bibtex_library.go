@@ -27,6 +27,12 @@ import (
  *
  */
 
+// TContributor holds the persistent data for one person (contributor).
+type TContributor struct {
+	Name  string // preferred display name (from contributors.name)
+	ORCID string // ORCID identifier, may be empty
+}
+
 type (
 	// The type for BibTeXLibraries
 	TBibTeXLibrary struct {
@@ -47,6 +53,8 @@ type (
 		KeyIsTemporary                    TStringSet                // Keys that are generated for temporary reasons
 		NameAliasToName                   TStringMap                // Mapping from name aliases to the actual name.
 		NameToAliases                     TStringSetMap             // The inverted version of NameAliasToName
+		NameToContributorID               map[string]string         // any recognized name form → contributor ID
+		ContributorByID                   map[string]*TContributor  // contributor ID → contributor data
 		StateAliasToCanonical             TStringMap                // Mapping from state name aliases to canonical state names.
 		StateToCountry                    TStringMap                // Mapping from canonical state names to canonical country names.
 		CountryAliasToCanonical           TStringMap                // Mapping from country name aliases to canonical country names.
@@ -112,6 +120,8 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.HintToKey = newKeyHintsTable()
 	l.KeyIsTemporary = TStringSetNew()
 	l.NameAliasToName = TStringMap{}
+	l.NameToContributorID = map[string]string{}
+	l.ContributorByID = map[string]*TContributor{}
 	l.StateAliasToCanonical = TStringMap{}
 	l.StateToCountry = TStringMap{}
 	l.CountryAliasToCanonical = TStringMap{}
@@ -527,11 +537,18 @@ func (l *TBibTeXLibrary) maybeAddFoundAlias(canonical, alias string) bool {
 		return false // parentheticals or brace-wrapped/stray-brace tokens are not name variants
 	}
 	if _, exists := l.NameAliasToName[alias]; exists {
+		// Already mapped in-memory; ensure contributor ID is propagated too.
+		if id, ok := l.NameToContributorID[canonical]; ok {
+			l.NameToContributorID[alias] = id
+		}
 		return false
 	}
 	l.NameAliasToName[alias] = canonical
 	l.NameToAliases.AddValueToStringSetMap(canonical, alias)
-	upsertNameMapping(alias, canonical)
+	// Derived aliases are not persisted — only in-memory.
+	if id, ok := l.NameToContributorID[canonical]; ok {
+		l.NameToContributorID[alias] = id
+	}
 	return true
 }
 
@@ -1231,7 +1248,7 @@ func KeyFromTime(KeyTime time.Time) string {
 
 // ////// Place me somehwere
 func (l *TBibTeXLibrary) IsKnownKey(key string) bool {
-	return bibEntryExists(key) || l.KeyOldies.Has(key)
+	return bibEntryExists(key) || l.KeyOldies.Has(key) || contributorIDExists(key)
 }
 
 // Generate a new key based on the ForwardKeyTime.

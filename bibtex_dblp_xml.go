@@ -1152,6 +1152,162 @@ func doUpdateDblp() {
 	cleanupDblpXmlFiles()
 }
 
+// swapBibTeXNameFormat converts between the two BibTeX name orderings:
+//   - "ss, ff"      ↔  "ff ss"
+//   - "ss, gg, ff"  ↔  "ff ss, gg"
+//
+// Returns "" when the input has no ", " separator (natural-order with unknown surname).
+func swapBibTeXNameFormat(name string) string {
+	parts := strings.SplitN(name, ", ", 3)
+	switch len(parts) {
+	case 2:
+		return parts[1] + " " + parts[0]
+	case 3:
+		return parts[2] + " " + parts[0] + ", " + parts[1]
+	}
+	return ""
+}
+
+// parseSurnameGeneration extracts the surname and optional generation from a
+// surname-first BibTeX name ("ss, ff" or "ss, gg, ff").
+// "de Boer, Remco C."      → ("de Boer", "")
+// "King, Jr., Martin Luther" → ("King", "Jr.")
+func parseSurnameGeneration(surnameFirstName string) (surname, generation string) {
+	parts := strings.SplitN(surnameFirstName, ", ", 3)
+	switch len(parts) {
+	case 2:
+		return parts[0], ""
+	case 3:
+		return parts[0], parts[1]
+	}
+	return "", ""
+}
+
+// naturalOrderToSurnameFirst converts "ff ss" → "ss, ff" and "ff ss, gg" → "ss, gg, ff"
+// using the known surname and optional generation from the DBLP canonical.
+// Returns "" when the alias does not end with the expected surname.
+func naturalOrderToSurnameFirst(alias, surname, generation string) string {
+	if surname == "" {
+		return ""
+	}
+	// Form 1: "ff ss, gg" with known generation
+	if generation != "" && strings.HasSuffix(alias, " "+surname+", "+generation) {
+		fn := strings.TrimSuffix(alias, " "+surname+", "+generation)
+		if strings.TrimSpace(fn) == "" {
+			return ""
+		}
+		return surname + ", " + generation + ", " + fn
+	}
+	// Form 2: "ff ss"
+	if strings.HasSuffix(alias, " "+surname) {
+		fn := strings.TrimSuffix(alias, " "+surname)
+		if strings.TrimSpace(fn) == "" {
+			return ""
+		}
+		return surname + ", " + fn
+	}
+	return ""
+}
+
+// doAbsorbDblpNames streams the stored DBLP XML, extracts the www-based name
+// variant→canonical map, and feeds each person's names into the library's
+// name_mappings table via AddNameMapping. Format variants (surname-first ↔
+// natural-order) are generated so that existing library mappings in either
+// ordering are merged into the DBLP canonical before adding the DBLP aliases.
+// A final RenormaliseNameFields pass applies all new mappings to stored entries.
+func doAbsorbDblpNames() {
+	if !openLibraryToUpdate() {
+		return
+	}
+	xmlFilename := readDblpCurrentXML()
+	if xmlFilename == "" {
+		Library.Error("No DBLP import on record; run -load_dblp_xml first.")
+		return
+	}
+	xmlGzPath := dblpFolder() + xmlFilename
+	if !FileExists(xmlGzPath) {
+		Library.Error("DBLP XML file not found: %s", xmlGzPath)
+		return
+	}
+	f, err := os.Open(xmlGzPath)
+	if err != nil {
+		Library.Error("Cannot open DBLP XML: %s", err)
+		return
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		f.Close()
+		Library.Error("Cannot read DBLP XML gzip: %s", err)
+		return
+	}
+
+	Library.Progress("Building DBLP name map from %s ...", xmlFilename)
+	nameMap, err := dblpBuildNameMap(gz)
+	gz.Close()
+	f.Close()
+	if err != nil {
+		Library.Warning("DBLP name map build partial: %s", err)
+	}
+	Library.Progress("  %d DBLP name variant→canonical pairs found.", len(nameMap))
+
+	// Group aliases by their DBLP canonical.
+	groups := make(map[string][]string) // canonicalLaTeX → []aliasLaTeX
+	for rawAlias, rawCanonical := range nameMap {
+		aliasLaTeX := dblpPersonNameToLaTeX(rawAlias)
+		canonicalLaTeX := dblpPersonNameToLaTeX(rawCanonical)
+		if aliasLaTeX == "" || canonicalLaTeX == "" || aliasLaTeX == canonicalLaTeX {
+			continue
+		}
+		groups[canonicalLaTeX] = append(groups[canonicalLaTeX], aliasLaTeX)
+	}
+
+	// mergeIfKnown absorbs an existing contributor whose name matches form into
+	// the contributor identified by dblpCanonical. Uses NameToContributorID for
+	// O(1) lookup across both canonical and alias forms.
+	mergeIfKnown := func(dblpCanonical, form string) {
+		if form == "" || form == dblpCanonical {
+			return
+		}
+		if existingID, ok := Library.NameToContributorID[form]; ok {
+			existingCanonical := Library.ContributorByID[existingID].Name
+			if existingCanonical != dblpCanonical {
+				Library.AddNameMapping(dblpCanonical, existingCanonical)
+			}
+		}
+	}
+
+	absorbed := 0
+	for canonicalLaTeX, aliases := range groups {
+		surname, generation := parseSurnameGeneration(canonicalLaTeX)
+		naturalCanonical := swapBibTeXNameFormat(canonicalLaTeX)
+
+		// Merge any existing library group whose name is a format variant of the canonical.
+		mergeIfKnown(canonicalLaTeX, naturalCanonical)
+
+		// Merge existing library groups whose name is a format variant of any alias.
+		for _, alias := range aliases {
+			mergeIfKnown(canonicalLaTeX, alias)
+			mergeIfKnown(canonicalLaTeX, swapBibTeXNameFormat(alias))
+			mergeIfKnown(canonicalLaTeX, naturalOrderToSurnameFirst(alias, surname, generation))
+		}
+
+		// Add the natural-order canonical form as an alias (bridges both orderings).
+		if naturalCanonical != "" && naturalCanonical != canonicalLaTeX {
+			Library.AddNameMapping(canonicalLaTeX, naturalCanonical)
+		}
+
+		// Add all DBLP aliases.
+		for _, alias := range aliases {
+			Library.AddNameMapping(canonicalLaTeX, alias)
+			absorbed++
+		}
+	}
+	Library.Progress("Absorbed %d DBLP name mappings.", absorbed)
+
+	Library.Progress("Re-normalising author/editor fields...")
+	Library.RenormaliseNameFields()
+}
+
 // cleanupDblpXmlFiles removes all but the two most recent dblp-*.xml.gz files
 // from dblpFolder(). Called only after a successful import.
 func cleanupDblpXmlFiles() {

@@ -58,11 +58,18 @@ func init() {
 			ExportStateCountries, func() { importStateCountriesFromCSV(true) },
 			func(l *TBibTeXLibrary) { cascadeRenormaliseFields(l, "address") }},
 
-		// Name normalisation
-		{"name_mappings", NameMappingsFilePath,
-			ExportNameMappings, func() { importNameMappingsFromCSV(true) },
+		// Contributor identity and name-alias tables (replace legacy name_mappings).
+		// contributors must be imported before contributor_names (FK dependency).
+		{"contributors", ContributorsFilePath,
+			ExportContributors, func() { importContributorsFromCSV(true) },
 			func(l *TBibTeXLibrary) {
-				loadNameMappingsFromDb(l)
+				loadContributorsFromDb(l)
+				cascadeRenormaliseFields(l, "author", "editor")
+			}},
+		{"contributor_names", ContributorNamesFilePath,
+			ExportContributorNames, func() { importContributorNamesFromCSV(true) },
+			func(l *TBibTeXLibrary) {
+				loadContributorsFromDb(l)
 				cascadeRenormaliseFields(l, "author", "editor")
 			}},
 

@@ -1557,7 +1557,7 @@ func (l *TBibTeXLibrary) CheckEntries() {
 // -import_name_mappings / -add_name_mappings to apply new mappings immediately
 // without requiring a separate bib.check run (§11.3 cascade).
 func (l *TBibTeXLibrary) RenormaliseNameFields() {
-	loadNameMappingsFromDb(l)
+	loadContributorsFromDb(l)
 	l.CheckNameMappingConsistency()
 
 	total := countBibEntries()

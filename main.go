@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.6"
+const AppVersion = "26.9"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2137,6 +2137,7 @@ func main() {
 		cmdFixDuplicates        bool // -fix_duplicates: fix entries in unresolved title groups
 		cmdFixCandidates        bool // -fix_candidates: link unmatched entries to DBLP
 		cmdTriageAuthorMappings bool // -triage_author_mappings: triage author/editor losing_field_values
+		cmdAbsorbDblpNames      bool // -absorb_dblp_names: absorb www-based name mappings from DBLP XML
 		cmdAddDblpEntry   bool
 		cmdAddDblpEntries bool
 		cmdWatch             bool
@@ -2195,6 +2196,7 @@ func main() {
 	flag.BoolVar(&cmdFixDuplicates, "fix_duplicates", false, "interactively resolve title-duplicate pairs in the library")
 	flag.BoolVar(&cmdFixDuplicates, "fix_all_entries", false, "alias for -fix_duplicates")
 	flag.BoolVar(&cmdTriageAuthorMappings, "triage_author_mappings", false, "triage author/editor entries in losing_field_values")
+	flag.BoolVar(&cmdAbsorbDblpNames, "absorb_dblp_names", false, "absorb www-based name variant→canonical mappings from the stored DBLP XML")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
 	flag.BoolVar(&cmdFixCandidates, "fix_candidates", false, "interactively link library entries without a DBLP key to DBLP records")
 	flag.BoolVar(&cmdFixCandidates, "extend_dblp_coverage", false, "alias for -fix_candidates")
@@ -2446,6 +2448,9 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 
 	case cmdTriageAuthorMappings:
 		doTriageAuthorMappings()
+
+	case cmdAbsorbDblpNames:
+		doAbsorbDblpNames()
 
 	case cmdRestoreKeyHints:
 		doRestoreKeyHints(restoreKeyHintsPath)

@@ -172,6 +172,73 @@ func importNameMappingsFromCSV(replace bool) {
 	importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, rowCount)
 }
 
+// ── contributors ─────────────────────────────────────────────────────────────
+// CSV format: id;name;orcid  (orcid may be empty)
+
+func ExportContributors() {
+	ensureTablesDir()
+	path := tablesFilePath(ContributorsFilePath)
+	rows, err := db.Query(`SELECT id, name, COALESCE(orcid, '') FROM contributors ORDER BY id`)
+	if err != nil {
+		dbInteraction.Warning("Could not query contributors: %s", err)
+		return
+	}
+	defer rows.Close()
+	writeCSVExport(path, rows, 3)
+}
+
+func importContributorsFromCSV(replace bool) {
+	path := tablesFilePath(ContributorsFilePath)
+	upsert := `INSERT INTO contributors (id, name, orcid) VALUES (?, ?, ?)
+	             ON CONFLICT(id) DO UPDATE SET name = excluded.name, orcid = excluded.orcid`
+	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
+	var clearFn func()
+	if replace {
+		clearFn = func() { db.Exec(`DELETE FROM contributors`) } //nolint:errcheck
+	}
+	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
+		orcid := ""
+		if len(f) >= 3 {
+			orcid = f[2]
+		}
+		tx.Exec(upsert, f[0], f[1], orcid) //nolint:errcheck
+	})
+	if ok {
+		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
+	}
+}
+
+// ── contributor_names ─────────────────────────────────────────────────────────
+// CSV format: id;name
+
+func ExportContributorNames() {
+	ensureTablesDir()
+	path := tablesFilePath(ContributorNamesFilePath)
+	rows, err := db.Query(`SELECT id, name FROM contributor_names ORDER BY id, name`)
+	if err != nil {
+		dbInteraction.Warning("Could not query contributor_names: %s", err)
+		return
+	}
+	defer rows.Close()
+	writeCSVExport(path, rows, 2)
+}
+
+func importContributorNamesFromCSV(replace bool) {
+	path := tablesFilePath(ContributorNamesFilePath)
+	insert := `INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`
+	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
+	var clearFn func()
+	if replace {
+		clearFn = func() { db.Exec(`DELETE FROM contributor_names`) } //nolint:errcheck
+	}
+	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
+		tx.Exec(insert, f[0], f[1]) //nolint:errcheck
+	})
+	if ok {
+		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
+	}
+}
+
 // ── key_hints ────────────────────────────────────────────────────────────────
 // CSV format: key;hint  (elements[0]=key, elements[1]=hint)
 

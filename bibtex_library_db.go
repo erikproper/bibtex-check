@@ -54,6 +54,7 @@ var (
 	fieldMappingsLoading        bool  // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
 	entryFieldMappingsLoading   bool  // suppresses DB write-through in AddEntryFieldAlias during initial load
 	nameMappingsLoading         bool  // suppresses DB write-through in name-mapping mutations during initial load
+	contributorsLoading         bool  // suppresses DB write-through while loading contributors table
 )
 
 // dbExecSave executes a DB statement during the end-of-run save phase. On error it
@@ -428,6 +429,8 @@ func connectToDatabase() {
 	maybeMigrateFilterTableNames()
 	maybeConsolidateEntryFlags()
 	ensureNameMappingsTableExists()
+	ensureContributorsTableExists()
+	ensureContributorNamesTableExists()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
@@ -495,6 +498,8 @@ func reopenDb(path string) {
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
 	ensureNameMappingsTableExists()
+	ensureContributorsTableExists()
+	ensureContributorNamesTableExists()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
@@ -1212,6 +1217,56 @@ func tryCreateTableIfNeeded(command string) {
 // (fieldMappingsLoading, entryFieldMappingsLoading) to suppress the write-
 // through during the initial DB→memory population pass.
 
+// --- contributors + contributor_names tables ---
+
+func ensureContributorsTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS contributors (
+		  id    TEXT PRIMARY KEY,
+		  name  TEXT NOT NULL,
+		  orcid TEXT
+		);`)
+}
+
+func ensureContributorNamesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS contributor_names (
+		  id   TEXT NOT NULL,
+		  name TEXT NOT NULL,
+		  PRIMARY KEY (id, name),
+		  FOREIGN KEY (id) REFERENCES contributors(id) ON DELETE CASCADE
+		);`)
+}
+
+func contributorIDExists(id string) bool {
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM contributors WHERE id = ?`, id).Scan(&n) //nolint:errcheck
+	return n > 0
+}
+
+func upsertContributorToDB(id, name, orcid string) {
+	if err := bibExec(`INSERT INTO contributors (id, name, orcid) VALUES (?, ?, ?)
+	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name, orcid = COALESCE(excluded.orcid, orcid)`,
+		id, name, orcid); err != nil {
+		dbInteraction.Warning("contributors upsert failed: %s", err)
+		dbWriteFailed = true
+	}
+}
+
+func upsertContributorNameToDB(id, name string) {
+	if err := bibExec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, id, name); err != nil {
+		dbInteraction.Warning("contributor_names upsert failed: %s", err)
+		dbWriteFailed = true
+	}
+}
+
+func deleteContributorNameFromDB(id, name string) {
+	if err := bibExec(`DELETE FROM contributor_names WHERE id = ? AND name = ?`, id, name); err != nil {
+		dbInteraction.Warning("contributor_names delete failed: %s", err)
+		dbWriteFailed = true
+	}
+}
+
 // --- name_mappings table ---
 
 func ensureNameMappingsTableExists() {
@@ -1222,31 +1277,37 @@ func ensureNameMappingsTableExists() {
 		);`)
 }
 
-// upsertNameMapping writes a single alias → name pair to the DB. Suppressed
-// during initial load (nameMappingsLoading) so bulk load does not generate O(n)
-// individual writes.
+// upsertNameMapping records alias as a non-derived name form for the contributor
+// whose canonical name is `name`. Suppressed during load. If no contributor
+// exists yet for `name` a new one is created on the fly.
 func upsertNameMapping(alias, name string) {
-	if nameMappingsLoading {
+	if contributorsLoading {
 		return
 	}
 	if alias == name {
 		return
 	}
-	if err := bibExec(`INSERT INTO name_mappings (alias, name) VALUES (?, ?)
-	                    ON CONFLICT(alias) DO UPDATE SET name = excluded.name`, alias, name); err != nil {
-		dbInteraction.Warning("name_mappings upsert failed: %s", err)
-		dbWriteFailed = true
+	id, ok := Library.NameToContributorID[name]
+	if !ok {
+		id = Library.NewKey()
+		Library.ContributorByID[id] = &TContributor{Name: name}
+		Library.NameToContributorID[name] = id
+		upsertContributorToDB(id, name, "")
+		upsertContributorNameToDB(id, name)
 	}
+	upsertContributorNameToDB(id, alias)
+	Library.NameToContributorID[alias] = id
 }
 
-// deleteNameMapping removes a single alias from the DB. Suppressed during load.
+// deleteNameMapping removes a non-derived name form from the contributor
+// identified by alias. Suppressed during load.
 func deleteNameMapping(alias string) {
-	if nameMappingsLoading {
+	if contributorsLoading {
 		return
 	}
-	if err := bibExec(`DELETE FROM name_mappings WHERE alias = ?`, alias); err != nil {
-		dbInteraction.Warning("name_mappings delete failed: %s", err)
-		dbWriteFailed = true
+	if id, ok := Library.NameToContributorID[alias]; ok {
+		deleteContributorNameFromDB(id, alias)
+		delete(Library.NameToContributorID, alias)
 	}
 }
 
@@ -1286,6 +1347,176 @@ func loadNameMappingsFromDb(l *TBibTeXLibrary) {
 	canonicals := map[string]bool{}
 	for _, p := range pairs {
 		canonicals[p.name] = true
+	}
+	for canonical := range canonicals {
+		l.FindAliases(canonical, canonical)
+	}
+}
+
+// maybeMigrateNameMappingsToContributors runs once when the contributors table
+// is empty but name_mappings has data. It creates one contributor per unique
+// canonical name in name_mappings, writes the canonical and all its aliases to
+// contributor_names, then drops the name_mappings table. Subsequent starts use
+// loadContributorsFromDb exclusively.
+func maybeMigrateNameMappingsToContributors(l *TBibTeXLibrary) {
+	// Skip when contributors already has data.
+	var n int
+	db.QueryRow(`SELECT COUNT(*) FROM contributors`).Scan(&n) //nolint:errcheck
+	if n > 0 {
+		return
+	}
+
+	// Check whether name_mappings exists and has data.
+	rows, err := db.Query(`SELECT alias, name FROM name_mappings`)
+	if err != nil {
+		return // table gone or empty — nothing to migrate
+	}
+	type pair struct{ alias, name string }
+	var pairs []pair
+	for rows.Next() {
+		var alias, name string
+		if err := rows.Scan(&alias, &name); err != nil {
+			continue
+		}
+		pairs = append(pairs, pair{alias, name})
+	}
+	rows.Close()
+	if len(pairs) == 0 {
+		return
+	}
+
+	dbInteraction.Progress("Migrating name_mappings → contributors / contributor_names...")
+
+	// Build canonical → []aliases map.
+	canonicalAliases := map[string][]string{}
+	for _, p := range pairs {
+		if p.alias != p.name {
+			canonicalAliases[p.name] = append(canonicalAliases[p.name], p.alias)
+		}
+	}
+
+	// Create one contributor per canonical.
+	for canonical, aliases := range canonicalAliases {
+		id := l.NewKey()
+		l.ContributorByID[id] = &TContributor{Name: canonical}
+		l.NameToContributorID[canonical] = id
+		upsertContributorToDB(id, canonical, "")
+		upsertContributorNameToDB(id, canonical)
+		for _, alias := range aliases {
+			upsertContributorNameToDB(id, alias)
+			l.NameToContributorID[alias] = id
+		}
+	}
+
+	// Drop name_mappings.
+	db.Exec(`DROP TABLE IF EXISTS name_mappings`) //nolint:errcheck
+	dbInteraction.Progress("  Migration complete: %d contributors created.", len(canonicalAliases))
+}
+
+// derivableNameForms returns the complete set of name forms derivable from
+// baseNames via the two name-alias rules (inversion + compressed initials),
+// applied transitively. Forms that equal a member of baseNames are excluded so
+// the result represents only the derived aliases, never the bases themselves.
+func derivableNameForms(baseNames []string) map[string]bool {
+	derived := map[string]bool{}
+	var expand func(name string)
+	expand = func(name string) {
+		for _, form := range []string{invertedNameForm(name), compressedInitialsForm(name)} {
+			if form != "" && !derived[form] {
+				derived[form] = true
+				expand(form)
+			}
+		}
+	}
+	for _, name := range baseNames {
+		expand(name)
+	}
+	for _, name := range baseNames {
+		delete(derived, name) // bases are not "derived from" themselves
+	}
+	return derived
+}
+
+// loadContributorsFromDb replaces loadNameMappingsFromDb. It reads the
+// contributors and contributor_names tables, builds NameAliasToName,
+// NameToAliases, NameToContributorID, and ContributorByID, then prunes any
+// derivable name forms from contributor_names (so the table converges to only
+// non-derivable base forms over successive runs).
+func loadContributorsFromDb(l *TBibTeXLibrary) {
+	contributorsLoading = true
+	defer func() { contributorsLoading = false }()
+
+	// Load contributor metadata.
+	rows, err := db.Query(`SELECT id, name, COALESCE(orcid, '') FROM contributors`)
+	if err != nil {
+		dbInteraction.Warning("Could not query contributors: %s", err)
+		return
+	}
+	for rows.Next() {
+		var id, name, orcid string
+		if err := rows.Scan(&id, &name, &orcid); err != nil {
+			dbInteraction.Warning("Could not scan contributors row: %s", err)
+			continue
+		}
+		l.ContributorByID[id] = &TContributor{Name: name, ORCID: orcid}
+	}
+	rows.Close()
+
+	// Load contributor_names grouped by contributor ID.
+	nameRows, err := db.Query(`SELECT id, name FROM contributor_names`)
+	if err != nil {
+		dbInteraction.Warning("Could not query contributor_names: %s", err)
+		return
+	}
+	namesPerID := map[string][]string{}
+	for nameRows.Next() {
+		var id, name string
+		if err := nameRows.Scan(&id, &name); err != nil {
+			dbInteraction.Warning("Could not scan contributor_names row: %s", err)
+			continue
+		}
+		namesPerID[id] = append(namesPerID[id], name)
+	}
+	nameRows.Close()
+
+	// For each contributor: clean up derivable stored forms, build in-memory maps.
+	type pair struct{ alias, canonical string }
+	var pairs []pair
+	for id, names := range namesPerID {
+		c, ok := l.ContributorByID[id]
+		if !ok {
+			continue
+		}
+		canonical := c.Name
+
+		// Find and remove derivable forms from contributor_names.
+		derivable := derivableNameForms(names)
+		for _, name := range names {
+			if derivable[name] && name != canonical {
+				deleteContributorNameFromDB(id, name)
+				continue
+			}
+			// Non-derivable: populate in-memory maps.
+			l.NameToContributorID[name] = id
+			if name != canonical {
+				pairs = append(pairs, pair{alias: name, canonical: canonical})
+			}
+		}
+		l.NameToContributorID[canonical] = id
+	}
+
+	// Build NameAliasToName / NameToAliases from the base (non-derivable) pairs.
+	for _, p := range pairs {
+		l.AddAlias(p.alias, p.canonical, &l.NameAliasToName, &l.NameToAliases, true)
+	}
+
+	// Derive additional in-memory aliases via FindAliases.
+	for _, p := range pairs {
+		l.FindAliases(p.canonical, p.alias)
+	}
+	canonicals := map[string]bool{}
+	for _, p := range pairs {
+		canonicals[p.canonical] = true
 	}
 	for canonical := range canonicals {
 		l.FindAliases(canonical, canonical)
