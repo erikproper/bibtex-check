@@ -619,7 +619,7 @@ func doTriageAuthorMappings() {
 	}
 	defer reportHomework()
 
-	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') ORDER BY entry_key, field`)
+	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
 	if err != nil {
 		Library.Warning("Could not query losing_field_values: %s", err)
 		return
@@ -636,6 +636,10 @@ func doTriageAuthorMappings() {
 
 	retireLoser := func(key, field, loser string) {
 		db.Exec(`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
+	}
+
+	markKept := func(key, field, loser string) {
+		db.Exec(`UPDATE losing_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
 	}
 
 	splitOnAnd := func(value string) []string {
@@ -678,11 +682,16 @@ func doTriageAuthorMappings() {
 		return true
 	}
 
+	stepN := int(cmdStep)
+	questionCounter := 0
+outer:
 	for _, p := range pairs {
 		winner := Library.EntryFieldValueity(p.key, p.field)
 		if winner == "" {
 			continue
 		}
+
+		Library.ResetQuestionFlag()
 
 		// Re-check: a name mapping added during this run may have already equated them.
 		wNames := splitOnAnd(winner)
@@ -737,10 +746,11 @@ func doTriageAuthorMappings() {
 					Library.AddNameMapping(lNames[pos], wNames[pos])
 					retireLoser(p.key, p.field, p.loser)
 				case "q":
-					return
+					break outer
 				}
 			} else {
 				Library.Progress("Multi-name variant (%d diffs) kept: %s %s", len(diffPos), p.key, p.field)
+				markKept(p.key, p.field, p.loser)
 			}
 		} else {
 			wSet := make(map[string]bool, len(normW))
@@ -760,29 +770,20 @@ func doTriageAuthorMappings() {
 				return true
 			}
 			if isSubset(lSet, wSet) || isSubset(wSet, lSet) {
-				longer, shorter := winner, p.loser
-				if len(lNames) > len(wNames) {
-					longer, shorter = p.loser, winner
-				}
-				options := TStringSetNew()
-				options.Add("a", "s", "w", "q")
-				answer := Library.WarningQuestion(
-					"Accept longer (a), skip (s), waive/retire (w), quit (q)?",
-					options,
-					"Entry: %s / field: %s\n  Longer:  %s\n  Shorter: %s",
-					p.key, p.field, longer, shorter)
-				switch answer {
-				case "a":
-					Library.SetEntryFieldValue(p.key, p.field, longer)
-					retireLoser(p.key, p.field, p.loser)
-				case "w":
-					retireLoser(p.key, p.field, p.loser)
-				case "q":
-					return
-				}
+				markKept(p.key, p.field, p.loser)
 			} else {
 				Library.Warning("Unclassifiable pair for %s %s — flag for manual review\n  Winner: %s\n  Loser:  %s",
 					p.key, p.field, winner, p.loser)
+			}
+		}
+
+		if stepN > 0 && Library.QuestionWasAsked() {
+			questionCounter++
+			if questionCounter >= stepN {
+				if Library.AskContinueOrQuit() {
+					break outer
+				}
+				questionCounter = 0
 			}
 		}
 	}
@@ -895,7 +896,7 @@ func reportHomework() {
 	})
 
 	authorEditorPairs := 0
-	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor')`).Scan(&authorEditorPairs)
+	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&authorEditorPairs)
 
 	Library.Progress("Homework:\n  %d title group(s) with unresolved duplicate(s)\n  %d entry/ies with unresolved DBLP candidate(s)\n  %d lone proceedings\n  %d url(s) not yet checked\n  %d author/editor value(s) needing triage",
 		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked, authorEditorPairs)

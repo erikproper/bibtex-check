@@ -2039,12 +2039,15 @@ func saveEntryMetadataToDb(l *TBibTeXLibrary) {
 func ensureLosingFieldValuesTableExists() {
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS losing_field_values (
-		  entry_key TEXT NOT NULL,
-		  field     TEXT NOT NULL,
-		  value     TEXT NOT NULL,
+		  entry_key     TEXT NOT NULL,
+		  field         TEXT NOT NULL,
+		  value         TEXT NOT NULL,
+		  triage_status TEXT,
 		  PRIMARY KEY (entry_key, field, value),
 		  FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE
 		);`)
+	// Add triage_status to databases created before this column existed.
+	db.Exec(`ALTER TABLE losing_field_values ADD COLUMN triage_status TEXT`) //nolint:errcheck
 }
 
 // maybeMigrateToLosingFieldValues copies challengers from the legacy

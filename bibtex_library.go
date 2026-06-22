@@ -561,12 +561,23 @@ func (l *TBibTeXLibrary) FindAliases(canonical, currentAlias string) bool {
 
 // AddNameMapping makes alias an alias of canonical, absorbing the alias's
 // existing canonical group (if any) into canonical.
-// If canonical is itself an alias of another name, the call is redirected to
-// that name's canonical so the mapping graph stays acyclic.
+// If canonical is itself an alias of another name the call is normally redirected
+// to that name's canonical to keep the graph acyclic. Exception: when canonical is
+// currently an alias of alias (a direct inversion), we detach canonical first so
+// the intended direction takes effect.
 func (l *TBibTeXLibrary) AddNameMapping(canonical, alias string) {
 	if existingCanonical, isMapped := l.NameAliasToName[canonical]; isMapped {
-		l.AddNameMapping(existingCanonical, alias)
-		return
+		if existingCanonical == alias {
+			// Inversion: canonical is currently an alias of alias; detach it so
+			// we can re-canonicalise canonical and absorb alias's group into it.
+			delete(l.NameAliasToName, canonical)
+			l.NameToAliases.DeleteValueFromStringSetMap(alias, canonical)
+			deleteNameMapping(canonical)
+			// fall through to normal processing
+		} else {
+			l.AddNameMapping(existingCanonical, alias)
+			return
+		}
 	}
 
 	// If alias is currently a canonical, absorb all its aliases into canonical.
