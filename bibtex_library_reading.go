@@ -165,7 +165,7 @@ func (l *TBibTeXLibrary) ReadKeyHintsFile() {
 
 func (l *TBibTeXLibrary) ReadKeyNonDoublesFile() {
 	loadKeyNonDoublesFromDb(l)
-	l.Progress("Key non-doubles: %d entries", len(l.NonDoubles))
+	l.Progress("Key non-doubles: %d entries", len(l.NonDoubleEntries))
 }
 
 func (l *TBibTeXLibrary) ReadDblpParentFile() {

@@ -45,7 +45,8 @@ type (
 		//		BookTitleIndex                   TStringSetMap             //
 		ISBNIndex                         TStringSetMap             //
 		DOIIndex                          TStringSetMap             //
-		NonDoubles                        TStringSetMap             //
+		NonDoubleEntries                   TStringSetMap             //
+		NonDoubleContributorNames         map[[2]string]bool        //
 		HintToKey   *TCachedTable[string, string] // persistent hint→key mappings (DBLP-derived hints are transient)
 		newKeyHints TStringMap                   // counts persistent hints added in the current run (for harvest reporting)
 		KeyOldies   *TKeyAliasTable              // alias→canonical key mappings; always flat, eagerly updated
@@ -115,7 +116,8 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	//	l.BookTitleIndex = TStringSetMap{}
 	l.ISBNIndex = TStringSetMap{}
 	l.DOIIndex = TStringSetMap{}
-	l.NonDoubles = TStringSetMap{}
+	l.NonDoubleEntries = TStringSetMap{}
+	l.NonDoubleContributorNames = map[[2]string]bool{}
 	l.KeyOldies = newKeyOldiesTable()
 	l.HintToKey = newKeyHintsTable()
 	l.KeyIsTemporary = TStringSetNew()
@@ -743,7 +745,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 
 			if !l.KeyIsTemporary.Contains(source) {
 				l.AddKeyAlias(source, target)
-				l.AddNonDoubles(source, target)
+				l.AddNonDoubleEntries(source, target)
 				// Rename source PDF to target name so the file stays associated.
 				l.mergePDFFile(source, target)
 			}
@@ -877,14 +879,14 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 	target := l.MapEntryKey(targetRAW)
 
 	if l.EntryExists(source) && l.EntryExists(target) {
-		if source != target && !l.NonDoubles[source].Set().Contains(target) {
+		if source != target && !l.NonDoubleEntries[source].Set().Contains(target) {
 			if l.PreMergeCheck != nil {
 				l.PreMergeCheck(source, target)
 				source = l.MapEntryKey(source)
 				target = l.MapEntryKey(target)
 			}
 		}
-		if source != target && !l.NonDoubles[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
+		if source != target && !l.NonDoubleEntries[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
 			l.Warning("Found potential double entries")
 
 			sourceEntry := l.entryDisplayString(source)
@@ -901,7 +903,7 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 			if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
 				l.MergeEntries(source, target)
 			} else {
-				l.AddNonDoubles(source, target)
+				l.AddNonDoubleEntries(source, target)
 			}
 		}
 	}
@@ -1484,26 +1486,26 @@ func (l *TBibTeXLibrary) resolveNonDoubleKey(rawKey string) string {
 	return ""
 }
 
-// nonDoublesLoadingFromDb suppresses write-through in AddNonDoubles while
+// nonDoublesLoadingFromDb suppresses write-through in AddNonDoubleEntries while
 // loadKeyNonDoublesFromDb is populating in-memory state from an already-current DB.
 var nonDoublesLoadingFromDb bool
 
-func (l *TBibTeXLibrary) AddNonDoubles(a, b string) {
+func (l *TBibTeXLibrary) AddNonDoubleEntries(a, b string) {
 	a = l.MapEntryKey(a)
 	b = l.MapEntryKey(b)
 	if a == b {
 		return
 	}
-	existing := l.NonDoubles[a]
+	existing := l.NonDoubleEntries[a]
 	if existing.Contains(b) {
 		return
 	}
 
 	s := TStringSet{}
-	s.Initialise().Add(a, b).Unite(existing).Unite(l.NonDoubles[b])
+	s.Initialise().Add(a, b).Unite(existing).Unite(l.NonDoubleEntries[b])
 
 	for c := range s.Elements() {
-		l.NonDoubles[c] = s
+		l.NonDoubleEntries[c] = s
 	}
 	// Write-through so Ctrl-C or step-limit exits cannot lose a dismissal decision.
 	// Writes all pairs in the transitive set (not just the directly-added pair) so
@@ -1574,7 +1576,7 @@ func (l *TBibTeXLibrary) ResolveVariationSet(list []string) []string {
 				if !l.EntryExists(f) || e == f {
 					continue
 				}
-				if l.NonDoubles[e].Set().Contains(f) {
+				if l.NonDoubleEntries[e].Set().Contains(f) {
 					continue
 				}
 				if l.ContentEqual(e, f) && !l.EvidenceForBeingDifferentEntries(e, f) {

@@ -303,15 +303,15 @@ func importKeyOldiesFromCSV(replace bool) {
 	}
 }
 
-// ── key_non_doubles ──────────────────────────────────────────────────────────
+// ── non_double_entries ──────────────────────────────────────────────────────────
 // CSV format: key1;key2
 
 func ExportKeyNonDoubles() {
 	ensureTablesDir()
 	path := tablesFilePath(KeyNonDoublesFilePath)
-	rows, err := db.Query(`SELECT key1, key2 FROM key_non_doubles ORDER BY key1, key2`)
+	rows, err := db.Query(`SELECT key1, key2 FROM non_double_entries ORDER BY key1, key2`)
 	if err != nil {
-		dbInteraction.Warning("Could not query key_non_doubles: %s", err)
+		dbInteraction.Warning("Could not query non_double_entries: %s", err)
 		return
 	}
 	defer rows.Close()
@@ -320,11 +320,11 @@ func ExportKeyNonDoubles() {
 
 func importKeyNonDoublesFromCSV(replace bool) {
 	path := tablesFilePath(KeyNonDoublesFilePath)
-	insert := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT(key1, key2) DO NOTHING`
+	insert := `INSERT INTO non_double_entries (key1, key2) VALUES (?, ?) ON CONFLICT(key1, key2) DO NOTHING`
 	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM key_non_doubles`) }
+		clearFn = func() { db.Exec(`DELETE FROM non_double_entries`) }
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		tx.Exec(insert, f[0], f[1])
@@ -850,7 +850,7 @@ func ImportAllCSVExchangeFiles() bool {
 		{"name_mappings", tablesFilePath(NameMappingsFilePath), importNameMappingsFromCSV},
 		{"key_hints", tablesFilePath(KeyHintsFilePath), importKeyHintsFromCSV},
 		{"key_oldies", tablesFilePath(KeyOldiesFilePath), importKeyOldiesFromCSV},
-		{"key_non_doubles", tablesFilePath(KeyNonDoublesFilePath), importKeyNonDoublesFromCSV},
+		{"non_double_entries", tablesFilePath(KeyNonDoublesFilePath), importKeyNonDoublesFromCSV},
 		{"generic_field_mappings", tablesFilePath(GenericFieldMappingsFilePath), importGenericFieldMappingsFromCSV},
 		{"losing_field_values", tablesFilePath(LosingFieldValuesFilePath), importLosingFieldValuesFromCSV},
 		{"cross_field_mappings", tablesFilePath(CrossFieldMappingsFilePath), importCrossFieldMappingsFromCSV},

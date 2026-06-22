@@ -434,6 +434,7 @@ func connectToDatabase() {
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
+	ensureNonDoubleContributorNamesTableExists()
 	ensureDblpParentTableExists()
 	ensureDblpWaivedTableExists()
 	ensureDblpCanonicalTableExists()
@@ -503,6 +504,7 @@ func reopenDb(path string) {
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
+	ensureNonDoubleContributorNamesTableExists()
 	ensureDblpParentTableExists()
 	ensureDblpWaivedTableExists()
 	ensureDblpCanonicalTableExists()
@@ -1206,7 +1208,7 @@ func tryCreateTableIfNeeded(command string) {
 //
 //  5. cross_field_mappings: source-field → target-field value propagation.
 //
-//  6. key_hints, key_oldies, key_non_doubles: key alias tables.
+//  6. key_hints, key_oldies, non_double_entries: key alias tables.
 //
 //  7. dblp_parent, dblp_waived, entry_flags: DBLP-related tables.
 //
@@ -1708,25 +1710,35 @@ func newKeyOldiesTable() *TKeyAliasTable {
 	}
 }
 
-// --- key_non_doubles table ---
+// --- non_double_entries table ---
+
+func maybeMigrateKeyNonDoublesToNonDoubleEntries() {
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='key_non_doubles'`).Scan(&count); err != nil || count == 0 {
+		return
+	}
+	db.Exec(`INSERT OR IGNORE INTO non_double_entries SELECT key1, key2 FROM key_non_doubles`) //nolint:errcheck
+	db.Exec(`DROP TABLE key_non_doubles`)                                                       //nolint:errcheck
+}
 
 func ensureKeyNonDoublesTableExists() {
 	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS key_non_doubles (
+		CREATE TABLE IF NOT EXISTS non_double_entries (
 		  key1 TEXT NOT NULL,
 		  key2 TEXT NOT NULL,
 		  PRIMARY KEY (key1, key2)
 		);`)
+	maybeMigrateKeyNonDoublesToNonDoubleEntries()
 }
 
-// loadKeyNonDoublesFromDb populates l.NonDoubles from the DB.
+// loadKeyNonDoublesFromDb populates l.NonDoubleEntries from the DB.
 // Stale pairs (unknown or aliased keys) are deleted from the DB immediately.
 // Alias-resolved pairs are updated to their canonical form in the DB.
 // Unimported DBLP: keys are kept as-is for future matching.
 func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT key1, key2 FROM key_non_doubles`)
+	rows, err := db.Query(`SELECT key1, key2 FROM non_double_entries`)
 	if err != nil {
-		dbInteraction.Warning("Could not query key_non_doubles: %s", err)
+		dbInteraction.Warning("Could not query non_double_entries: %s", err)
 		return
 	}
 	type rawPair struct{ k1, k2 string }
@@ -1734,7 +1746,7 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 	for rows.Next() {
 		var key1, key2 string
 		if err := rows.Scan(&key1, &key2); err != nil {
-			dbInteraction.Warning("Could not scan key_non_doubles row: %s", err)
+			dbInteraction.Warning("Could not scan non_double_entries row: %s", err)
 			continue
 		}
 		pairs = append(pairs, rawPair{key1, key2})
@@ -1744,8 +1756,8 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 	nonDoublesLoadingFromDb = true
 	defer func() { nonDoublesLoadingFromDb = false }()
 
-	deleteSQL := `DELETE FROM key_non_doubles WHERE key1 = ? AND key2 = ?`
-	upsertSQL := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
+	deleteSQL := `DELETE FROM non_double_entries WHERE key1 = ? AND key2 = ?`
+	upsertSQL := `INSERT INTO non_double_entries (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
 
 	for _, p := range pairs {
 		r1 := l.resolveNonDoubleKey(p.k1)
@@ -1759,7 +1771,7 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 			db.Exec(upsertSQL, r1, r2)     //nolint:errcheck
 			db.Exec(upsertSQL, r2, r1)     //nolint:errcheck
 		}
-		l.AddNonDoubles(r1, r2)
+		l.AddNonDoubleEntries(r1, r2)
 	}
 }
 
@@ -1767,12 +1779,12 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 // Pairs where one or both keys are unimported DBLP: keys are preserved alongside
 // normal library-entry pairs.
 func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
-	dbExecSave("Could not clear key_non_doubles", `DELETE FROM key_non_doubles;`)
-	insert := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING;`
+	dbExecSave("Could not clear non_double_entries", `DELETE FROM non_double_entries;`)
+	insert := `INSERT INTO non_double_entries (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING;`
 	isValidNonDoubleKey := func(k string) bool {
 		return k == l.MapEntryKey(k) && (l.EntryExists(k) || strings.HasPrefix(k, "DBLP:"))
 	}
-	for key, set := range l.NonDoubles {
+	for key, set := range l.NonDoubleEntries {
 		if !isValidNonDoubleKey(key) {
 			continue
 		}
@@ -1783,10 +1795,130 @@ func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
 			if l.EntryExists(key) && l.EntryExists(nonDouble) && l.EvidenceForBeingDifferentEntries(key, nonDouble) {
 				continue
 			}
-			dbExecSave("key_non_doubles insert failed", insert, key, nonDouble)
+			dbExecSave("non_double_entries insert failed", insert, key, nonDouble)
 		}
 	}
-	setTableDate("key_non_doubles", time.Now().UnixMicro())
+	setTableDate("non_double_entries", time.Now().UnixMicro())
+}
+
+// --- non_double_contributor_names table ---
+
+func ensureNonDoubleContributorNamesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS non_double_contributor_names (
+		  name1 TEXT NOT NULL,
+		  name2 TEXT NOT NULL,
+		  PRIMARY KEY (name1, name2),
+		  CHECK (name1 < name2)
+		);`)
+}
+
+// loadNonDoubleContributorNamesFromDb populates l.NonDoubleContributorNames.
+func loadNonDoubleContributorNamesFromDb(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT name1, name2 FROM non_double_contributor_names`)
+	if err != nil {
+		dbInteraction.Warning("Could not query non_double_contributor_names: %s", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n1, n2 string
+		if err := rows.Scan(&n1, &n2); err != nil {
+			continue
+		}
+		l.NonDoubleContributorNames[[2]string{n1, n2}] = true
+	}
+}
+
+// addNonDoubleContributorNamePair records that name1 and name2 refer to different
+// persons. The pair is stored with name1 < name2 (lexicographic) to match the
+// CHECK constraint.
+func addNonDoubleContributorNamePair(l *TBibTeXLibrary, name1, name2 string) {
+	if name1 > name2 {
+		name1, name2 = name2, name1
+	}
+	if name1 == name2 {
+		return
+	}
+	key := [2]string{name1, name2}
+	if l.NonDoubleContributorNames[key] {
+		return
+	}
+	l.NonDoubleContributorNames[key] = true
+	db.Exec(`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, name1, name2) //nolint:errcheck
+}
+
+// isNonDoubleContributorNamePair returns true if name1 and name2 are recorded as
+// referring to different persons.
+func isNonDoubleContributorNamePair(l *TBibTeXLibrary, name1, name2 string) bool {
+	if name1 > name2 {
+		name1, name2 = name2, name1
+	}
+	return l.NonDoubleContributorNames[[2]string{name1, name2}]
+}
+
+// maybeMigrateSkippedToNonDoubleContributorNames seeds non_double_contributor_names
+// from losing_field_values rows that were skipped during triage. For each skipped
+// author/editor pair, the single differing name position is extracted and recorded.
+// Migrated rows are updated to triage_status='kept'.
+func maybeMigrateSkippedToNonDoubleContributorNames(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE triage_status='skipped' AND field IN ('author','editor')`)
+	if err != nil {
+		return
+	}
+	type skippedPair struct{ key, field, loser string }
+	var pairs []skippedPair
+	for rows.Next() {
+		var p skippedPair
+		if rows.Scan(&p.key, &p.field, &p.loser) == nil {
+			pairs = append(pairs, p)
+		}
+	}
+	rows.Close()
+	if len(pairs) == 0 {
+		return
+	}
+
+	splitOnAnd := func(v string) []string {
+		var out []string
+		for _, p := range strings.Split(v, " and ") {
+			p = strings.TrimSpace(p)
+			lc := strings.ToLower(p)
+			if lc != "others" && lc != "et.al." && lc != "et al." {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+
+	migrated := 0
+	for _, p := range pairs {
+		winner := l.EntryFieldValueity(p.key, p.field)
+		if winner == "" {
+			continue
+		}
+		wNames := splitOnAnd(winner)
+		lNames := splitOnAnd(p.loser)
+		if len(wNames) != len(lNames) {
+			continue
+		}
+		var diffPos []int
+		for i := range wNames {
+			if wNames[i] != lNames[i] {
+				diffPos = append(diffPos, i)
+			}
+		}
+		if len(diffPos) != 1 {
+			continue
+		}
+		pos := diffPos[0]
+		addNonDoubleContributorNamePair(l, wNames[pos], lNames[pos])
+		db.Exec(`UPDATE losing_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.loser) //nolint:errcheck
+		migrated++
+	}
+	if migrated > 0 {
+		dbInteraction.Progress("Migrated %d skipped triage pairs to non_double_contributor_names.", migrated)
+	}
 }
 
 // --- dblp_parent table ---
@@ -2907,9 +3039,9 @@ func repairDirtyMappingTables() (nameMappingsRepaired, entryFieldMappingsRepaire
 		}
 	}
 
-	// key_non_doubles: "key1;key2"
-	if repair("key_non_doubles", base+KeyNonDoublesFilePath) {
-		rows, err := db.Query(`SELECT key1, key2 FROM key_non_doubles`)
+	// non_double_entries: "key1;key2"
+	if repair("non_double_entries", base+KeyNonDoublesFilePath) {
+		rows, err := db.Query(`SELECT key1, key2 FROM non_double_entries`)
 		if err == nil {
 			var lines []string
 			for rows.Next() {
@@ -2920,7 +3052,7 @@ func repairDirtyMappingTables() (nameMappingsRepaired, entryFieldMappingsRepaire
 			}
 			rows.Close()
 			if writeRepairCSV(base+KeyNonDoublesFilePath, lines) {
-				finishRepair("key_non_doubles")
+				finishRepair("non_double_entries")
 			}
 		}
 	}

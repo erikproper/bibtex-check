@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.12"
+const AppVersion = "26.14"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -364,7 +364,7 @@ func findLibraryEqualWithDblp(key string) bool {
 		if Library.EntryFieldValueity(peer, DBLPField) == "" {
 			continue
 		}
-		if Library.NonDoubles[mappedKey].Set().Contains(peer) {
+		if Library.NonDoubleEntries[mappedKey].Set().Contains(peer) {
 			continue
 		}
 		if Library.EvidenceForBeingDifferentEntries(mappedKey, peer) {
@@ -439,7 +439,7 @@ func maybeFindDBLPCandidatesExcluding(key string, extraExclusions TStringSet) bo
 		return false
 	}
 	allCandidates := readDblpTitleLinks(hash)
-	existing := Library.NonDoubles[key]
+	existing := Library.NonDoubleEntries[key]
 	entryYear, hasYear := dblpFilterYear(key)
 	var candidates []string
 	var yearFiltered []string
@@ -448,7 +448,7 @@ func maybeFindDBLPCandidatesExcluding(key string, extraExclusions TStringSet) bo
 			continue
 		}
 		if extraExclusions.Contains(c) {
-			Library.AddNonDoubles(key, KeyForDBLP(c))
+			Library.AddNonDoubleEntries(key, KeyForDBLP(c))
 			continue
 		}
 		if !dblpCandidateInYearRange(c, entryYear, hasYear) {
@@ -461,7 +461,7 @@ func maybeFindDBLPCandidatesExcluding(key string, extraExclusions TStringSet) bo
 		// All remaining candidates were rejected by the year filter. Auto-dismiss
 		// them into non-doubles so the homework count stops counting this entry.
 		for _, c := range yearFiltered {
-			Library.AddNonDoubles(key, KeyForDBLP(c))
+			Library.AddNonDoubleEntries(key, KeyForDBLP(c))
 		}
 		if len(yearFiltered) > 0 {
 			flushWorkingDbToHome()
@@ -494,7 +494,7 @@ func maybeFindDBLPCandidatesExcluding(key string, extraExclusions TStringSet) bo
 	chosen := Library.AskCandidateDblpKey(key, candidates)
 	if chosen == "" {
 		for _, c := range candidates {
-			Library.AddNonDoubles(key, KeyForDBLP(c))
+			Library.AddNonDoubleEntries(key, KeyForDBLP(c))
 			extraExclusions.Add(c)
 		}
 		flushWorkingDbToHome()
@@ -739,6 +739,9 @@ func doTriageAuthorMappings() {
 	}
 	defer reportHomework()
 
+	maybeMigrateSkippedToNonDoubleContributorNames(&Library)
+	loadNonDoubleContributorNamesFromDb(&Library)
+
 	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
 	if err != nil {
 		Library.Warning("Could not query losing_field_values: %s", err)
@@ -760,10 +763,6 @@ func doTriageAuthorMappings() {
 
 	markKept := func(key, field, loser string) {
 		db.Exec(`UPDATE losing_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
-	}
-
-	markSkipped := func(key, field, loser string) {
-		db.Exec(`UPDATE losing_field_values SET triage_status='skipped' WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
 	}
 
 	splitOnAnd := func(value string) []string {
@@ -860,6 +859,10 @@ outer:
 			}
 			if len(diffPos) == 1 {
 				pos := diffPos[0]
+				if isNonDoubleContributorNamePair(&Library, wNames[pos], lNames[pos]) {
+					markKept(p.key, p.field, p.loser)
+					continue
+				}
 				options := TStringSetNew()
 				options.Add("w", "l", "e", "s", "q")
 				answer := Library.WarningQuestion(
@@ -882,7 +885,8 @@ outer:
 						retireLoser(p.key, p.field, p.loser)
 					}
 				case "s":
-					markSkipped(p.key, p.field, p.loser)
+					addNonDoubleContributorNamePair(&Library, wNames[pos], lNames[pos])
+					markKept(p.key, p.field, p.loser)
 				case "q":
 					break outer
 				}
@@ -947,7 +951,7 @@ func reportHomework() {
 		groupUnresolved := false
 		for i, a := range canonicals {
 			for _, b := range canonicals[i+1:] {
-				if Library.NonDoubles[a].Set().Contains(b) {
+				if Library.NonDoubleEntries[a].Set().Contains(b) {
 					continue
 				}
 				if Library.EvidenceForBeingDifferentEntries(a, b) {
@@ -977,7 +981,7 @@ func reportHomework() {
 		if hash == "" {
 			return true
 		}
-		existing := Library.NonDoubles[key]
+		existing := Library.NonDoubleEntries[key]
 		for _, c := range readDblpTitleLinks(hash) {
 			if !existing.Set().Contains(KeyForDBLP(c)) {
 				dblpCandidates++
@@ -1570,7 +1574,7 @@ func doFixEntries(args []string) {
 func hasUnresolvedPairs(canonicals []string) bool {
 	for i, a := range canonicals {
 		for _, b := range canonicals[i+1:] {
-			if Library.NonDoubles[a].Set().Contains(b) {
+			if Library.NonDoubleEntries[a].Set().Contains(b) {
 				continue
 			}
 			if Library.EvidenceForBeingDifferentEntries(a, b) {

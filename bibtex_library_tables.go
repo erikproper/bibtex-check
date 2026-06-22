@@ -114,7 +114,7 @@ func init() {
 			ExportKeyHints, func() { importKeyHintsFromCSV(true) }, nil},
 		{"key_oldies", KeyOldiesFilePath,
 			ExportKeyOldies, func() { importKeyOldiesFromCSV(true) }, nil},
-		{"key_non_doubles", KeyNonDoublesFilePath,
+		{"non_double_entries", KeyNonDoublesFilePath,
 			ExportKeyNonDoubles, func() { importKeyNonDoublesFromCSV(true) }, nil},
 
 		// DBLP overrides and flags (no cascade)
