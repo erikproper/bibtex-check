@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.5"
+const AppVersion = "26.6"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -289,6 +289,7 @@ func openLibraryToUpdate() bool {
 		Library.CheckDblpWaivedConsistency()
 		Library.CheckEntryFieldMappingWinners()
 	}
+	normalizeAuthorEditorEntryFields()
 	retireResolvedAuthorEditorLosers()
 	return true
 }
@@ -606,6 +607,53 @@ func cleanKeys(args []string) []string {
 		}
 	}
 	return result
+}
+
+// normalizeAuthorEditorEntryFields applies current name mappings to all stored author/editor
+// field values in bib_entries. Any entry whose stored value contains at least one mapped alias
+// is updated in-place; the old value is recorded as a loser in losing_field_values.
+// Called at startup so that name mappings added between runs are immediately propagated.
+func normalizeAuthorEditorEntryFields() {
+	if len(Library.NameAliasToName) == 0 {
+		return
+	}
+
+	rows, err := db.Query(`SELECT entry_key, field, value FROM bib_entries WHERE field IN ('author', 'editor')`)
+	if err != nil {
+		return
+	}
+	type fieldRow struct{ key, field, value string }
+	var fields []fieldRow
+	for rows.Next() {
+		var r fieldRow
+		if rows.Scan(&r.key, &r.field, &r.value) == nil {
+			fields = append(fields, r)
+		}
+	}
+	rows.Close()
+
+	updated := 0
+	for _, r := range fields {
+		parts := strings.Split(r.value, " and ")
+		changed := false
+		for i, name := range parts {
+			name = strings.TrimSpace(name)
+			if canonical, ok := Library.NameAliasToName[name]; ok {
+				parts[i] = canonical
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		newValue := strings.Join(parts, " and ")
+		db.Exec(`INSERT INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, r.key, r.field, r.value) //nolint:errcheck
+		Library.SetEntryFieldValue(r.key, r.field, newValue)
+		updated++
+	}
+	if updated > 0 {
+		Library.Progress("Normalized %d author/editor field(s) via name mappings", updated)
+	}
 }
 
 // retireResolvedAuthorEditorLosers deletes losing_field_values rows for author/editor
