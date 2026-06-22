@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "25.61"
+const AppVersion = "25.62"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -248,7 +248,6 @@ func openLibraryToUpdate() bool {
 	maybeMigrateTableConstraints()
 	maybeMigrateToLosingFieldValues()
 	maybeMigrateStripLocalURL()
-	maybeMigrateIncollectionTypes()
 	preCheckRepair()
 	maybeMigrateToFKSchema()
 	initialiseLibrary()
