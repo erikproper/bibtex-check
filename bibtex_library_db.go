@@ -1494,6 +1494,38 @@ func loadContributorsFromDb(l *TBibTeXLibrary) {
 	}
 }
 
+// splitBibNameField splits a BibTeX author/editor value on " and " at brace
+// depth 0, so that protected groups such as "{Butler and Bloor}" are kept
+// intact as a single token. Empty tokens are omitted.
+func splitBibNameField(s string) []string {
+	const sep = " and "
+	var result []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ' ':
+			if depth == 0 && len(s)-i >= len(sep) && s[i:i+len(sep)] == sep {
+				if t := strings.TrimSpace(s[start:i]); t != "" {
+					result = append(result, t)
+				}
+				i += len(sep) - 1
+				start = i + 1
+			}
+		}
+	}
+	if t := strings.TrimSpace(s[start:]); t != "" {
+		result = append(result, t)
+	}
+	return result
+}
+
 // seedContributorsFromEntries ensures that every author/editor name currently
 // stored in bib_entries has a corresponding contributor record. Names already
 // reachable via NameToContributorID (exact stored or canonical match) or via
@@ -1516,14 +1548,10 @@ func seedContributorsFromEntries(l *TBibTeXLibrary) {
 		if rows.Scan(&value) != nil {
 			continue
 		}
-		for _, raw := range strings.Split(value, " and ") {
-			name := strings.TrimSpace(raw)
+		for _, name := range splitBibNameField(value) {
 			lc := strings.ToLower(name)
-			if name == "" || lc == "others" || lc == "et.al." || lc == "et al." {
+			if lc == "others" || lc == "et.al." || lc == "et al." {
 				continue
-			}
-			if strings.HasPrefix(name, "{") {
-				continue // brace-wrapped: organisation name, skip
 			}
 			if _, ok := l.NameToContributorID[name]; ok {
 				continue // already a known contributor or registered derived form
