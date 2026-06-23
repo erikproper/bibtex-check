@@ -96,11 +96,15 @@ func hasGarbledName(names string) bool {
 //   - s contains "} {" (stray closing brace from invertedNameForm output,
 //     e.g. "Jr. J. A.} {Bubenko")
 //
-// This deliberately does NOT flag valid TeX encoding such as B{\"o}hm or
-// {\c c} where braces wrap a single command sequence.
+// A leading { is only a stray brace when the first group's content contains a comma
+// (whole-name wrapping, e.g. {Bubenko, Jr. J. A.}) or is empty. TeX accent groups
+// such as {\"O}, {\c c}, {\AA} have no comma inside and are not flagged.
 func hasStrayBrace(s string) bool {
 	if strings.HasPrefix(s, "{") {
-		return true
+		closingBrace := strings.Index(s, "}")
+		if closingBrace <= 1 || strings.Contains(s[1:closingBrace], ",") {
+			return true
+		}
 	}
 	return strings.Contains(s, "} {")
 }

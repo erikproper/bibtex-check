@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.29"
+const AppVersion = "26.30"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -865,33 +865,18 @@ outer:
 					markKept(p.key, p.field, p.loser)
 					continue
 				}
-				options := TStringSetNew()
-				options.Add("w", "l", "e", "s", "q")
-				answer := Library.WarningQuestion(
-					"Map to winner-canonical (w), loser-canonical (l), edit canonical (e), skip (s), quit (q)?",
-					options,
-					"Entry: %s / field: %s\n  Winner: %s\n  Loser:  %s\n  Pos %d: winner=%q loser=%q",
-					p.key, p.field, winner, p.loser, pos+1, wNames[pos], lNames[pos])
-				switch answer {
-				case "w":
-					Library.AddNameMapping(wNames[pos], lNames[pos])
-					retireLoser(p.key, p.field, p.loser)
-				case "l":
-					Library.AddNameMapping(lNames[pos], wNames[pos])
-					retireLoser(p.key, p.field, p.loser)
-				case "e":
-					canonical, err := Library.AskForInput("Enter canonical name")
-					if err == nil && canonical != "" {
-						Library.AddNameMapping(canonical, wNames[pos])
-						Library.AddNameMapping(canonical, lNames[pos])
-						retireLoser(p.key, p.field, p.loser)
-					}
-				case "s":
-					addNonDoubleContributorNamePair(&Library, wNames[pos], lNames[pos])
-					markKept(p.key, p.field, p.loser)
-				case "q":
+				Library.Progress("Entry: %s / field: %s\n  Winner: %s\n  Loser:  %s", p.key, p.field, winner, p.loser)
+				resultName, quit, mapped := Library.resolveNamePair(p.key, p.field, pos+1, len(wNames), 1, 1, wNames[pos], lNames[pos])
+				if quit {
 					break outer
 				}
+				if mapped {
+					retireLoser(p.key, p.field, p.loser)
+				} else {
+					addNonDoubleContributorNamePair(&Library, wNames[pos], lNames[pos])
+					markKept(p.key, p.field, p.loser)
+				}
+				_ = resultName
 			} else {
 				Library.Progress("Multi-name variant (%d diffs) kept: %s %s", len(diffPos), p.key, p.field)
 				markKept(p.key, p.field, p.loser)

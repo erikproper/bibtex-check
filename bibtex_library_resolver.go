@@ -238,14 +238,54 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	return current
 }
 
-// resolveAuthorBreakdown interactively resolves per-name differences in an author/editor
-// challenge. Returns the resolved author string, or "" when breakdown is not possible
-// because the two sides have different author counts (caller should fall back to keeping current).
+// resolveNamePair interactively resolves a single differing name position in an
+// author/editor field. winnerName is the preferred/current form; loserName is the
+// challenger/incoming form. namePos and nameTotal give position context for display.
 //
-// For each differing name position the user is offered:
-//   y — keep the current name at this position
-//   n — accept the challenger's name at this position
-//   m — add a global name mapping (challenger → current) and keep the current name
+// Returns:
+//   resultName — canonical name to use at this position (winnerName when quit or skipped)
+//   quit       — user pressed q; caller should abort its enclosing loop
+//   mapped     — a name mapping was recorded (triage may retire the losing_field_values row;
+//                breakdown uses the new resultName)
+//
+// The "s" (skip) case returns (winnerName, false, false): no mapping, no quit. Triage callers
+// should add a non-double contributor pair entry for the skipped pair; breakdown callers
+// simply keep the current name.
+func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, diffIdx, diffTotal int, winnerName, loserName string) (resultName string, quit bool, mapped bool) {
+	options := TStringSetNew()
+	options.Add("w", "l", "e", "s", "q")
+	answer := l.WarningQuestion(
+		"Map to winner-canonical (w), loser-canonical (l), edit canonical (e), skip (s), quit (q)?",
+		options,
+		"Name %d of %d (difference %d of %d) for entry %s field %s:\n  Winner: %s\n  Loser:  %s",
+		namePos, nameTotal, diffIdx, diffTotal, key, field, winnerName, loserName)
+	switch answer {
+	case "w":
+		l.AddNameMapping(winnerName, loserName)
+		return winnerName, false, true
+	case "l":
+		l.AddNameMapping(loserName, winnerName)
+		return loserName, false, true
+	case "e":
+		canonical, err := l.AskForInput("Enter canonical name")
+		if err == nil && canonical != "" {
+			l.AddNameMapping(canonical, winnerName)
+			l.AddNameMapping(canonical, loserName)
+			return canonical, false, true
+		}
+		return winnerName, false, false
+	case "s":
+		return winnerName, false, false
+	case "q":
+		return winnerName, true, false
+	}
+	return winnerName, false, false
+}
+
+// resolveAuthorBreakdown interactively resolves per-name differences in an author/editor
+// challenge using resolveNamePair for each differing position. Returns the resolved author
+// string, or "" when breakdown is not possible because the two sides have different author
+// counts (caller should fall back to keeping current).
 func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current string) string {
 	challengeNames := splitBibNameField(challenge)
 	currentNames := splitBibNameField(current)
@@ -268,22 +308,13 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 
 	resultNames := make([]string, len(currentNames))
 	copy(resultNames, currentNames)
-
 	total := len(challengeNames)
+
 	for diffIdx, i := range diffPositions {
-		options := TStringSetNew()
-		options.Add("y", "n", "m")
-		warning := "Name %d of %d (difference %d of %d) for entry %s field %s:\n- Challenger: %s\n- Current   : %s"
-		question := "Keep current (y), take challenger (n), or map challenger→current globally (m)?"
-		answer := l.WarningQuestion(question, options, warning,
-			i+1, total, diffIdx+1, len(diffPositions), key, field,
-			challengeNames[i], currentNames[i])
-		switch answer {
-		case "n":
-			resultNames[i] = challengeNames[i]
-		case "m":
-			l.AddNameMapping(currentNames[i], challengeNames[i])
-		// "y": keep resultNames[i] = currentNames[i]
+		resultName, quit, _ := l.resolveNamePair(key, field, i+1, total, diffIdx+1, len(diffPositions), currentNames[i], challengeNames[i])
+		resultNames[i] = resultName
+		if quit {
+			break
 		}
 	}
 
