@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // ── Table registry ────────────────────────────────────────────────────────────
@@ -189,9 +190,15 @@ func exportMdatePath(csvPath string) string { return csvPath + ".mdate" }
 
 // isExportCurrent returns true when the CSV file exists and its accompanying
 // .mdate file records the same modification timestamp as the DB table, meaning
-// nothing has changed since the last export.
+// nothing has changed since the last export. A table with no tracked modification
+// time (tableModTime == 0) is always considered out of date so it gets exported
+// and stamped on the next run.
 func isExportCurrent(csvPath, tableName string) bool {
 	if _, err := os.Stat(csvPath); err != nil {
+		return false
+	}
+	modTime := tableModTime(tableName)
+	if modTime == 0 {
 		return false
 	}
 	data, err := os.ReadFile(exportMdatePath(csvPath))
@@ -202,13 +209,21 @@ func isExportCurrent(csvPath, tableName string) bool {
 	if _, err := fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &fileTime); err != nil {
 		return false
 	}
-	return fileTime == tableModTime(tableName)
+	return fileTime == modTime
 }
 
 // writeExportMdate writes the current DB modification timestamp for tableName
 // alongside the exported CSV so that the next export can skip it when unchanged.
+// When the table has no tracked modification time yet (tableModTime == 0), a
+// timestamp is recorded now so future changes detected via setTableDate will
+// trigger re-exports correctly.
 func writeExportMdate(csvPath, tableName string) {
-	data := fmt.Sprintf("%d\n", tableModTime(tableName))
+	modTime := tableModTime(tableName)
+	if modTime == 0 {
+		modTime = time.Now().UnixMicro()
+		setTableDate(tableName, modTime)
+	}
+	data := fmt.Sprintf("%d\n", modTime)
 	if err := os.WriteFile(exportMdatePath(csvPath), []byte(data), 0644); err != nil {
 		dbInteraction.Warning("Could not write export mdate %s: %s", exportMdatePath(csvPath), err)
 	}

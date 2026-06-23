@@ -284,6 +284,14 @@ func (t *TBibTeXTeX) CollectTeXToken(token *string, isOfferedProtection bool, ne
 				*nextIsTokenOfSubTitle = false
 			}
 
+			// Stray delimiter guard: if no element was collected but the stream is
+			// not at a singleton or EOS, the current character is a delimiter (e.g.
+			// a stray '}' from garbled input) that blocks all element collectors.
+			// Advance one character to prevent an infinite loop.
+			if len(*token) == 0 && !t.EndOfStream() && !t.ThisCharacterIsIn(TeXSingletons) {
+				t.NextCharacter()
+			}
+
 			// Punctuated-acronym detection: when the token so far is a sequence of
 			// single uppercase letters separated by '.' (e.g. "U" or "U.S"), consume
 			// the '.' into the token and continue. The final '.' is absorbed so it

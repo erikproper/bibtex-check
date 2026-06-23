@@ -426,6 +426,9 @@ func connectToDatabase() {
 	maybeConsolidateEntryFlags()
 	ensureContributorsTableExists()
 	ensureContributorNamesTableExists()
+	ensureContributorRolesTableExists()
+	ensureEntryContributorNamesTableExists()
+	ensureNonDoubleContributorsTableExists()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
@@ -495,6 +498,9 @@ func reopenDb(path string) {
 	maybeMigrateFilterTableNames()
 	ensureContributorsTableExists()
 	ensureContributorNamesTableExists()
+	ensureContributorRolesTableExists()
+	ensureEntryContributorNamesTableExists()
+	ensureNonDoubleContributorsTableExists()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
@@ -1231,6 +1237,38 @@ func ensureContributorNamesTableExists() {
 		  name TEXT NOT NULL,
 		  PRIMARY KEY (id, name),
 		  FOREIGN KEY (id) REFERENCES contributors(id) ON DELETE CASCADE
+		);`)
+}
+
+func ensureContributorRolesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS contributor_roles (
+		  entry_key      TEXT    NOT NULL REFERENCES bib_entries(entry_key),
+		  role           TEXT    NOT NULL,
+		  position       INTEGER NOT NULL,
+		  contributor_id TEXT    NOT NULL REFERENCES contributors(id),
+		  PRIMARY KEY (entry_key, role, position)
+		);`)
+}
+
+func ensureEntryContributorNamesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS entry_contributor_names (
+		  entry_key      TEXT NOT NULL REFERENCES bib_entries(entry_key),
+		  role           TEXT NOT NULL,
+		  contributor_id TEXT NOT NULL REFERENCES contributors(id),
+		  alias          TEXT NOT NULL,
+		  PRIMARY KEY (entry_key, role, contributor_id, alias)
+		);`)
+}
+
+func ensureNonDoubleContributorsTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS non_double_contributors (
+		  contributor_id_a TEXT NOT NULL REFERENCES contributors(id),
+		  contributor_id_b TEXT NOT NULL REFERENCES contributors(id),
+		  PRIMARY KEY (contributor_id_a, contributor_id_b),
+		  CHECK (contributor_id_a < contributor_id_b)
 		);`)
 }
 
