@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.25"
+const AppVersion = "26.28"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2145,6 +2145,7 @@ func main() {
 		cmdFixCandidates        bool // -fix_candidates: link unmatched entries to DBLP
 		cmdTriageAuthorMappings bool // -triage_author_mappings: triage author/editor losing_field_values
 		cmdAbsorbDblpNames      bool // -absorb_dblp_names: absorb www-based name mappings from DBLP XML
+		cmdMergeOrcidDuplicates bool // -merge_orcid_duplicates: merge contributors sharing the same ORCID
 		cmdAddDblpEntry   bool
 		cmdAddDblpEntries bool
 		cmdWatch             bool
@@ -2204,6 +2205,7 @@ func main() {
 	flag.BoolVar(&cmdFixDuplicates, "fix_all_entries", false, "alias for -fix_duplicates")
 	flag.BoolVar(&cmdTriageAuthorMappings, "triage_author_mappings", false, "triage author/editor entries in losing_field_values")
 	flag.BoolVar(&cmdAbsorbDblpNames, "absorb_dblp_names", false, "absorb www-based name variant→canonical mappings from the stored DBLP XML")
+	flag.BoolVar(&cmdMergeOrcidDuplicates, "merge_orcid_duplicates", false, "merge contributors that share the same non-empty ORCID")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
 	flag.BoolVar(&cmdFixCandidates, "fix_candidates", false, "interactively link library entries without a DBLP key to DBLP records")
 	flag.BoolVar(&cmdFixCandidates, "extend_dblp_coverage", false, "alias for -fix_candidates")
@@ -2458,6 +2460,9 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 
 	case cmdAbsorbDblpNames:
 		doAbsorbDblpNames()
+
+	case cmdMergeOrcidDuplicates:
+		doMergeOrcidDuplicates()
 
 	case cmdRestoreKeyHints:
 		doRestoreKeyHints(restoreKeyHintsPath)

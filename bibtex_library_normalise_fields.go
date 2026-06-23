@@ -403,7 +403,7 @@ func init() {
 	fieldNormalisers["publisher"] = NormaliseLiteralString
 	fieldNormalisers["school"] = NormaliseLiteralString
 	fieldNormalisers["series"] = NormaliseLiteralString
-	fieldNormalisers[TitleField] = NormaliseTitleString
+	fieldNormalisers[TitleField] = NormaliseBooktitleValue
 	fieldNormalisers["url"] = NormaliseURLValue
 	fieldNormalisers["urldate"] = NormaliseDateValue
 	fieldNormalisers["year"] = NormaliseYearValue

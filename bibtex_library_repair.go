@@ -67,6 +67,9 @@ func hasSingleLetterSurname(names string) bool {
 func hasGarbledName(names string) bool {
 	for _, name := range strings.Split(names, " and ") {
 		name = strings.TrimSpace(name)
+		if hasUnbalancedBraces(name) {
+			return true
+		}
 		commas := strings.Count(name, ",")
 		if commas >= 3 {
 			return true
@@ -265,15 +268,32 @@ func repairFieldFromBibMap(bibMap map[string]map[string]string, key, field strin
 	return ""
 }
 
+// hasUnbalancedBraces returns true when the number of opening braces does not
+// equal the number of closing braces in s.  Used to detect name fragments that
+// resulted from a naive " and " split inside a brace group.
+func hasUnbalancedBraces(s string) bool {
+	depth := 0
+	for _, ch := range s {
+		switch ch {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
+	}
+	return depth != 0
+}
+
 // isGarbledContributorName returns true when name is not a valid single-person
 // BibTeX name.  Catches:
-//   - multi-person strings (" and " at brace depth 0)
+//   - any occurrence of " and " (person names never contain " and ", even inside
+//     brace groups — the brace may have absorbed an entire author list)
 //   - names with ≥3 commas or an ambiguous 2-comma form
 //   - names starting with "{" or containing "} {" (stray braces)
 //   - "ss, ff" names where ff ends with an incomplete TeX accent group like {\c}
 //     indicating truncation at the space inside a group like {\c c}
 func isGarbledContributorName(name string) bool {
-	if len(splitBibNameField(name)) > 1 {
+	if strings.Contains(name, " and ") {
 		return true
 	}
 	if hasGarbledName(name) {

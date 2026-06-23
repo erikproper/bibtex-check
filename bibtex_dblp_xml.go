@@ -1486,6 +1486,66 @@ func doAbsorbDblpNames() {
 	Library.RenormaliseNameFields()
 }
 
+// bestOrcidCanonical picks the preferred canonical name from a group that shares
+// an ORCID.  Preference: "ss, ff" format (the standard BibTeX person-name form)
+// over natural-order names; alphabetical tiebreak within each tier.
+func bestOrcidCanonical(canonicals []string) string {
+	var ssff, natural []string
+	for _, c := range canonicals {
+		if strings.Contains(c, ", ") {
+			ssff = append(ssff, c)
+		} else {
+			natural = append(natural, c)
+		}
+	}
+	candidates := ssff
+	if len(candidates) == 0 {
+		candidates = natural
+	}
+	sort.Strings(candidates)
+	return candidates[0]
+}
+
+// doMergeOrcidDuplicates finds contributors that share the same non-empty ORCID
+// and merges each duplicate group into a single canonical record.  Because ORCIDs
+// are globally unique, two contributors with the same ORCID are the same person;
+// merging combines their alias sets under one canonical name.
+func doMergeOrcidDuplicates() {
+	if !openLibraryToUpdate() {
+		return
+	}
+
+	// Group contributor canonical names by ORCID.
+	orcidGroups := map[string][]string{} // orcid → []canonical name
+	for _, contrib := range Library.ContributorByID {
+		if contrib.ORCID == "" {
+			continue
+		}
+		orcidGroups[contrib.ORCID] = append(orcidGroups[contrib.ORCID], contrib.Name)
+	}
+
+	merged := 0
+	for orcid, canonicals := range orcidGroups {
+		if len(canonicals) < 2 {
+			continue
+		}
+		best := bestOrcidCanonical(canonicals)
+		for _, other := range canonicals {
+			if other == best {
+				continue
+			}
+			Library.Progress("ORCID %s: absorbing %q into %q", orcid, other, best)
+			Library.AddNameMapping(best, other)
+			merged++
+		}
+	}
+
+	Library.Progress("Merged %d ORCID-duplicate contributor pair(s).", merged)
+	if merged > 0 {
+		Library.RenormaliseNameFields()
+	}
+}
+
 // cleanupDblpXmlFiles removes all but the two most recent dblp-*.xml.gz files
 // from dblpFolder(). Called only after a successful import.
 func cleanupDblpXmlFiles() {
