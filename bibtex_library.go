@@ -458,7 +458,7 @@ func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, 
 	if check {
 		if currentOriginal, aliasIsAlreadyAliased := (*aliasMap)[alias]; aliasIsAlreadyAliased {
 			if currentOriginal != original {
-				l.Warning("Line 290:"+WarningAmbiguousAlias, alias, currentOriginal, original)
+				l.Warning(WarningAmbiguousAlias, alias, currentOriginal, original)
 
 				return
 			}

@@ -620,6 +620,7 @@ func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err err
 		}
 
 		var authors []dblpXMLPerson
+		var urlOrcid string
 	childLoop:
 		for {
 			child, cerr := d.Token()
@@ -628,21 +629,27 @@ func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err err
 			}
 			switch ct := child.(type) {
 			case xml.StartElement:
-				if ct.Name.Local != "author" {
-					d.Skip()
-					continue
-				}
-				var bibtex, orcid string
-				for _, a := range ct.Attr {
-					switch a.Name.Local {
-					case "bibtex":
-						bibtex = a.Value
-					case "orcid":
-						orcid = a.Value
+				switch ct.Name.Local {
+				case "author":
+					var bibtex, orcid string
+					for _, a := range ct.Attr {
+						switch a.Name.Local {
+						case "bibtex":
+							bibtex = a.Value
+						case "orcid":
+							orcid = a.Value
+						}
 					}
+					text, _ := xmlCollectText(d)
+					authors = append(authors, dblpXMLPerson{Name: text, Bibtex: bibtex, ORCID: orcid})
+				case "url":
+					text, _ := xmlCollectText(d)
+					if urlOrcid == "" && strings.HasPrefix(text, "https://orcid.org/") {
+						urlOrcid = strings.TrimPrefix(text, "https://orcid.org/")
+					}
+				default:
+					d.Skip()
 				}
-				text, _ := xmlCollectText(d)
-				authors = append(authors, dblpXMLPerson{Name: text, Bibtex: bibtex, ORCID: orcid})
 			case xml.EndElement:
 				break childLoop
 			}
@@ -655,6 +662,9 @@ func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err err
 				canonicalORCID = p.ORCID
 				break
 			}
+		}
+		if canonicalORCID == "" {
+			canonicalORCID = urlOrcid
 		}
 		if canonicalName != "" {
 			if canonicalORCID != "" {
@@ -1442,6 +1452,26 @@ func doAbsorbDblpNames() {
 			break
 		}
 	}
+	// File-store fallback: some contributors have their ORCID listed as a url in
+	// their DBLP www entry rather than as an orcid= attribute on the author element.
+	// The CSV-based map above misses those; consult the file store directly for any
+	// contributor still without an ORCID.
+	for id, contrib := range Library.ContributorByID {
+		if contrib.ORCID != "" {
+			continue
+		}
+		orcid := resolveNameToORCID(swapBibTeXNameFormat(contrib.Name))
+		if orcid == "" {
+			orcid = resolveNameToORCID(contrib.Name)
+		}
+		if orcid == "" {
+			continue
+		}
+		contrib.ORCID = orcid
+		upsertContributorToDB(id, contrib.Name, orcid)
+		orcidsSet++
+	}
+
 	if orcidsSet > 0 {
 		Library.Progress("Set ORCID for %d contributor(s) from DBLP.", orcidsSet)
 	}
