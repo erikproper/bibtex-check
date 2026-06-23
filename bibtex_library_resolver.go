@@ -179,7 +179,9 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	}
 
 	options := TStringSetNew()
-	if field == EntryTypeField || field == "year" || field == "pages" || field == "author" || field == "editor" ||
+	if field == "author" || field == "editor" {
+		options.Add("y", "n", "b")
+	} else if field == EntryTypeField || field == "year" || field == "pages" ||
 		field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {
 		options.Add("y", "n")
 	} else {
@@ -188,7 +190,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 	question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
 	question += "Current entry:\n" + l.EntryString(key, "", "  ")
-	question += "Keep the value as is?"
+	question += "Keep the value as is? (b = break down by name)"
 	answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
 
 	switch answer {
@@ -210,6 +212,14 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge
+	case "b":
+		result := l.resolveAuthorBreakdown(key, field, challenge, current)
+		if result == "" {
+			result = current
+		}
+		l.UpdateEntryFieldAlias(key, field, challenge, result)
+		l.setLineage(key, field, challengeSource, result != challenge)
+		return result
 	case "Y":
 		l.UpdateGenericFieldAlias(field, challenge, current)
 		l.setLineage(key, field, challengeSource, true)
@@ -226,6 +236,58 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	}
 
 	return current
+}
+
+// resolveAuthorBreakdown interactively resolves per-name differences in an author/editor
+// challenge. Returns the resolved author string, or "" when breakdown is not possible
+// because the two sides have different author counts (caller should fall back to keeping current).
+//
+// For each differing name position the user is offered:
+//   y — keep the current name at this position
+//   n — accept the challenger's name at this position
+//   m — add a global name mapping (challenger → current) and keep the current name
+func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current string) string {
+	challengeNames := splitBibNameField(challenge)
+	currentNames := splitBibNameField(current)
+
+	if len(challengeNames) != len(currentNames) {
+		l.Progress("Cannot break down by name: challenger has %d author(s), current has %d.",
+			len(challengeNames), len(currentNames))
+		return ""
+	}
+
+	var diffPositions []int
+	for i := range challengeNames {
+		if challengeNames[i] != currentNames[i] {
+			diffPositions = append(diffPositions, i)
+		}
+	}
+	if len(diffPositions) == 0 {
+		return current
+	}
+
+	resultNames := make([]string, len(currentNames))
+	copy(resultNames, currentNames)
+
+	total := len(challengeNames)
+	for diffIdx, i := range diffPositions {
+		options := TStringSetNew()
+		options.Add("y", "n", "m")
+		warning := "Name %d of %d (difference %d of %d) for entry %s field %s:\n- Challenger: %s\n- Current   : %s"
+		question := "Keep current (y), take challenger (n), or map challenger→current globally (m)?"
+		answer := l.WarningQuestion(question, options, warning,
+			i+1, total, diffIdx+1, len(diffPositions), key, field,
+			challengeNames[i], currentNames[i])
+		switch answer {
+		case "n":
+			resultNames[i] = challengeNames[i]
+		case "m":
+			l.AddNameMapping(currentNames[i], challengeNames[i])
+		// "y": keep resultNames[i] = currentNames[i]
+		}
+	}
+
+	return strings.Join(resultNames, " and ")
 }
 
 // TODO (code cleanup): revisit lineage tracking across all MaybeResolveFieldValue / ResolveFieldValue paths —
