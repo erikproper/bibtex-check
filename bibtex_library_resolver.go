@@ -172,14 +172,6 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return challengeRaw
 	}
 
-	// DBLP re-syncing a value it previously set that the user hasn't manually edited:
-	// accept silently to avoid repeated challenges when DBLP refines its data (e.g. adding
-	// a volume number or city name to a proceedings title).
-	if challengeSource == "dblp" && currentRec.Source == "dblp" && !currentRec.Edited {
-		l.setLineage(key, field, "dblp", false)
-		return challenge
-	}
-
 	// If the challenging preferred alias already resolves to this entry via key_oldies,
 	// the resolution was already recorded in a prior run — silently keep the current value.
 	if field == PreferredAliasField && l.MapEntryKey(challenge) == l.MapEntryKey(key) {
