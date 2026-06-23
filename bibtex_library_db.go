@@ -1237,11 +1237,14 @@ func ensureContributorNamesTableExists() {
 
 func upsertContributorToDB(id, name, orcid string) {
 	if err := bibExec(`INSERT INTO contributors (id, name, orcid) VALUES (?, ?, ?)
-	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name, orcid = COALESCE(excluded.orcid, orcid)`,
+	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name,
+	                      orcid = COALESCE(NULLIF(excluded.orcid, ''), orcid)`,
 		id, name, orcid); err != nil {
 		dbInteraction.Warning("contributors upsert failed: %s", err)
 		dbWriteFailed = true
+		return
 	}
+	setTableDate("contributors", time.Now().UnixMicro())
 }
 
 func upsertContributorNameToDB(id, name string) {
