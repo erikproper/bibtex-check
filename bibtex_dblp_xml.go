@@ -1452,18 +1452,27 @@ func doAbsorbDblpNames() {
 			break
 		}
 	}
-	// File-store fallback: some contributors have their ORCID listed as a url in
-	// their DBLP www entry rather than as an orcid= attribute on the author element.
-	// The CSV-based map above misses those; consult the file store directly for any
-	// contributor still without an ORCID.
+	// File-store fallback: some contributors have their ORCID listed only as a
+	// url in their DBLP www entry, not as an orcid= attribute on the author
+	// element. The CSV-based map above misses those. For each contributor still
+	// without an ORCID, do a fast existence check on the DBLP persons index file
+	// (one stat call); only if that file exists do we proceed to read it and look
+	// for an ORCID URL. Non-DBLP contributors are skipped after a single stat.
 	for id, contrib := range Library.ContributorByID {
 		if contrib.ORCID != "" {
 			continue
 		}
-		orcid := resolveNameToORCID(swapBibTeXNameFormat(contrib.Name))
-		if orcid == "" {
-			orcid = resolveNameToORCID(contrib.Name)
+		// DBLP persons index is keyed by the natural-order (first-last) form.
+		naturalForm := swapBibTeXNameFormat(contrib.Name)
+		hash := dblpPersonNameHash(naturalForm)
+		if hash == "" || !FileExists(dblpPersonEntriesPath(hash)) {
+			hash = dblpPersonNameHash(contrib.Name)
+			if hash == "" || !FileExists(dblpPersonEntriesPath(hash)) {
+				continue
+			}
+			naturalForm = contrib.Name
 		}
+		orcid := resolveNameToORCID(naturalForm)
 		if orcid == "" {
 			continue
 		}
