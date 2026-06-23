@@ -1272,6 +1272,9 @@ func upsertNameMapping(alias, name string) {
 	if alias == name {
 		return
 	}
+	if isGarbledContributorName(alias) || isGarbledContributorName(name) {
+		return
+	}
 	id, ok := Library.NameToContributorID[name]
 	if !ok {
 		id = Library.NewKey()
@@ -1551,6 +1554,9 @@ func seedContributorsFromEntries(l *TBibTeXLibrary) {
 		for _, name := range splitBibNameField(value) {
 			lc := strings.ToLower(name)
 			if lc == "others" || lc == "et.al." || lc == "et al." {
+				continue
+			}
+			if isGarbledContributorName(name) {
 				continue
 			}
 			if _, ok := l.NameToContributorID[name]; ok {

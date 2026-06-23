@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.24"
+const AppVersion = "26.25"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1533,6 +1533,11 @@ func doRepairGarbledNames(repairBibPath string) {
 	if !openLibraryToUpdate() {
 		return
 	}
+
+	Library.Progress("Cleaning garbled contributor_names entries")
+	nc := Library.CleanGarbledContributorNames()
+	Library.Progress("Removed %d garbled contributor record(s)", nc)
+
 	var bibMap map[string]map[string]string
 	if repairBibPath != "" {
 		Library.Progress("Parsing repair bib: %s", repairBibPath)

@@ -20,6 +20,12 @@ import (
 	"strings"
 )
 
+// incompleteTeXAccentAtEnd matches a brace group containing only a single
+// lowercase TeX command letter at the end of a string (e.g. "{\c}", "{\u}").
+// This pattern indicates a name that was truncated at the space inside a
+// TeX accent group like {\c c} — the {\c} fragment is left with no argument.
+var incompleteTeXAccentAtEnd = regexp.MustCompile(`\{\\[a-z]\}$`)
+
 // knownSuffixes is the set of BibTeX name suffixes recognised in the
 // "Last, Jr, First" three-part format.  A 2-comma name whose middle part
 // is in this set is a valid suffix form, NOT garbled.
@@ -48,10 +54,12 @@ func hasSingleLetterSurname(names string) bool {
 }
 
 // hasGarbledName returns true when any individual name in a BibTeX "and"-list
-// is garbled.  Two patterns are detected:
+// is garbled.  Three patterns are detected:
 //   - ≥3 commas (e.g. "A., Bubenko, Jr, Janis")
 //   - exactly 2 commas where the middle part is not a known suffix
 //     (ruling out the valid "Bubenko, Jr, Janis A." form)
+//   - "ss, ff" form where ff ends with an incomplete TeX accent group like {\c}
+//     indicating truncation at the space inside {\c c} (Preguiça-type garbling)
 //
 // Single-letter surname cases (e.g. "A, Prajith C.") are intentionally NOT
 // detected here: single-letter name parts occur in legitimate naming conventions
@@ -66,6 +74,12 @@ func hasGarbledName(names string) bool {
 		if commas == 2 {
 			parts := strings.SplitN(name, ",", 3)
 			if !knownSuffixes[strings.TrimSpace(parts[1])] {
+				return true
+			}
+		}
+		if commas == 1 {
+			idx := strings.Index(name, ", ")
+			if idx >= 0 && incompleteTeXAccentAtEnd.MatchString(name[idx+2:]) {
 				return true
 			}
 		}
@@ -249,6 +263,145 @@ func repairFieldFromBibMap(bibMap map[string]map[string]string, key, field strin
 		}
 	}
 	return ""
+}
+
+// isGarbledContributorName returns true when name is not a valid single-person
+// BibTeX name.  Catches:
+//   - multi-person strings (" and " at brace depth 0)
+//   - names with ≥3 commas or an ambiguous 2-comma form
+//   - names starting with "{" or containing "} {" (stray braces)
+//   - "ss, ff" names where ff ends with an incomplete TeX accent group like {\c}
+//     indicating truncation at the space inside a group like {\c c}
+func isGarbledContributorName(name string) bool {
+	if len(splitBibNameField(name)) > 1 {
+		return true
+	}
+	if hasGarbledName(name) {
+		return true
+	}
+	if hasStrayBrace(name) {
+		return true
+	}
+	if idx := strings.Index(name, ", "); idx >= 0 {
+		ff := name[idx+2:]
+		if incompleteTeXAccentAtEnd.MatchString(ff) {
+			return true
+		}
+	}
+	return false
+}
+
+// CleanGarbledContributorNames removes garbled entries from contributor_names
+// and contributors, then purges the corresponding entries from the library's
+// in-memory maps so that the subsequent repair pass uses clean alias state.
+// Proceeds in three passes:
+//  1. Delete contributors whose canonical name is garbled (ON DELETE CASCADE
+//     removes all their contributor_names rows automatically).
+//  2. Delete individual garbled contributor_names entries for contributors
+//     whose canonical name is valid.
+//  3. Delete contributors that have no remaining contributor_names entries.
+//
+// Returns the number of rows deleted across all passes.
+func (l *TBibTeXLibrary) CleanGarbledContributorNames() int {
+	deleted := 0
+
+	// Pass 1: remove contributors with garbled canonical names.
+	crows, cerr := db.Query(`SELECT id, name FROM contributors`)
+	if cerr != nil {
+		dbInteraction.Warning("CleanGarbledContributorNames: query contributors: %s", cerr)
+		return 0
+	}
+	type idNamePair struct{ id, name string }
+	var garbledContribs []idNamePair
+	for crows.Next() {
+		var id, name string
+		if crows.Scan(&id, &name) == nil && isGarbledContributorName(name) {
+			garbledContribs = append(garbledContribs, idNamePair{id, name})
+		}
+	}
+	crows.Close()
+	for _, p := range garbledContribs {
+		if err := bibExec(`DELETE FROM contributors WHERE id = ?`, p.id); err != nil {
+			dbInteraction.Warning("CleanGarbledContributorNames: delete contributor %s: %s", p.id, err)
+		} else {
+			l.purgeContributorFromMemory(p.id)
+			deleted++
+		}
+	}
+
+	// Pass 2: remove individual garbled contributor_names rows.
+	nrows, nerr := db.Query(`SELECT id, name FROM contributor_names`)
+	if nerr != nil {
+		dbInteraction.Warning("CleanGarbledContributorNames: query contributor_names: %s", nerr)
+		return deleted
+	}
+	type idName struct{ id, name string }
+	var garbledNames []idName
+	for nrows.Next() {
+		var id, name string
+		if nrows.Scan(&id, &name) == nil && isGarbledContributorName(name) {
+			garbledNames = append(garbledNames, idName{id, name})
+		}
+	}
+	nrows.Close()
+	for _, p := range garbledNames {
+		deleteContributorNameFromDB(p.id, p.name)
+		delete(l.NameToContributorID, p.name)
+		delete(l.NameAliasToName, p.name)
+		deleted++
+	}
+
+	// Pass 3: remove contributors with no remaining contributor_names entries.
+	orphanRows, oerr := db.Query(`
+		SELECT c.id FROM contributors c
+		WHERE NOT EXISTS (SELECT 1 FROM contributor_names n WHERE n.id = c.id)`)
+	if oerr != nil {
+		dbInteraction.Warning("CleanGarbledContributorNames: query orphans: %s", oerr)
+		return deleted
+	}
+	var orphanIDs []string
+	for orphanRows.Next() {
+		var id string
+		if orphanRows.Scan(&id) == nil {
+			orphanIDs = append(orphanIDs, id)
+		}
+	}
+	orphanRows.Close()
+	for _, id := range orphanIDs {
+		if err := bibExec(`DELETE FROM contributors WHERE id = ?`, id); err != nil {
+			dbInteraction.Warning("CleanGarbledContributorNames: delete orphan contributor %s: %s", id, err)
+		} else {
+			l.purgeContributorFromMemory(id)
+			deleted++
+		}
+	}
+
+	return deleted
+}
+
+// purgeContributorFromMemory removes all traces of a contributor from the
+// library's in-memory maps.  Called after the contributor and its names have
+// been deleted from the DB.
+func (l *TBibTeXLibrary) purgeContributorFromMemory(id string) {
+	contrib, ok := l.ContributorByID[id]
+	if !ok {
+		return
+	}
+	// Remove all name forms that point to this contributor.
+	for name, cid := range l.NameToContributorID {
+		if cid == id {
+			delete(l.NameToContributorID, name)
+			delete(l.NameAliasToName, name)
+		}
+	}
+	// Remove reverse alias entries that resolve to the canonical.
+	canonical := contrib.Name
+	for alias, target := range l.NameAliasToName {
+		if target == canonical {
+			delete(l.NameAliasToName, alias)
+		}
+	}
+	delete(l.ContributorByID, id)
 }
 
 // RepairGarbledNames iterates every entry and repairs garbled author/editor
