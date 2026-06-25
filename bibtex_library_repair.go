@@ -19,7 +19,9 @@ import (
 // lowercase TeX command letter at the end of a string (e.g. "{\c}", "{\u}").
 // This pattern indicates a name that was truncated at the space inside a
 // TeX accent group like {\c c} — the {\c} fragment is left with no argument.
-var incompleteTeXAccentAtEnd = regexp.MustCompile(`\{\\[a-z]\}$`)
+// Excludes i, j, l, o: these are complete standalone LaTeX character commands
+// (\i = dotless i, \j = dotless j, \l = ł, \o = ø) and need no argument.
+var incompleteTeXAccentAtEnd = regexp.MustCompile(`\{\\[a-hkm-np-z]\}$`)
 
 // knownSuffixes is the set of BibTeX name suffixes recognised in the
 // "Last, Jr, First" three-part format.  A 2-comma name whose middle part
