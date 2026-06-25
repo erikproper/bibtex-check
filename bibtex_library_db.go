@@ -2763,7 +2763,9 @@ func bibExec(query string, args ...any) error {
 		reindexDone = true
 		dbInteraction.Progress("SQLite corruption detected — running REINDEX + VACUUM to repair")
 		db.Exec(`REINDEX`) //nolint:errcheck
-		db.Exec(`VACUUM`)  //nolint:errcheck
+		if _, vacuumErr := db.Exec(`VACUUM`); vacuumErr != nil {
+			dbInteraction.Warning("VACUUM failed — database may be unrecoverable: %s", vacuumErr)
+		}
 		_, err = db.Exec(query, args...)
 	}
 	return err
