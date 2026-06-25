@@ -2766,6 +2766,12 @@ func repairCorruptDatabase() error {
 	working := dbPath()
 	db.Close()
 	db = nil
+	// The old WAL and SHM files belong to the corrupt database. Remove them
+	// before installing the clean copy so SQLite does not try to apply the
+	// old (corrupt) WAL pages to the new database, which would produce
+	// another SQLITE_CORRUPT immediately after reopening.
+	os.Remove(working + "-wal")
+	os.Remove(working + "-shm")
 	if err := os.Rename(tmpPath, working); err != nil {
 		if copyErr := copyFile(tmpPath, working); copyErr != nil {
 			os.Remove(tmpPath)
