@@ -2780,9 +2780,16 @@ func repairCorruptDatabase() error {
 		os.Remove(tmpPath)
 	}
 	reopenDb(working)
-	// VACUUM INTO copies table rows faithfully but cannot detect index/row-count
-	// mismatches in the source. Rebuild all indexes from the table data so the
-	// fresh DB is internally consistent before any writes are attempted.
+	// Old multi-connection writes can leave duplicate (entry_key, field) rows in
+	// bib_entries, violating its UNIQUE constraint. Remove extras before REINDEX,
+	// keeping the lowest-rowid survivor for each pair.
+	if _, dedupeErr := db.Exec(
+		`DELETE FROM bib_entries WHERE rowid NOT IN (
+		     SELECT MIN(rowid) FROM bib_entries GROUP BY entry_key, field
+		 )`); dedupeErr != nil {
+		dbInteraction.Warning("Could not deduplicate bib_entries: %s", dedupeErr)
+	}
+	// Rebuild all indexes from the now-clean table data.
 	if _, reindexErr := db.Exec(`REINDEX`); reindexErr != nil {
 		dbInteraction.Warning("REINDEX after rebuild failed: %s", reindexErr)
 	}
