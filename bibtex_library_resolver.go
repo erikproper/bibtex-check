@@ -190,7 +190,11 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 	question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
 	question += "Current entry:\n" + l.EntryString(key, "", "  ")
-	question += "Keep the value as is? (b = break down by name)"
+	if field == "author" || field == "editor" {
+		question += "Keep the value as is? (b = break down by name)"
+	} else {
+		question += "Keep the value as is?"
+	}
 	answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
 
 	switch answer {

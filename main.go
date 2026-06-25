@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.34.9"
+const AppVersion = "26.34.15"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -780,7 +780,13 @@ func doTriageAuthorMappings() {
 	maybeMigrateSkippedToNonDoubleContributorNames(&Library)
 	loadNonDoubleContributorNamesFromDb(&Library)
 
-	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
+	rows, err := bibQuery(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
+	if err != nil {
+		// Index corruption (e.g. from old multi-connection SQLite access) makes
+		// ORDER BY fail with SQLITE_CORRUPT. Rebuild the index and retry once.
+		bibExec(`REINDEX losing_field_values`) //nolint:errcheck
+		rows, err = bibQuery(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
+	}
 	if err != nil {
 		Library.Warning("Could not query losing_field_values: %s", err)
 		return
@@ -796,11 +802,11 @@ func doTriageAuthorMappings() {
 	rows.Close()
 
 	retireLoser := func(key, field, loser string) {
-		db.Exec(`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
+		bibExec(`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
 	}
 
 	markKept := func(key, field, loser string) {
-		db.Exec(`UPDATE losing_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
+		bibExec(`UPDATE losing_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
 	}
 
 	splitOnAnd := func(value string) []string {
@@ -854,6 +860,7 @@ outer:
 	for _, p := range pairs {
 		winner := Library.EntryFieldValueity(p.key, p.field)
 		if winner == "" {
+			retireLoser(p.key, p.field, p.loser)
 			continue
 		}
 
@@ -1061,7 +1068,7 @@ func reportHomework() {
 	})
 
 	authorEditorPairs := 0
-	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&authorEditorPairs)
+	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&authorEditorPairs)
 
 	Library.Progress("Homework:\n  %d title group(s) with unresolved duplicate(s)\n  %d entry/ies with unresolved DBLP candidate(s)\n  %d lone proceedings\n  %d url(s) not yet checked\n  %d author/editor value(s) needing triage",
 		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked, authorEditorPairs)

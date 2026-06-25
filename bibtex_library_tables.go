@@ -188,13 +188,15 @@ func resolveTableNames(spec string) ([]string, string) {
 
 func exportMdatePath(csvPath string) string { return csvPath + ".mdate" }
 
-// isExportCurrent returns true when the CSV file exists and its accompanying
-// .mdate file records the same modification timestamp as the DB table, meaning
-// nothing has changed since the last export. A table with no tracked modification
-// time (tableModTime == 0) is always considered out of date so it gets exported
-// and stamped on the next run.
+// isExportCurrent returns true when the CSV file exists, the dirty bit is clear,
+// and the .mdate file records the same modification timestamp as the DB table.
+// A table with no tracked modification time (tableModTime == 0) or a set dirty
+// bit is always considered out of date so it gets exported and stamped.
 func isExportCurrent(csvPath, tableName string) bool {
 	if _, err := os.Stat(csvPath); err != nil {
+		return false
+	}
+	if isTableDirty(tableName) {
 		return false
 	}
 	modTime := tableModTime(tableName)
@@ -216,7 +218,7 @@ func isExportCurrent(csvPath, tableName string) bool {
 // alongside the exported CSV so that the next export can skip it when unchanged.
 // When the table has no tracked modification time yet (tableModTime == 0), a
 // timestamp is recorded now so future changes detected via setTableDate will
-// trigger re-exports correctly.
+// trigger re-exports correctly. Also clears the dirty bit and updates last_written_time.
 func writeExportMdate(csvPath, tableName string) {
 	modTime := tableModTime(tableName)
 	if modTime == 0 {
@@ -226,7 +228,10 @@ func writeExportMdate(csvPath, tableName string) {
 	data := fmt.Sprintf("%d\n", modTime)
 	if err := os.WriteFile(exportMdatePath(csvPath), []byte(data), 0644); err != nil {
 		dbInteraction.Warning("Could not write export mdate %s: %s", exportMdatePath(csvPath), err)
+		return
 	}
+	clearTableDirty(tableName)
+	setTableLastWritten(tableName)
 }
 
 // ExportTables exports the listed tables (or all when spec is "" / "all")

@@ -419,6 +419,7 @@ func connectToDatabase() {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", dbName, err.Error())
 	}
+	db.SetMaxOpenConns(1)
 	configureDatabasePragmas()
 
 	ensureTableDatesTableExists()
@@ -493,6 +494,7 @@ func reopenDb(path string) {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", path, err)
 	}
+	db.SetMaxOpenConns(1)
 	configureDatabasePragmas()
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
@@ -1187,13 +1189,16 @@ func isTableDirty(tableName string) bool {
 	return dirty != 0
 }
 
+// setTableLastWritten records that tableName was just exported. It stores the
+// current modification_time as last_written_time so the DB reflects what was in
+// the CSV at the time of export (matching what writeExportMdate writes to .mdate).
 func setTableLastWritten(tableName string) {
-	now := time.Now().UnixMicro()
+	modTime := tableModTime(tableName)
 	err := bibExec(`
 		INSERT INTO table_modification_times (table_name, modification_time, last_written_time)
 		  VALUES (?, 0, ?)
 		  ON CONFLICT(table_name) DO UPDATE SET last_written_time = excluded.last_written_time;`,
-		tableName, now)
+		tableName, modTime)
 	if err != nil {
 		dbInteraction.Error("Setting last_written_time for %s failed: %s", tableName, err)
 	}
@@ -1657,7 +1662,7 @@ func ensureKeyHintsTableExists() {
 // Stale hints (target entry removed) are deleted from the DB during Load().
 // Transient DBLP-derived hints use SetTransient and are never written to the DB.
 func newKeyHintsTable() *TCachedTable[string, string] {
-	return newCachedTable(&TSQLiteTable[string, string]{
+	t := newCachedTable(&TSQLiteTable[string, string]{
 		upsertSQL: `INSERT INTO key_hints (hint, key) VALUES (?, ?)
 		            ON CONFLICT(hint) DO UPDATE SET key = excluded.key;`,
 		deleteSQL:  `DELETE FROM key_hints WHERE hint = ?`,
@@ -1669,6 +1674,8 @@ func newKeyHintsTable() *TCachedTable[string, string] {
 			return hint, key, rows.Scan(&hint, &key)
 		},
 	})
+	t.onModify = func() { setTableDate("key_hints", time.Now().UnixMicro()) }
+	return t
 }
 
 // --- key_oldies table ---
@@ -1689,6 +1696,7 @@ func newKeyOldiesTable() *TKeyAliasTable {
 		            ON CONFLICT(alias) DO UPDATE SET key = excluded.key;`,
 		deleteSQL: `DELETE FROM key_oldies WHERE alias = ?`,
 		selectSQL: `SELECT alias, key FROM key_oldies`,
+		onModify:  func() { setTableDate("key_oldies", time.Now().UnixMicro()) },
 	}
 }
 

@@ -123,6 +123,9 @@ func writeURLsFailedFile(path string, lines []string) {
 // Each failed download is recorded in urls_failed.csv (url; reason; date).
 // The file is rewritten on every run so it reflects the current state.
 func (l *TBibTeXLibrary) GetPDFs() {
+	if !Online {
+		return
+	}
 	filesDir := l.FilesRoot + l.FilesFolder
 	failedPath := l.FilesRoot + URLsFailedFilePath
 

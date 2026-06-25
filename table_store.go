@@ -81,9 +81,12 @@ func (s *TSQLiteTable[K, V]) ForEach(fn func(K, V)) {
 // TCachedTable wraps a TTableStore with an in-memory read cache.
 // Call Load() once after the DB is open; thereafter all Gets come from the map.
 // Set and Delete write through to the backing store and keep the map consistent.
+// onModify, when set, is called after each successful persistent write (Set/Delete).
+// It is NOT called by SetTransient. Wire it to setTableDate for modification tracking.
 type TCachedTable[K comparable, V any] struct {
-	cache   map[K]V
-	backing TTableStore[K, V]
+	cache    map[K]V
+	backing  TTableStore[K, V]
+	onModify func()
 }
 
 // newCachedTable wraps backing in an unloaded TCachedTable. Call Load() before reading.
@@ -155,6 +158,9 @@ func (c *TCachedTable[K, V]) Set(key K, value V) {
 	if c.cache != nil {
 		c.cache[key] = value
 	}
+	if c.onModify != nil {
+		c.onModify()
+	}
 }
 
 // Delete removes key from the backing store and the cache.
@@ -162,6 +168,9 @@ func (c *TCachedTable[K, V]) Delete(key K) {
 	c.backing.Delete(key)
 	if c.cache != nil {
 		delete(c.cache, key)
+	}
+	if c.onModify != nil {
+		c.onModify()
 	}
 }
 
@@ -185,12 +194,15 @@ func (c *TCachedTable[K, V]) ForEach(fn func(K, V)) {
 // Transient aliases (e.g. DBLP-derived) use SetTransient: they populate the forward
 // map for in-process lookups but are never written to the DB and never appear in the
 // inverse map, so they do not participate in bulk chain updates.
+// onModify, when set, is called after each persistent write (Set/Delete/DeleteByTarget).
+// It is NOT called by SetTransient. Wire it to setTableDate for modification tracking.
 type TKeyAliasTable struct {
 	forward    map[string]string   // alias → canonical (always flat)
 	inverse    map[string][]string // canonical → persistent aliases pointing to it
 	upsertSQL  string
 	deleteSQL  string
 	selectSQL  string
+	onModify   func()
 }
 
 func removeStringFromSlice(slice []string, value string) []string {
@@ -339,6 +351,10 @@ func (t *TKeyAliasTable) Set(alias, canonical string) {
 	if err := bibExec(t.upsertSQL, alias, canonical); err != nil {
 		dbInteraction.Warning("table write failed: %s", err)
 		dbWriteFailed = true
+		return
+	}
+	if t.onModify != nil {
+		t.onModify()
 	}
 }
 
@@ -362,6 +378,10 @@ func (t *TKeyAliasTable) Delete(alias string) {
 	if err := bibExec(t.deleteSQL, alias); err != nil {
 		dbInteraction.Warning("table delete failed: %s", err)
 		dbWriteFailed = true
+		return
+	}
+	if t.onModify != nil {
+		t.onModify()
 	}
 }
 
@@ -369,14 +389,20 @@ func (t *TKeyAliasTable) Delete(alias string) {
 // Uses the inverse map for O(1) lookup; does not touch transient-only entries.
 func (t *TKeyAliasTable) DeleteByTarget(canonical string) {
 	aliases := t.inverse[canonical]
+	modified := false
 	for _, alias := range aliases {
 		delete(t.forward, alias)
 		if err := bibExec(t.deleteSQL, alias); err != nil {
 			dbInteraction.Warning("table delete failed: %s", err)
 			dbWriteFailed = true
+		} else {
+			modified = true
 		}
 	}
 	delete(t.inverse, canonical)
+	if modified && t.onModify != nil {
+		t.onModify()
+	}
 }
 
 // EachAlias calls fn for each persistent alias pointing to canonical.
