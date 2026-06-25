@@ -2761,7 +2761,9 @@ func bibExec(query string, args ...any) error {
 	_, err := db.Exec(query, args...)
 	if err != nil && !reindexDone && sqliteIndexCorrupt(err) {
 		reindexDone = true
+		dbInteraction.Progress("SQLite corruption detected — running REINDEX + VACUUM to repair")
 		db.Exec(`REINDEX`) //nolint:errcheck
+		db.Exec(`VACUUM`)  //nolint:errcheck
 		_, err = db.Exec(query, args...)
 	}
 	return err
