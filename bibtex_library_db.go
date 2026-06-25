@@ -2750,8 +2750,32 @@ func sqliteIndexCorrupt(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "is malformed")
 }
 
-// reindexDone guards against repeated full-REINDEX calls within one session.
-var reindexDone bool
+// rebuildDone guards against repeated full-rebuild attempts within one session.
+var rebuildDone bool
+
+// repairCorruptDatabase rebuilds the working database by writing a clean copy
+// via VACUUM INTO and reopening the connection. This resets both the on-disk
+// file and the in-process page cache, which in-place VACUUM does not do.
+func repairCorruptDatabase() error {
+	tmpPath := dbPath() + ".repair.db"
+	os.Remove(tmpPath)
+	if _, err := db.Exec(`VACUUM INTO ?`, tmpPath); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	working := dbPath()
+	db.Close()
+	db = nil
+	if err := os.Rename(tmpPath, working); err != nil {
+		if copyErr := copyFile(tmpPath, working); copyErr != nil {
+			os.Remove(tmpPath)
+			return copyErr
+		}
+		os.Remove(tmpPath)
+	}
+	reopenDb(working)
+	return nil
+}
 
 func bibExec(query string, args ...any) error {
 	if activeTx != nil {
@@ -2759,12 +2783,11 @@ func bibExec(query string, args ...any) error {
 		return err
 	}
 	_, err := db.Exec(query, args...)
-	if err != nil && !reindexDone && sqliteIndexCorrupt(err) {
-		reindexDone = true
-		dbInteraction.Progress("SQLite corruption detected — running REINDEX + VACUUM to repair")
-		db.Exec(`REINDEX`) //nolint:errcheck
-		if _, vacuumErr := db.Exec(`VACUUM`); vacuumErr != nil {
-			dbInteraction.Warning("VACUUM failed — database may be unrecoverable: %s", vacuumErr)
+	if err != nil && !rebuildDone && sqliteIndexCorrupt(err) {
+		rebuildDone = true
+		dbInteraction.Progress("SQLite corruption detected — rebuilding database to repair")
+		if repairErr := repairCorruptDatabase(); repairErr != nil {
+			dbInteraction.Warning("Database rebuild failed — corruption may persist: %s", repairErr)
 		}
 		_, err = db.Exec(query, args...)
 	}
