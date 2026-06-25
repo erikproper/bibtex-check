@@ -2744,12 +2744,26 @@ var activeTx *sql.Tx
 
 // bibExec executes a write statement using the active transaction if one is in
 // progress, or directly on the DB otherwise.
+// sqliteIndexCorrupt reports whether err is a SQLite SQLITE_CORRUPT (11) error,
+// which typically indicates a damaged B-tree index that REINDEX can repair.
+func sqliteIndexCorrupt(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "is malformed")
+}
+
+// reindexDone guards against repeated full-REINDEX calls within one session.
+var reindexDone bool
+
 func bibExec(query string, args ...any) error {
 	if activeTx != nil {
 		_, err := activeTx.Exec(query, args...)
 		return err
 	}
 	_, err := db.Exec(query, args...)
+	if err != nil && !reindexDone && sqliteIndexCorrupt(err) {
+		reindexDone = true
+		db.Exec(`REINDEX`) //nolint:errcheck
+		_, err = db.Exec(query, args...)
+	}
 	return err
 }
 
