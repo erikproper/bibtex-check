@@ -1290,10 +1290,36 @@ func (l *TBibTeXLibrary) CheckYear(entry *TBibTeXEntry) {
 }
 
 
+var (
+	urlDateDMY      = regexp.MustCompile(`^(\d{2})[./](\d{2})[./](\d{4})$`)
+	urlDateYMDSlash = regexp.MustCompile(`^(\d{4})/(\d{2})/(\d{2})$`)
+	urlDatePrefix   = regexp.MustCompile(`(?i)^(accessed|last accessed|last visited|zugegriffen|abgerufen|aufgerufen)[:\s]+`)
+)
+
+// normaliseURLDate attempts to convert common non-ISO urldate formats to YYYY-MM-DD.
+// It strips access-verb prefixes (English and German) then tries DD.MM.YYYY,
+// DD/MM/YYYY, and YYYY/MM/DD. Returns the normalised date and true on success.
+func normaliseURLDate(date string) (string, bool) {
+	trimmed := urlDatePrefix.ReplaceAllString(strings.TrimSpace(date), "")
+	trimmed = strings.TrimSpace(trimmed)
+	if m := urlDateDMY.FindStringSubmatch(trimmed); m != nil {
+		return m[3] + "-" + m[2] + "-" + m[1], true
+	}
+	if m := urlDateYMDSlash.FindStringSubmatch(trimmed); m != nil {
+		return m[1] + "-" + m[2] + "-" + m[3], true
+	}
+	return "", false
+}
+
 func (l *TBibTeXLibrary) CheckURLDate(entry *TBibTeXEntry) {
 	date := entry.FieldValue("urldate")
 
 	if date == "" || IsValidDate(date) {
+		return
+	}
+
+	if normalised, ok := normaliseURLDate(date); ok && IsValidDate(normalised) {
+		l.setEntryField(entry, "urldate", normalised)
 		return
 	}
 
