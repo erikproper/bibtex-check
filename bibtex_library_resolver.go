@@ -42,7 +42,7 @@ func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
 }
 
 func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRaw, currentRaw string) string {
-	current := l.MapFieldValue(field, currentRaw)
+	current := l.MapFieldValue(field, l.NormaliseFieldValue(field, currentRaw))
 	challenge := l.MapFieldValue(field, l.NormaliseFieldValue(field, challengeRaw))
 
 	if current == challenge {
@@ -248,14 +248,13 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 //   mapped     — a name mapping was recorded (triage may retire the losing_field_values row;
 //                breakdown uses the new resultName)
 //
-// The "s" (skip) case returns (winnerName, false, false): no mapping, no quit. Triage callers
-// should add a non-double contributor pair entry for the skipped pair; breakdown callers
-// simply keep the current name.
+// The "n" (non-double) case records (winnerName, loserName) in non_double_contributor_names
+// and returns (winnerName, false, false): no mapping, no quit, keep the winner name.
 func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, diffIdx, diffTotal int, winnerName, loserName string) (resultName string, quit bool, mapped bool) {
 	options := TStringSetNew()
-	options.Add("w", "l", "e", "s", "q")
+	options.Add("w", "l", "e", "c", "n", "q")
 	answer := l.WarningQuestion(
-		"Map to winner-canonical (w), loser-canonical (l), edit canonical (e), skip (s), quit (q)?",
+		"Map to winner-canonical (w), loser-canonical (l), edit canonical (e), change to loser (c), non-double (n), quit (q)?",
 		options,
 		"Name %d of %d (difference %d of %d) for entry %s field %s:\n  Winner: %s\n  Loser:  %s",
 		namePos, nameTotal, diffIdx, diffTotal, key, field, winnerName, loserName)
@@ -274,7 +273,12 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 			return canonical, false, true
 		}
 		return winnerName, false, false
-	case "s":
+	case "c":
+		// Different people: accept loser name for this entry at this position
+		// without creating any name mapping between the two forms.
+		return loserName, false, false
+	case "n":
+		addNonDoubleContributorNamePair(l, winnerName, loserName)
 		return winnerName, false, false
 	case "q":
 		return winnerName, true, false

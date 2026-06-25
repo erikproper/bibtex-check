@@ -68,6 +68,16 @@ func (s *TTermSpinner) Update(done, total int) {
 	fmt.Fprintf(os.Stderr, "\r%s %s %d/%d (%.0f%%)", spinnerChars[s.frame], s.label, done, total, pct)
 }
 
+// Tick advances the spinner one frame without any progress counts. Use this
+// when the total work is unknown — e.g. while waiting for a background task.
+func (s *TTermSpinner) Tick() {
+	if s == nil {
+		return
+	}
+	s.frame = (s.frame + 1) % len(spinnerChars)
+	fmt.Fprintf(os.Stderr, "\r%s %s...", spinnerChars[s.frame], s.label)
+}
+
 // Stop prints a "done" completion line and deactivates the global spinner.
 func (s *TTermSpinner) Stop() {
 	if s == nil {

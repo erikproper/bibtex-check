@@ -124,6 +124,8 @@ const (
 	ProgressReadingBibFile    = "Reading bib file %s"
 	ProgressReparsingBibFile  = "Database out of date — re-parsing bib file into database"
 	ProgressImportingBibFile  = "Importing bib file %s into database"
+	ProgressClearingBibTables       = "Clearing bib tables"
+	ProgressParsingBibFile          = "Parsing bib file"
 	ProgressBackingUpDatabase       = "Backing up database before re-parse"
 	ProgressCreatingLibraryBackup   = "Creating library backup %s"
 	ProgressCopyingToWorkingDatabase = "Copying database to working location"

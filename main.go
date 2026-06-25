@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.32"
+const AppVersion = "26.34.7"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -174,9 +174,27 @@ func parseSyncBibFile(path string) bool {
 	// the previous in-memory state (clearBibTables only clears the DB tables).
 	Library.GroupEntries = TStringSetMap{}
 	Library.Comments = nil
+	Library.Progress(ProgressClearingBibTables)
 	clearBibTables()
 	beginBibTransaction()
-	if !Library.ParseBibFile(path) {
+	parseCh := make(chan bool, 1)
+	go func() { parseCh <- Library.ParseBibFile(path) }()
+	parseSpinner := Library.NewSpinner(ProgressParsingBibFile)
+	parseTicker := time.NewTicker(200 * time.Millisecond)
+	var parseOk bool
+syncParseLoop:
+	for {
+		select {
+		case ok := <-parseCh:
+			parseTicker.Stop()
+			parseSpinner.Stop()
+			parseOk = ok
+			break syncParseLoop
+		case <-parseTicker.C:
+			parseSpinner.Tick()
+		}
+	}
+	if !parseOk {
 		rollbackBibTransaction()
 		if safeOk {
 			rollbackSafeParse()
@@ -216,9 +234,27 @@ func parseBibIntoDb() bool {
 	}
 	Library.GroupEntries = TStringSetMap{}
 	Library.Comments = nil
+	Library.Progress(ProgressClearingBibTables)
 	clearBibTables()
 	beginBibTransaction()
-	if !Library.ReadBib(BibFile) {
+	readCh := make(chan bool, 1)
+	go func() { readCh <- Library.ReadBib(BibFile) }()
+	readSpinner := Library.NewSpinner(ProgressParsingBibFile)
+	readTicker := time.NewTicker(200 * time.Millisecond)
+	var readOk bool
+bibParseLoop:
+	for {
+		select {
+		case ok := <-readCh:
+			readTicker.Stop()
+			readSpinner.Stop()
+			readOk = ok
+			break bibParseLoop
+		case <-readTicker.C:
+			readSpinner.Tick()
+		}
+	}
+	if !readOk {
 		rollbackBibTransaction()
 		if safeOk {
 			rollbackSafeParse()
@@ -1514,31 +1550,6 @@ func doRestoreKeyHints(csvPath string) {
 	Library.Progress("Key hints restore complete: %d total, %d imported, %d skipped (no entry), %d remapped via key_oldies, %d refused (ambiguous)", total, imported, skipped, remapped, ambiguous)
 }
 
-func doRepairGarbledNames(repairBibPath string) {
-	if !openLibraryToUpdate() {
-		return
-	}
-
-	Library.Progress("Cleaning garbled contributor_names entries")
-	nc := Library.CleanGarbledContributorNames()
-	Library.Progress("Removed %d garbled contributor record(s)", nc)
-
-	var bibMap map[string]map[string]string
-	if repairBibPath != "" {
-		Library.Progress("Parsing repair bib: %s", repairBibPath)
-		var err error
-		bibMap, err = parseBibForAuthorEditor(repairBibPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not parse repair bib %s: %s\n", repairBibPath, err)
-		} else {
-			Library.Progress("Loaded %d entries from repair bib", len(bibMap))
-		}
-	}
-	Library.Progress("Scanning entries for garbled names")
-	n := Library.RepairGarbledNames(bibMap)
-	Library.Progress("Repaired %d garbled author/editor field(s)", n)
-}
-
 func doShowEntry(args []string) {
 	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
@@ -2158,8 +2169,6 @@ func main() {
 		cmdRepairDblpManifest       bool
 		cmdRebuildDblpCrossrefIndex bool
 		cmdRebuildDblpTitleIndex    bool
-		cmdRepairGarbledNames   bool
-		repairBibPath           string
 		cmdRestoreKeyHints      bool
 		restoreKeyHintsPath     string
 		cmdDeleteGarbage            bool
@@ -2223,8 +2232,6 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
 	flag.BoolVar(&cmdRebuildDblpCrossrefIndex, "rebuild_dblp_crossref_index", false, "rebuild DBLP crossref children index from stored data.json files")
 	flag.BoolVar(&cmdRebuildDblpTitleIndex, "rebuild_dblp_title_index", false, "rebuild DBLP title index from stored data.json files (no XML needed; -base required for folder config)")
-	flag.BoolVar(&cmdRepairGarbledNames, "repair_garbled_names", false, "clean bad name_mappings and repair garbled author/editor fields")
-	flag.StringVar(&repairBibPath, "repair_bib", "", "path to a reference .bib file for -repair_garbled_names (non-DBLP entries)")
 	flag.BoolVar(&cmdRestoreKeyHints, "restore_key_hints", false, "restore key hints from a backup CSV, remapping old keys via key_oldies")
 	flag.StringVar(&restoreKeyHintsPath, "hints_csv", "", "path to the backup key_hints.csv for -restore_key_hints")
 	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
@@ -2451,9 +2458,6 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 
 	case cmdRestoreKeyHints:
 		doRestoreKeyHints(restoreKeyHintsPath)
-
-	case cmdRepairGarbledNames:
-		doRepairGarbledNames(repairBibPath)
 
 	case cmdUpdateDblp:
 		doUpsertDblpEntries()

@@ -521,25 +521,42 @@ func reopenDb(path string) {
 	ensureBibTablesExist()
 }
 
-// beginSafeParse copies the live SQLite file to a temp location outside Nextcloud,
-// then switches db to that temp file. Returns false if setup fails (caller falls
-// through to an unsafe parse on the live file).
+// beginSafeParse creates a consistent backup of the live SQLite file in the
+// system temp directory (outside Nextcloud), then switches db to work on that
+// copy. Returns false if setup fails (caller proceeds on the live file instead).
+// Uses VACUUM INTO rather than a raw file copy so that any uncheckpointed WAL
+// pages are included in the backup. Shows a spinner while waiting.
 func beginSafeParse() bool {
-	dbInteraction.Progress(ProgressBackingUpDatabase)
-	livePath := dbPath()
 	ts := time.Now().Format("20060102_150405")
 	safeParseTemp = fmt.Sprintf("%s/bibtex_check_%s_%s%s",
 		os.TempDir(), bibTeXBaseName, ts, cacheFileExtension)
 
-	safeParseOriginalCount = countDistinctBibEntries() // count entries before switching to temp
+	safeParseOriginalCount = countDistinctBibEntries()
 
-	if err := copyFile(livePath, safeParseTemp); err != nil {
-		dbInteraction.Warning("Safe parse: could not copy database to temp: %s", err)
-		safeParseTemp = ""
-		return false
+	spinner := dbInteraction.NewSpinner(ProgressBackingUpDatabase)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := db.Exec(`VACUUM INTO ?`, safeParseTemp)
+		errCh <- err
+	}()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-errCh:
+			spinner.Stop()
+			if err != nil {
+				dbInteraction.Warning("Safe parse: could not back up database: %s", err)
+				os.Remove(safeParseTemp)
+				safeParseTemp = ""
+				return false
+			}
+			reopenDb(safeParseTemp)
+			return true
+		case <-ticker.C:
+			spinner.Tick()
+		}
 	}
-	reopenDb(safeParseTemp)
-	return true
 }
 
 // commitSafeParse completes a successful safe parse by installing the newly
@@ -1243,7 +1260,7 @@ func ensureContributorNamesTableExists() {
 func ensureContributorRolesTableExists() {
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS contributor_roles (
-		  entry_key      TEXT    NOT NULL REFERENCES bib_entries(entry_key),
+		  entry_key      TEXT    NOT NULL REFERENCES bib_entry_keys(entry_key),
 		  role           TEXT    NOT NULL,
 		  position       INTEGER NOT NULL,
 		  contributor_id TEXT    NOT NULL REFERENCES contributors(id),
@@ -1254,7 +1271,7 @@ func ensureContributorRolesTableExists() {
 func ensureEntryContributorNamesTableExists() {
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS entry_contributor_names (
-		  entry_key      TEXT NOT NULL REFERENCES bib_entries(entry_key),
+		  entry_key      TEXT NOT NULL REFERENCES bib_entry_keys(entry_key),
 		  role           TEXT NOT NULL,
 		  contributor_id TEXT NOT NULL REFERENCES contributors(id),
 		  alias          TEXT NOT NULL,
@@ -1529,12 +1546,12 @@ func loadContributorsFromDb(l *TBibTeXLibrary) {
 	for _, p := range pairs {
 		l.FindAliases(p.canonical, p.alias)
 	}
-	canonicals := map[string]bool{}
-	for _, p := range pairs {
-		canonicals[p.canonical] = true
-	}
-	for canonical := range canonicals {
-		l.FindAliases(canonical, canonical)
+	// FindAliases for the canonical itself must cover every contributor, not only
+	// those that have non-canonical aliases — otherwise contributors whose only
+	// stored name is their canonical (e.g. "Surname, Firstname" with no explicit
+	// aliases) never get their derived non-inverted form added to NameAliasToName.
+	for _, c := range l.ContributorByID {
+		l.FindAliases(c.Name, c.Name)
 	}
 }
 
