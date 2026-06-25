@@ -2791,9 +2791,16 @@ func bibExec(query string, args ...any) error {
 	_, err := db.Exec(query, args...)
 	if err != nil && !rebuildDone && sqliteIndexCorrupt(err) {
 		rebuildDone = true
-		dbInteraction.Progress("SQLite corruption detected — rebuilding database to repair")
+		dbInteraction.Progress("SQLite corruption detected — rebuilding database to repair (trigger: %s)", query)
 		if repairErr := repairCorruptDatabase(); repairErr != nil {
 			dbInteraction.Warning("Database rebuild failed — corruption may persist: %s", repairErr)
+		}
+		var integrityResult string
+		if row := db.QueryRow(`PRAGMA integrity_check(1)`); row != nil {
+			row.Scan(&integrityResult) //nolint:errcheck
+		}
+		if integrityResult != "ok" {
+			dbInteraction.Warning("Database integrity check failed after rebuild: %s", integrityResult)
 		}
 		_, err = db.Exec(query, args...)
 	}
