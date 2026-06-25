@@ -237,6 +237,67 @@ func fixDotSeparatedDate(date string) string {
 	return fmt.Sprintf("%s-%02d-%02d", year, month, day)
 }
 
+// fixNaturalLanguageDate converts human-readable date strings to YYYY-MM-DD.
+// Handles "23 April 2026" and "April 23, 2026" (full and abbreviated month names).
+// Returns "" when the format is not recognised or the values are out of range.
+func fixNaturalLanguageDate(date string) string {
+	var monthNames = map[string]int{
+		"january": 1, "jan": 1,
+		"february": 2, "feb": 2,
+		"march": 3, "mar": 3,
+		"april": 4, "apr": 4,
+		"may": 5,
+		"june": 6, "jun": 6,
+		"july": 7, "jul": 7,
+		"august": 8, "aug": 8,
+		"september": 9, "sep": 9, "sept": 9,
+		"october": 10, "oct": 10,
+		"november": 11, "nov": 11,
+		"december": 12, "dec": 12,
+	}
+
+	// Normalise: collapse runs of spaces, strip trailing comma after day
+	clean := strings.Join(strings.Fields(date), " ")
+
+	var day, month, year int
+
+	// "DD MonthName YYYY"
+	var dayStr, monthName, yearStr string
+	if n, _ := fmt.Sscanf(clean, "%s %s %s", &dayStr, &monthName, &yearStr); n == 3 {
+		dayStr = strings.TrimRight(dayStr, ",")
+		if d, err := strconv.Atoi(dayStr); err == nil {
+			if m, ok := monthNames[strings.ToLower(monthName)]; ok {
+				if IsValidYear(yearStr) {
+					if y, err := strconv.Atoi(yearStr); err == nil {
+						day, month, year = d, m, y
+					}
+				}
+			}
+		}
+	}
+
+	// "MonthName DD, YYYY" or "MonthName DD YYYY"
+	if day == 0 {
+		if n, _ := fmt.Sscanf(clean, "%s %s %s", &monthName, &dayStr, &yearStr); n == 3 {
+			dayStr = strings.TrimRight(dayStr, ",")
+			if m, ok := monthNames[strings.ToLower(monthName)]; ok {
+				if d, err := strconv.Atoi(dayStr); err == nil {
+					if IsValidYear(yearStr) {
+						if y, err := strconv.Atoi(yearStr); err == nil {
+							day, month, year = d, m, y
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if day < 1 || day > 31 || month < 1 || month > 12 || year == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+}
+
 func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
 	trimmedDate := strings.TrimSpace(rawDate)
 
@@ -245,6 +306,10 @@ func NormaliseDateValue(l *TBibTeXLibrary, rawDate string) string {
 	}
 
 	if fixed := fixDotSeparatedDate(trimmedDate); fixed != "" {
+		return fixed
+	}
+
+	if fixed := fixNaturalLanguageDate(trimmedDate); fixed != "" {
 		return fixed
 	}
 
