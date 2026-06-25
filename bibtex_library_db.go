@@ -2780,6 +2780,12 @@ func repairCorruptDatabase() error {
 		os.Remove(tmpPath)
 	}
 	reopenDb(working)
+	// VACUUM INTO copies table rows faithfully but cannot detect index/row-count
+	// mismatches in the source. Rebuild all indexes from the table data so the
+	// fresh DB is internally consistent before any writes are attempted.
+	if _, reindexErr := db.Exec(`REINDEX`); reindexErr != nil {
+		dbInteraction.Warning("REINDEX after rebuild failed: %s", reindexErr)
+	}
 	return nil
 }
 
