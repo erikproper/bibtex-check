@@ -2179,6 +2179,7 @@ func main() {
 		cmdRestoreKeyHints      bool
 		restoreKeyHintsPath     string
 		cmdDeleteGarbage            bool
+		cmdRestoreFromDump          bool
 		cmdApplyScript              bool
 		// Unified table export/import (v23.0).
 		// Bare flag (-export) means "all"; with value (-export t1,t2) means those tables.
@@ -2242,6 +2243,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	flag.BoolVar(&cmdRestoreKeyHints, "restore_key_hints", false, "restore key hints from a backup CSV, remapping old keys via key_oldies")
 	flag.StringVar(&restoreKeyHintsPath, "hints_csv", "", "path to the backup key_hints.csv for -restore_key_hints")
 	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
+	flag.BoolVar(&cmdRestoreFromDump, "restore_from_dump", false, "restore home database from $base.dump (use after corruption to rebuild from SQL dump)")
 	flag.BoolVar(&cmdNoGarbageCleaning, "no_garbage_cleaning", false, "skip background cleanup of the DBLP trash folder")
 	flag.BoolVar(&cmdApplyScript, "do_entry_actions", false, "evaluate group assignment rules from <base>.scripts/entry_actions")
 	// Unified table export / import (v23.0)
@@ -2382,6 +2384,11 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "Done (%.0fs).\n", time.Since(start).Seconds())
+		os.Exit(0)
+	}
+
+	if cmdRestoreFromDump {
+		doRestoreFromDump()
 		os.Exit(0)
 	}
 

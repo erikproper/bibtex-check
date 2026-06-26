@@ -20,6 +20,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -993,10 +994,11 @@ func preCheckRepair() {
 	db.Exec(`PRAGMA foreign_keys = OFF`)
 	db.Exec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
 	         SELECT DISTINCT entry_key FROM bib_entries`)
-	res, _ := db.Exec(`DELETE FROM bib_entry_keys
-	                   WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`)
-	if n, _ := res.RowsAffected(); n > 0 {
-		dbInteraction.Warning("Removed %d stale anchor row(s) — cascading to dependent tables", n)
+	if res, err := db.Exec(`DELETE FROM bib_entry_keys
+		                   WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`); err == nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			dbInteraction.Warning("Removed %d stale anchor row(s) — cascading to dependent tables", n)
+		}
 	}
 	repair := func(table, fkCol string) {
 		res, err := db.Exec(fmt.Sprintf(
@@ -1067,6 +1069,68 @@ func writeDatabaseDump() {
 		out.Close()
 		os.Remove(dumpPath)
 	}
+}
+
+// doRestoreFromDump restores the home database from a SQL dump file produced by
+// writeDatabaseDump. The dump is loaded into a fresh SQLite file via the sqlite3
+// CLI. The corrupt home DB is moved to the backups folder before replacement.
+// This must be called before connectToDatabase (bibTeXFolder and bibTeXBaseName
+// must already be set; backupFolder may still be empty, defaulting to $base.backups/).
+func doRestoreFromDump() {
+	dumpPath := bibTeXFolder + bibTeXBaseName + ".dump"
+	info, err := os.Stat(dumpPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "No dump file found at %s\n", dumpPath)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Restoring from %s (%.0f MB)...\n", dumpPath, float64(info.Size())/1e6)
+
+	homePath := dbHomePath()
+	newPath := homePath + ".restore"
+	os.Remove(newPath)
+
+	f, err := os.Open(dumpPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cannot open dump file: %s\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	cmd := exec.Command("sqlite3", newPath)
+	cmd.Stdin = f
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "sqlite3 restore failed: %s\n%s\n", err, stderr.String())
+		os.Remove(newPath)
+		os.Exit(1)
+	}
+
+	bkDir := backupFolder
+	if bkDir == "" {
+		bkDir = bibTeXFolder + bibTeXBaseName + ".backups/"
+	}
+	if _, err := os.Stat(homePath); err == nil {
+		ts := time.Now().Format("20060102_150405")
+		corruptBackup := bkDir + bibTeXBaseName + "_corrupt_" + ts + cacheFileExtension
+		if mkErr := os.MkdirAll(bkDir, 0755); mkErr == nil {
+			if renErr := os.Rename(homePath, corruptBackup); renErr != nil {
+				if cpErr := copyFile(homePath, corruptBackup); cpErr == nil {
+					os.Remove(homePath)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "Moved corrupt DB to %s\n", corruptBackup)
+		}
+	}
+
+	if err := os.Rename(newPath, homePath); err != nil {
+		if cpErr := copyFile(newPath, homePath); cpErr != nil {
+			fmt.Fprintf(os.Stderr, "Could not install restored DB at %s: %s\n", homePath, cpErr)
+			os.Exit(1)
+		}
+		os.Remove(newPath)
+	}
+	fmt.Fprintf(os.Stderr, "Restore complete: %s\n", homePath)
 }
 
 // --- table_modification_times table ---
