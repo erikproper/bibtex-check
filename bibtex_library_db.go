@@ -400,9 +400,14 @@ func maybeMigrateToFKSchema() {
 // read cursors (eliminating SQLITE_BUSY when setTableDirty is called from
 // within a forEachBibEntryKey iteration). The busy timeout adds automatic
 // retry for any residual lock contention.
-func configureDatabasePragmas() {
+// configureDatabasePragmas sets up WAL mode, busy timeout, and FK enforcement.
+// Returns true when the WAL pragma succeeds (DB is healthy); false indicates
+// the file is corrupt or missing — the caller should not proceed with ensure* calls.
+func configureDatabasePragmas() bool {
+	walOK := true
 	if _, err := db.Exec(`PRAGMA journal_mode = WAL`); err != nil {
 		dbInteraction.Warning("Could not enable WAL journal mode: %s", err)
+		walOK = false
 	}
 	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
 		dbInteraction.Warning("Could not set busy_timeout: %s", err)
@@ -410,6 +415,7 @@ func configureDatabasePragmas() {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		dbInteraction.Warning("Could not enable FK enforcement: %s", err)
 	}
+	return walOK
 }
 
 func connectToDatabase() {
@@ -420,7 +426,10 @@ func connectToDatabase() {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", dbName, err.Error())
 	}
-	configureDatabasePragmas()
+	if !configureDatabasePragmas() && dbIsolationActive() {
+		dbInteraction.Progress("Working database stale or corrupt — will refresh from home database")
+		return
+	}
 
 	ensureTableDatesTableExists()
 	maybeMigrateFilterTableNames()
@@ -975,6 +984,12 @@ func finaliseWorkingDatabase() {
 
 	writeDatabaseDump()
 
+	dumpPath := bibTeXFolder + bibTeXBaseName + ".dump"
+	backupDumpPath := backupFolder + bibTeXBaseName + "_" + ts + ".dump"
+	if _, err := os.Stat(dumpPath); err == nil {
+		copyFile(dumpPath, backupDumpPath) //nolint:errcheck
+	}
+
 	// writeDatabaseDump() opens the home DB via the sqlite3 CLI, which may trigger
 	// a WAL checkpoint or other write that updates home's mtime. Read back home's
 	// actual stored mtime and apply it to working so both agree exactly — prevents
@@ -1121,6 +1136,18 @@ func doRestoreFromDump() {
 			}
 			fmt.Fprintf(os.Stderr, "Moved corrupt DB to %s\n", corruptBackup)
 		}
+	}
+
+	// Remove stale WAL/SHM files so SQLite does not apply them to the fresh DB.
+	os.Remove(homePath + "-wal")
+	os.Remove(homePath + "-shm")
+
+	// Also wipe the working DB (cache folder) so the next run starts clean.
+	if workPath := dbPath(); workPath != homePath {
+		os.Remove(workPath)
+		os.Remove(workPath + "-wal")
+		os.Remove(workPath + "-shm")
+		fmt.Fprintf(os.Stderr, "Cleared working database at %s\n", workPath)
 	}
 
 	if err := os.Rename(newPath, homePath); err != nil {
