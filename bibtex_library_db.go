@@ -1874,6 +1874,9 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 // Pairs where one or both keys are unimported DBLP: keys are preserved alongside
 // normal library-entry pairs.
 func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
+	var countBefore int
+	db.QueryRow(`SELECT COUNT(*) FROM non_double_entries`).Scan(&countBefore)
+
 	dbExecSave("Could not clear non_double_entries", `DELETE FROM non_double_entries;`)
 	insert := `INSERT INTO non_double_entries (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING;`
 	isValidNonDoubleKey := func(k string) bool {
@@ -1893,7 +1896,12 @@ func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
 			dbExecSave("non_double_entries insert failed", insert, key, nonDouble)
 		}
 	}
-	setTableDate("non_double_entries", time.Now().UnixMicro())
+
+	var countAfter int
+	db.QueryRow(`SELECT COUNT(*) FROM non_double_entries`).Scan(&countAfter)
+	if countAfter != countBefore {
+		setTableDate("non_double_entries", time.Now().UnixMicro())
+	}
 }
 
 // --- non_double_contributor_names table ---
