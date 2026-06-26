@@ -660,7 +660,17 @@ func loadBibTeXSettings() {
 		// Migrated from legacy .folders: persist to DB now.
 		SetConfig("key_prefix", keyPrefix)
 	} else {
-		// Fresh install with no key_prefix anywhere: prompt and save to DB.
+		// No key_prefix in DB config or legacy .folders. If isolation is active and the
+		// config table is empty, the working DB has not yet been set up from home —
+		// defer the prompt; prepareWorkingDatabase will re-call loadBibTeXSettings after
+		// copying the proper home DB to the working path.
+		if dbIsolationActive() {
+			var cfgCount int
+			db.QueryRow(`SELECT COUNT(*) FROM config`).Scan(&cfgCount)
+			if cfgCount == 0 {
+				return
+			}
+		}
 		keyPrefix = promptKeyPrefix()
 		SetConfig("key_prefix", keyPrefix)
 	}
@@ -870,6 +880,9 @@ func prepareWorkingDatabase() bool {
 		os.Chtimes(working, hNew.ModTime(), hNew.ModTime())
 	}
 	reopenDb(working)
+	if keyPrefix == "" {
+		loadBibTeXSettings()
+	}
 	markWriteSessionOpen()
 	db.QueryRow(`SELECT total_changes()`).Scan(&changesAtSessionOpen)
 	dbWriteSessionActive = true
