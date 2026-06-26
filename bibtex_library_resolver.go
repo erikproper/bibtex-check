@@ -178,8 +178,15 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return current
 	}
 
-	canBreakDown := (field == "author" || field == "editor") &&
-		len(splitBibNameField(challenge)) == len(splitBibNameField(current))
+	canBreakDown := false
+	if field == "author" || field == "editor" {
+		cNames := splitBibNameField(current)
+		chNames := splitBibNameField(challenge)
+		nC, nCh := len(cNames), len(chNames)
+		currentEndsWithOthers := nC > 0 && strings.ToLower(cNames[nC-1]) == "others"
+		challengeEndsWithOthers := nCh > 0 && strings.ToLower(chNames[nCh-1]) == "others"
+		canBreakDown = nC == nCh || (currentEndsWithOthers && !challengeEndsWithOthers && nCh >= nC)
+	}
 
 	options := TStringSetNew()
 	if field == "author" || field == "editor" {
@@ -315,32 +322,55 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current string) string {
 	challengeNames := splitBibNameField(challenge)
 	currentNames := splitBibNameField(current)
+	nCurrent := len(currentNames)
+	nChallenge := len(challengeNames)
 
-	if len(challengeNames) != len(currentNames) {
+	currentEndsWithOthers := nCurrent > 0 && strings.ToLower(currentNames[nCurrent-1]) == "others"
+	challengeEndsWithOthers := nChallenge > 0 && strings.ToLower(challengeNames[nChallenge-1]) == "others"
+	othersExpansion := currentEndsWithOthers && !challengeEndsWithOthers && nChallenge >= nCurrent
+
+	if nChallenge != nCurrent && !othersExpansion {
 		l.Progress("Cannot break down by name: challenger has %d author(s), current has %d.",
-			len(challengeNames), len(currentNames))
+			nChallenge, nCurrent)
 		return ""
 	}
 
+	// When expanding "others", only compare the concrete prefix (positions before "others").
+	prefixLen := nCurrent
+	if othersExpansion {
+		prefixLen = nCurrent - 1
+	}
+
 	var diffPositions []int
-	for i := range challengeNames {
+	for i := 0; i < prefixLen; i++ {
 		if challengeNames[i] != currentNames[i] {
 			diffPositions = append(diffPositions, i)
 		}
 	}
-	if len(diffPositions) == 0 {
+	if len(diffPositions) == 0 && !othersExpansion {
 		return current
 	}
 
-	resultNames := make([]string, len(currentNames))
-	copy(resultNames, currentNames)
-	total := len(challengeNames)
+	resultNames := make([]string, prefixLen)
+	copy(resultNames, currentNames[:prefixLen])
 
 	for diffIdx, i := range diffPositions {
-		resultName, quit, _ := l.resolveNamePair(key, field, i+1, total, diffIdx+1, len(diffPositions), currentNames[i], challengeNames[i])
+		resultName, quit, _ := l.resolveNamePair(key, field, i+1, nChallenge, diffIdx+1, len(diffPositions), currentNames[i], challengeNames[i])
 		resultNames[i] = resultName
 		if quit {
-			break
+			return ""
+		}
+	}
+
+	if othersExpansion {
+		tail := strings.Join(challengeNames[prefixLen:], " and ")
+		if l.WarningYesNoQuestion(
+			"Replace 'others' with: "+tail,
+			"For entry %s field %s — challenger provides %d additional name(s): %s",
+			key, field, nChallenge-prefixLen, tail) {
+			resultNames = append(resultNames, challengeNames[prefixLen:]...)
+		} else {
+			resultNames = append(resultNames, "others")
 		}
 	}
 
