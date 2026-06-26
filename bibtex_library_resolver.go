@@ -178,9 +178,16 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return current
 	}
 
+	canBreakDown := (field == "author" || field == "editor") &&
+		len(splitBibNameField(challenge)) == len(splitBibNameField(current))
+
 	options := TStringSetNew()
 	if field == "author" || field == "editor" {
-		options.Add("y", "n", "b")
+		if canBreakDown {
+			options.Add("y", "n", "b")
+		} else {
+			options.Add("y", "n")
+		}
 	} else if field == EntryTypeField || field == "year" || field == "pages" ||
 		field == "month" || field == "dblp" || field == "title" || field == "number" || field == "booktitle" {
 		options.Add("y", "n")
@@ -190,7 +197,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
 	question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
 	question += "Current entry:\n" + l.EntryString(key, "", "  ")
-	if field == "author" || field == "editor" {
+	if canBreakDown {
 		question += "Keep the value as is? (b = break down by name)"
 	} else {
 		question += "Keep the value as is?"
@@ -218,12 +225,23 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return challenge
 	case "b":
 		result := l.resolveAuthorBreakdown(key, field, challenge, current)
-		if result == "" {
-			result = current
+		if result != "" {
+			l.UpdateEntryFieldAlias(key, field, challenge, result)
+			l.setLineage(key, field, challengeSource, result != challenge)
+			return result
 		}
-		l.UpdateEntryFieldAlias(key, field, challenge, result)
-		l.setLineage(key, field, challengeSource, result != challenge)
-		return result
+		// Breakdown was not possible — fall through to a plain y/n re-ask.
+		ynOptions := TStringSetNew()
+		ynOptions.Add("y", "n")
+		answer = l.WarningQuestion(question, ynOptions, warning, key, field, challenge, current)
+		if answer == "n" {
+			l.UpdateEntryFieldAlias(key, field, current, challenge)
+			l.setLineage(key, field, challengeSource, false)
+			return challenge
+		}
+		l.UpdateEntryFieldAlias(key, field, challenge, current)
+		l.setLineage(key, field, challengeSource, true)
+		return current
 	case "Y":
 		l.UpdateGenericFieldAlias(field, challenge, current)
 		l.setLineage(key, field, challengeSource, true)
