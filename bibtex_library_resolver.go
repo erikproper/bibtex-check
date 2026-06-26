@@ -178,15 +178,17 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return current
 	}
 
+	var currentAuthorNames, challengeAuthorNames []string
 	canBreakDown := false
 	if field == "author" || field == "editor" {
-		cNames := splitBibNameField(current)
-		chNames := splitBibNameField(challenge)
-		nC, nCh := len(cNames), len(chNames)
-		currentEndsWithOthers := nC > 0 && strings.ToLower(cNames[nC-1]) == "others"
-		challengeEndsWithOthers := nCh > 0 && strings.ToLower(chNames[nCh-1]) == "others"
-		canBreakDown = nC == nCh || (currentEndsWithOthers && !challengeEndsWithOthers && nCh >= nC)
+		currentAuthorNames = splitBibNameField(current)
+		challengeAuthorNames = splitBibNameField(challenge)
+		nC, nCh := len(currentAuthorNames), len(challengeAuthorNames)
+		currentEndsWithOthers := nC > 0 && strings.ToLower(currentAuthorNames[nC-1]) == "others"
+		challengeEndsWithOthers := nCh > 0 && strings.ToLower(challengeAuthorNames[nCh-1]) == "others"
+		canBreakDown = (nC == nCh && nC > 1) || (currentEndsWithOthers && !challengeEndsWithOthers && nCh >= nC)
 	}
+	singleAuthor := len(currentAuthorNames) == 1 && len(challengeAuthorNames) == 1
 
 	options := TStringSetNew()
 	if field == "author" || field == "editor" {
@@ -213,6 +215,9 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 
 	switch answer {
 	case "y":
+		if singleAuthor {
+			l.AddNameMapping(currentAuthorNames[0], challengeAuthorNames[0])
+		}
 		// Record challenge→current in losing_field_values. For PreferredAliasField, do NOT
 		// call AddKeyAlias(challenge, key): challenge may already be an alias of another entry
 		// and adding it here would produce a spurious "Ambiguous key oldie" warning.
@@ -220,6 +225,9 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		l.setLineage(key, field, challengeSource, true)
 		return current
 	case "n":
+		if singleAuthor {
+			l.AddNameMapping(challengeAuthorNames[0], currentAuthorNames[0])
+		}
 		l.UpdateEntryFieldAlias(key, field, current, challenge)
 		if field == PreferredAliasField {
 			// Demote the old alias to a key oldie only when it is not already claimed

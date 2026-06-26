@@ -59,7 +59,7 @@ var (
 // dbExecSave executes a DB statement during the end-of-run save phase. On error it
 // logs msg and sets dbWriteFailed so postCheckGate blocks the home-DB copy.
 func dbExecSave(msg, query string, args ...any) {
-	if _, err := db.Exec(query, args...); err != nil {
+	if err := bibExec(query, args...); err != nil {
 		dbInteraction.Warning("%s: %s", msg, err)
 		dbWriteFailed = true
 	}
