@@ -1703,10 +1703,13 @@ func newKeyOldiesTable() *TKeyAliasTable {
 func maybeMigrateKeyNonDoublesToNonDoubleEntries() {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='key_non_doubles'`).Scan(&count); err != nil || count == 0 {
+		// Copy modification timestamp forward if only the TMT row survives.
+		db.Exec(`UPDATE table_modification_times SET table_name = 'non_double_entries' WHERE table_name = 'key_non_doubles'`) //nolint:errcheck
 		return
 	}
-	db.Exec(`INSERT OR IGNORE INTO non_double_entries SELECT key1, key2 FROM key_non_doubles`) //nolint:errcheck
-	db.Exec(`DROP TABLE key_non_doubles`)                                                       //nolint:errcheck
+	db.Exec(`INSERT OR IGNORE INTO non_double_entries SELECT key1, key2 FROM key_non_doubles`)                                //nolint:errcheck
+	db.Exec(`UPDATE table_modification_times SET table_name = 'non_double_entries' WHERE table_name = 'key_non_doubles'`)    //nolint:errcheck
+	db.Exec(`DROP TABLE key_non_doubles`)                                                                                     //nolint:errcheck
 }
 
 func ensureKeyNonDoublesTableExists() {

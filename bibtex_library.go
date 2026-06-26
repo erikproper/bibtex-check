@@ -1511,7 +1511,7 @@ func (l *TBibTeXLibrary) AddNonDoubleEntries(a, b string) {
 	// Writes all pairs in the transitive set (not just the directly-added pair) so
 	// the DB stays consistent with the in-memory union. Suppressed during DB load.
 	if !nonDoublesLoadingFromDb {
-		upsert := `INSERT INTO key_non_doubles (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
+		upsert := `INSERT INTO non_double_entries (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
 		for k1 := range s.Elements() {
 			for k2 := range s.Elements() {
 				if k1 != k2 {

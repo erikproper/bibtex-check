@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.34.29"
+const AppVersion = "26.34.30"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2697,6 +2697,8 @@ case cmdAlignBooktitleCountries:
 		clearTableDirty("bib_entries")
 		refreshBibDbTimestamp()
 	}
+
+	saveKeyNonDoublesToDb(&Library)
 
 	if !postCheckGate() {
 		dbInteraction.Warning("Post-check gate failed — home database not updated")
