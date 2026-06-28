@@ -458,8 +458,22 @@ func connectToDatabase() {
 	ensureEntryWarningsTableExists()
 	ensureDeletedEntriesTableExists()
 	ensureConfigTableExists()
-	maybeBootstrapConfigFromFile()
-	loadBibTeXSettings()
+	// maybeBootstrapConfigFromFile() unconditionally writes a "version" config row,
+	// so checking the row count *after* it runs can never see "empty" — that check
+	// must happen first, before bootstrap has a chance to poison it. When isolation
+	// is active and the working DB has no config yet, it has not been populated from
+	// home — skip bootstrap/load entirely; prepareWorkingDatabase will copy home's
+	// real config over and call loadBibTeXSettings() once that copy is in place.
+	skipConfigSetup := false
+	if dbIsolationActive() {
+		var cfgCount int
+		db.QueryRow(`SELECT COUNT(*) FROM config`).Scan(&cfgCount)
+		skipConfigSetup = cfgCount == 0
+	}
+	if !skipConfigSetup {
+		maybeBootstrapConfigFromFile()
+		loadBibTeXSettings()
+	}
 	ensureShortenMappingsTableExists()
 	ensureBibEntryKeysTableExists()
 	ensureBibTablesExist()
@@ -709,17 +723,10 @@ func loadBibTeXSettings() {
 		// Migrated from legacy .folders: persist to DB now.
 		SetConfig("key_prefix", keyPrefix)
 	} else {
-		// No key_prefix in DB config or legacy .folders. If isolation is active and the
-		// config table is empty, the working DB has not yet been set up from home —
-		// defer the prompt; prepareWorkingDatabase will re-call loadBibTeXSettings after
-		// copying the proper home DB to the working path.
-		if dbIsolationActive() {
-			var cfgCount int
-			db.QueryRow(`SELECT COUNT(*) FROM config`).Scan(&cfgCount)
-			if cfgCount == 0 {
-				return
-			}
-		}
+		// No key_prefix in DB config or legacy .folders. The caller (connectToDatabase /
+		// prepareWorkingDatabase) is responsible for not calling loadBibTeXSettings at all
+		// when the working DB has not yet been populated from home — by the time we get
+		// here, the config table is assumed to genuinely lack a key_prefix.
 		keyPrefix = promptKeyPrefix()
 		SetConfig("key_prefix", keyPrefix)
 	}
