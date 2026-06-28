@@ -493,13 +493,34 @@ func countDistinctBibEntries() int {
 	return n
 }
 
+// copyRetryAttempts and copyRetryDelay control the retry behaviour of
+// copyFile and copyFileAtomic when a size-mismatch (likely caused by a
+// transient cloud-sync race on the source file) is detected.
+const copyRetryAttempts = 3
+
+var copyRetryDelay = 300 * time.Millisecond
+
 // copyFile copies src to dst byte-for-byte. Verifies the number of bytes
 // copied matches src's size as stat'd before the read started — if src is
 // concurrently replaced or truncated mid-copy (e.g. by a cloud-sync client,
 // since the home database lives inside a synced folder), io.Copy simply
 // stops at the new EOF without an error, which would otherwise silently
-// produce a truncated, corrupt-looking destination file.
+// produce a truncated, corrupt-looking destination file. Retries a few times
+// since this kind of interference is typically a brief, transient window.
 func copyFile(src, dst string) error {
+	var lastErr error
+	for attempt := 1; attempt <= copyRetryAttempts; attempt++ {
+		if lastErr = copyFileOnce(src, dst); lastErr == nil {
+			return nil
+		}
+		if attempt < copyRetryAttempts {
+			time.Sleep(time.Duration(attempt) * copyRetryDelay)
+		}
+	}
+	return lastErr
+}
+
+func copyFileOnce(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -530,8 +551,22 @@ func copyFile(src, dst string) error {
 // database lives inside a synced folder) never observes a partially written
 // file — only the complete old file or the complete new file. Plain copyFile
 // (truncate + incremental write) is unsafe for that path: a sync client can
-// read and upload a half-written file, corrupting the synced copy.
+// read and upload a half-written file, corrupting the synced copy. Retries a
+// few times on a source size mismatch (see copyFile).
 func copyFileAtomic(src, dst string) error {
+	var lastErr error
+	for attempt := 1; attempt <= copyRetryAttempts; attempt++ {
+		if lastErr = copyFileAtomicOnce(src, dst); lastErr == nil {
+			return nil
+		}
+		if attempt < copyRetryAttempts {
+			time.Sleep(time.Duration(attempt) * copyRetryDelay)
+		}
+	}
+	return lastErr
+}
+
+func copyFileAtomicOnce(src, dst string) error {
 	tmp := fmt.Sprintf("%s.tmp-%d", dst, os.Getpid())
 	in, err := os.Open(src)
 	if err != nil {
