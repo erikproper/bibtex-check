@@ -493,20 +493,35 @@ func countDistinctBibEntries() int {
 	return n
 }
 
-// copyFile copies src to dst byte-for-byte.
+// copyFile copies src to dst byte-for-byte. Verifies the number of bytes
+// copied matches src's size as stat'd before the read started — if src is
+// concurrently replaced or truncated mid-copy (e.g. by a cloud-sync client,
+// since the home database lives inside a synced folder), io.Copy simply
+// stops at the new EOF without an error, which would otherwise silently
+// produce a truncated, corrupt-looking destination file.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+	srcInfo, err := in.Stat()
+	if err != nil {
+		return err
+	}
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	written, err := io.Copy(out, in)
+	if err != nil {
+		return err
+	}
+	if written != srcInfo.Size() {
+		return fmt.Errorf("incomplete copy: wrote %d of %d bytes (source may have changed during copy)", written, srcInfo.Size())
+	}
+	return nil
 }
 
 // copyFileAtomic copies src to a temp file in dst's directory, syncs it to
@@ -523,14 +538,24 @@ func copyFileAtomic(src, dst string) error {
 		return err
 	}
 	defer in.Close()
+	srcInfo, err := in.Stat()
+	if err != nil {
+		return err
+	}
 	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	written, err := io.Copy(out, in)
+	if err != nil {
 		out.Close()
 		os.Remove(tmp)
 		return err
+	}
+	if written != srcInfo.Size() {
+		out.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("incomplete copy: wrote %d of %d bytes (source may have changed during copy)", written, srcInfo.Size())
 	}
 	if err := out.Sync(); err != nil {
 		out.Close()
