@@ -492,6 +492,45 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// copyFileAtomic copies src to a temp file in dst's directory, syncs it to
+// disk, then renames it over dst. The rename is atomic at the filesystem
+// level, so a cloud-sync client watching dst (e.g. Nextcloud, since the home
+// database lives inside a synced folder) never observes a partially written
+// file — only the complete old file or the complete new file. Plain copyFile
+// (truncate + incremental write) is unsafe for that path: a sync client can
+// read and upload a half-written file, corrupting the synced copy.
+func copyFileAtomic(src, dst string) error {
+	tmp := fmt.Sprintf("%s.tmp-%d", dst, os.Getpid())
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // reopenDb closes the current db connection and opens a new one at path,
 // re-ensuring all table schemas exist (idempotent).
 func reopenDb(path string) {
@@ -804,7 +843,7 @@ func maybeMigrateToHomePath() {
 	if err != nil || wInfo.Size() == 0 {
 		return
 	}
-	if err := copyFile(working, home); err != nil {
+	if err := copyFileAtomic(working, home); err != nil {
 		dbInteraction.Warning("Could not establish home database: %s", err)
 		return
 	}
@@ -858,7 +897,7 @@ func prepareWorkingDatabase() bool {
 			answer, _ := dbInteraction.AskForInput("Restore home from working copy? [y/N]")
 			if strings.EqualFold(answer, "y") {
 				db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`) //nolint:errcheck
-				if err := copyFile(working, home); err != nil {
+				if err := copyFileAtomic(working, home); err != nil {
 					dbInteraction.Warning("Could not restore: %s", err)
 					return false
 				}
@@ -973,7 +1012,7 @@ func finaliseWorkingDatabase() {
 
 	dbInteraction.Progress(ProgressSavingDatabaseToHome)
 	wInfo, wErr := os.Stat(working)
-	if err := copyFile(working, home); err != nil {
+	if err := copyFileAtomic(working, home); err != nil {
 		dbInteraction.Warning("Could not save working database to home: %s", err)
 		return
 	}

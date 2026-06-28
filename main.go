@@ -84,17 +84,15 @@ func initialiseLibrary() {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, bibTeXFolder, bibTeXBaseName)
 	Library.PreMergeCheck = func(source, target string) {
-		if Library.EntryFieldValueity(source, DBLPField) != "" || Library.EntryFieldValueity(target, DBLPField) != "" {
+		// Only search the surviving key (target). source is about to be merged
+		// into target — searching it separately is redundant and, when the
+		// library has several duplicate entries for the same work, was causing
+		// the user to be asked for the same DBLP match repeatedly (once per
+		// duplicate key) before they converged into one entry.
+		if Library.EntryFieldValueity(target, DBLPField) != "" {
 			return
 		}
-		maybeFindDBLPCandidates(source)
-		// If source just acquired a DBLP key, exclude it from target's search so the
-		// same candidate is not offered twice in one PreMergeCheck call.
-		excl := TStringSetNew()
-		if d := Library.EntryFieldValueity(Library.MapEntryKey(source), DBLPField); d != "" {
-			excl.Add(normalizeDblpKey(d))
-		}
-		maybeFindDBLPCandidatesExcluding(target, excl)
+		maybeFindDBLPCandidates(target)
 	}
 
 	// If bib_entries was dirty on the previous run (crash mid-write), advance its
