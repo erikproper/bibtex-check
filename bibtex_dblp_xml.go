@@ -681,11 +681,11 @@ func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err err
 }
 
 // saveDblpNameFiles writes the DBLP name maps from Pass 1 to two CSV files in
-// globalFolder: dblp_name_bibtex.csv (alias;canonical) and dblp_name_orcid.csv
+// dblpFolder(): dblp_name_bibtex.csv (alias;canonical) and dblp_name_orcid.csv
 // (canonical;orcid). Names are converted to LaTeX format before writing.
 func saveDblpNameFiles(nameMap, orcidMap map[string]string) {
-	namePath := globalFolder + "dblp_name_bibtex.csv"
-	orcidPath := globalFolder + "dblp_name_orcid.csv"
+	namePath := dblpFolder() + "dblp_name_bibtex.csv"
+	orcidPath := dblpFolder() + "dblp_name_orcid.csv"
 
 	nameLines := make([]string, 0, len(nameMap))
 	for rawAlias, rawCanon := range nameMap {
@@ -719,12 +719,12 @@ func saveDblpNameFiles(nameMap, orcidMap map[string]string) {
 	}
 }
 
-// loadDblpNameFiles reads the two DBLP name CSV files from globalFolder and
+// loadDblpNameFiles reads the two DBLP name CSV files from dblpFolder() and
 // returns (alias→canonical, canonical→orcid) maps, both in LaTeX name format.
 // Returns ok=false when either file is absent or unreadable.
 func loadDblpNameFiles() (nameMapLatex, orcidMapLatex map[string]string, ok bool) {
-	namePath := globalFolder + "dblp_name_bibtex.csv"
-	orcidPath := globalFolder + "dblp_name_orcid.csv"
+	namePath := dblpFolder() + "dblp_name_bibtex.csv"
+	orcidPath := dblpFolder() + "dblp_name_orcid.csv"
 
 	if !FileExists(namePath) || !FileExists(orcidPath) {
 		return nil, nil, false

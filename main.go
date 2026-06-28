@@ -2396,6 +2396,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 
 	maybeMigrateDbFile()
 	maybeMigrateDblpFolder()
+	maybeMigrateDblpNameFiles()
 	maybeMigrateTablesFolder()
 	maybeMigrateScriptFile()
 	maybeMigrateToHomePath()

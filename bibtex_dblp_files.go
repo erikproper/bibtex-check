@@ -61,6 +61,32 @@ func maybeMigrateDblpFolder() {
 	}
 }
 
+// maybeMigrateDblpNameFiles moves the Pass-1 DBLP name CSVs (dblp_name_bibtex.csv,
+// dblp_name_orcid.csv) from the legacy globalFolder location into dblpFolder(),
+// where they belong alongside the rest of the DBLP-derived cache. Called at
+// startup before any access to those files.
+func maybeMigrateDblpNameFiles() {
+	if globalFolder == "" {
+		return // no separate global folder; files were always alongside DBLP.cache
+	}
+	for _, name := range []string{"dblp_name_bibtex.csv", "dblp_name_orcid.csv"} {
+		oldPath := globalFolder + name
+		newPath := dblpFolder() + name
+		if _, err := os.Stat(newPath); err == nil {
+			continue // already migrated
+		}
+		if _, err := os.Stat(oldPath); err != nil {
+			continue // nothing to migrate
+		}
+		if err := os.MkdirAll(dblpFolder(), 0755); err != nil {
+			continue
+		}
+		if err := os.Rename(oldPath, newPath); err == nil {
+			dbInteraction.Progress("Migrated %s: globalFolder → DBLP.cache/", name)
+		}
+	}
+}
+
 func dblpTrashFolder() string { return dblpFolder() + "trash/" }
 
 // moveToDblpTrash moves path into the DBLP trash folder with a timestamp
