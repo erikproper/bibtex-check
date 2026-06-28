@@ -458,17 +458,20 @@ func connectToDatabase() {
 	ensureEntryWarningsTableExists()
 	ensureDeletedEntriesTableExists()
 	ensureConfigTableExists()
-	// maybeBootstrapConfigFromFile() unconditionally writes a "version" config row,
-	// so checking the row count *after* it runs can never see "empty" — that check
-	// must happen first, before bootstrap has a chance to poison it. When isolation
-	// is active and the working DB has no config yet, it has not been populated from
-	// home — skip bootstrap/load entirely; prepareWorkingDatabase will copy home's
-	// real config over and call loadBibTeXSettings() once that copy is in place.
+	// Checking config row count is not a reliable "not yet populated from home"
+	// signal: a half-finished prior attempt (e.g. interrupted at the key-prefix
+	// prompt) can leave config rows (version, backup_folder, ...) behind from
+	// maybeBootstrapConfigFromFile() without ever getting a real key_prefix or
+	// real library content. bib_entries is only ever created by a real import or
+	// a copy from home, never by bootstrap noise, so its absence is the reliable
+	// signal that this working DB has not yet been populated from home — skip
+	// config bootstrap/load entirely; prepareWorkingDatabase will copy home's
+	// real config and content over and call loadBibTeXSettings() once that's done.
 	skipConfigSetup := false
 	if dbIsolationActive() {
-		var cfgCount int
-		db.QueryRow(`SELECT COUNT(*) FROM config`).Scan(&cfgCount)
-		skipConfigSetup = cfgCount == 0
+		var hasBibEntries int
+		db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bib_entries'`).Scan(&hasBibEntries)
+		skipConfigSetup = hasBibEntries == 0
 	}
 	if !skipConfigSetup {
 		maybeBootstrapConfigFromFile()
