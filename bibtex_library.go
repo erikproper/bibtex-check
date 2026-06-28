@@ -926,6 +926,15 @@ func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
 	}
 }
 
+// AddKeyAlias records a persistent alias→canonical key mapping in key_oldies.
+// Always persists: an alias being registered here (explicit -add_key_mapping,
+// a demoted preferred alias, a migrated key hint, ...) is by definition an old
+// or alternate identifier that should keep redirecting to canonical across
+// runs, regardless of what format the alias string happens to be in — it is
+// not expected to match the current EP-YYYY-MM-DD-HH-MM-SS key format. Callers
+// that need transient, regenerated-every-run aliases (e.g. DBLP-derived ones,
+// rebuilt fresh from the dblp field each run) should call
+// l.KeyOldies.SetTransient directly instead of going through this function.
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 	canonical := l.MapEntryKey(key)
 	if alias == canonical {
@@ -938,11 +947,7 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 		l.Warning(WarningAmbiguousKeyOldie, alias, existing, canonical)
 		return
 	}
-	if IsValidKey(alias) {
-		l.KeyOldies.Set(alias, canonical)
-	} else {
-		l.KeyOldies.SetTransient(alias, canonical)
-	}
+	l.KeyOldies.Set(alias, canonical)
 }
 
 func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {

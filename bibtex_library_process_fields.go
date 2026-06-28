@@ -19,7 +19,9 @@ type TFieldProcessors = map[string]func(*TBibTeXLibrary, string, string) (string
 var fieldProcessors TFieldProcessors
 
 func processDBLPValue(l *TBibTeXLibrary, key, value string) (string, string) {
-	l.AddKeyAlias(KeyForDBLP(value), key)
+	// Transient: DBLP-derived aliases are regenerated from the dblp field on
+	// every run, so persisting them to key_oldies would just be redundant.
+	l.KeyOldies.SetTransient(KeyForDBLP(value), key)
 	addDblpKeyHintTransient(l, KeyForDBLP(value), key)
 
 	return DBLPField, value
