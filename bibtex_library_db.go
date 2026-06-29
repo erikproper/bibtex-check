@@ -542,6 +542,13 @@ func copyFileOnce(src, dst string) error {
 	if written != srcInfo.Size() {
 		return fmt.Errorf("incomplete copy: wrote %d of %d bytes (source may have changed during copy)", written, srcInfo.Size())
 	}
+	// Re-stat src after the read completes: a cloud-sync client can leave src at a
+	// stable-but-wrong size for the whole read (e.g. mid-hydration), in which case
+	// written == srcInfo.Size() above passes even though both numbers are stale. A
+	// size change across the read window is a clear sign src was not settled.
+	if postInfo, err := os.Stat(src); err == nil && postInfo.Size() != srcInfo.Size() {
+		return fmt.Errorf("source size changed during copy (%d -> %d bytes) — likely an active cloud sync", srcInfo.Size(), postInfo.Size())
+	}
 	return nil
 }
 
@@ -591,6 +598,13 @@ func copyFileAtomicOnce(src, dst string) error {
 		out.Close()
 		os.Remove(tmp)
 		return fmt.Errorf("incomplete copy: wrote %d of %d bytes (source may have changed during copy)", written, srcInfo.Size())
+	}
+	// See copyFileOnce: a stable-but-wrong source size for the whole read defeats
+	// the written-vs-srcInfo check above, so re-stat src after the read too.
+	if postInfo, err := os.Stat(src); err == nil && postInfo.Size() != srcInfo.Size() {
+		out.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("source size changed during copy (%d -> %d bytes) — likely an active cloud sync", srcInfo.Size(), postInfo.Size())
 	}
 	if err := out.Sync(); err != nil {
 		out.Close()
@@ -989,8 +1003,33 @@ func prepareWorkingDatabase() bool {
 	}
 
 	dbInteraction.Progress(ProgressCopyingToWorkingDatabase)
-	if err := copyFile(home, working); err != nil {
-		dbInteraction.Warning("Could not copy database to working location: %s", err)
+	// copyFile only verifies internal self-consistency (bytes written match the
+	// source's size as stat'd immediately before the read) — if the source itself
+	// is transiently mis-reporting a much smaller size (e.g. a cloud-sync client
+	// mid-hydration on the home file, which lives inside a synced folder), that
+	// check passes even though both numbers are wrong by the same amount. Guard
+	// against that by comparing the result to hInfo, stat'd independently at the
+	// top of this function, and retrying the whole copy if they disagree.
+	copyOK := false
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := copyFile(home, working); err != nil {
+			dbInteraction.Warning("Could not copy database to working location: %s", err)
+			return false
+		}
+		if wNew, err := os.Stat(working); err == nil && wNew.Size() == hInfo.Size() {
+			copyOK = true
+			break
+		} else {
+			gotSize := int64(-1)
+			if err == nil {
+				gotSize = wNew.Size()
+			}
+			dbInteraction.Warning("Working copy size mismatch (got %d, expected %d) — likely a cloud-sync race on the home file; retrying", gotSize, hInfo.Size())
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+	}
+	if !copyOK {
+		dbInteraction.Warning("Home database copy is unreliable after retries — aborting this run without touching the working database")
 		return false
 	}
 	os.Remove(working + "-wal") //nolint:errcheck
