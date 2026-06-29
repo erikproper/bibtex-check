@@ -951,13 +951,37 @@ func prepareWorkingDatabase() bool {
 	home := dbHomePath()
 	working := dbPath()
 
-	hInfo, hErr := os.Stat(home)
+	// A transient stat failure here (e.g. a cloud-sync client unlinking and
+	// recreating the file as part of its own reconciliation, rather than a safe
+	// rename) must not be mistaken for "no home DB ever existed" — that falls
+	// through below to os.Create(home), which would silently replace a real,
+	// populated home DB with an empty stub. Retry first; a genuine absence is
+	// stable across a second, while a sync race resolves within milliseconds.
+	var hInfo os.FileInfo
+	var hErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		hInfo, hErr = os.Stat(home)
+		if hErr == nil {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 	if hErr != nil {
 		// No home DB yet. If a bib file exists for this base, create an empty home DB
 		// so the normal open flow can proceed and auto-import it via ValidBibDb() == false.
 		bibPath := bibTeXFolder + bibTeXBaseName + BibFileExtension
-		if _, bibErr := os.Stat(bibPath); bibErr != nil {
+		bibInfo, bibErr := os.Stat(bibPath)
+		if bibErr != nil {
 			dbInteraction.Warning("Home database not found: %s", home)
+			return false
+		}
+		// A substantial .bib file means this is an established library, not a
+		// fresh one — a stat failure here despite that is the same kind of
+		// anomaly this retry loop exists to survive, just outlasting it. Refuse
+		// to silently overwrite a real home DB with an empty stub; surface the
+		// problem instead of quietly destroying data.
+		if bibInfo.Size() > 100*1024 {
+			dbInteraction.Warning("Home database not found (%s) but %s is %d bytes — refusing to create an empty replacement for an established library; investigate before retrying", home, bibPath, bibInfo.Size())
 			return false
 		}
 		f, createErr := os.Create(home)
