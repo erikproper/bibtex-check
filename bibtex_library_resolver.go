@@ -194,6 +194,8 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	if field == "author" || field == "editor" {
 		if canBreakDown {
 			options.Add("y", "n", "b")
+		} else if singleAuthor {
+			options.Add("y", "n", "e")
 		} else {
 			options.Add("y", "n")
 		}
@@ -208,6 +210,8 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	question += "Current entry:\n" + l.EntryString(key, "", "  ")
 	if canBreakDown {
 		question += "Keep the value as is? (b = break down by name)"
+	} else if singleAuthor {
+		question += "Keep the value as is? (e = edit)"
 	} else {
 		question += "Keep the value as is?"
 	}
@@ -238,6 +242,20 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		}
 		l.setLineage(key, field, challengeSource, false)
 		return challenge
+	case "e":
+		edited, _ := l.AskForInput("Enter the resolved value for " + field)
+		edited = strings.TrimSpace(edited)
+		if edited == "" {
+			edited = current
+		}
+		if singleAuthor {
+			l.AddNameMapping(edited, currentAuthorNames[0])
+			l.AddNameMapping(edited, challengeAuthorNames[0])
+		}
+		l.UpdateEntryFieldAlias(key, field, challenge, edited)
+		l.UpdateEntryFieldAlias(key, field, current, edited)
+		l.setLineage(key, field, challengeSource, true)
+		return edited
 	case "b":
 		result := l.resolveAuthorBreakdown(key, field, challenge, current)
 		if result != "" {

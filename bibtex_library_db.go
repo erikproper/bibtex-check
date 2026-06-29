@@ -1124,12 +1124,21 @@ func preCheckRepair() {
 			dbInteraction.Warning("Removed %d stale anchor row(s) — cascading to dependent tables", n)
 		}
 	}
+	repairOrphanRows()
+	db.Exec(`PRAGMA foreign_keys = ON`)
+}
+
+// repairOrphanRows deletes rows from FK-dependent tables whose anchor (bib_entry_keys)
+// row is missing. Shared by preCheckRepair (proactive, session start) and postCheckGate
+// (reactive, session end) — an entry whose own bib_entries write failed mid-run can leave
+// behind dependent rows (e.g. entry_metadata) for a key that never made it into bib_entries.
+func repairOrphanRows() {
 	repair := func(table, fkCol string) {
 		res, err := db.Exec(fmt.Sprintf(
 			`DELETE FROM %s WHERE %s NOT IN (SELECT entry_key FROM bib_entry_keys)`,
 			table, fkCol))
 		if err != nil {
-			dbInteraction.Warning("preCheckRepair %s: %s", table, err)
+			dbInteraction.Warning("repairOrphanRows %s: %s", table, err)
 			return
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
@@ -1140,24 +1149,10 @@ func preCheckRepair() {
 	repair("losing_field_values", "entry_key")
 	repair("entry_warnings", "key")
 	repair("entry_metadata", "entry_key")
-	db.Exec(`PRAGMA foreign_keys = ON`)
 }
 
-// postCheckGate re-syncs bib_entry_keys to the current bib_entries state, then
-// uses PRAGMA foreign_key_check to verify all FK constraints. Returns true when
-// clean. Called from the write tail of main() just before finaliseWorkingDatabase;
-// a false return suppresses the home-DB copy so a bad run cannot corrupt persisted state.
-func postCheckGate() bool {
-	if dbWriteFailed {
-		dbInteraction.Warning("Post-check: DB write failure(s) detected — home database not updated")
-		return false
-	}
-
-	db.Exec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
-	         SELECT DISTINCT entry_key FROM bib_entries`)
-	db.Exec(`DELETE FROM bib_entry_keys
-	         WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`)
-
+// foreignKeyCheckOK runs PRAGMA foreign_key_check and warns about each violation found.
+func foreignKeyCheckOK() bool {
 	rows, err := db.Query(`PRAGMA foreign_key_check`)
 	if err != nil {
 		dbInteraction.Warning("Post-check: foreign_key_check failed: %s", err)
@@ -1174,6 +1169,37 @@ func postCheckGate() bool {
 		ok = false
 	}
 	return ok
+}
+
+// postCheckGate re-syncs bib_entry_keys to the current bib_entries state, then
+// uses PRAGMA foreign_key_check to verify all FK constraints. Returns true when
+// clean. Called from the write tail of main() just before finaliseWorkingDatabase;
+// a false return suppresses the home-DB copy so a bad run cannot corrupt persisted state.
+// On FK violations, attempts one round of orphan-row repair before giving up —
+// a single entry whose bib_entries write failed (see upsertBibEntryField/closeEntry,
+// which set dbWriteFailed) can otherwise discard an entire session's other edits.
+func postCheckGate() bool {
+	if dbWriteFailed {
+		dbInteraction.Warning("Post-check: DB write failure(s) detected — home database not updated")
+		return false
+	}
+
+	db.Exec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
+	         SELECT DISTINCT entry_key FROM bib_entries`)
+	db.Exec(`DELETE FROM bib_entry_keys
+	         WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`)
+
+	if foreignKeyCheckOK() {
+		return true
+	}
+
+	dbInteraction.Warning("Post-check: attempting orphan-row repair before failing the session")
+	repairOrphanRows()
+	if foreignKeyCheckOK() {
+		dbInteraction.Progress("Post-check: repaired — home database will be updated")
+		return true
+	}
+	return false
 }
 
 // writeDatabaseDump writes a SQL dump of the home database to $base.dump using
@@ -3146,6 +3172,7 @@ func closeEntry(entry *TBibTeXEntry) bool {
 			}
 			if err != nil {
 				dbInteraction.Warning("bib_entries write failed for %s.%s: %s", entry.Key, field, err)
+				dbWriteFailed = true
 			}
 		}
 	}
@@ -3155,6 +3182,7 @@ func closeEntry(entry *TBibTeXEntry) bool {
 			changed = true
 			if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, entry.Key, field); err != nil {
 				dbInteraction.Warning("bib_entries delete failed for %s.%s: %s", entry.Key, field, err)
+				dbWriteFailed = true
 			}
 		}
 	}
@@ -3405,6 +3433,7 @@ func upsertBibEntryField(key, field, value string) {
 	}
 	if err != nil {
 		dbInteraction.Warning("bib_entries write failed for %s.%s: %s", key, field, err)
+		dbWriteFailed = true
 	}
 	if entryCache != nil {
 		if value == "" {
