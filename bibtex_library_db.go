@@ -1067,6 +1067,24 @@ func prepareWorkingDatabase() bool {
 		os.Chtimes(working, hNew.ModTime(), hNew.ModTime())
 	}
 	reopenDb(working)
+
+	// Hard backstop: two prior incidents each passed every check above (home
+	// stable throughout, copy size verified against hInfo) and the working DB
+	// still ended up empty by the time we get here — the exact mechanism is still
+	// unconfirmed, but whatever it is happens between the verified copy and this
+	// point. Don't rely on figuring that out before this can do more damage:
+	// regardless of cause, never proceed into loadBibTeXSettings (which is what
+	// produces the confusing key-prefix prompt) or any further work on a working
+	// copy that's implausibly empty for a home DB this size.
+	if hInfo.Size() > 10*1024*1024 {
+		var rowCount int
+		db.QueryRow(`SELECT COUNT(*) FROM bib_entries`).Scan(&rowCount) //nolint:errcheck
+		if rowCount == 0 {
+			dbInteraction.Warning("Working copy has 0 bib_entries rows right after reopening, but home is %d bytes — something cleared or replaced the working DB between the verified copy and here. Aborting without touching home; broken working copy left at %s for inspection.", hInfo.Size(), working)
+			return false
+		}
+	}
+
 	if keyPrefix == "" {
 		loadBibTeXSettings()
 	}
