@@ -1115,9 +1115,23 @@ func flushWorkingDbToHome() {
 	if !dbIsolationActive() {
 		return
 	}
+	// Writes made via bibExec while a bib transaction is open go through activeTx
+	// and are invisible to a WAL checkpoint until committed — including the very
+	// write (e.g. a non_double_entries dismissal) that just triggered this flush.
+	// Callers like doUpsertDblpEntries wrap long, interactive, step-paused loops in
+	// one transaction spanning many flush calls, so commit it first and reopen an
+	// equivalent one afterward; this makes the flush actually durable instead of a
+	// silent no-op against uncommitted state.
+	reopenTx := activeTx != nil
+	if reopenTx {
+		commitBibTransaction()
+	}
 	db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
 	if err := copyFile(dbPath(), dbHomePath()); err != nil {
 		dbInteraction.Warning("Could not flush working database to home: %s", err)
+	}
+	if reopenTx {
+		beginBibTransaction()
 	}
 }
 
