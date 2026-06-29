@@ -1031,6 +1031,19 @@ func prepareWorkingDatabase() bool {
 		return true
 	}
 
+	// connectToDatabase opened db against this same working path and may have run
+	// ensureXXXTableExists() against it (e.g. on a stale/missing working file)
+	// before this function ever ran. That connection must not survive the raw
+	// file-level copy below: SQLite has no way to know the file changed out from
+	// under it, so its page cache/WAL still reflect whatever it last wrote — and
+	// closing it later (in reopenDb) checkpoints that stale state back over the
+	// freshly copied content, truncating the file to match. Close it now, before
+	// the copy, so reopenDb's later Close is a no-op with nothing stale to flush.
+	if db != nil {
+		db.Close()
+		db = nil
+	}
+
 	dbInteraction.Progress(ProgressCopyingToWorkingDatabase)
 	// copyFile only verifies internal self-consistency (bytes written match the
 	// source's size as stat'd immediately before the read) — if the source itself
