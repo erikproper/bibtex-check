@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.34.47"
+const AppVersion = "26.34.49"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2339,6 +2339,16 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 		os.Exit(0)
 	}
 
+	// Acquired here, before cmdUpdateDblp, rather than further down: -update_dblp
+	// does a slow (multi-minute) download+import and does not os.Exit() afterward —
+	// it falls through into the normal session below. acquireDblpLock alone does
+	// not stop a second, unrelated invocation (e.g. -watch) from acquiring this same
+	// instance lock and running a full session against the same working DB while
+	// the download is still in progress; when -update_dblp later reaches its own
+	// DB work, both processes can be writing at once, producing SQLITE_BUSY_SNAPSHOT
+	// ("database is locked (517)") on whichever write loses the race.
+	acquireInstanceLock()
+
 	if cmdUpdateDblp {
 		acquireDblpLock()
 		maybeStartDblpTrashCleanup()
@@ -2396,8 +2406,6 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 		doRestoreFromDump()
 		os.Exit(0)
 	}
-
-	acquireInstanceLock()
 
 	maybeMigrateDbFile()
 	maybeMigrateDblpFolder()

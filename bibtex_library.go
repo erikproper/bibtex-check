@@ -1520,7 +1520,10 @@ func (l *TBibTeXLibrary) AddNonDoubleEntries(a, b string) {
 		for k1 := range s.Elements() {
 			for k2 := range s.Elements() {
 				if k1 != k2 {
-					bibExec(upsert, k1, k2) //nolint:errcheck
+					if err := bibExec(upsert, k1, k2); err != nil {
+						dbInteraction.Warning("non_double_entries upsert failed: %s", err)
+						dbWriteFailed = true
+					}
 				}
 			}
 		}
