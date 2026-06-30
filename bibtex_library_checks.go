@@ -1447,7 +1447,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 			crossrefDBLP = parentDBLP
 		}
 
-		if crossrefKey == "" && !l.HasMetadata(key, MetaPropDblpKeyMissing) {
+		if crossrefKey == "" && entryType != "misc" && !l.HasMetadata(key, MetaPropDblpKeyMissing) {
 			l.Warning("Crossref entry type without a crossref %s", key)
 		}
 
