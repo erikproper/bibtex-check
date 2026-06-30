@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.34.46"
+const AppVersion = "26.34.47"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -480,7 +480,14 @@ func maybeFindDBLPCandidatesExcluding(key string, extraExclusions TStringSet) bo
 	var candidates []string
 	var yearFiltered []string
 	for _, c := range allCandidates {
-		if existing.Contains(KeyForDBLP(c)) {
+		// AddNonDoubleEntries stores both sides through MapEntryKey, so when this
+		// candidate's DBLP key is already claimed by another library entry (e.g. a
+		// near-duplicate that already has dblp set), what's actually recorded is
+		// (key, thatOtherEntry) — not (key, "DBLP:..."). Checking membership with
+		// the same mapping keeps this consistent with what was stored; otherwise a
+		// dismissal silently never matches and the candidate is offered again on
+		// every later run.
+		if existing.Contains(Library.MapEntryKey(KeyForDBLP(c))) {
 			continue
 		}
 		if extraExclusions.Contains(c) {
