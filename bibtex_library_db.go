@@ -2138,9 +2138,6 @@ func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
 			if nonDouble == key || !isValidNonDoubleKey(nonDouble) {
 				continue
 			}
-			if l.EntryExists(key) && l.EntryExists(nonDouble) && l.EvidenceForBeingDifferentEntries(key, nonDouble) {
-				continue
-			}
 			dbExecSave("non_double_entries insert failed", insert, key, nonDouble)
 		}
 	}
