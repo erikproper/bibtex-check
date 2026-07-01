@@ -997,8 +997,12 @@ func prepareWorkingDatabase() bool {
 
 	// Crash recovery: primary check uses session markers; legacy fallback uses
 	// size+mtime for DBs written before session markers were introduced.
+	// Skip the legacy check when session markers confirm a clean close — the
+	// working DB's mtime can legitimately be newer than home's when the
+	// "nothing real written" early-return in finaliseWorkingDatabase wrote
+	// session-close markers without re-syncing the mtime afterward.
 	crashed := writeSessionIsCrashed()
-	if !crashed && wErr == nil && wInfo.Size() > 0 &&
+	if !crashed && !writeSessionIsClean() && wErr == nil && wInfo.Size() > 0 &&
 		wInfo.Size() != hInfo.Size() && wInfo.ModTime().After(hInfo.ModTime()) {
 		crashed = true
 	}
