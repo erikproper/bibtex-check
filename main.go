@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -53,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.34.52"
+const AppVersion = "26.34.53"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -189,7 +190,7 @@ syncParseLoop:
 			parseOk = ok
 			break syncParseLoop
 		case <-parseTicker.C:
-			parseSpinner.Tick()
+			parseSpinner.TickCount(int(atomic.LoadInt64(&bibParseCount)))
 		}
 	}
 	if !parseOk {
@@ -249,7 +250,7 @@ bibParseLoop:
 			readOk = ok
 			break bibParseLoop
 		case <-readTicker.C:
-			readSpinner.Tick()
+			readSpinner.TickCount(int(atomic.LoadInt64(&bibParseCount)))
 		}
 	}
 	if !readOk {

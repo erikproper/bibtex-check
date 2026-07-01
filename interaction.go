@@ -78,6 +78,15 @@ func (s *TTermSpinner) Tick() {
 	fmt.Fprintf(os.Stderr, "\r%s %s...", spinnerChars[s.frame], s.label)
 }
 
+// TickCount advances the spinner one frame and shows a running entry count.
+func (s *TTermSpinner) TickCount(n int) {
+	if s == nil {
+		return
+	}
+	s.frame = (s.frame + 1) % len(spinnerChars)
+	fmt.Fprintf(os.Stderr, "\r%s %s... (%d entries)", spinnerChars[s.frame], s.label, n)
+}
+
 // Stop prints a "done" completion line and deactivates the global spinner.
 func (s *TTermSpinner) Stop() {
 	if s == nil {

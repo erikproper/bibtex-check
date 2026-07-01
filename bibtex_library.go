@@ -18,8 +18,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+var bibParseCount int64
 
 /*
  *
@@ -1292,9 +1295,8 @@ func (l *TBibTeXLibrary) NewKey() string {
 
 // Start recording to the library
 func (l *TBibTeXLibrary) StartRecordingToLibrary() bool {
-	// Reset the set of the illegal fields we may have encountered.
 	l.illegalFields = TStringSetNew()
-
+	atomic.StoreInt64(&bibParseCount, 0)
 	return true
 }
 
@@ -1471,7 +1473,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 	}
 
 	l.MaybeApplyFieldMappings(entry, true)
-
+	atomic.AddInt64(&bibParseCount, 1)
 	return true
 }
 
