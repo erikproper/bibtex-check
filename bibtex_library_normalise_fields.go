@@ -340,10 +340,9 @@ func NormaliseGroupsValue(l *TBibTeXLibrary, groups string) string {
 }
 
 func NormaliseLanguageID(l *TBibTeXLibrary, language string) string {
-	if language == DefaultLanguage {
+	if defaultLangID != "" && language == defaultLangID {
 		return ""
 	}
-
 	return language
 }
 

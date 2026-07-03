@@ -55,6 +55,7 @@ var (
 	fieldMappingsLoading        bool  // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
 	entryFieldMappingsLoading   bool  // suppresses DB write-through in AddEntryFieldAlias during initial load
 	contributorsLoading         bool  // suppresses DB write-through while loading contributors table
+	defaultLangID               string // langid value treated as default; entries with this value have the field removed
 )
 
 // dbExecSave executes a DB statement during the end-of-run save phase. On error it
@@ -824,6 +825,7 @@ func loadBibTeXSettings() {
 			}
 		}
 	}
+	defaultLangID = GetConfig(DefaultLangIDConfigKey, DefaultLangIDFallback)
 	SetConfig("version", AppVersion)
 }
 

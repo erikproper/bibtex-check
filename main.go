@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.34.53"
+const AppVersion = "26.34.55"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1375,6 +1375,60 @@ func doRemoveFromGroup(args []string) {
 	}
 }
 
+func doSetGroups(args []string) {
+	if !openLibraryToUpdate() {
+		return
+	}
+	key := Library.MapEntryKey(cleanKey(args[0]))
+	if !Library.EntryExists(key) {
+		fmt.Fprintf(os.Stderr, "Unknown entry key: %s\n", args[0])
+		return
+	}
+
+	additive := len(args) > 1 && args[1] == "+"
+	var newGroups []string
+	if additive {
+		newGroups = args[2:]
+	} else {
+		newGroups = args[1:]
+	}
+
+	if !additive {
+		rows, err := db.Query(`SELECT group_name FROM bib_groups WHERE entry_key = ?`, key)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not query current groups for %s: %s\n", key, err)
+			return
+		}
+		var current []string
+		for rows.Next() {
+			var g string
+			if rows.Scan(&g) == nil {
+				current = append(current, g)
+			}
+		}
+		rows.Close()
+		for _, g := range current {
+			if err := removeBibGroupEntry(g, key); err != nil {
+				fmt.Fprintf(os.Stderr, "Could not remove %s from group %s: %s\n", key, g, err)
+				return
+			}
+			Library.GroupEntries.DeleteValueFromStringSetMap(g, key)
+		}
+	}
+
+	for _, g := range newGroups {
+		if g == "" {
+			continue
+		}
+		if err := addBibGroupEntry(g, key); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not add %s to group %s: %s\n", key, g, err)
+			return
+		}
+		Library.GroupEntries.AddValueToStringSetMap(g, key)
+	}
+	bibEntriesModified = true
+}
+
 // resolveInputKey maps a user-supplied key to its canonical entry key,
 // falling back to HintToKey when MapEntryKey returns the input unchanged.
 func resolveInputKey(raw string) string {
@@ -2168,6 +2222,7 @@ func main() {
 		cmdUseAliases         bool
 		cmdAddToGroup         bool
 		cmdRemoveFromGroup    bool
+		cmdSetGroups          bool
 		cmdSetField           bool
 		cmdRenderAsBibTeX     bool
 		cmdRenderGroup        bool
@@ -2231,6 +2286,7 @@ func main() {
 	flag.BoolVar(&cmdMap, "map", false, "also record alias→key in the project map file (with -entry_key_alias)")
 	flag.BoolVar(&cmdAddToGroup, "add_to_group", false, "add an entry to a group: -add_to_group <key> <group>")
 	flag.BoolVar(&cmdRemoveFromGroup, "remove_from_group", false, "remove an entry from a group")
+	flag.BoolVar(&cmdSetGroups, "set_groups", false, "set group membership: -set_groups <key> [+] <group>...")
 	flag.BoolVar(&cmdSetField, "set_field", false, "set a field on an entry: -set_field <key> <field> [<value>] (omit value to clear)")
 	flag.BoolVar(&cmdRenderGroup, "render_group", false, "render all entries in a group to pubs/citations folders")
 	flag.BoolVar(&cmdListGroupAliases, "list_group_aliases", false, "list canonical|alias pairs for all entries in a group")
@@ -2602,6 +2658,13 @@ case cmdWatch:
 			os.Exit(1)
 		}
 		doRemoveFromGroup(args)
+
+	case cmdSetGroups:
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -set_groups <key> [+] <group>...")
+			os.Exit(1)
+		}
+		doSetGroups(args)
 
 	case cmdRenderGroup:
 		if len(args) != 3 {

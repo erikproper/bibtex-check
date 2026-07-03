@@ -77,7 +77,8 @@ const (
 
 	URLsFailedFilePath = "urls_failed.csv"
 
-	DefaultLanguage = "eng"
+	DefaultLangIDConfigKey     = "default_langid"
+	DefaultLangIDFallback      = "english"
 )
 
 // Entry flag values stored in entry_flags.csv / the entry_flags SQLite table.
