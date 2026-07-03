@@ -582,6 +582,9 @@ func addCaseProtectionToTeXQuotes(s string) string {
 }
 
 func NormaliseTitleString(l *TBibTeXLibrary, title string) string {
+	if title == "" {
+		return ""
+	}
 	l.TBibTeXTeX.TextString(fixMisplacedBraceQuotes(ApplyLaTeXMap(title)))
 	l.TBibTeXTeX.inWord = false
 	l.TBibTeXTeX.TeXSpacety()
@@ -598,6 +601,9 @@ func NormaliseTitleString(l *TBibTeXLibrary, title string) string {
 // only special characters such as accented letters still need their own braces
 // (e.g. Pl{\"u}wig), not surrounding words like DeGruyter.
 func NormaliseLiteralString(l *TBibTeXLibrary, s string) string {
+	if s == "" {
+		return ""
+	}
 	l.TBibTeXTeX.TextString(ApplyLaTeXMap(s))
 	l.TBibTeXTeX.inWord = false
 	l.TBibTeXTeX.TeXSpacety()

@@ -438,9 +438,9 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challe
 			l.setLineage(key, field, challengeSource, false)
 			return ""
 		}
-		// In subset merge mode a field absent from the bib may be an intentional
-		// deletion by the user — ask rather than silently keeping the DB value.
-		if subsetMergeActive {
+		// When merging library entries and the challenger has no value for a field,
+		// ask whether to keep the current value rather than silently preserving it.
+		if challengeSource == "" {
 			return l.ResolveFieldValue(key, challengeKey, field, challenge, current)
 		}
 		return current
