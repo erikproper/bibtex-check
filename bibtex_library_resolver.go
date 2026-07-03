@@ -127,8 +127,10 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	// normalisation).  Silently adopt the normalised form without prompting.
 	// This check comes after the stored-mapping lookups so explicit user decisions
 	// (recorded via UpdateEntryFieldAlias) still take precedence.
-	if normCurrent := l.MapFieldValue(field, l.NormaliseFieldValue(field, currentRaw)); normCurrent == challenge {
-		return normCurrent
+	if !forceInteractive {
+		if normCurrent := l.MapFieldValue(field, l.NormaliseFieldValue(field, currentRaw)); normCurrent == challenge {
+			return normCurrent
+		}
 	}
 
 	// Full title beats a braced series abbreviation (e.g. "{ICDE}") in both directions.
@@ -435,6 +437,11 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challe
 		if challengeSource != "" && dblpKnownFields.Contains(field) {
 			l.setLineage(key, field, challengeSource, false)
 			return ""
+		}
+		// In subset merge mode a field absent from the bib may be an intentional
+		// deletion by the user — ask rather than silently keeping the DB value.
+		if subsetMergeActive {
+			return l.ResolveFieldValue(key, challengeKey, field, challenge, current)
 		}
 		return current
 	}
