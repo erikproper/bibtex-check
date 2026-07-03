@@ -49,6 +49,11 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return current
 	}
 
+	// In subset merge mode the user has explicitly edited this field; skip every
+	// auto-resolution path that would silently keep the current value and always
+	// present an interactive challenge when the raw texts differ.
+	forceInteractive := subsetMergeActive && currentRaw != challengeRaw
+
 	if field == "crossref" {
 		if current == "" {
 			return challenge
@@ -113,7 +118,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 
 	if l.EntryFieldAliasHasTarget(key, field, current, challenge) {
 		return challenge
-	} else if l.EntryFieldAliasHasTarget(key, field, challenge, current) {
+	} else if !forceInteractive && l.EntryFieldAliasHasTarget(key, field, challenge, current) {
 		return current
 	}
 
@@ -151,7 +156,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	}
 
 	// Equal or higher priority challenger: compare semantic content.
-	if TeXStringIndexer(current) == TeXStringIndexer(challenge) {
+	if !forceInteractive && TeXStringIndexer(current) == TeXStringIndexer(challenge) {
 		// For title/booktitle in library-to-library merges (no external source), brace structure
 		// is semantically significant — fall through to the user challenge rather than silently
 		// accepting either form.
