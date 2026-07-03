@@ -146,7 +146,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	challengePriority := lineagePriorityOf(challengeSource)
 	currentPriority := lineagePriorityOf(currentRec.Source)
 
-	if challengePriority < currentPriority {
+	if challengePriority < currentPriority && !subsetMergeActive {
 		return current
 	}
 

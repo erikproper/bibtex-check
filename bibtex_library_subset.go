@@ -72,6 +72,11 @@ func readSubsetState(statePath string) TSubsetState {
 // not stored in the DB, so it never contributes to a genuine content change.
 // EntryTypeField is intentionally included so that changing e.g. @inproceedings to
 // @incollection in the subset bib is detected as a real edit.
+// subsetMergeActive is set while applySubsetBibToDb is merging a bib-changed entry so
+// that ResolveFieldValue bypasses all silent resolution paths and always asks the user
+// when the raw field values differ.  Reset immediately after MergeEntries returns.
+var subsetMergeActive bool
+
 var subsetFingerprintExclude = func() TStringSet {
 	s := TStringSetNew()
 	s.Set().Unite(bibEditorNoiseFields)
@@ -385,7 +390,9 @@ func applySubsetBibToDb(bibEntry TBibTeXEntry, canonicalKey string, trusted bool
 	// keeps a higher-priority (e.g. DBLP) type and never asks the user.
 	applySubsetEntryType(newType, canonicalKey, dbEntry)
 	tempKey := addHarvestEntry(&Library, cleanEntry)
+	subsetMergeActive = true
 	Library.MergeEntries(tempKey, canonicalKey)
+	subsetMergeActive = false
 	finalKey := Library.MapEntryKey(canonicalKey)
 	if len(toClear) > 0 && dbEntry != nil {
 		for _, field := range toClear {
