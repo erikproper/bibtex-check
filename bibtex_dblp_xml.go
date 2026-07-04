@@ -747,6 +747,46 @@ func loadDblpNameFiles() (nameMapLatex, orcidMapLatex map[string]string, ok bool
 	return nameMapLatex, orcidMapLatex, true
 }
 
+// loadDblpOrcidCSV loads just dblp_name_orcid.csv into a name→ORCID map.
+// Returns an empty map (not nil) when the file is absent or unreadable.
+// This is DBLP-level (base-agnostic): the file lives under dblpFolder().
+func loadDblpOrcidCSV() map[string]string {
+	result := map[string]string{}
+	orcidPath := dblpFolder() + "dblp_name_orcid.csv"
+	if !FileExists(orcidPath) {
+		return result
+	}
+	processCSVFile(orcidPath, func(rec []string) {
+		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
+			result[rec[0]] = rec[1]
+		}
+	})
+	return result
+}
+
+// extendDblpOrcidCSV merges newEntries into dblp_name_orcid.csv.
+// Reads the existing file, merges, and writes back sorted. No-op when empty.
+func extendDblpOrcidCSV(newEntries map[string]string) {
+	if len(newEntries) == 0 {
+		return
+	}
+	existing := loadDblpOrcidCSV()
+	for name, orcid := range newEntries {
+		if name != "" && orcid != "" {
+			existing[name] = orcid
+		}
+	}
+	orcidPath := dblpFolder() + "dblp_name_orcid.csv"
+	lines := make([]string, 0, len(existing))
+	for name, orcid := range existing {
+		lines = append(lines, name+";"+orcid)
+	}
+	sort.Strings(lines)
+	if err := os.WriteFile(orcidPath, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not update %s: %s\n", orcidPath, err)
+	}
+}
+
 // --- Second pass: main import ---
 
 const dblpProgressInterval = 50_000
@@ -1452,16 +1492,16 @@ func doAbsorbDblpNames() {
 			break
 		}
 	}
-	// File-store fallback for groups already matched above: for each DBLP
-	// canonical that resolved to a known contributor, check the file store for
-	// a url-based ORCID (cases where the ORCID is a <url> child in the www entry
-	// rather than an orcid= attribute on the author element). Bounded by the
-	// number of matched groups, so this never iterates all contributors.
+	// File-store fallback: for each DBLP canonical that resolved to a known contributor,
+	// check the file store for a url-based ORCID. Bounded by len(groups).
+	// New finds are collected and flushed to dblp_name_orcid.csv at the end.
+	newlyFoundOrcids := map[string]string{}
 	for canonicalLaTeX := range groups {
 		orcid := resolveNameToORCID(canonicalLaTeX)
 		if orcid == "" {
 			continue
 		}
+		newlyFoundOrcids[canonicalLaTeX] = orcid
 		for _, form := range []string{canonicalLaTeX, swapBibTeXNameFormat(canonicalLaTeX)} {
 			id, ok := Library.NameToContributorID[form]
 			if !ok {
@@ -1478,6 +1518,9 @@ func doAbsorbDblpNames() {
 		}
 	}
 
+	if len(newlyFoundOrcids) > 0 {
+		extendDblpOrcidCSV(newlyFoundOrcids)
+	}
 	if orcidsSet > 0 {
 		Library.Progress("Set ORCID for %d contributor(s) from DBLP.", orcidsSet)
 	}

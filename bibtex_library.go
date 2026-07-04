@@ -59,6 +59,7 @@ type (
 		NameToAliases                     TStringSetMap             // The inverted version of NameAliasToName
 		NameToContributorID               map[string]string         // any recognized name form → contributor ID
 		ContributorByID                   map[string]*TContributor  // contributor ID → contributor data
+		ContributorIDOldies               map[string]string         // absorbed contributor ID → current canonical contributor ID
 		StateAliasToCanonical             TStringMap                // Mapping from state name aliases to canonical state names.
 		StateToCountry                    TStringMap                // Mapping from canonical state names to canonical country names.
 		CountryAliasToCanonical           TStringMap                // Mapping from country name aliases to canonical country names.
@@ -127,6 +128,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.NameAliasToName = TStringMap{}
 	l.NameToContributorID = map[string]string{}
 	l.ContributorByID = map[string]*TContributor{}
+	l.ContributorIDOldies = map[string]string{}
 	l.StateAliasToCanonical = TStringMap{}
 	l.StateToCountry = TStringMap{}
 	l.CountryAliasToCanonical = TStringMap{}
@@ -659,7 +661,20 @@ func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
 	for _, r := range removals {
 		l.NameToAliases.DeleteValueFromStringSetMap(r.to, r.from)
 		delete(l.NameAliasToName, r.from)
-		deleteNameMapping(r.from)
+		// Only delete from the DB when r.from is a non-canonical alias. If r.from IS a
+		// contributor's canonical name, deleteNameMapping would remove the canonical from
+		// contributor_names and corrupt that contributor. The spurious reverse edge exists
+		// only because loading saw r.from as a non-canonical name for another contributor;
+		// that entry is cleaned up by subsequent merges and re-loads.
+		if id, ok := l.NameToContributorID[r.from]; ok {
+			if c, isC := l.ContributorByID[id]; isC && c.Name == r.from {
+				// r.from is a canonical name — skip the DB delete.
+			} else {
+				deleteNameMapping(r.from)
+			}
+		} else {
+			deleteNameMapping(r.from)
+		}
 	}
 
 	// Phase 2: flatten multi-hop chains (A → B → C becomes A → C).

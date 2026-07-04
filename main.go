@@ -54,7 +54,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.34.61"
+const AppVersion = "26.34.69"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1881,6 +1881,28 @@ func upgradeWatchEntries(entries []TWatchEntry) ([]TWatchEntry, bool) {
 	changed := false
 	for i, e := range entries {
 		switch e.EntryType {
+		case "contributor":
+			// Resolve stale IDs — follow any absorbed-ID chain to the current canonical.
+			if canonical := Library.ResolveContributorID(e.Value); canonical != e.Value {
+				if _, stillExists := Library.ContributorByID[canonical]; stillExists {
+					Library.Progress("Watch: resolved stale contributor %q → %s", e.Value, canonical)
+					comment := e.Comment
+					if contrib, ok := Library.ContributorByID[canonical]; ok && contrib.Name != "" {
+						comment = contrib.Name
+					}
+					entries[i] = TWatchEntry{EntryType: "contributor", Value: canonical, Comment: comment, Tag: e.Tag}
+					changed = true
+				} else {
+					Library.Warning("Watch: contributor %q (chain → %s) no longer exists — keeping entry", e.Value, canonical)
+				}
+			} else if _, exists := Library.ContributorByID[e.Value]; !exists {
+				Library.Warning("Watch: contributor %q not found and has no oldie record — keeping entry", e.Value)
+			} else if e.Comment == "" {
+				if contrib, ok := Library.ContributorByID[e.Value]; ok && contrib.Name != "" {
+					entries[i].Comment = contrib.Name
+					changed = true
+				}
+			}
 		case "name":
 			orcid := resolveNameToORCID(e.Value)
 			if orcid == "" {
@@ -2179,6 +2201,22 @@ func doAddNameMapping(args []string) {
 		Library.AddNameMapping(args[0], args[1])
 		Library.RenormaliseNameFields()
 	}
+}
+
+// gracefulQuit runs the normal post-check and DB finalisation sequence, then
+// exits with code 0. Called when the user presses 'q' during interactive name
+// resolution so that changes made earlier in the run are not lost.
+func gracefulQuit() {
+	forceCommitBibTransaction()
+	saveKeyNonDoublesToDb(&Library)
+
+	if !postCheckGate() {
+		dbInteraction.Warning("Post-check gate failed — home database not updated")
+		abandonWorkingDatabase()
+	} else {
+		finaliseWorkingDatabase()
+	}
+	os.Exit(0)
 }
 
 func main() {

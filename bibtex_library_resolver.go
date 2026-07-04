@@ -264,7 +264,10 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		l.setLineage(key, field, challengeSource, true)
 		return edited
 	case "b":
-		result := l.resolveAuthorBreakdown(key, field, challenge, current)
+		result, quit := l.resolveAuthorBreakdown(key, field, challenge, current)
+		if quit {
+			gracefulQuit()
+		}
 		if result != "" {
 			l.UpdateEntryFieldAlias(key, field, challenge, result)
 			l.setLineage(key, field, challengeSource, result != challenge)
@@ -352,7 +355,7 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 // challenge using resolveNamePair for each differing position. Returns the resolved author
 // string, or "" when breakdown is not possible because the two sides have different author
 // counts (caller should fall back to keeping current).
-func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current string) string {
+func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current string) (string, bool) {
 	challengeNames := splitBibNameField(challenge)
 	currentNames := splitBibNameField(current)
 	nCurrent := len(currentNames)
@@ -365,7 +368,7 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 	if nChallenge != nCurrent && !othersExpansion {
 		l.Progress("Cannot break down by name: challenger has %d author(s), current has %d.",
 			nChallenge, nCurrent)
-		return ""
+		return "", false
 	}
 
 	// When expanding "others", only compare the concrete prefix (positions before "others").
@@ -381,7 +384,7 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 		}
 	}
 	if len(diffPositions) == 0 && !othersExpansion {
-		return current
+		return current, false
 	}
 
 	resultNames := make([]string, prefixLen)
@@ -391,7 +394,7 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 		resultName, quit, _ := l.resolveNamePair(key, field, i+1, nChallenge, diffIdx+1, len(diffPositions), currentNames[i], challengeNames[i])
 		resultNames[i] = resultName
 		if quit {
-			return ""
+			return "", true
 		}
 	}
 
@@ -407,7 +410,7 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 		}
 	}
 
-	return strings.Join(resultNames, " and ")
+	return strings.Join(resultNames, " and "), false
 }
 
 // TODO (code cleanup): revisit lineage tracking across all MaybeResolveFieldValue / ResolveFieldValue paths —

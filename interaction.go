@@ -20,6 +20,32 @@ import (
 	"strings"
 )
 
+// stdinCh is the single source of stdin lines for all interactive prompts.
+// One pump goroutine reads os.Stdin here; every consumer (WarningQuestion,
+// AskContinueOrQuit, DBLP scan, etc.) pulls from this channel so there is
+// never more than one reader competing for the same input byte.
+var stdinCh = make(chan string, 1)
+
+func init() {
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			stdinCh <- scanner.Text()
+		}
+		close(stdinCh)
+	}()
+}
+
+// readStdinLine blocks until the user types a line and returns it trimmed of
+// whitespace (including any stray \r). Returns "" when stdin is closed.
+func readStdinLine() string {
+	line, ok := <-stdinCh
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(line)
+}
+
 // TTermSpinner renders an in-place spinner + progress counter on stderr.
 // A nil receiver is safe on all methods, so callers can do:
 //
@@ -28,8 +54,9 @@ import (
 //
 // and the whole thing is a no-op when interaction is silenced.
 type TTermSpinner struct {
-	label string
-	frame int
+	label   string
+	frame   int
+	updated bool // true after the first visible render
 }
 
 var spinnerChars = []string{"|", "/", "-", "\\"}
@@ -41,6 +68,17 @@ var activeSpinner *TTermSpinner
 func SpinnerInterrupt() {
 	if activeSpinner != nil {
 		fmt.Fprint(os.Stderr, "\r\033[K")
+		activeSpinner.updated = false
+	}
+}
+
+// SpinnerCommit makes the current spinner line permanently visible by ending it with
+// a newline. Use this immediately before a multi-line interactive dialog (e.g. a
+// challenge prompt) so the user can see the progress count above the dialog.
+func SpinnerCommit() {
+	if activeSpinner != nil && activeSpinner.updated {
+		fmt.Fprint(os.Stderr, "\r\n")
+		activeSpinner.updated = false
 	}
 }
 
@@ -65,6 +103,7 @@ func (s *TTermSpinner) Update(done, total int) {
 		pct = float64(done) * 100.0 / float64(total)
 	}
 	s.frame = (s.frame + 1) % len(spinnerChars)
+	s.updated = true
 	fmt.Fprintf(os.Stderr, "\r%s %s %d/%d (%.0f%%)", spinnerChars[s.frame], s.label, done, total, pct)
 }
 
@@ -75,6 +114,7 @@ func (s *TTermSpinner) Tick() {
 		return
 	}
 	s.frame = (s.frame + 1) % len(spinnerChars)
+	s.updated = true
 	fmt.Fprintf(os.Stderr, "\r%s %s...", spinnerChars[s.frame], s.label)
 }
 
@@ -84,6 +124,7 @@ func (s *TTermSpinner) TickCount(n int) {
 		return
 	}
 	s.frame = (s.frame + 1) % len(spinnerChars)
+	s.updated = true
 	fmt.Fprintf(os.Stderr, "\r%s %s... (%d entries)", spinnerChars[s.frame], s.label, n)
 }
 
@@ -140,9 +181,7 @@ func (r *TInteraction) OutputWasProduced() bool {
 // Does not set questionWasAsked (setup prompts, not entry-processing questions).
 func (r *TInteraction) AskForInput(prompt string) (string, error) {
 	fmt.Fprintf(os.Stderr, "INPUT:    %s: ", prompt)
-	reader := bufio.NewReader(os.Stdin)
-	line, err := reader.ReadString('\n')
-	return strings.TrimSpace(line), err
+	return readStdinLine(), nil
 }
 
 // SetStepMode enables or disables per-entry stepping (size 1).
@@ -178,8 +217,7 @@ func (r *TInteraction) PressEnterToContinue() {
 		return
 	}
 	fmt.Fprint(os.Stderr, "--- Press Enter to continue ---")
-	reader := bufio.NewReader(os.Stdin)
-	reader.ReadString('\n')
+	readStdinLine()
 }
 
 // PressBatchEnterToContinue unconditionally pauses for Enter; used after
@@ -189,7 +227,7 @@ func (r *TInteraction) PressBatchEnterToContinue() {
 		return
 	}
 	fmt.Fprint(os.Stderr, "--- Press Enter to continue ---")
-	bufio.NewReader(os.Stdin).ReadString('\n')
+	readStdinLine()
 }
 
 // AskContinueOrQuit asks the user whether to continue or quit after an entry
@@ -199,18 +237,18 @@ func (r *TInteraction) AskContinueOrQuit() bool {
 	if r.silenced {
 		return false
 	}
-	fmt.Fprint(os.Stderr, "QUESTION: Continue with next entry, or quit? (c/q): ")
-	reader := bufio.NewReader(os.Stdin)
+	SpinnerInterrupt()
+	fmt.Fprint(os.Stderr, "QUESTION: Continue with next entry, or quit? (Enter/c/q): ")
 	for {
-		answer, _ := reader.ReadString('\n')
-		answer = strings.TrimSpace(answer)
-		if answer == "c" || answer == "q" {
-			if answer == "q" {
-				r.quitRequested = true
-			}
-			return answer == "q"
+		answer := readStdinLine()
+		if answer == "" || answer == "c" || answer == "y" {
+			return false
 		}
-		fmt.Fprint(os.Stderr, "(c/q): ")
+		if answer == "q" {
+			r.quitRequested = true
+			return true
+		}
+		fmt.Fprint(os.Stderr, "(Enter/c/q): ")
 	}
 }
 
@@ -220,10 +258,8 @@ func (r *TInteraction) AskContinueOrQuit() bool {
 func (r *TInteraction) ConfirmAction(prompt string) bool {
 	r.questionsAnswered++
 	fmt.Fprintf(os.Stderr, "CONFIRM:  %s (y/n): ", prompt)
-	reader := bufio.NewReader(os.Stdin)
 	for {
-		answer, _ := reader.ReadString('\n')
-		answer = strings.TrimSpace(answer)
+		answer := readStdinLine()
 		if answer == "y" || answer == "n" {
 			return answer == "y"
 		}
@@ -294,18 +330,11 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 
 	fmt.Fprint(os.Stderr, "QUESTION: "+question+" "+optionSet)
 
-	reader := bufio.NewReader(os.Stdin)
-	validOption := false
 	for {
-		option, _ := reader.ReadString('\n')
-		option = option[:len(option)-1]
-
-		validOption = options.Contains(option)
-
-		if validOption {
+		option := readStdinLine()
+		if options.Contains(option) {
 			return option
 		}
-
 		fmt.Fprint(os.Stderr, optionSet)
 	}
 }

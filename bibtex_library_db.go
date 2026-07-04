@@ -440,6 +440,7 @@ func connectToDatabase() {
 	ensureContributorRolesTableExists()
 	ensureEntryContributorNamesTableExists()
 	ensureNonDoubleContributorsTableExists()
+	ensureContributorIDOldiesTableExists()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
@@ -647,6 +648,7 @@ func reopenDb(path string) {
 	ensureContributorRolesTableExists()
 	ensureEntryContributorNamesTableExists()
 	ensureNonDoubleContributorsTableExists()
+	ensureContributorIDOldiesTableExists()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
@@ -3100,6 +3102,68 @@ func ensureBibTablesExist() {
 		  position INTEGER PRIMARY KEY,
 		  content  TEXT NOT NULL
 		);`)
+}
+
+// --- contributor_id_oldies ---
+
+func ensureContributorIDOldiesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS contributor_id_oldies (
+		  absorbed_id  TEXT NOT NULL PRIMARY KEY,
+		  canonical_id TEXT NOT NULL
+		);`)
+}
+
+func upsertContributorIDOldie(absorbedID, canonicalID string) {
+	db.Exec(`INSERT INTO contributor_id_oldies (absorbed_id, canonical_id) VALUES (?, ?)
+		ON CONFLICT(absorbed_id) DO UPDATE SET canonical_id = excluded.canonical_id`,
+		absorbedID, canonicalID) //nolint:errcheck
+}
+
+func loadContributorIDOldiesFromDB(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT absorbed_id, canonical_id FROM contributor_id_oldies`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var absorbedID, canonicalID string
+		if rows.Scan(&absorbedID, &canonicalID) == nil {
+			l.ContributorIDOldies[absorbedID] = canonicalID
+		}
+	}
+}
+
+// ResolveContributorID returns the current canonical contributor ID for id,
+// following any absorbed-ID chain in ContributorIDOldies. Returns id itself
+// when already canonical or unknown.
+func (l *TBibTeXLibrary) ResolveContributorID(id string) string {
+	seen := map[string]bool{id: true}
+	cur := id
+	for {
+		next, ok := l.ContributorIDOldies[cur]
+		if !ok {
+			return cur
+		}
+		if seen[next] {
+			return cur
+		}
+		seen[next] = true
+		cur = next
+	}
+}
+
+// forceCommitBibTransaction commits any open bib transaction regardless of
+// nesting depth. Used before graceful quit to ensure pending writes survive.
+func forceCommitBibTransaction() {
+	if activeTx == nil {
+		return
+	}
+	if err := activeTx.Commit(); err != nil {
+		dbInteraction.Warning("Could not commit bib transaction on quit: %s", err)
+	}
+	activeTx = nil
+	txDepth = 0
 }
 
 // --- bib entry write primitives ---
