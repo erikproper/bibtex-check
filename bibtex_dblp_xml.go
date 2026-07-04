@@ -666,6 +666,19 @@ func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err err
 		if canonicalORCID == "" {
 			canonicalORCID = urlOrcid
 		}
+		// When no bibtex= disambiguation exists but there is exactly one author and
+		// an ORCID is present, capture the ORCID using the author's display name as
+		// the canonical. This covers the vast majority of DBLP persons whose names
+		// are unambiguous and whose www entries therefore never get bibtex=.
+		if canonicalName == "" && len(authors) == 1 && canonicalORCID != "" {
+			raw := authors[0].Name
+			if raw == "" {
+				raw = authors[0].Bibtex
+			}
+			if raw != "" {
+				canonicalName = dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(raw), "")
+			}
+		}
 		if canonicalName != "" {
 			if canonicalORCID != "" {
 				orcidMap[canonicalName] = canonicalORCID
@@ -703,13 +716,17 @@ func saveDblpNameFiles(nameMap, orcidMap map[string]string) {
 		fmt.Fprintf(os.Stderr, "  Saved %d name mappings to %s\n", len(nameLines), namePath)
 	}
 
-	orcidLines := make([]string, 0, len(orcidMap))
+	// Merge new XML-sourced ORCIDs into the existing file rather than overwriting it.
+	merged := loadDblpOrcidCSV()
 	for rawCanon, orcid := range orcidMap {
 		cl := dblpPersonNameToLaTeX(rawCanon)
-		if cl == "" || orcid == "" {
-			continue
+		if cl != "" && orcid != "" {
+			merged[cl] = orcid
 		}
-		orcidLines = append(orcidLines, cl+";"+orcid)
+	}
+	orcidLines := make([]string, 0, len(merged))
+	for name, orcid := range merged {
+		orcidLines = append(orcidLines, name+";"+orcid)
 	}
 	sort.Strings(orcidLines)
 	if err := os.WriteFile(orcidPath, []byte(strings.Join(orcidLines, "\n")+"\n"), 0644); err != nil {
