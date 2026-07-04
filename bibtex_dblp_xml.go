@@ -1491,7 +1491,8 @@ func doAbsorbDblpNames() {
 	}
 	Library.Progress("Absorbed %d DBLP name mappings.", absorbed)
 
-	// Set ORCIDs for known contributors that do not yet have one.
+	// Set ORCIDs for known contributors. When DBLP has a DIFFERENT ORCID than stored,
+	// warn and clear the seen record so the next -enrich_contributor_data re-challenges.
 	orcidsSet := 0
 	for canonicalLaTeX, orcid := range orcidMapLatex {
 		for _, form := range []string{canonicalLaTeX, swapBibTeXNameFormat(canonicalLaTeX)} {
@@ -1500,7 +1501,13 @@ func doAbsorbDblpNames() {
 				continue
 			}
 			contrib := Library.ContributorByID[id]
+			if contrib.ORCID == orcid {
+				break // already correct
+			}
 			if contrib.ORCID != "" {
+				Library.Warning("ORCID conflict for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
+					contrib.Name, contrib.ORCID, orcid)
+				clearContributorORCIDSeen(id, contrib.ORCID)
 				break
 			}
 			contrib.ORCID = orcid
@@ -1525,7 +1532,13 @@ func doAbsorbDblpNames() {
 				continue
 			}
 			contrib := Library.ContributorByID[id]
+			if contrib.ORCID == orcid {
+				break // already correct
+			}
 			if contrib.ORCID != "" {
+				Library.Warning("ORCID conflict for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
+					contrib.Name, contrib.ORCID, orcid)
+				clearContributorORCIDSeen(id, contrib.ORCID)
 				break
 			}
 			contrib.ORCID = orcid

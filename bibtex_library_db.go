@@ -1653,6 +1653,13 @@ func ensureNonDoubleContributorsTableExists() {
 }
 
 
+// clearContributorORCIDSeen deletes any seen record for (contributorID, orcid).
+// No-op when the contributor_orcid_seen table does not exist (deployed build).
+func clearContributorORCIDSeen(contributorID, orcid string) {
+	db.Exec(`DELETE FROM contributor_orcid_seen WHERE contributor_id = ? AND orcid = ?`,
+		contributorID, orcid) //nolint:errcheck
+}
+
 func upsertContributorToDB(id, name, orcid string) {
 	if err := bibExec(`INSERT INTO contributors (id, name, orcid) VALUES (?, ?, ?)
 	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name,
