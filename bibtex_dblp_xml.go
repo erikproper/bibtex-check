@@ -681,7 +681,11 @@ func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err err
 		}
 		if canonicalName != "" {
 			if canonicalORCID != "" {
-				orcidMap[canonicalName] = canonicalORCID
+				if existing, seen := orcidMap[canonicalName]; seen && existing != canonicalORCID {
+					orcidMap[canonicalName] = "" // ambiguous: two people with same display name
+				} else if !seen {
+					orcidMap[canonicalName] = canonicalORCID
+				}
 			}
 			for _, p := range authors {
 				if p.Name != canonicalName {
@@ -1505,7 +1509,8 @@ func doAbsorbDblpNames() {
 				break // already correct
 			}
 			if contrib.ORCID != "" {
-				Library.Warning("ORCID conflict for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
+				// Different ORCID stored — warn; dev version resolves with full disambiguation.
+				Library.Warning("ORCID mismatch for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
 					contrib.Name, contrib.ORCID, orcid)
 				clearContributorORCIDSeen(id, contrib.ORCID)
 				break
@@ -1536,7 +1541,7 @@ func doAbsorbDblpNames() {
 				break // already correct
 			}
 			if contrib.ORCID != "" {
-				Library.Warning("ORCID conflict for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
+				Library.Warning("ORCID mismatch for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
 					contrib.Name, contrib.ORCID, orcid)
 				clearContributorORCIDSeen(id, contrib.ORCID)
 				break
