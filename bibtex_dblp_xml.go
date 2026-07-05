@@ -588,33 +588,78 @@ func doRebuildDblpCrossrefIndex() {
 
 // --- First pass: name map ---
 
-// dblpBuildNameMap does a first streaming pass over the DBLP XML, collecting
-// only www (person homepage) entries to build a plain-name → canonical-name map
-// and a canonical-name → ORCID map. The canonical name comes from the bibtex=
-// attribute of the first author that carries one; the disambiguation suffix
-// (e.g. " 0001") is stripped. The orcid= attribute of that same author element
-// is stored in the returned orcidMap.
-func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err error) {
-	d := newDblpDecoder(r)
-	if err := advanceToDblpRoot(d); err != nil {
-		return nil, nil, err
+// dblpPersonMaps holds the three person-level maps built during Pass 1 of XML import.
+type dblpPersonMaps struct {
+	nameToKey      map[string]string // raw name form → DBLP key; "" = two people share this form
+	orcidToKey     map[string]string // ORCID → DBLP key
+	keyToCanonical map[string]string // DBLP key → canonical name
+}
+
+// aliasToCanonical derives the alias→canonical map needed by dblpImportFromReader.
+func (pm dblpPersonMaps) aliasToCanonical() map[string]string {
+	m := make(map[string]string, len(pm.nameToKey))
+	for name, key := range pm.nameToKey {
+		if key == "" {
+			continue
+		}
+		canon := pm.keyToCanonical[key]
+		if canon != "" && name != canon {
+			m[name] = canon
+		}
+	}
+	return m
+}
+
+// dblpBuildNameMap does Pass 1 of DBLP XML import: scans every <www> entry under
+// a homepages/ key and populates the three person maps.
+func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
+	pm := dblpPersonMaps{
+		nameToKey:      make(map[string]string),
+		orcidToKey:     make(map[string]string),
+		keyToCanonical: make(map[string]string),
 	}
 
-	nameMap = make(map[string]string)
-	orcidMap = make(map[string]string)
+	addName := func(raw, key string) {
+		if raw == "" || key == "" {
+			return
+		}
+		if existing, seen := pm.nameToKey[raw]; seen && existing != key {
+			pm.nameToKey[raw] = ""
+		} else if !seen {
+			pm.nameToKey[raw] = key
+		}
+	}
+
+	d := newDblpDecoder(r)
+	if err := advanceToDblpRoot(d); err != nil {
+		return pm, err
+	}
+
 	for {
 		tok, err := d.Token()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nameMap, orcidMap, fmt.Errorf("building name map: %w", err)
+			return pm, fmt.Errorf("building name map: %w", err)
 		}
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
 		}
 		if se.Name.Local != "www" {
+			d.Skip()
+			continue
+		}
+
+		var dblpKey string
+		for _, a := range se.Attr {
+			if a.Name.Local == "key" {
+				dblpKey = a.Value
+				break
+			}
+		}
+		if !strings.HasPrefix(dblpKey, "homepages/") {
 			d.Skip()
 			continue
 		}
@@ -655,163 +700,121 @@ func dblpBuildNameMap(r io.Reader) (nameMap, orcidMap map[string]string, err err
 			}
 		}
 
-		var canonicalName, canonicalORCID string
-		for _, p := range authors {
-			if p.Bibtex != "" {
-				canonicalName = dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(p.Bibtex), "")
-				canonicalORCID = p.ORCID
-				break
-			}
-		}
-		if canonicalORCID == "" {
-			canonicalORCID = urlOrcid
-		}
-		// When no bibtex= disambiguation exists but there is exactly one author and
-		// an ORCID is present, capture the ORCID using the author's display name as
-		// the canonical. This covers the vast majority of DBLP persons whose names
-		// are unambiguous and whose www entries therefore never get bibtex=.
-		if canonicalName == "" && len(authors) == 1 && canonicalORCID != "" {
-			raw := authors[0].Name
-			if raw == "" {
-				raw = authors[0].Bibtex
-			}
-			if raw != "" {
-				canonicalName = dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(raw), "")
-			}
-		}
-		if canonicalName != "" {
-			if canonicalORCID != "" {
-				if existing, seen := orcidMap[canonicalName]; seen && existing != canonicalORCID {
-					orcidMap[canonicalName] = "" // ambiguous: two people with same display name
-				} else if !seen {
-					orcidMap[canonicalName] = canonicalORCID
-				}
-			}
-			for _, p := range authors {
-				if p.Name != canonicalName {
-					nameMap[p.Name] = canonicalName
-				}
-			}
-		}
-	}
-	return nameMap, orcidMap, nil
-}
-
-// saveDblpNameFiles writes the DBLP name maps from Pass 1 to two CSV files in
-// dblpFolder(): dblp_name_bibtex.csv (alias;canonical) and dblp_name_orcid.csv
-// (canonical;orcid). Names are converted to LaTeX format before writing.
-func saveDblpNameFiles(nameMap, orcidMap map[string]string) {
-	namePath := dblpFolder() + "dblp_name_bibtex.csv"
-	orcidPath := dblpFolder() + "dblp_name_orcid.csv"
-
-	nameLines := make([]string, 0, len(nameMap))
-	for rawAlias, rawCanon := range nameMap {
-		al := dblpPersonNameToLaTeX(rawAlias)
-		cl := dblpPersonNameToLaTeX(rawCanon)
-		if al == "" || cl == "" || al == cl {
+		if len(authors) == 0 {
 			continue
 		}
-		nameLines = append(nameLines, al+";"+cl)
-	}
-	sort.Strings(nameLines)
-	if err := os.WriteFile(namePath, []byte(strings.Join(nameLines, "\n")+"\n"), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not write %s: %s\n", namePath, err)
-	} else {
-		fmt.Fprintf(os.Stderr, "  Saved %d name mappings to %s\n", len(nameLines), namePath)
-	}
 
-	// Merge new XML-sourced ORCIDs into the existing file rather than overwriting it.
-	// Ambiguous names (empty ORCID — two distinct people) are purged from the cache.
-	merged := loadDblpOrcidCSV()
-	for rawCanon, orcid := range orcidMap {
-		cl := dblpPersonNameToLaTeX(rawCanon)
-		if cl == "" {
-			continue
-		}
-		if orcid == "" {
-			delete(merged, cl)
+		first := authors[0]
+		var canonical string
+		if first.Bibtex != "" {
+			canonical = dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(first.Bibtex), "")
 		} else {
-			merged[cl] = orcid
+			canonical = applyUnicodeMap(first.Name)
+		}
+		if canonical == "" {
+			continue
+		}
+		pm.keyToCanonical[dblpKey] = canonical
+
+		addName(canonical, dblpKey)
+		if displayRaw := applyUnicodeMap(first.Name); displayRaw != canonical {
+			addName(displayRaw, dblpKey)
+		}
+		for _, a := range authors[1:] {
+			addName(applyUnicodeMap(a.Name), dblpKey)
+			if a.Bibtex != "" {
+				if bForm := dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(a.Bibtex), ""); bForm != "" {
+					addName(bForm, dblpKey)
+				}
+			}
+		}
+
+		orcid := first.ORCID
+		if orcid == "" {
+			orcid = urlOrcid
+		}
+		if orcid != "" {
+			pm.orcidToKey[orcid] = dblpKey
 		}
 	}
-	orcidLines := make([]string, 0, len(merged))
-	for name, orcid := range merged {
-		orcidLines = append(orcidLines, name+";"+orcid)
-	}
-	sort.Strings(orcidLines)
-	if err := os.WriteFile(orcidPath, []byte(strings.Join(orcidLines, "\n")+"\n"), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not write %s: %s\n", orcidPath, err)
-	} else {
-		fmt.Fprintf(os.Stderr, "  Saved %d ORCIDs to %s\n", len(orcidLines), orcidPath)
-	}
+	return pm, nil
 }
 
-// loadDblpNameFiles reads the two DBLP name CSV files from dblpFolder() and
-// returns (alias→canonical, canonical→orcid) maps, both in LaTeX name format.
-// Returns ok=false when either file is absent or unreadable.
-func loadDblpNameFiles() (nameMapLatex, orcidMapLatex map[string]string, ok bool) {
-	namePath := dblpFolder() + "dblp_name_bibtex.csv"
-	orcidPath := dblpFolder() + "dblp_name_orcid.csv"
-
-	if !FileExists(namePath) || !FileExists(orcidPath) {
-		return nil, nil, false
+// saveDblpNameFiles writes three DBLP person-map CSVs to dblpFolder():
+//
+//	dblp_name_key.csv      — LaTeX name form ; DBLP homepages key
+//	dblp_orcid_key.csv     — ORCID ; DBLP homepages key
+//	dblp_key_canonical.csv — DBLP homepages key ; LaTeX canonical name
+func saveDblpNameFiles(pm dblpPersonMaps) {
+	writeCSV := func(path string, lines []string) {
+		sort.Strings(lines)
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not write %s: %s\n", path, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "  Saved %d rows to %s\n", len(lines), path)
+		}
 	}
 
-	nameMapLatex = make(map[string]string)
-	processCSVFile(namePath, func(rec []string) {
-		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
-			nameMapLatex[rec[0]] = rec[1]
+	nameLines := make([]string, 0, len(pm.nameToKey))
+	for rawName, key := range pm.nameToKey {
+		if key == "" {
+			continue
 		}
-	})
-
-	orcidMapLatex = make(map[string]string)
-	processCSVFile(orcidPath, func(rec []string) {
-		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
-			orcidMapLatex[rec[0]] = rec[1]
+		if latexName := dblpPersonNameToLaTeX(rawName); latexName != "" {
+			nameLines = append(nameLines, latexName+";"+key)
 		}
-	})
+	}
+	writeCSV(dblpFolder()+"dblp_name_key.csv", nameLines)
 
-	return nameMapLatex, orcidMapLatex, true
+	orcidLines := make([]string, 0, len(pm.orcidToKey))
+	for orcid, key := range pm.orcidToKey {
+		if orcid != "" && key != "" {
+			orcidLines = append(orcidLines, orcid+";"+key)
+		}
+	}
+	writeCSV(dblpFolder()+"dblp_orcid_key.csv", orcidLines)
+
+	keyLines := make([]string, 0, len(pm.keyToCanonical))
+	for key, rawCanon := range pm.keyToCanonical {
+		if latexCanon := dblpPersonNameToLaTeX(rawCanon); key != "" && latexCanon != "" {
+			keyLines = append(keyLines, key+";"+latexCanon)
+		}
+	}
+	writeCSV(dblpFolder()+"dblp_key_canonical.csv", keyLines)
 }
 
-// loadDblpOrcidCSV loads just dblp_name_orcid.csv into a name→ORCID map.
-// Returns an empty map (not nil) when the file is absent or unreadable.
-// This is DBLP-level (base-agnostic): the file lives under dblpFolder().
-func loadDblpOrcidCSV() map[string]string {
-	result := map[string]string{}
-	orcidPath := dblpFolder() + "dblp_name_orcid.csv"
-	if !FileExists(orcidPath) {
-		return result
+// loadDblpPersonMaps reads the three DBLP person-map CSVs from dblpFolder().
+// Returns ok=false when any file is absent (run -dblp_update to regenerate).
+func loadDblpPersonMaps() (pm dblpPersonMaps, ok bool) {
+	nameKeyPath := dblpFolder() + "dblp_name_key.csv"
+	orcidKeyPath := dblpFolder() + "dblp_orcid_key.csv"
+	keyCanonPath := dblpFolder() + "dblp_key_canonical.csv"
+
+	if !FileExists(nameKeyPath) || !FileExists(orcidKeyPath) || !FileExists(keyCanonPath) {
+		return dblpPersonMaps{}, false
 	}
-	processCSVFile(orcidPath, func(rec []string) {
+
+	pm = dblpPersonMaps{
+		nameToKey:      make(map[string]string),
+		orcidToKey:     make(map[string]string),
+		keyToCanonical: make(map[string]string),
+	}
+	processCSVFile(nameKeyPath, func(rec []string) {
 		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
-			result[rec[0]] = rec[1]
+			pm.nameToKey[rec[0]] = rec[1]
 		}
 	})
-	return result
-}
-
-// extendDblpOrcidCSV merges newEntries into dblp_name_orcid.csv.
-// Reads the existing file, merges, and writes back sorted. No-op when empty.
-func extendDblpOrcidCSV(newEntries map[string]string) {
-	if len(newEntries) == 0 {
-		return
-	}
-	existing := loadDblpOrcidCSV()
-	for name, orcid := range newEntries {
-		if name != "" && orcid != "" {
-			existing[name] = orcid
+	processCSVFile(orcidKeyPath, func(rec []string) {
+		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
+			pm.orcidToKey[rec[0]] = rec[1]
 		}
-	}
-	orcidPath := dblpFolder() + "dblp_name_orcid.csv"
-	lines := make([]string, 0, len(existing))
-	for name, orcid := range existing {
-		lines = append(lines, name+";"+orcid)
-	}
-	sort.Strings(lines)
-	if err := os.WriteFile(orcidPath, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not update %s: %s\n", orcidPath, err)
-	}
+	})
+	processCSVFile(keyCanonPath, func(rec []string) {
+		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
+			pm.keyToCanonical[rec[0]] = rec[1]
+		}
+	})
+	return pm, true
 }
 
 // --- Second pass: main import ---
@@ -1098,14 +1101,15 @@ func doLoadDblpXml(args []string) {
 		fmt.Fprintf(os.Stderr, "Could not read gzip from %s: %s\n", xmlGzPath, err)
 		os.Exit(1)
 	}
-	nameMap, orcidMap, err := dblpBuildNameMap(gz1)
+	pm, err := dblpBuildNameMap(gz1)
 	gz1.Close()
 	f1.Close()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: name map build error: %s\n", err)
 	}
-	fmt.Fprintf(os.Stderr, "  %d name mappings collected (%.0fs).\n", len(nameMap), time.Since(start).Seconds())
-	saveDblpNameFiles(nameMap, orcidMap)
+	fmt.Fprintf(os.Stderr, "  %d person entries collected (%.0fs).\n", len(pm.keyToCanonical), time.Since(start).Seconds())
+	saveDblpNameFiles(pm)
+	nameMap := pm.aliasToCanonical()
 
 	// Second pass: import all entries.
 	fmt.Fprintf(os.Stderr, "Pass 2: importing DBLP XML from %s...\n", xmlGzPath)
@@ -1374,12 +1378,10 @@ func doAbsorbDblpNames() {
 	if !openLibraryToUpdate() {
 		return
 	}
-	// Load name and ORCID maps. Fast path: pre-built CSV files from Pass 1 of
-	// -load_dblp_xml. Fallback: re-scan the gz (slow, for first run or missing files).
-	nameMapLatex, orcidMapLatex, filesOK := loadDblpNameFiles()
+	pm, filesOK := loadDblpPersonMaps()
 	if filesOK {
-		Library.Progress("Loaded DBLP name maps from cache (%d aliases, %d ORCIDs).",
-			len(nameMapLatex), len(orcidMapLatex))
+		Library.Progress("Loaded DBLP person maps from cache (%d persons, %d ORCIDs).",
+			len(pm.keyToCanonical), len(pm.orcidToKey))
 	} else {
 		xmlFilename := readDblpCurrentXML()
 		if xmlFilename == "" {
@@ -1402,41 +1404,29 @@ func doAbsorbDblpNames() {
 			Library.Error("Cannot read DBLP XML gzip: %s", err)
 			return
 		}
-		Library.Progress("Building DBLP name map from %s ...", xmlFilename)
-		rawNameMap, rawOrcidMap, buildErr := dblpBuildNameMap(gz)
+		Library.Progress("Building DBLP person maps from %s ...", xmlFilename)
+		var buildErr error
+		pm, buildErr = dblpBuildNameMap(gz)
 		gz.Close()
 		f.Close()
 		if buildErr != nil {
-			Library.Warning("DBLP name map build partial: %s", buildErr)
+			Library.Warning("DBLP person map build partial: %s", buildErr)
 		}
-		Library.Progress("  %d DBLP name variant→canonical pairs found.", len(rawNameMap))
-
-		nameMapLatex = make(map[string]string, len(rawNameMap))
-		for rawAlias, rawCanon := range rawNameMap {
-			al := dblpPersonNameToLaTeX(rawAlias)
-			cl := dblpPersonNameToLaTeX(rawCanon)
-			if al != "" && cl != "" && al != cl {
-				nameMapLatex[al] = cl
-			}
-		}
-		orcidMapLatex = make(map[string]string, len(rawOrcidMap))
-		for rawCanon, orcid := range rawOrcidMap {
-			cl := dblpPersonNameToLaTeX(rawCanon)
-			if cl != "" && orcid != "" {
-				orcidMapLatex[cl] = orcid
-			}
-		}
+		Library.Progress("  %d DBLP persons found.", len(pm.keyToCanonical))
 	}
 
-	// Group aliases by their DBLP canonical (names already in LaTeX format).
-	groups := make(map[string][]string) // canonicalLaTeX → []aliasLaTeX
-	for aliasLaTeX, canonicalLaTeX := range nameMapLatex {
-		groups[canonicalLaTeX] = append(groups[canonicalLaTeX], aliasLaTeX)
+	// Build key → names (inverted nameToKey) and key → ORCID (inverted orcidToKey).
+	keyToNames := make(map[string][]string, len(pm.keyToCanonical))
+	for name, key := range pm.nameToKey {
+		if key != "" {
+			keyToNames[key] = append(keyToNames[key], name)
+		}
+	}
+	keyToOrcid := make(map[string]string, len(pm.orcidToKey))
+	for orcid, key := range pm.orcidToKey {
+		keyToOrcid[key] = orcid
 	}
 
-	// mergeIfKnown absorbs an existing contributor whose name matches form into
-	// the contributor identified by dblpCanonical. Uses NameToContributorID for
-	// O(1) lookup across both canonical and alias forms.
 	mergeIfKnown := func(dblpCanonical, form string) {
 		if form == "" || form == dblpCanonical {
 			return
@@ -1449,7 +1439,6 @@ func doAbsorbDblpNames() {
 		}
 	}
 
-	// isKnown returns true if any of the supplied name forms is already a known contributor.
 	isKnown := func(forms ...string) bool {
 		for _, form := range forms {
 			if form != "" {
@@ -1461,90 +1450,55 @@ func doAbsorbDblpNames() {
 		return false
 	}
 
-	absorbed := 0
-	for canonicalLaTeX, aliases := range groups {
-		surname, generation := parseSurnameGeneration(canonicalLaTeX)
-		naturalCanonical := swapBibTeXNameFormat(canonicalLaTeX)
+	absorbed, orcidsSet := 0, 0
 
-		// Skip groups where none of the DBLP name forms matches an existing contributor.
-		// Absorbing unknown persons would create spurious contributors not grounded in
-		// any of our bib entries.
-		allForms := []string{canonicalLaTeX, naturalCanonical}
-		for _, alias := range aliases {
-			allForms = append(allForms, alias, swapBibTeXNameFormat(alias),
-				naturalOrderToSurnameFirst(alias, surname, generation))
+	for key, names := range keyToNames {
+		canonical := pm.keyToCanonical[key]
+		if canonical == "" {
+			continue
+		}
+		orcid := keyToOrcid[key]
+		surname, generation := parseSurnameGeneration(canonical)
+		naturalCanonical := swapBibTeXNameFormat(canonical)
+
+		allForms := []string{canonical, naturalCanonical}
+		for _, name := range names {
+			allForms = append(allForms, name, swapBibTeXNameFormat(name),
+				naturalOrderToSurnameFirst(name, surname, generation))
 		}
 		if !isKnown(allForms...) {
 			continue
 		}
 
-		// Merge any existing library group whose name is a format variant of the canonical.
-		mergeIfKnown(canonicalLaTeX, naturalCanonical)
-
-		// Merge existing library groups whose name is a format variant of any alias.
-		for _, alias := range aliases {
-			mergeIfKnown(canonicalLaTeX, alias)
-			mergeIfKnown(canonicalLaTeX, swapBibTeXNameFormat(alias))
-			mergeIfKnown(canonicalLaTeX, naturalOrderToSurnameFirst(alias, surname, generation))
-		}
-
-		// Add the natural-order canonical form as an alias (bridges both orderings).
-		if naturalCanonical != "" && naturalCanonical != canonicalLaTeX {
-			Library.AddNameMapping(canonicalLaTeX, naturalCanonical)
-		}
-
-		// Add all DBLP aliases.
-		for _, alias := range aliases {
-			Library.AddNameMapping(canonicalLaTeX, alias)
-			absorbed++
-		}
-	}
-	Library.Progress("Absorbed %d DBLP name mappings.", absorbed)
-
-	// Set ORCIDs for known contributors. When DBLP has a DIFFERENT ORCID than stored,
-	// warn and clear the seen record so the next -enrich_contributor_data re-challenges.
-	orcidsSet := 0
-	for canonicalLaTeX, orcid := range orcidMapLatex {
-		for _, form := range []string{canonicalLaTeX, swapBibTeXNameFormat(canonicalLaTeX)} {
-			id, ok := Library.NameToContributorID[form]
-			if !ok {
-				continue
+		mergeIfKnown(canonical, naturalCanonical)
+		for _, name := range names {
+			if name != canonical {
+				mergeIfKnown(canonical, name)
+				mergeIfKnown(canonical, swapBibTeXNameFormat(name))
+				mergeIfKnown(canonical, naturalOrderToSurnameFirst(name, surname, generation))
 			}
-			contrib := Library.ContributorByID[id]
-			if contrib.ORCID == orcid {
-				break // already correct
-			}
-			if contrib.ORCID != "" {
-				// Different ORCID stored — warn; dev version resolves with full disambiguation.
-				Library.Warning("ORCID mismatch for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
-					contrib.Name, contrib.ORCID, orcid)
-				clearContributorORCIDSeen(id, contrib.ORCID)
-				break
-			}
-			contrib.ORCID = orcid
-			upsertContributorToDB(id, contrib.Name, orcid)
-			orcidsSet++
-			break
 		}
-	}
-	// File-store fallback: for each DBLP canonical that resolved to a known contributor,
-	// check the file store for a url-based ORCID. Bounded by len(groups).
-	// New finds are collected and flushed to dblp_name_orcid.csv at the end.
-	newlyFoundOrcids := map[string]string{}
-	for canonicalLaTeX := range groups {
-		orcid := resolveNameToORCID(canonicalLaTeX)
+		if naturalCanonical != "" && naturalCanonical != canonical {
+			Library.AddNameMapping(canonical, naturalCanonical)
+		}
+		for _, name := range names {
+			if name != canonical {
+				Library.AddNameMapping(canonical, name)
+				absorbed++
+			}
+		}
+
 		if orcid == "" {
 			continue
 		}
-		newlyFoundOrcids[canonicalLaTeX] = orcid
-		for _, form := range []string{canonicalLaTeX, swapBibTeXNameFormat(canonicalLaTeX)} {
+		for _, form := range []string{canonical, naturalCanonical} {
 			id, ok := Library.NameToContributorID[form]
 			if !ok {
 				continue
 			}
 			contrib := Library.ContributorByID[id]
 			if contrib.ORCID == orcid {
-				break // already correct
+				break
 			}
 			if contrib.ORCID != "" {
 				Library.Warning("ORCID mismatch for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
@@ -1559,13 +1513,7 @@ func doAbsorbDblpNames() {
 		}
 	}
 
-	if len(newlyFoundOrcids) > 0 {
-		extendDblpOrcidCSV(newlyFoundOrcids)
-	}
-	if orcidsSet > 0 {
-		Library.Progress("Set ORCID for %d contributor(s) from DBLP.", orcidsSet)
-	}
-
+	Library.Progress("Absorbed %d DBLP name alias(es), set %d ORCID(s).", absorbed, orcidsSet)
 	Library.Progress("Re-normalising author/editor fields...")
 	Library.RenormaliseNameFields()
 }
