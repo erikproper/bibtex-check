@@ -183,8 +183,7 @@ func texToHTML(s string) string {
 	s = strings.ReplaceAll(s, "---", "—")
 	s = strings.ReplaceAll(s, "--", "–")
 
-	// Special characters
-	s = strings.ReplaceAll(s, "~", "&nbsp;")
+	// Special characters (& before accent pairs; ~ after, so {\~a} isn't mangled first)
 	s = strings.ReplaceAll(s, `\&`, "&amp;")
 
 	// TeX emphasis commands
@@ -193,10 +192,13 @@ func texToHTML(s string) string {
 	s = applyTeXCommand(s, `\textbf`, "<strong>", "</strong>")
 	s = applyTeXCommand(s, `\texttt`, "<code>", "</code>")
 
-	// Accented characters (two-brace forms first)
+	// Accented characters (two-brace forms first, must run before ~ → &nbsp;)
 	for _, p := range texAccentPairs {
 		s = strings.ReplaceAll(s, p[0], p[1])
 	}
+
+	// Standalone ~ is a TeX non-breaking space tie; replace after accent pairs.
+	s = strings.ReplaceAll(s, "~", "&nbsp;")
 
 	// Special letter sequences (handle before brace removal)
 	s = strings.ReplaceAll(s, `{\ss}`, "ß")
