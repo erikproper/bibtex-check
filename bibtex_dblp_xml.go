@@ -721,10 +721,16 @@ func saveDblpNameFiles(nameMap, orcidMap map[string]string) {
 	}
 
 	// Merge new XML-sourced ORCIDs into the existing file rather than overwriting it.
+	// Ambiguous names (empty ORCID — two distinct people) are purged from the cache.
 	merged := loadDblpOrcidCSV()
 	for rawCanon, orcid := range orcidMap {
 		cl := dblpPersonNameToLaTeX(rawCanon)
-		if cl != "" && orcid != "" {
+		if cl == "" {
+			continue
+		}
+		if orcid == "" {
+			delete(merged, cl)
+		} else {
 			merged[cl] = orcid
 		}
 	}
