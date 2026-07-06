@@ -590,19 +590,25 @@ func doRebuildDblpCrossrefIndex() {
 
 // dblpPersonMaps holds the three person-level maps built during Pass 1 of XML import.
 type dblpPersonMaps struct {
-	nameToKey      map[string]string // raw name form → DBLP key; "" = two people share this form
+	nameToKey      map[string]string // LaTeX name form → DBLP key; "" = two people share this form
 	orcidToKey     map[string]string // ORCID → DBLP key
-	keyToCanonical map[string]string // DBLP key → canonical name
+	keyToCanonical map[string]string // DBLP key → display canonical (LaTeX, first <author> text)
+	keyToBibtex    map[string]string // DBLP key → bibtex= form (LaTeX), only when ≠ display
+	keyOldies      map[string]string // child DBLP key → parent DBLP key (crossref redirects)
 }
 
 // aliasToCanonical derives the alias→canonical map needed by dblpImportFromReader.
+// Uses bibtex= form as canonical when present; falls back to display canonical.
 func (pm dblpPersonMaps) aliasToCanonical() map[string]string {
 	m := make(map[string]string, len(pm.nameToKey))
 	for name, key := range pm.nameToKey {
 		if key == "" {
 			continue
 		}
-		canon := pm.keyToCanonical[key]
+		canon := pm.keyToBibtex[key]
+		if canon == "" {
+			canon = pm.keyToCanonical[key]
+		}
 		if canon != "" && name != canon {
 			m[name] = canon
 		}
@@ -611,22 +617,30 @@ func (pm dblpPersonMaps) aliasToCanonical() map[string]string {
 }
 
 // dblpBuildNameMap does Pass 1 of DBLP XML import: scans every <www> entry under
-// a homepages/ key and populates the three person maps.
+// a homepages/ key and populates the five person maps.
+// Name forms are LaTeX-converted before insertion so ambiguity detection works on
+// the final representation. Crossref-only entries are recorded as key oldies.
 func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 	pm := dblpPersonMaps{
 		nameToKey:      make(map[string]string),
 		orcidToKey:     make(map[string]string),
 		keyToCanonical: make(map[string]string),
+		keyToBibtex:    make(map[string]string),
+		keyOldies:      make(map[string]string),
 	}
 
 	addName := func(raw, key string) {
 		if raw == "" || key == "" {
 			return
 		}
-		if existing, seen := pm.nameToKey[raw]; seen && existing != key {
-			pm.nameToKey[raw] = ""
+		latex := dblpPersonNameToLaTeX(raw)
+		if latex == "" {
+			return
+		}
+		if existing, seen := pm.nameToKey[latex]; seen && existing != key {
+			pm.nameToKey[latex] = ""
 		} else if !seen {
-			pm.nameToKey[raw] = key
+			pm.nameToKey[latex] = key
 		}
 	}
 
@@ -665,7 +679,7 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 		}
 
 		var authors []dblpXMLPerson
-		var urlOrcid string
+		var urlOrcid, crossrefKey string
 	childLoop:
 		for {
 			child, cerr := d.Token()
@@ -692,6 +706,11 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 					if urlOrcid == "" && strings.HasPrefix(text, "https://orcid.org/") {
 						urlOrcid = strings.TrimPrefix(text, "https://orcid.org/")
 					}
+				case "crossref":
+					text, _ := xmlCollectText(d)
+					if crossrefKey == "" {
+						crossrefKey = text
+					}
 				default:
 					d.Skip()
 				}
@@ -700,32 +719,36 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 			}
 		}
 
+		if crossrefKey != "" && len(authors) == 0 {
+			pm.keyOldies[dblpKey] = crossrefKey
+			continue
+		}
+
 		if len(authors) == 0 {
 			continue
 		}
 
 		first := authors[0]
-		var canonical string
-		if first.Bibtex != "" {
-			canonical = dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(first.Bibtex), "")
-		} else {
-			canonical = applyUnicodeMap(first.Name)
-		}
-		if canonical == "" {
+		displayLatex := dblpPersonNameToLaTeX(first.Name)
+		if displayLatex == "" {
 			continue
 		}
-		pm.keyToCanonical[dblpKey] = canonical
+		pm.keyToCanonical[dblpKey] = displayLatex
 
-		addName(canonical, dblpKey)
-		if displayRaw := applyUnicodeMap(first.Name); displayRaw != canonical {
-			addName(displayRaw, dblpKey)
+		if first.Bibtex != "" {
+			if bibtexLatex := dblpPersonNameToLaTeX(first.Bibtex); bibtexLatex != "" && bibtexLatex != displayLatex {
+				pm.keyToBibtex[dblpKey] = bibtexLatex
+			}
+		}
+
+		addName(first.Name, dblpKey)
+		if first.Bibtex != "" {
+			addName(first.Bibtex, dblpKey)
 		}
 		for _, a := range authors[1:] {
-			addName(applyUnicodeMap(a.Name), dblpKey)
+			addName(a.Name, dblpKey)
 			if a.Bibtex != "" {
-				if bForm := dblpDisambigSuffix.ReplaceAllString(applyUnicodeMap(a.Bibtex), ""); bForm != "" {
-					addName(bForm, dblpKey)
-				}
+				addName(a.Bibtex, dblpKey)
 			}
 		}
 
@@ -740,14 +763,14 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 	return pm, nil
 }
 
-// saveDblpNameFiles writes three DBLP person-map CSVs to dblpFolder():
-//
-//	dblp_name_key.csv      — LaTeX name form ; DBLP homepages key
-//	dblp_orcid_key.csv     — ORCID ; DBLP homepages key
-//	dblp_key_canonical.csv — DBLP homepages key ; LaTeX canonical name
+// saveDblpNameFiles writes five DBLP person-map CSVs to dblpFolder() and
+// removes the two legacy files (dblp_name_bibtex.csv, dblp_name_orcid.csv).
 func saveDblpNameFiles(pm dblpPersonMaps) {
-	writeCSV := func(path string, lines []string) {
+	base := dblpFolder()
+
+	writeCSV := func(filename string, lines []string) {
 		sort.Strings(lines)
+		path := base + filename
 		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not write %s: %s\n", path, err)
 		} else {
@@ -756,15 +779,12 @@ func saveDblpNameFiles(pm dblpPersonMaps) {
 	}
 
 	nameLines := make([]string, 0, len(pm.nameToKey))
-	for rawName, key := range pm.nameToKey {
-		if key == "" {
-			continue
-		}
-		if latexName := dblpPersonNameToLaTeX(rawName); latexName != "" {
-			nameLines = append(nameLines, latexName+";"+key)
+	for name, key := range pm.nameToKey {
+		if key != "" && name != "" {
+			nameLines = append(nameLines, name+";"+key)
 		}
 	}
-	writeCSV(dblpFolder()+"dblp_name_key.csv", nameLines)
+	writeCSV("dblp_name_key.csv", nameLines)
 
 	orcidLines := make([]string, 0, len(pm.orcidToKey))
 	for orcid, key := range pm.orcidToKey {
@@ -772,25 +792,52 @@ func saveDblpNameFiles(pm dblpPersonMaps) {
 			orcidLines = append(orcidLines, orcid+";"+key)
 		}
 	}
-	writeCSV(dblpFolder()+"dblp_orcid_key.csv", orcidLines)
+	writeCSV("dblp_orcid_key.csv", orcidLines)
 
-	keyLines := make([]string, 0, len(pm.keyToCanonical))
-	for key, rawCanon := range pm.keyToCanonical {
-		if latexCanon := dblpPersonNameToLaTeX(rawCanon); key != "" && latexCanon != "" {
-			keyLines = append(keyLines, key+";"+latexCanon)
+	canonLines := make([]string, 0, len(pm.keyToCanonical))
+	for key, canon := range pm.keyToCanonical {
+		if key != "" && canon != "" {
+			canonLines = append(canonLines, key+";"+canon)
 		}
 	}
-	writeCSV(dblpFolder()+"dblp_key_canonical.csv", keyLines)
+	writeCSV("dblp_key_canonical.csv", canonLines)
+
+	bibtexLines := make([]string, 0, len(pm.keyToBibtex))
+	for key, bibtex := range pm.keyToBibtex {
+		if key != "" && bibtex != "" {
+			bibtexLines = append(bibtexLines, key+";"+bibtex)
+		}
+	}
+	writeCSV("dblp_key_bibtex.csv", bibtexLines)
+
+	oldiesLines := make([]string, 0, len(pm.keyOldies))
+	for child, parent := range pm.keyOldies {
+		if child != "" && parent != "" {
+			oldiesLines = append(oldiesLines, child+";"+parent)
+		}
+	}
+	writeCSV("dblp_homepages_oldies.csv", oldiesLines)
+
+	for _, stale := range []string{"dblp_name_bibtex.csv", "dblp_name_orcid.csv"} {
+		path := base + stale
+		if FileExists(path) {
+			if err := os.Remove(path); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove stale %s: %s\n", path, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "  Removed stale %s\n", path)
+			}
+		}
+	}
 }
 
-// loadDblpPersonMaps reads the three DBLP person-map CSVs from dblpFolder().
-// Returns ok=false when any file is absent (run -dblp_update to regenerate).
+// loadDblpPersonMaps reads the DBLP person-map CSVs from dblpFolder().
+// The three core files must exist; dblp_key_bibtex and dblp_homepages_oldies are optional.
+// Returns ok=false when a core file is absent (run -dblp_update to regenerate).
 func loadDblpPersonMaps() (pm dblpPersonMaps, ok bool) {
-	nameKeyPath := dblpFolder() + "dblp_name_key.csv"
-	orcidKeyPath := dblpFolder() + "dblp_orcid_key.csv"
-	keyCanonPath := dblpFolder() + "dblp_key_canonical.csv"
-
-	if !FileExists(nameKeyPath) || !FileExists(orcidKeyPath) || !FileExists(keyCanonPath) {
+	base := dblpFolder()
+	if !FileExists(base+"dblp_name_key.csv") ||
+		!FileExists(base+"dblp_orcid_key.csv") ||
+		!FileExists(base+"dblp_key_canonical.csv") {
 		return dblpPersonMaps{}, false
 	}
 
@@ -798,22 +845,38 @@ func loadDblpPersonMaps() (pm dblpPersonMaps, ok bool) {
 		nameToKey:      make(map[string]string),
 		orcidToKey:     make(map[string]string),
 		keyToCanonical: make(map[string]string),
+		keyToBibtex:    make(map[string]string),
+		keyOldies:      make(map[string]string),
 	}
-	processCSVFile(nameKeyPath, func(rec []string) {
+	processCSVFile(base+"dblp_name_key.csv", func(rec []string) {
 		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
 			pm.nameToKey[rec[0]] = rec[1]
 		}
 	})
-	processCSVFile(orcidKeyPath, func(rec []string) {
+	processCSVFile(base+"dblp_orcid_key.csv", func(rec []string) {
 		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
 			pm.orcidToKey[rec[0]] = rec[1]
 		}
 	})
-	processCSVFile(keyCanonPath, func(rec []string) {
+	processCSVFile(base+"dblp_key_canonical.csv", func(rec []string) {
 		if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
 			pm.keyToCanonical[rec[0]] = rec[1]
 		}
 	})
+	if FileExists(base + "dblp_key_bibtex.csv") {
+		processCSVFile(base+"dblp_key_bibtex.csv", func(rec []string) {
+			if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
+				pm.keyToBibtex[rec[0]] = rec[1]
+			}
+		})
+	}
+	if FileExists(base + "dblp_homepages_oldies.csv") {
+		processCSVFile(base+"dblp_homepages_oldies.csv", func(rec []string) {
+			if len(rec) == 2 && rec[0] != "" && rec[1] != "" {
+				pm.keyOldies[rec[0]] = rec[1]
+			}
+		})
+	}
 	return pm, true
 }
 
@@ -1453,15 +1516,19 @@ func doAbsorbDblpNames() {
 	absorbed, orcidsSet := 0, 0
 
 	for key, names := range keyToNames {
-		canonical := pm.keyToCanonical[key]
+		canonical := pm.keyToBibtex[key]
+		if canonical == "" {
+			canonical = pm.keyToCanonical[key]
+		}
 		if canonical == "" {
 			continue
 		}
+		displayCanonical := pm.keyToCanonical[key]
 		orcid := keyToOrcid[key]
 		surname, generation := parseSurnameGeneration(canonical)
 		naturalCanonical := swapBibTeXNameFormat(canonical)
 
-		allForms := []string{canonical, naturalCanonical}
+		allForms := []string{canonical, naturalCanonical, displayCanonical, swapBibTeXNameFormat(displayCanonical)}
 		for _, name := range names {
 			allForms = append(allForms, name, swapBibTeXNameFormat(name),
 				naturalOrderToSurnameFirst(name, surname, generation))
@@ -1471,6 +1538,8 @@ func doAbsorbDblpNames() {
 		}
 
 		mergeIfKnown(canonical, naturalCanonical)
+		mergeIfKnown(canonical, displayCanonical)
+		mergeIfKnown(canonical, swapBibTeXNameFormat(displayCanonical))
 		for _, name := range names {
 			if name != canonical {
 				mergeIfKnown(canonical, name)
@@ -1480,6 +1549,9 @@ func doAbsorbDblpNames() {
 		}
 		if naturalCanonical != "" && naturalCanonical != canonical {
 			Library.AddNameMapping(canonical, naturalCanonical)
+		}
+		if displayCanonical != "" && displayCanonical != canonical {
+			Library.AddNameMapping(canonical, displayCanonical)
 		}
 		for _, name := range names {
 			if name != canonical {
