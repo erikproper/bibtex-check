@@ -2665,6 +2665,28 @@ func resolveNameToContributorID(l *TBibTeXLibrary, name string) (string, bool) {
 	return "", false
 }
 
+func resolveNamesToIDSeq(l *TBibTeXLibrary, names []string) []string {
+	var seq []string
+	for _, name := range names {
+		if id, ok := resolveNameToContributorID(l, name); ok {
+			seq = append(seq, id)
+		}
+	}
+	return seq
+}
+
+func idSeqEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // isGloballyAmbiguous reports whether name maps to more than one contributor.
 func isGloballyAmbiguous(l *TBibTeXLibrary, name string) bool {
 	_, ok := l.AmbiguousNameToContributorIDs[name]
@@ -2738,37 +2760,6 @@ func retroactivelyBackfillDisambiguation(l *TBibTeXLibrary, name string) {
 	}
 }
 
-// resolveNamesToIDSeq resolves a pre-split name slice to a contributor-ID slice.
-// "others" / garbled names are omitted; ordering is preserved.
-func resolveNamesToIDSeq(l *TBibTeXLibrary, names []string) []string {
-	ids := make([]string, 0, len(names))
-	for _, name := range names {
-		lc := strings.ToLower(name)
-		if lc == "others" || lc == "et.al." || lc == "et al." {
-			continue
-		}
-		if isGarbledContributorName(name) {
-			continue
-		}
-		if id, ok := resolveNameToContributorID(l, name); ok {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
-// idSeqEqual reports whether two contributor-ID slices are identical.
-func idSeqEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
 
 // normalizeEtAlTail replaces trailing "et al." / "et.al." variants in an
 // author/editor field value with "and others" so that the list splits cleanly
@@ -2875,221 +2866,6 @@ func resolveContributorForPosition(l *TBibTeXLibrary, key, role string, position
 	l.Warning("Ambiguous contributor %q at (%s %s pos %d): using %s",
 		name, key, role, position, candidates[0])
 	return candidates[0], true
-}
-
-// maybeMigrateAuthorEditorToContributorRoles populates contributor_roles and
-// entry_contributor_names from the author/editor rows in bib_entries, retires
-// losing_field_values challengers whose ID sequence matches the winner, then
-// removes author/editor rows from bib_entries. Runs once: skipped if
-// contributor_roles already has rows.
-func maybeMigrateAuthorEditorToContributorRoles(l *TBibTeXLibrary) {
-	var roleCount int
-	db.QueryRow(`SELECT COUNT(*) FROM contributor_roles`).Scan(&roleCount) //nolint:errcheck
-	if roleCount > 0 {
-		contributorRolesActive = true
-		return
-	}
-	var entryCount int
-	db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field IN ('author', 'editor')`).Scan(&entryCount) //nolint:errcheck
-	if entryCount == 0 {
-		return
-	}
-
-	l.Progress("Migrating %d author/editor rows to contributor_roles ...", entryCount)
-
-	rows, err := db.Query(
-		`SELECT entry_key, field, value FROM bib_entries
-		 WHERE field IN ('author', 'editor') ORDER BY entry_key, field`)
-	if err != nil {
-		dbInteraction.Warning("contributor_roles migration: cannot query bib_entries: %s", err)
-		return
-	}
-	type entryRole struct{ key, field, value string }
-	var toMigrate []entryRole
-	for rows.Next() {
-		var er entryRole
-		if rows.Scan(&er.key, &er.field, &er.value) == nil {
-			toMigrate = append(toMigrate, er)
-		}
-	}
-	rows.Close()
-
-	tx, err := db.Begin()
-	if err != nil {
-		dbInteraction.Warning("contributor_roles migration: begin tx: %s", err)
-		return
-	}
-
-	// Ensure the "others" sentinel contributor exists so it resolves normally
-	// below — "others" is kept in contributor_roles so " and others" round-trips.
-	ensureOthersContributor(l)
-
-	// winnerSeqs[entry_key][role] holds the resolved ID sequence for each entry,
-	// used below to retire identical-sequence losers from losing_field_values.
-	winnerSeqs := map[string]map[string][]string{}
-
-	rolesMigrated, aliasesMigrated, newContributors, garbledSkipped := 0, 0, 0, 0
-
-	// cleanlyMigrated tracks (entry_key, field) pairs that were fully migrated to
-	// contributor_roles. Only these rows are deleted from bib_entries at the end.
-	// Fields with any garbled name are left in bib_entries untouched so that no
-	// information is lost; the normal check pass will warn about them.
-	type migKey struct{ key, field string }
-	cleanlyMigrated := map[migKey]bool{}
-
-	for _, er := range toMigrate {
-		// Normalise trailing et-al variants to "others" before splitting.
-		names := splitBibNameField(normalizeEtAlTail(er.value))
-		var seq []string
-		position := 0
-		entryHadGarbled := false
-		for _, name := range names {
-			lc := strings.ToLower(name)
-			if lc == "et.al." || lc == "et al." {
-				continue
-			}
-
-			storeName := name
-			garbled := false
-			if isGarbledContributorName(name) {
-				// Wrap in braces only if not already brace-wrapped; names like
-				// {Fortuna, M.H.} are already at one level and don't need a second.
-				if !strings.HasPrefix(name, "{") {
-					storeName = "{" + name + "}"
-				}
-				garbled = true
-				garbledSkipped++
-				entryHadGarbled = true
-			}
-
-			id, ok := resolveNameToContributorID(l, storeName)
-			if !ok {
-				id = l.NewKey()
-				l.ContributorByID[id] = &TContributor{Name: storeName, Garbled: garbled}
-				l.NameToContributorID[storeName] = id
-				// Use tx.Exec, not bibExec/db.Exec — db already has this tx open;
-				// a second write path on the same connection produces SQLITE_BUSY.
-				garbledInt := 0
-				if garbled {
-					garbledInt = 1
-				} else {
-					newContributors++
-					l.Progress("  Unexpected new contributor during migration: %q", storeName)
-				}
-				if _, err := tx.Exec(
-					`INSERT INTO contributors (id, name, orcid, garbled) VALUES (?, ?, '', ?)
-					 ON CONFLICT(id) DO UPDATE SET name = excluded.name, garbled = MAX(garbled, excluded.garbled)`,
-					id, storeName, garbledInt); err != nil {
-					tx.Rollback() //nolint:errcheck
-					dbInteraction.Warning("contributor_roles migration: insert contributor: %s", err)
-					return
-				}
-				if _, err := tx.Exec(
-					`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`,
-					id, storeName); err != nil {
-					tx.Rollback() //nolint:errcheck
-					dbInteraction.Warning("contributor_roles migration: insert contributor_name: %s", err)
-					return
-				}
-			} else if garbled {
-				if c := l.ContributorByID[id]; c != nil {
-					c.Garbled = true
-				}
-				// Mark the existing contributor as garbled in the DB too.
-				tx.Exec(`UPDATE contributors SET garbled = 1 WHERE id = ?`, id) //nolint:errcheck
-			}
-
-			position++
-			if _, err := tx.Exec(
-				`INSERT OR IGNORE INTO contributor_roles
-				 (entry_key, role, position, contributor_id) VALUES (?, ?, ?, ?)`,
-				er.key, er.field, position, id); err != nil {
-				tx.Rollback() //nolint:errcheck
-				dbInteraction.Warning("contributor_roles migration: insert role: %s", err)
-				return
-			}
-			rolesMigrated++
-			seq = append(seq, id)
-
-			// Record name_used evidence when the stored name differs from canonical.
-			if contrib := l.ContributorByID[id]; contrib != nil && storeName != contrib.Name {
-				if _, err := tx.Exec(
-					`INSERT OR IGNORE INTO entry_contributor_names
-					 (entry_key, role, position, contributor_id, name_used) VALUES (?, ?, ?, ?, ?)`,
-					er.key, er.field, position, id, storeName); err != nil {
-					tx.Rollback() //nolint:errcheck
-					dbInteraction.Warning("contributor_roles migration: insert entry name: %s", err)
-					return
-				}
-				aliasesMigrated++
-			}
-		}
-		cleanlyMigrated[migKey{er.key, er.field}] = true
-		if winnerSeqs[er.key] == nil {
-			winnerSeqs[er.key] = map[string][]string{}
-		}
-		winnerSeqs[er.key][er.field] = seq
-
-		// When any name was garble-wrapped, register the original field value as a
-		// losing form so that loadAuthorEditorFieldMappingsFromCache can register
-		// the alias old-form → new-wrapped-form after the migration commits.
-		if entryHadGarbled {
-			tx.Exec( //nolint:errcheck
-				`INSERT OR IGNORE INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?)`,
-				er.key, er.field, er.value)
-		}
-	}
-
-	// Retire losing_field_values rows whose loser resolves to the same ID sequence
-	// as the winner just migrated into contributor_roles.
-	lfvRetired := 0
-	lfvRows, lfvErr := db.Query(
-		`SELECT entry_key, field, value FROM losing_field_values
-		 WHERE field IN ('author', 'editor')`)
-	if lfvErr == nil {
-		type lfvRow struct{ key, field, loser string }
-		var lfvAll []lfvRow
-		for lfvRows.Next() {
-			var r lfvRow
-			if lfvRows.Scan(&r.key, &r.field, &r.loser) == nil {
-				lfvAll = append(lfvAll, r)
-			}
-		}
-		lfvRows.Close()
-		for _, r := range lfvAll {
-			loserSeq := resolveNamesToIDSeq(l, splitBibNameField(r.loser))
-			if winner, ok := winnerSeqs[r.key][r.field]; ok && idSeqEqual(winner, loserSeq) {
-				if _, err := tx.Exec(
-					`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`,
-					r.key, r.field, r.loser); err == nil {
-					lfvRetired++
-				}
-			}
-		}
-	}
-
-	// Delete only the cleanly-migrated rows; garbled-field rows stay in bib_entries.
-	deleteStmt := `DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`
-	for mk := range cleanlyMigrated {
-		if _, err := tx.Exec(deleteStmt, mk.key, mk.field); err != nil {
-			tx.Rollback() //nolint:errcheck
-			dbInteraction.Warning("contributor_roles migration: delete row: %s", err)
-			return
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		dbInteraction.Warning("contributor_roles migration: commit: %s", err)
-		return
-	}
-
-	setTableDate("contributor_roles", time.Now().UnixMicro())
-	contributorRolesActive = true
-	l.Progress("  Done: %d positions (%d garbled name(s) wrapped), %d entry aliases, %d loser(s) retired.",
-		rolesMigrated, garbledSkipped, aliasesMigrated, lfvRetired)
-	if newContributors > 0 {
-		l.Progress("  Warning: %d unexpected new contributor(s) created.", newContributors)
-	}
 }
 
 // --- key_hints table ---
@@ -4026,15 +3802,6 @@ func ensureLosingFieldValuesTableExists() {
 		);`)
 	// Add triage_status to databases created before this column existed.
 	db.Exec(`ALTER TABLE losing_field_values ADD COLUMN triage_status TEXT`) //nolint:errcheck
-}
-
-// maybeDropFilterEntryFieldMappings drops the legacy filter_entry_field_mappings
-// table if it still exists. Data was migrated to losing_field_values in 21.x;
-// the table is now dead code and should be removed from every database.
-// TODO: remove this function (and its call sites) once all databases have been
-// opened at least once with 26.41+.
-func maybeDropFilterEntryFieldMappings() {
-	db.Exec(`DROP TABLE IF EXISTS filter_entry_field_mappings`) //nolint:errcheck
 }
 
 // maybeMigrateStripLocalURL deletes all local-url rows from bib_entries on the first

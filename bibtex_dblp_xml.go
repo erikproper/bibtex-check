@@ -1575,6 +1575,7 @@ func absorbDblpNamesCore() {
 	}
 
 	keysLinked, absorbed, orcidsSet := 0, 0, 0
+	var splitCandidates []dblpSplitCandidate
 
 	for key, names := range keyToNames {
 		// Derive the canonical in Last,First format.
@@ -1723,6 +1724,17 @@ func absorbDblpNamesCore() {
 			}
 			setContributorDblpKey(&Library, contribID, key)
 			keysLinked++
+		} else if contrib.DblpKey != key {
+			// This contributor already has a different DBLP key — the same person in
+			// the library was matched by two distinct DBLP persons. Schedule a split.
+			splitCandidates = append(splitCandidates, dblpSplitCandidate{
+				contribID:    contribID,
+				existingKey:  contrib.DblpKey,
+				newKey:       key,
+				newCanonical: displayCanonical,
+				newName:      canonical,
+				newForms:     allForms,
+			})
 		}
 
 		// Set or check ORCID.
@@ -1747,10 +1759,142 @@ func absorbDblpNamesCore() {
 		orcidsSet++
 	}
 
+	for _, sc := range splitCandidates {
+		if splitContributorByDblpKeys(&Library, sc) {
+			keysLinked++
+		}
+	}
+
 	Library.Progress("Linked %d DBLP person key(s), absorbed %d name alias(es), set %d ORCID(s).",
 		keysLinked, absorbed, orcidsSet)
 	Library.Progress("Re-normalising author/editor fields...")
 	Library.RenormaliseNameFields()
+}
+
+type dblpSplitCandidate struct {
+	contribID    string
+	existingKey  string
+	newKey       string
+	newCanonical string // DBLP display canonical for readDblpPersonEntries
+	newName      string // BibTeX surname-first form for the new contributor name
+	newForms     []string
+}
+
+// splitContributorByDblpKeys splits a contributor that was matched by two distinct
+// DBLP person keys. Entries whose DBLP key appears in the new person's publication
+// index are moved to a freshly-created (or existing) contributor; the original
+// contributor retains its existing DBLP key and the remaining entries.
+func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
+	contrib := l.ContributorByID[sc.contribID]
+	if contrib == nil {
+		return false
+	}
+
+	// Build the set of DBLP publication keys belonging to the new person.
+	newPubSet := make(map[string]bool)
+	for _, k := range readDblpPersonEntries(sc.newCanonical) {
+		newPubSet[k] = true
+	}
+	if len(newPubSet) == 0 {
+		l.Progress("  DBLP split: no publications indexed for %s (%q) — skipped.", sc.newKey, sc.newCanonical)
+		return false
+	}
+
+	// Find entries attributed to the merged contributor whose DBLP key
+	// belongs to the new person.
+	rows, err := db.Query(`
+		SELECT DISTINCT cr.entry_key, COALESCE(be.value, '')
+		FROM contributor_roles cr
+		LEFT JOIN bib_entries be ON be.entry_key = cr.entry_key AND be.field = ?
+		WHERE cr.contributor_id = ?`, DBLPField, sc.contribID)
+	if err != nil {
+		l.Warning("splitContributorByDblpKeys: query: %s", err)
+		return false
+	}
+	var toNew []string
+	for rows.Next() {
+		var entryKey, dblpVal string
+		if rows.Scan(&entryKey, &dblpVal) != nil {
+			continue
+		}
+		if newPubSet[normalizeDblpKey(dblpVal)] {
+			toNew = append(toNew, entryKey)
+		}
+	}
+	rows.Close()
+
+	if len(toNew) == 0 {
+		l.Progress("  DBLP split: %q linked to %s; 0 entries match %s — skipped.",
+			contrib.Name, sc.existingKey, sc.newKey)
+		return false
+	}
+
+	// Determine the name for the new contributor.
+	newName := sc.newName
+	if newName == "" {
+		newName = sc.newCanonical
+	}
+
+	// Create or reuse a contributor for the new DBLP person.
+	newID := ""
+	creatingNew := false
+	if existingNewID, ok := l.NameToContributorID[newName]; ok && existingNewID != sc.contribID {
+		newID = existingNewID
+		if c := l.ContributorByID[newID]; c != nil && c.DblpKey == "" {
+			setContributorDblpKey(l, newID, sc.newKey)
+		}
+	} else {
+		newID = l.NewKey()
+		creatingNew = true
+	}
+
+	tx, txErr := db.Begin()
+	if txErr != nil {
+		l.Warning("splitContributorByDblpKeys: begin tx: %s", txErr)
+		return false
+	}
+	if creatingNew {
+		if _, err := tx.Exec(
+			`INSERT INTO contributors (id, name, orcid, dblp_key, garbled) VALUES (?, ?, '', ?, 0)`,
+			newID, newName, sc.newKey); err != nil {
+			tx.Rollback() //nolint:errcheck
+			l.Warning("splitContributorByDblpKeys: insert contributor: %s", err)
+			return false
+		}
+		tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, newID, newName) //nolint:errcheck
+	}
+	for _, entryKey := range toNew {
+		if _, err := tx.Exec(
+			`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND contributor_id = ?`,
+			newID, entryKey, sc.contribID); err != nil {
+			tx.Rollback() //nolint:errcheck
+			l.Warning("splitContributorByDblpKeys: update roles: %s", err)
+			return false
+		}
+		tx.Exec( //nolint:errcheck
+			`UPDATE entry_contributor_names SET contributor_id = ? WHERE entry_key = ? AND contributor_id = ?`,
+			newID, entryKey, sc.contribID)
+	}
+	if err := tx.Commit(); err != nil {
+		l.Warning("splitContributorByDblpKeys: commit: %s", err)
+		return false
+	}
+	if creatingNew {
+		l.ContributorByID[newID] = &TContributor{Name: newName, DblpKey: sc.newKey}
+		l.NameToContributorID[newName] = newID
+		l.DblpKeyToContributorID[sc.newKey] = newID
+	}
+
+	// Register DBLP name forms for the new contributor as aliases.
+	for _, form := range sc.newForms {
+		if form != "" && form != newName {
+			l.AddNameMapping(newName, form)
+		}
+	}
+
+	l.Progress("  DBLP split: moved %d entry/ies from %q (%s) to new contributor %q (%s).",
+		len(toNew), contrib.Name, sc.existingKey, newName, sc.newKey)
+	return true
 }
 
 // absorbDblpOrcidsCore sweeps contributors for ORCID assignment using the DBLP

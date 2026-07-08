@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.217"
+const AppVersion = "27.0"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -154,7 +154,6 @@ func doImportBib(path string) {
 	if !prepareWorkingDatabase() {
 		return
 	}
-	maybeDropFilterEntryFieldMappings()
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
@@ -287,7 +286,6 @@ func openLibraryToUpdate() bool {
 		return false
 	}
 	maybeMigrateTableConstraints()
-	maybeDropFilterEntryFieldMappings()
 	maybeMigrateStripLocalURL()
 	preCheckRepair()
 	maybeMigrateToFKSchema()
@@ -295,7 +293,6 @@ func openLibraryToUpdate() bool {
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
 	seedContributorsFromEntries(&Library)
-	maybeMigrateAuthorEditorToContributorRoles(&Library)
 	maybeCleanupOrphanedContributors(&Library)
 
 	if skipBibValidation || Library.ValidBibDb() {
@@ -3919,7 +3916,6 @@ case cmdAlignBooktitleCountries:
 		// Does not require ValidBibDb: mapping tables are imported independently of bib entries.
 		if prepareWorkingDatabase() {
 			maybeMigrateTableConstraints()
-			maybeDropFilterEntryFieldMappings()
 			if ImportAllCSVExchangeFiles() {
 				dbInteraction.Progress("All CSV exchange files imported successfully.")
 			}
