@@ -588,17 +588,24 @@ func doRebuildDblpCrossrefIndex() {
 
 // --- First pass: name map ---
 
-// dblpPersonMaps holds the three person-level maps built during Pass 1 of XML import.
+// dblpBuildNameMap does a first streaming pass over the DBLP XML, collecting
+// only www (person homepage) entries to build a plain-name → canonical-name map
+// and a canonical-name → ORCID map. The canonical name comes from the bibtex=
+// attribute of the first author that carries one; the disambiguation suffix
+// (e.g. " 0001") is stripped. The orcid= attribute of that same author element
+// dblpPersonMaps holds the person-level maps built during Pass 1 of XML import.
+// All maps are keyed around the DBLP homepages entry key (e.g. "homepages/93/4573").
 type dblpPersonMaps struct {
 	nameToKey      map[string]string // LaTeX name form → DBLP key; "" = two people share this form
 	orcidToKey     map[string]string // ORCID → DBLP key
 	keyToCanonical map[string]string // DBLP key → display canonical (LaTeX, first <author> text)
-	keyToBibtex    map[string]string // DBLP key → bibtex= form (LaTeX), only when ≠ display
+	keyToBibtex    map[string]string // DBLP key → bibtex= form (LaTeX), only when it differs from display
 	keyOldies      map[string]string // child DBLP key → parent DBLP key (crossref redirects)
 }
 
 // aliasToCanonical derives the alias→canonical map needed by dblpImportFromReader.
-// Uses bibtex= form as canonical when present; falls back to display canonical.
+// Uses the bibtex= form as canonical when present (preserves data.json compatibility);
+// falls back to display canonical.
 func (pm dblpPersonMaps) aliasToCanonical() map[string]string {
 	m := make(map[string]string, len(pm.nameToKey))
 	for name, key := range pm.nameToKey {
@@ -618,8 +625,13 @@ func (pm dblpPersonMaps) aliasToCanonical() map[string]string {
 
 // dblpBuildNameMap does Pass 1 of DBLP XML import: scans every <www> entry under
 // a homepages/ key and populates the five person maps.
-// Name forms are LaTeX-converted before insertion so ambiguity detection works on
-// the final representation. Crossref-only entries are recorded as key oldies.
+//
+// Name forms are converted to LaTeX before insertion so that ambiguity detection
+// works on the final representation (preventing HTML/Unicode encoding variants of
+// the same name from slipping through as separate entries).
+//
+// Entries that only contain a <crossref> field are recorded as key oldies
+// (child → parent redirect) rather than being processed as person records.
 func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 	pm := dblpPersonMaps{
 		nameToKey:      make(map[string]string),
@@ -629,6 +641,8 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 		keyOldies:      make(map[string]string),
 	}
 
+	// addName inserts a LaTeX-converted name form → key mapping.
+	// Ambiguity (same LaTeX form appearing under two different keys) is marked with "".
 	addName := func(raw, key string) {
 		if raw == "" || key == "" {
 			return
@@ -719,6 +733,7 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 			}
 		}
 
+		// Crossref-only entry: record as a key redirect (oldie) and skip name processing.
 		if crossrefKey != "" && len(authors) == 0 {
 			pm.keyOldies[dblpKey] = crossrefKey
 			continue
@@ -729,18 +744,24 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 		}
 
 		first := authors[0]
+
+		// Display canonical: first author's text content (LaTeX-converted).
 		displayLatex := dblpPersonNameToLaTeX(first.Name)
 		if displayLatex == "" {
 			continue
 		}
 		pm.keyToCanonical[dblpKey] = displayLatex
 
+		// Bibtex form: bibtex= attribute (suffix stripped, LaTeX-converted), stored only
+		// when it differs from the display canonical.
 		if first.Bibtex != "" {
-			if bibtexLatex := dblpPersonNameToLaTeX(first.Bibtex); bibtexLatex != "" && bibtexLatex != displayLatex {
+			bibtexLatex := dblpPersonNameToLaTeX(first.Bibtex)
+			if bibtexLatex != "" && bibtexLatex != displayLatex {
 				pm.keyToBibtex[dblpKey] = bibtexLatex
 			}
 		}
 
+		// Add all name forms: display canonical, bibtex form, all alias authors.
 		addName(first.Name, dblpKey)
 		if first.Bibtex != "" {
 			addName(first.Bibtex, dblpKey)
@@ -752,6 +773,7 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 			}
 		}
 
+		// ORCID: prefer orcid= on first author, fall back to <url> element.
 		orcid := first.ORCID
 		if orcid == "" {
 			orcid = urlOrcid
@@ -763,8 +785,22 @@ func dblpBuildNameMap(r io.Reader) (dblpPersonMaps, error) {
 	return pm, nil
 }
 
-// saveDblpNameFiles writes five DBLP person-map CSVs to dblpFolder() and
-// removes the two legacy files (dblp_name_bibtex.csv, dblp_name_orcid.csv).
+// saveDblpNameFiles writes the DBLP name maps from Pass 1 to two CSV files in
+// dblpFolder(): dblp_name_bibtex.csv (alias;canonical) and dblp_name_orcid.csv
+// (canonical;orcid). Names are converted to LaTeX format before writing.
+// saveDblpNameFiles writes the three DBLP person-map CSVs to dblpFolder():
+//   dblp_name_key.csv      — LaTeX name form ; DBLP homepages key
+//   dblp_orcid_key.csv     — ORCID ; DBLP homepages key
+//   dblp_key_canonical.csv — DBLP homepages key ; LaTeX canonical name
+//
+// Ambiguous name forms (pm.nameToKey[name] == "") are omitted from dblp_name_key.csv.
+// saveDblpNameFiles writes the five DBLP person-map CSVs to dblpFolder().
+//
+//	dblp_name_key.csv         — LaTeX name ; DBLP key  (many:1, ambiguous names omitted)
+//	dblp_orcid_key.csv        — ORCID ; DBLP key       (many:1)
+//	dblp_key_canonical.csv    — DBLP key ; display canonical (LaTeX)
+//	dblp_key_bibtex.csv       — DBLP key ; bibtex= form (LaTeX, only when ≠ display)
+//	dblp_homepages_oldies.csv — child DBLP key ; parent DBLP key (crossref redirects)
 func saveDblpNameFiles(pm dblpPersonMaps) {
 	base := dblpFolder()
 
@@ -818,16 +854,6 @@ func saveDblpNameFiles(pm dblpPersonMaps) {
 	}
 	writeCSV("dblp_homepages_oldies.csv", oldiesLines)
 
-	for _, stale := range []string{"dblp_name_bibtex.csv", "dblp_name_orcid.csv"} {
-		path := base + stale
-		if FileExists(path) {
-			if err := os.Remove(path); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not remove stale %s: %s\n", path, err)
-			} else {
-				fmt.Fprintf(os.Stderr, "  Removed stale %s\n", path)
-			}
-		}
-	}
 }
 
 // loadDblpPersonMaps reads the DBLP person-map CSVs from dblpFolder().
@@ -1405,6 +1431,36 @@ func parseSurnameGeneration(surnameFirstName string) (surname, generation string
 	return "", ""
 }
 
+// simpleSurnameSwap converts a natural-order name to "Last, First" using simple
+// heuristics that work for the vast majority of DBLP person names:
+//
+//   - Braced compound surname at end: "First {Compound Last}" → "Compound Last, First"
+//   - Simple last token: "First Middle Last" → "Last, First Middle"
+//
+// Returns "" for single-token names or when the input already contains a comma.
+func simpleSurnameSwap(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.Contains(name, ",") {
+		return ""
+	}
+	// Braced compound surname: "First {Compound Last}" → "Compound Last, First"
+	if strings.HasSuffix(name, "}") {
+		if start := strings.LastIndex(name, " {"); start >= 0 {
+			first := strings.TrimSpace(name[:start])
+			last := name[start+2 : len(name)-1]
+			if first != "" && last != "" {
+				return last + ", " + first
+			}
+		}
+	}
+	// Simple last-token heuristic.
+	i := strings.LastIndex(name, " ")
+	if i < 0 {
+		return ""
+	}
+	return name[i+1:] + ", " + strings.TrimSpace(name[:i])
+}
+
 // naturalOrderToSurnameFirst converts "ff ss" → "ss, ff" and "ff ss, gg" → "ss, gg, ff"
 // using the known surname and optional generation from the DBLP canonical.
 // Returns "" when the alias does not end with the expected surname.
@@ -1437,10 +1493,10 @@ func naturalOrderToSurnameFirst(alias, surname, generation string) string {
 // natural-order) are generated so that existing library mappings in either
 // ordering are merged into the DBLP canonical before adding the DBLP aliases.
 // A final RenormaliseNameFields pass applies all new mappings to stored entries.
-func doAbsorbDblpNames() {
-	if !openLibraryToUpdate() {
-		return
-	}
+// absorbDblpNamesCore does the actual work of -absorb_dblp_names and is called both
+// from doAbsorbDblpNames (standalone command) and from doUpsertDblpEntries (implicit
+// post-update absorption).  The library must already be open for writing.
+func absorbDblpNamesCore() {
 	pm, filesOK := loadDblpPersonMaps()
 	if filesOK {
 		Library.Progress("Loaded DBLP person maps from cache (%d persons, %d ORCIDs).",
@@ -1478,13 +1534,15 @@ func doAbsorbDblpNames() {
 		Library.Progress("  %d DBLP persons found.", len(pm.keyToCanonical))
 	}
 
-	// Build key → names (inverted nameToKey) and key → ORCID (inverted orcidToKey).
+	// Build key → names (inverted nameToKey, non-ambiguous entries only).
 	keyToNames := make(map[string][]string, len(pm.keyToCanonical))
 	for name, key := range pm.nameToKey {
 		if key != "" {
 			keyToNames[key] = append(keyToNames[key], name)
 		}
 	}
+
+	// Build key → ORCID (inverted orcidToKey).
 	keyToOrcid := make(map[string]string, len(pm.orcidToKey))
 	for orcid, key := range pm.orcidToKey {
 		keyToOrcid[key] = orcid
@@ -1508,86 +1566,312 @@ func doAbsorbDblpNames() {
 				if _, ok := Library.NameToContributorID[form]; ok {
 					return true
 				}
+				if _, ok := Library.AmbiguousNameToContributorIDs[form]; ok {
+					return true
+				}
 			}
 		}
 		return false
 	}
 
-	absorbed, orcidsSet := 0, 0
+	keysLinked, absorbed, orcidsSet := 0, 0, 0
 
 	for key, names := range keyToNames {
-		canonical := pm.keyToBibtex[key]
-		if canonical == "" {
-			canonical = pm.keyToCanonical[key]
+		// Derive the canonical in Last,First format.
+		// Priority: (1) bibtex= form that already has a comma ("Lowe, David B."),
+		// (2) simpleSurnameSwap of bibtex= form ("Claire {Le Goues}" → "Le Goues, Claire"),
+		// (3) simpleSurnameSwap of display name ("Margot Brereton" → "Brereton, Margot"),
+		// (4) fallback to display name as-is (single-token names, rare).
+		bibtexForm := pm.keyToBibtex[key]
+		displayForm := pm.keyToCanonical[key]
+		var canonical string
+		if strings.Contains(bibtexForm, ",") {
+			canonical = bibtexForm
+		} else if bibtexForm != "" {
+			if ss := simpleSurnameSwap(bibtexForm); ss != "" {
+				canonical = ss
+			} else {
+				canonical = bibtexForm
+			}
+		} else {
+			canonical = simpleSurnameSwap(displayForm)
+			if canonical == "" {
+				canonical = displayForm
+			}
 		}
 		if canonical == "" {
 			continue
 		}
-		displayCanonical := pm.keyToCanonical[key]
 		orcid := keyToOrcid[key]
 		surname, generation := parseSurnameGeneration(canonical)
 		naturalCanonical := swapBibTeXNameFormat(canonical)
 
-		allForms := []string{canonical, naturalCanonical, displayCanonical, swapBibTeXNameFormat(displayCanonical)}
+		// Collect all name forms including the display canonical (may differ from bibtex).
+		// simpleSurnameSwap bridges natural-order DBLP names to Last,First library entries
+		// for the common case where no bibtex= attribute is present.
+		displayCanonical := pm.keyToCanonical[key]
+		allForms := []string{
+			canonical, naturalCanonical,
+			displayCanonical, swapBibTeXNameFormat(displayCanonical), simpleSurnameSwap(displayCanonical),
+		}
 		for _, name := range names {
 			allForms = append(allForms, name, swapBibTeXNameFormat(name),
-				naturalOrderToSurnameFirst(name, surname, generation))
+				simpleSurnameSwap(name), naturalOrderToSurnameFirst(name, surname, generation))
 		}
+
+		// Skip DBLP persons not represented by any contributor in this library.
 		if !isKnown(allForms...) {
 			continue
 		}
 
-		mergeIfKnown(canonical, naturalCanonical)
-		mergeIfKnown(canonical, displayCanonical)
-		mergeIfKnown(canonical, swapBibTeXNameFormat(displayCanonical))
-		for _, name := range names {
-			if name != canonical {
-				mergeIfKnown(canonical, name)
-				mergeIfKnown(canonical, swapBibTeXNameFormat(name))
-				mergeIfKnown(canonical, naturalOrderToSurnameFirst(name, surname, generation))
+		// Find the primary contributor FIRST so we can use their existing library
+		// canonical as the merge target. This prevents creating ghost contributors
+		// when the DBLP-derived canonical differs only in formatting (e.g. spacing).
+		var contribID string
+		for _, form := range allForms {
+			if form == "" {
+				continue
+			}
+			if id, ok := Library.NameToContributorID[form]; ok {
+				contribID = id
+				break
+			}
+			if ids, ok := Library.AmbiguousNameToContributorIDs[form]; ok && len(ids) > 0 {
+				contribID = ids[0]
+				break
 			}
 		}
-		if naturalCanonical != "" && naturalCanonical != canonical {
-			Library.AddNameMapping(canonical, naturalCanonical)
+		if contribID == "" {
+			continue
 		}
-		if displayCanonical != "" && displayCanonical != canonical {
-			Library.AddNameMapping(canonical, displayCanonical)
+		contrib := Library.ContributorByID[contribID]
+		if contrib == nil {
+			continue
+		}
+		// Use the existing library canonical as the merge target — never a fresh
+		// DBLP-derived form that may not yet exist as a contributor.
+		mergeCanonical := contrib.Name
+
+		// Merge other library contributors that are format variants into the primary.
+		mergeIfKnown(mergeCanonical, naturalCanonical)
+		mergeIfKnown(mergeCanonical, displayCanonical)
+		mergeIfKnown(mergeCanonical, swapBibTeXNameFormat(displayCanonical))
+		mergeIfKnown(mergeCanonical, simpleSurnameSwap(displayCanonical))
+		for _, name := range names {
+			if name != mergeCanonical {
+				mergeIfKnown(mergeCanonical, name)
+				mergeIfKnown(mergeCanonical, swapBibTeXNameFormat(name))
+				mergeIfKnown(mergeCanonical, simpleSurnameSwap(name))
+				mergeIfKnown(mergeCanonical, naturalOrderToSurnameFirst(name, surname, generation))
+			}
+		}
+
+		// Add DBLP name forms and format variants as aliases of the primary.
+		for _, form := range []string{naturalCanonical, displayCanonical, swapBibTeXNameFormat(displayCanonical)} {
+			if form != "" && form != mergeCanonical {
+				Library.AddNameMapping(mergeCanonical, form)
+			}
 		}
 		for _, name := range names {
-			if name != canonical {
-				Library.AddNameMapping(canonical, name)
+			if name != mergeCanonical {
+				Library.AddNameMapping(mergeCanonical, name)
 				absorbed++
 			}
 		}
 
+		// DBLP-backed ambiguity resolution: one DBLP key = one person, so any library
+		// ambiguity across these name forms is an artifact — merge the duplicates in.
+		for _, form := range allForms {
+			if form == "" {
+				continue
+			}
+			if ids, ok := Library.AmbiguousNameToContributorIDs[form]; ok {
+				for _, ambigID := range ids {
+					if ambigID == contribID {
+						continue
+					}
+					if c := Library.ContributorByID[ambigID]; c != nil {
+						Library.AddNameMapping(mergeCanonical, c.Name)
+					}
+				}
+			}
+		}
+
+		// Link contributor to DBLP key; if the key is already held by a different
+		// contributor, DBLP proves they are the same person — merge the unanchored
+		// one into the keyed holder so all contributor_roles follow.
+		if contrib.DblpKey == "" {
+			if existingID, conflict := Library.DblpKeyToContributorID[key]; conflict && existingID != contribID {
+				existing := Library.ContributorByID[existingID]
+				Library.Progress("DBLP key %s: merging %q into %q.", key, contrib.Name, existing.Name)
+				if mergeContributorInDB(contribID, existingID) {
+					if existing.ORCID == "" && contrib.ORCID != "" {
+						existing.ORCID = contrib.ORCID
+						Library.ORCIDToContributorID[contrib.ORCID] = existingID
+						upsertContributorORCIDToDB(existingID, contrib.ORCID, true)
+					}
+					for name, nid := range Library.NameToContributorID {
+						if nid == contribID {
+							Library.NameToContributorID[name] = existingID
+						}
+					}
+					delete(Library.ContributorByID, contribID)
+					Library.AddNameMapping(existing.Name, contrib.Name)
+					keysLinked++
+				}
+				continue
+			}
+			setContributorDblpKey(&Library, contribID, key)
+			keysLinked++
+		}
+
+		// Set or check ORCID.
+		if orcid == "" || contrib.ORCID == orcid {
+			continue
+		}
+		if contrib.ORCID != "" {
+			if otherID := Library.ORCIDToContributorID[orcid]; otherID != "" && otherID != contribID {
+				makeNameAmbiguous(&Library, contrib.Name, contribID, otherID)
+				retroactivelyBackfillDisambiguation(&Library, contrib.Name)
+				clearContributorORCIDSeen(contribID, contrib.ORCID)
+			} else {
+				Library.Warning("ORCID mismatch for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
+					contrib.Name, contrib.ORCID, orcid)
+				clearContributorORCIDSeen(contribID, contrib.ORCID)
+			}
+			continue
+		}
+		contrib.ORCID = orcid
+		Library.ORCIDToContributorID[orcid] = contribID
+		upsertContributorORCIDToDB(contribID, orcid, true)
+		orcidsSet++
+	}
+
+	Library.Progress("Linked %d DBLP person key(s), absorbed %d name alias(es), set %d ORCID(s).",
+		keysLinked, absorbed, orcidsSet)
+	Library.Progress("Re-normalising author/editor fields...")
+	Library.RenormaliseNameFields()
+}
+
+// absorbDblpOrcidsCore sweeps contributors for ORCID assignment using the DBLP
+// key→ORCID map.  For contributors that already have a DblpKey (set by absorbDblpNamesCore)
+// this is a pure in-memory lookup — no file-store reads.  Contributors without a DblpKey
+// get a name-based lookup against the nameToKey CSV.
+func absorbDblpOrcidsCore() {
+	total := len(Library.ContributorByID)
+	if total == 0 {
+		return
+	}
+
+	pm, ok := loadDblpPersonMaps()
+	if !ok {
+		Library.Error("DBLP person maps not found; run -load_dblp_xml first.")
+		return
+	}
+
+	keyToOrcid := make(map[string]string, len(pm.orcidToKey))
+	for orcid, key := range pm.orcidToKey {
+		keyToOrcid[key] = orcid
+	}
+
+	Library.Progress("Scanning for ORCIDs via DBLP person keys (%d contributors).", total)
+	spinner := Library.NewSpinner(ProgressScanningOrcids)
+	orcidsSet, keysLinked, merged, checked := 0, 0, 0, 0
+
+	for id, contrib := range Library.ContributorByID {
+		if contrib.Name == "" {
+			continue
+		}
+		checked++
+		spinner.Update(checked, total)
+
+		// For contributors without a DblpKey: try ORCID-based lookup first (direct,
+		// authoritative), then fall back to name-based lookup.
+		// The ORCID path covers the migration gap where an ORCID was assigned by
+		// the deployed version before the dblp_key column existed.
+		if contrib.DblpKey == "" {
+			var key string
+			if contrib.ORCID != "" {
+				key = pm.orcidToKey[contrib.ORCID]
+			}
+			if key == "" {
+				key = pm.nameToKey[contrib.Name]
+			}
+			if key == "" {
+				if swapped := swapBibTeXNameFormat(contrib.Name); swapped != "" {
+					key = pm.nameToKey[swapped]
+				}
+			}
+			if key != "" {
+				// If another contributor already holds this DBLP key, DBLP proves
+				// they are the same person — merge the key-less contributor into the
+				// existing holder so all contributor_roles follow.
+				if existingID, conflict := Library.DblpKeyToContributorID[key]; conflict && existingID != id {
+					existing := Library.ContributorByID[existingID]
+					Library.Progress("DBLP key %s: merging %q into %q.", key, contrib.Name, existing.Name)
+					if mergeContributorInDB(id, existingID) {
+						if existing.ORCID == "" && contrib.ORCID != "" {
+							existing.ORCID = contrib.ORCID
+							Library.ORCIDToContributorID[contrib.ORCID] = existingID
+							upsertContributorORCIDToDB(existingID, contrib.ORCID, true)
+						}
+						for name, nid := range Library.NameToContributorID {
+							if nid == id {
+								Library.NameToContributorID[name] = existingID
+							}
+						}
+						delete(Library.ContributorByID, id)
+						Library.AddNameMapping(existing.Name, contrib.Name)
+						merged++
+					}
+					continue
+				}
+				setContributorDblpKey(&Library, id, key)
+				keysLinked++
+			}
+		}
+
+		if contrib.DblpKey == "" || contrib.ORCID != "" {
+			continue
+		}
+
+		orcid := keyToOrcid[contrib.DblpKey]
 		if orcid == "" {
 			continue
 		}
-		for _, form := range []string{canonical, naturalCanonical} {
-			id, ok := Library.NameToContributorID[form]
-			if !ok {
-				continue
-			}
-			contrib := Library.ContributorByID[id]
-			if contrib.ORCID == orcid {
-				break
-			}
-			if contrib.ORCID != "" {
-				Library.Warning("ORCID mismatch for %q: stored %s, DBLP suggests %s — use -enrich_contributor_data to resolve",
-					contrib.Name, contrib.ORCID, orcid)
-				clearContributorORCIDSeen(id, contrib.ORCID)
-				break
-			}
-			contrib.ORCID = orcid
-			upsertContributorToDB(id, contrib.Name, orcid)
-			orcidsSet++
-			break
-		}
+
+		contrib.ORCID = orcid
+		Library.ORCIDToContributorID[orcid] = id
+		upsertContributorORCIDToDB(id, orcid, true)
+		orcidsSet++
 	}
 
-	Library.Progress("Absorbed %d DBLP name alias(es), set %d ORCID(s).", absorbed, orcidsSet)
-	Library.Progress("Re-normalising author/editor fields...")
-	Library.RenormaliseNameFields()
+	spinner.Stop()
+	if merged > 0 {
+		Library.Progress("DBLP key sweep: merged %d duplicate contributor(s) into existing DBLP-keyed records.", merged)
+		Library.RenormaliseNameFields()
+	}
+	if keysLinked > 0 {
+		Library.Progress("Linked %d additional contributor(s) to DBLP keys.", keysLinked)
+	}
+	if orcidsSet > 0 {
+		Library.Progress("DBLP ORCID sweep: %d new ORCID(s) assigned.", orcidsSet)
+	}
+}
+
+func doAbsorbDblpNames() {
+	if !openLibraryToUpdate() {
+		return
+	}
+	absorbDblpNamesCore()
+	absorbDblpOrcidsCore()
+}
+
+func doAbsorbDblpOrcids() {
+	if !openLibraryToUpdate() {
+		return
+	}
+	absorbDblpOrcidsCore()
 }
 
 // bestOrcidCanonical picks the preferred canonical name from a group that shares
@@ -1610,43 +1894,103 @@ func bestOrcidCanonical(canonicals []string) string {
 	return candidates[0]
 }
 
-// doMergeOrcidDuplicates finds contributors that share the same non-empty ORCID
-// and merges each duplicate group into a single canonical record.  Because ORCIDs
-// are globally unique, two contributors with the same ORCID are the same person;
-// merging combines their alias sets under one canonical name.
+// mergeOrcidDuplicatesCore finds contributors that share the same non-empty ORCID
+// and merges each duplicate group into a single canonical record using
+// mergeContributorInDB (which properly moves contributor_roles, orcids, etc.)
+// followed by in-memory alias registration. Returns the number of pairs merged.
+func mergeOrcidDuplicatesCore() int {
+	// Group contributor IDs by ORCID.
+	type idName struct{ id, name string }
+	orcidGroups := map[string][]idName{} // orcid → []idName
+	for id, contrib := range Library.ContributorByID {
+		if contrib.ORCID == "" {
+			continue
+		}
+		orcidGroups[contrib.ORCID] = append(orcidGroups[contrib.ORCID], idName{id, contrib.Name})
+	}
+
+	merged := 0
+	for orcid, members := range orcidGroups {
+		if len(members) < 2 {
+			continue
+		}
+		// Pick the best canonical name; find its member record.
+		canonicals := make([]string, len(members))
+		for i, m := range members {
+			canonicals[i] = m.name
+		}
+		bestName := bestOrcidCanonical(canonicals)
+		var bestID string
+		for _, m := range members {
+			if m.name == bestName {
+				bestID = m.id
+				break
+			}
+		}
+		if bestID == "" {
+			continue
+		}
+
+		for _, other := range members {
+			if other.id == bestID {
+				continue
+			}
+			Library.Progress("ORCID %s: absorbing %q into %q", orcid, other.name, bestName)
+			if mergeContributorInDB(other.id, bestID) {
+				// Update in-memory state: redirect all names from other.id to bestID.
+				for name, id := range Library.NameToContributorID {
+					if id == other.id {
+						Library.NameToContributorID[name] = bestID
+					}
+				}
+				delete(Library.ContributorByID, other.id)
+				// Register the old canonical as an alias of the new canonical.
+				Library.AddNameMapping(bestName, other.name)
+				merged++
+			}
+		}
+	}
+	return merged
+}
+
+// doMergeOrcidDuplicates is the -merge_orcid_duplicates entry point.
 func doMergeOrcidDuplicates() {
 	if !openLibraryToUpdate() {
 		return
 	}
-
-	// Group contributor canonical names by ORCID.
-	orcidGroups := map[string][]string{} // orcid → []canonical name
-	for _, contrib := range Library.ContributorByID {
-		if contrib.ORCID == "" {
-			continue
-		}
-		orcidGroups[contrib.ORCID] = append(orcidGroups[contrib.ORCID], contrib.Name)
-	}
-
-	merged := 0
-	for orcid, canonicals := range orcidGroups {
-		if len(canonicals) < 2 {
-			continue
-		}
-		best := bestOrcidCanonical(canonicals)
-		for _, other := range canonicals {
-			if other == best {
-				continue
-			}
-			Library.Progress("ORCID %s: absorbing %q into %q", orcid, other, best)
-			Library.AddNameMapping(best, other)
-			merged++
-		}
-	}
-
+	merged := mergeOrcidDuplicatesCore()
 	Library.Progress("Merged %d ORCID-duplicate contributor pair(s).", merged)
 	if merged > 0 {
 		Library.RenormaliseNameFields()
+		Library.CheckNameMappingConsistency()
+	}
+}
+
+// doEnrichContributorData runs the full contributor enrichment pipeline in one pass:
+//  1. Absorb DBLP name aliases (dblp_name_bibtex.csv → contributor names)
+//  2. Scan DBLP persons index for ORCIDs not yet recorded
+//  3. Fetch ORCID person records and add aliases / challenge canonical mismatches
+//  4. Merge contributors that share the same ORCID
+//  5. Re-normalise all author/editor fields to apply the merged mappings
+func doEnrichContributorData() {
+	if !openLibraryToUpdate() {
+		return
+	}
+	Library.Progress("Enriching contributor data — step 1/4: absorbing DBLP name mappings...")
+	absorbDblpNamesCore()
+
+	Library.Progress("Enriching contributor data — step 2/4: scanning DBLP persons for ORCIDs...")
+	absorbDblpOrcidsCore()
+
+	Library.Progress("Enriching contributor data — step 3/4: fetching ORCID person records...")
+	doEnrichOrcidProfilesCore()
+
+	Library.Progress("Enriching contributor data — step 4/4: merging ORCID duplicates...")
+	merged := mergeOrcidDuplicatesCore()
+	Library.Progress("Merged %d ORCID-duplicate contributor pair(s).", merged)
+	if merged > 0 {
+		Library.RenormaliseNameFields()
+		Library.CheckNameMappingConsistency()
 	}
 }
 

@@ -53,7 +53,8 @@ const (
 	// named after their DB table (or "folders" for the bootstrap settings).
 	ContributorsFilePath          = tablesFolderSuffix + "/contributors.csv"
 	ContributorNamesFilePath      = tablesFolderSuffix + "/contributor_names.csv"
-	EntryFieldMappingsFilePath    = tablesFolderSuffix + "/filter_entry_field_mappings.csv" // legacy; superseded by LosingFieldValuesFilePath
+	ContributorIDOldiesFilePath   = tablesFolderSuffix + "/contributor_id_oldies.csv"
+	ContributorORCIDSeenFilePath  = tablesFolderSuffix + "/contributor_orcid_seen.csv"
 	LosingFieldValuesFilePath     = tablesFolderSuffix + "/losing_field_values.csv"
 	GenericFieldMappingsFilePath  = tablesFolderSuffix + "/generic_field_mappings.csv"
 	CrossFieldMappingsFilePath    = tablesFolderSuffix + "/cross_field_mappings.csv"

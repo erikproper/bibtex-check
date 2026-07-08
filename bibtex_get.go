@@ -394,7 +394,7 @@ func rewriteKeysFile(fileName string, pairs []TBibGetPair, keyMapping bool) {
 
 // TSelectStatement is one parsed statement from a .select file.
 type TSelectStatement struct {
-	Kind   string   // "group", "groups", "name", "orcid", "has_pdf", "only_these", "watched"
+	Kind   string   // "group", "groups", "name", "orcid", "contributor", "has_pdf", "only_these", "watched"
 	Values []string // one or more quoted values (empty for bare-keyword operators)
 }
 
@@ -514,6 +514,17 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 					if libKey := Library.LookupDBLPKey(dk); libKey != "" {
 						add(libKey)
 					}
+				}
+			}
+		case "contributor":
+			// Include all library entries in which the contributor appears as author/editor.
+			for _, id := range s.Values {
+				for _, key := range contributorEntryKeys(id) {
+					resolved := Library.MapEntryKey(key)
+					if resolved == "" {
+						resolved = key
+					}
+					add(resolved)
 				}
 			}
 		case "has_pdf":
@@ -1667,21 +1678,26 @@ func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
 	for _, comment := range Library.Comments {
 		w.WriteString("@" + CommentEntryType + "{" + comment + "}\n\n")
 	}
-	// BibDesk static groups — identical to WriteBibTeXFile.
+	// BibDesk static groups — sorted for deterministic output.
 	if len(Library.GroupEntries) > 0 {
+		type groupRow struct{ name, keys string }
+		var groupRows []groupRow
+		for group, members := range Library.GroupEntries {
+			var outKeys []string
+			for key := range members.Elements() {
+				outKeys = append(outKeys, Library.MapEntryKey(key))
+			}
+			sort.Strings(outKeys)
+			groupRows = append(groupRows, groupRow{group, strings.Join(outKeys, ",")})
+		}
+		sort.Slice(groupRows, func(i, j int) bool { return groupRows[i].name < groupRows[j].name })
 		w.WriteString("@" + CommentEntryType + "{BibDesk Static Groups{")
 		w.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
 		w.WriteString("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n")
 		w.WriteString("<plist version=\"1.0\">\n<array>\n")
-		for group, keys := range Library.GroupEntries {
-			w.WriteString("\t<dict>\n\t\t<key>group name</key>\n\t\t<string>" + group + "</string>\n")
-			w.WriteString("\t\t<key>keys</key>\n\t\t<string>")
-			comma := ""
-			for key := range keys.Elements() {
-				w.WriteString(comma + Library.MapEntryKey(key))
-				comma = ","
-			}
-			w.WriteString("</string>\n\t</dict>\n")
+		for _, r := range groupRows {
+			w.WriteString("\t<dict>\n\t\t<key>group name</key>\n\t\t<string>" + r.name + "</string>\n")
+			w.WriteString("\t\t<key>keys</key>\n\t\t<string>" + r.keys + "</string>\n\t</dict>\n")
 		}
 		w.WriteString("</array>\n</plist>\n}}\n\n")
 	}

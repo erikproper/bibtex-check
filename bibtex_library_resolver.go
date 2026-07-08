@@ -54,6 +54,17 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	// present an interactive challenge when the raw texts differ.
 	forceInteractive := subsetMergeActive && currentRaw != challengeRaw
 
+	// With contributor_roles active, two author/editor strings are equal when they
+	// resolve to the same contributor-ID sequence, even if the name strings differ.
+	if !forceInteractive && contributorRolesActive && (field == "author" || field == "editor") {
+		if idSeqEqual(
+			resolveNamesToIDSeq(l, splitBibNameField(current)),
+			resolveNamesToIDSeq(l, splitBibNameField(challenge)),
+		) {
+			return current
+		}
+	}
+
 	if field == "crossref" {
 		if current == "" {
 			return challenge
@@ -185,6 +196,26 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return current
 	}
 
+	// With contributor_roles active, author/editor challenges go straight to
+	// per-name breakdown: the comparison model already identified which positions
+	// differ, so presenting the full-string y/n/b question is redundant.
+	if contributorRolesActive && (field == "author" || field == "editor") {
+		result, quit := l.resolveAuthorBreakdown(key, field, challenge, current)
+		if quit {
+			gracefulQuit()
+		}
+		if result == "" && !subsetMergeActive {
+			// Different name counts — cannot break down; keep current.
+			result = current
+		}
+		if result != "" {
+			l.UpdateEntryFieldAlias(key, field, challenge, result)
+			l.setLineage(key, field, challengeSource, result != challenge)
+			return result
+		}
+		// subsetMergeActive with different name counts: fall through to y/n challenge.
+	}
+
 	var currentAuthorNames, challengeAuthorNames []string
 	canBreakDown := false
 	if field == "author" || field == "editor" {
@@ -303,6 +334,26 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	return current
 }
 
+// contributorORCID returns the ORCID for name. Checks the in-memory contributor table
+// first (O(1)); on a file-store hit the result is written back to both in-memory and
+// the DB so subsequent lookups for the same contributor are free.
+func (l *TBibTeXLibrary) contributorORCID(name string) string {
+	if id, ok := l.NameToContributorID[name]; ok {
+		if c := l.ContributorByID[id]; c != nil {
+			if c.ORCID != "" {
+				return c.ORCID
+			}
+			orcid := resolveNameToORCID(name)
+			if orcid != "" {
+				c.ORCID = orcid
+				upsertContributorORCIDToDB(id, orcid, true)
+			}
+			return orcid
+		}
+	}
+	return resolveNameToORCID(name)
+}
+
 // resolveNamePair interactively resolves a single differing name position in an
 // author/editor field. winnerName is the preferred/current form; loserName is the
 // challenger/incoming form. namePos and nameTotal give position context for display.
@@ -313,16 +364,41 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 //   mapped     — a name mapping was recorded (triage may retire the losing_field_values row;
 //                breakdown uses the new resultName)
 //
-// The "n" (non-double) case records (winnerName, loserName) in non_double_contributor_names
-// and returns (winnerName, false, false): no mapping, no quit, keep the winner name.
+// The "n" (non-double) case records (winnerName, loserName) in non_double_contributor_names,
+// and also in non_double_contributors when contributor IDs are available for both names.
+// It returns (winnerName, false, false): no mapping, no quit, keep the winner name.
 func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, diffIdx, diffTotal int, winnerName, loserName string) (resultName string, quit bool, mapped bool) {
+	winnerORCID := l.contributorORCID(winnerName)
+	loserORCID := l.contributorORCID(loserName)
+
+	// When both ORCIDs are known, auto-resolve without prompting.
+	if winnerORCID != "" && loserORCID != "" {
+		if winnerORCID == loserORCID {
+			l.Progress("Auto-resolved (same ORCID %s): mapping %q → %q", winnerORCID, loserName, winnerName)
+			l.AddNameMapping(winnerName, loserName)
+			return winnerName, false, true
+		}
+		l.Progress("Auto-resolved (different ORCIDs: %s vs %s): using loser %q for entry %s pos %d",
+			winnerORCID, loserORCID, loserName, key, namePos)
+		return loserName, false, false
+	}
+
+	winnerDisplay := winnerName
+	if winnerORCID != "" {
+		winnerDisplay += " [" + winnerORCID + "]"
+	}
+	loserDisplay := loserName
+	if loserORCID != "" {
+		loserDisplay += " [" + loserORCID + "]"
+	}
+
 	options := TStringSetNew()
 	options.Add("w", "l", "e", "c", "n", "q")
 	answer := l.WarningQuestion(
 		"Map to winner-canonical (w), loser-canonical (l), edit canonical (e), change to loser (c), non-double (n), quit (q)?",
 		options,
 		"Name %d of %d (difference %d of %d) for entry %s field %s:\n  Winner: %s\n  Loser:  %s",
-		namePos, nameTotal, diffIdx, diffTotal, key, field, winnerName, loserName)
+		namePos, nameTotal, diffIdx, diffTotal, key, field, winnerDisplay, loserDisplay)
 	switch answer {
 	case "w":
 		l.AddNameMapping(winnerName, loserName)
@@ -344,6 +420,11 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 		return loserName, false, false
 	case "n":
 		addNonDoubleContributorNamePair(l, winnerName, loserName)
+		if idA, okA := l.NameToContributorID[winnerName]; okA {
+			if idB, okB := l.NameToContributorID[loserName]; okB {
+				addNonDoubleContributorPair(idA, idB)
+			}
+		}
 		return winnerName, false, false
 	case "q":
 		return winnerName, true, false
@@ -353,8 +434,8 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 
 // resolveAuthorBreakdown interactively resolves per-name differences in an author/editor
 // challenge using resolveNamePair for each differing position. Returns the resolved author
-// string, or "" when breakdown is not possible because the two sides have different author
-// counts (caller should fall back to keeping current).
+// string (or "" when breakdown is impossible due to different name counts), and a quit bool
+// that is true when the user pressed q — the caller must not record any alias in that case.
 func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current string) (string, bool) {
 	challengeNames := splitBibNameField(challenge)
 	currentNames := splitBibNameField(current)
@@ -366,8 +447,8 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 	othersExpansion := currentEndsWithOthers && !challengeEndsWithOthers && nChallenge >= nCurrent
 
 	if nChallenge != nCurrent && !othersExpansion {
-		l.Progress("Cannot break down by name: challenger has %d author(s), current has %d.",
-			nChallenge, nCurrent)
+		l.Warning("Cannot break down %s %s by name: challenger has %d name(s), current has %d — keeping current.",
+			key, field, nChallenge, nCurrent)
 		return "", false
 	}
 
@@ -379,7 +460,13 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 
 	var diffPositions []int
 	for i := 0; i < prefixLen; i++ {
-		if challengeNames[i] != currentNames[i] {
+		same := challengeNames[i] == currentNames[i]
+		if !same && contributorRolesActive {
+			cID, cOK := resolveNameToContributorID(l, currentNames[i])
+			chID, chOK := resolveNameToContributorID(l, challengeNames[i])
+			same = cOK && chOK && cID == chID
+		}
+		if !same {
 			diffPositions = append(diffPositions, i)
 		}
 	}
@@ -441,11 +528,8 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challe
 			l.setLineage(key, field, challengeSource, false)
 			return ""
 		}
-		// When merging library entries and the challenger has no value for a field,
-		// ask whether to keep the current value rather than silently preserving it.
-		if challengeSource == "" {
-			return l.ResolveFieldValue(key, challengeKey, field, challenge, current)
-		}
+		// An absent field in the challenger means "unknown" — it carries no evidence
+		// that the current value is wrong. Silently preserve the current value.
 		return current
 	}
 

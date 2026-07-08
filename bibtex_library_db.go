@@ -55,7 +55,9 @@ var (
 	fieldMappingsLoading        bool  // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
 	entryFieldMappingsLoading   bool  // suppresses DB write-through in AddEntryFieldAlias during initial load
 	contributorsLoading         bool  // suppresses DB write-through while loading contributors table
+	contributorRolesActive      bool  // true once contributor_roles is populated; blocks author/editor writes to bib_entries
 	defaultLangID               string // langid value treated as default; entries with this value have the field removed
+	preCloseHook                func() // called inside finaliseWorkingDatabase while DB is still open; set by openLibraryToUpdate
 )
 
 // dbExecSave executes a DB statement during the end-of-run save phase. On error it
@@ -109,6 +111,54 @@ func initEntryCache() {
 		e.Fields[field] = value
 	}
 	spinner.Stop()
+
+	// When contributor_roles is populated, reconstruct author/editor fields.
+	// Rows arrive in (entry_key, role, position) order so appending gives the
+	// correct " and "-joined string. contributor_roles REPLACES any raw value
+	// left in bib_entries (garbled fields stay in bib_entries and are used as-is
+	// only when contributor_roles has no rows for that entry+role).
+	if contributorRolesActive {
+		// First pass: collect which (entry_key, role) pairs have contributor_roles
+		// data. We clear those fields from the bib_entries-derived cache so the
+		// reconstruction starts from scratch, not concatenated onto the raw value.
+		seen := map[string]map[string]bool{}
+		roleRows, rErr := db.Query(
+			`SELECT entry_key, role, contributor_id
+			 FROM contributor_roles ORDER BY entry_key, role, position`)
+		if rErr == nil {
+			for roleRows.Next() {
+				var key, role, id string
+				if roleRows.Scan(&key, &role, &id) != nil {
+					continue
+				}
+				contrib, ok := Library.ContributorByID[id]
+				if !ok {
+					continue
+				}
+				e, ok := cache[key]
+				if !ok {
+					e = &TBibTeXEntry{Key: key, Fields: map[string]string{}}
+					cache[key] = e
+				}
+				// On the first contributor for this (key, role), clear any raw
+				// bib_entries value so we don't accidentally concatenate onto it.
+				if seen[key] == nil {
+					seen[key] = map[string]bool{}
+				}
+				if !seen[key][role] {
+					e.Fields[role] = ""
+					seen[key][role] = true
+				}
+				if e.Fields[role] == "" {
+					e.Fields[role] = contrib.Name
+				} else {
+					e.Fields[role] += " and " + contrib.Name
+				}
+			}
+			roleRows.Close()
+		}
+	}
+
 	entryCache = cache
 }
 
@@ -439,8 +489,17 @@ func connectToDatabase() {
 	ensureContributorNamesTableExists()
 	ensureContributorRolesTableExists()
 	ensureEntryContributorNamesTableExists()
+	maybeMigrateContributorsAddGarbled()
+	maybeMigrateContributorsAddDblpKey()
+	maybeMigrateEntryContributorNamesSchema()
+	maybeMigrateEntryContributorNamesAddOrcidUsed()
+	maybeMigrateEntryContributorNamesRenameAlias()
+	maybeMigrateEntryContributorNamesAddDblpKeyUsed()
 	ensureNonDoubleContributorsTableExists()
 	ensureContributorIDOldiesTableExists()
+	ensureContributorORCIDsTableExists()
+	ensureContributorORCIDSeenTableExists()
+	maybeMigrateContributorORCIDs()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
@@ -450,7 +509,6 @@ func connectToDatabase() {
 	ensureDblpCanonicalTableExists()
 	maybeMigrateDblpCanonical()
 	ensureCrossFieldMappingsTableExists()
-	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
 	ensureFieldMappingsTableExists()
 	maybeMigrateToFieldMappings()
@@ -487,6 +545,7 @@ func connectToDatabase() {
 	ensureShortenMappingsTableExists()
 	ensureBibEntryKeysTableExists()
 	ensureBibTablesExist()
+	contributorRolesActive = tableModTime("contributor_roles") > 0
 }
 
 // --- safe parse (copy-on-write DB swap) ---
@@ -647,8 +706,17 @@ func reopenDb(path string) {
 	ensureContributorNamesTableExists()
 	ensureContributorRolesTableExists()
 	ensureEntryContributorNamesTableExists()
+	maybeMigrateContributorsAddGarbled()
+	maybeMigrateContributorsAddDblpKey()
+	maybeMigrateEntryContributorNamesSchema()
+	maybeMigrateEntryContributorNamesAddOrcidUsed()
+	maybeMigrateEntryContributorNamesRenameAlias()
+	maybeMigrateEntryContributorNamesAddDblpKeyUsed()
 	ensureNonDoubleContributorsTableExists()
 	ensureContributorIDOldiesTableExists()
+	ensureContributorORCIDsTableExists()
+	ensureContributorORCIDSeenTableExists()
+	maybeMigrateContributorORCIDs()
 	ensureKeyHintsTableExists()
 	ensureKeyOldiesTableExists()
 	ensureKeyNonDoublesTableExists()
@@ -657,7 +725,6 @@ func reopenDb(path string) {
 	ensureDblpWaivedTableExists()
 	ensureDblpCanonicalTableExists()
 	ensureCrossFieldMappingsTableExists()
-	ensureEntryFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
 	ensureFieldMappingsTableExists()
 	ensureURLsIgnoreTableExists()
@@ -667,6 +734,7 @@ func reopenDb(path string) {
 	ensureShortenMappingsTableExists()
 	ensureBibEntryKeysTableExists()
 	ensureBibTablesExist()
+	contributorRolesActive = tableModTime("contributor_roles") > 0
 }
 
 // beginSafeParse creates a consistent backup of the live SQLite file in the
@@ -1172,6 +1240,12 @@ func finaliseWorkingDatabase() {
 	home := dbHomePath()
 	working := dbPath()
 
+	// Run the pre-close hook (e.g. reportHomework) while the DB is still open.
+	if preCloseHook != nil {
+		preCloseHook()
+		preCloseHook = nil
+	}
+
 	// Mark session closed and check whether anything real was written.
 	// total_changes() is cumulative for this connection; changesAtSessionOpen was
 	// recorded right after markWriteSessionOpen(). The close marker itself accounts
@@ -1270,6 +1344,8 @@ func repairOrphanRows() {
 	repair("losing_field_values", "entry_key")
 	repair("entry_warnings", "key")
 	repair("entry_metadata", "entry_key")
+	repair("contributor_roles", "entry_key")
+	repair("entry_contributor_names", "entry_key")
 }
 
 // foreignKeyCheckOK runs PRAGMA foreign_key_check and warns about each violation found.
@@ -1309,6 +1385,11 @@ func postCheckGate() bool {
 	         SELECT DISTINCT entry_key FROM bib_entries`)
 	db.Exec(`DELETE FROM bib_entry_keys
 	         WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`)
+	// Also anchor any contributor_roles entry_keys that are present in bib_entries
+	// but were written before bib_entry_keys was populated (e.g. from an older migration).
+	db.Exec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
+	         SELECT DISTINCT entry_key FROM contributor_roles
+	         WHERE entry_key IN (SELECT DISTINCT entry_key FROM bib_entries)`) //nolint:errcheck
 
 	if foreignKeyCheckOK() {
 		return true
@@ -1583,10 +1664,7 @@ func tryCreateTableIfNeeded(command string) {
 //  3. generic_field_mappings: per-field value normalisation.
 //     Depends on name_mappings (name values are normalised via name aliases).
 //
-//  4. filter_entry_field_mappings: per-(entry,field) overrides.
-//     Depends on name_mappings and generic mappings.
-//
-//  5. cross_field_mappings: source-field → target-field value propagation.
+//  4. cross_field_mappings: source-field → target-field value propagation.
 //
 //  6. key_hints, key_oldies, non_double_entries: key alias tables.
 //
@@ -1634,12 +1712,78 @@ func ensureContributorRolesTableExists() {
 func ensureEntryContributorNamesTableExists() {
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS entry_contributor_names (
-		  entry_key      TEXT NOT NULL REFERENCES bib_entry_keys(entry_key),
-		  role           TEXT NOT NULL,
-		  contributor_id TEXT NOT NULL REFERENCES contributors(id),
-		  alias          TEXT NOT NULL,
-		  PRIMARY KEY (entry_key, role, contributor_id, alias)
+		  entry_key      TEXT    NOT NULL,
+		  role           TEXT    NOT NULL,
+		  position       INTEGER NOT NULL,
+		  contributor_id TEXT    NOT NULL REFERENCES contributors(id),
+		  name_used      TEXT    NOT NULL,
+		  orcid_used     TEXT,
+		  PRIMARY KEY (entry_key, role, position),
+		  FOREIGN KEY (entry_key, role, position)
+		      REFERENCES contributor_roles(entry_key, role, position) ON DELETE CASCADE
 		);`)
+}
+
+// maybeMigrateEntryContributorNamesAddOrcidUsed adds the orcid_used column to
+// entry_contributor_names when it is absent (databases created before this migration).
+func maybeMigrateEntryContributorNamesAddOrcidUsed() {
+	var hasCol int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entry_contributor_names') WHERE name='orcid_used'`).Scan(&hasCol) //nolint:errcheck
+	if hasCol > 0 {
+		return
+	}
+	db.Exec(`ALTER TABLE entry_contributor_names ADD COLUMN orcid_used TEXT`) //nolint:errcheck
+}
+
+// maybeMigrateEntryContributorNamesRenameAlias renames the legacy `alias` column to
+// `name_used` to better reflect its meaning: the exact name form used on the publication.
+func maybeMigrateEntryContributorNamesRenameAlias() {
+	var hasAlias int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entry_contributor_names') WHERE name='alias'`).Scan(&hasAlias) //nolint:errcheck
+	if hasAlias == 0 {
+		return // already renamed
+	}
+	db.Exec(`ALTER TABLE entry_contributor_names RENAME COLUMN alias TO name_used`) //nolint:errcheck
+}
+
+// maybeMigrateEntryContributorNamesSchema drops and recreates entry_contributor_names
+// when the old schema (no position column) is still in place.
+// Safe to run whenever — the table is empty until disambiguation data is written.
+func maybeMigrateContributorsAddGarbled() {
+	var hasGarbled int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('contributors') WHERE name='garbled'`).Scan(&hasGarbled) //nolint:errcheck
+	if hasGarbled > 0 {
+		return
+	}
+	db.Exec(`ALTER TABLE contributors ADD COLUMN garbled INTEGER NOT NULL DEFAULT 0`) //nolint:errcheck
+}
+
+func maybeMigrateContributorsAddDblpKey() {
+	var has int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('contributors') WHERE name='dblp_key'`).Scan(&has) //nolint:errcheck
+	if has > 0 {
+		return
+	}
+	db.Exec(`ALTER TABLE contributors ADD COLUMN dblp_key TEXT`) //nolint:errcheck
+}
+
+func maybeMigrateEntryContributorNamesAddDblpKeyUsed() {
+	var has int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entry_contributor_names') WHERE name='dblp_key_used'`).Scan(&has) //nolint:errcheck
+	if has > 0 {
+		return
+	}
+	db.Exec(`ALTER TABLE entry_contributor_names ADD COLUMN dblp_key_used TEXT`) //nolint:errcheck
+}
+
+func maybeMigrateEntryContributorNamesSchema() {
+	var hasPosition int
+	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entry_contributor_names') WHERE name='position'`).Scan(&hasPosition) //nolint:errcheck
+	if hasPosition > 0 {
+		return
+	}
+	db.Exec(`DROP TABLE IF EXISTS entry_contributor_names`) //nolint:errcheck
+	ensureEntryContributorNamesTableExists()
 }
 
 func ensureNonDoubleContributorsTableExists() {
@@ -1652,20 +1796,294 @@ func ensureNonDoubleContributorsTableExists() {
 		);`)
 }
 
+// addNonDoubleContributorPair records that idA and idB are confirmed different
+// people. The IDs are stored in sorted order to satisfy the CHECK constraint.
+// No-op when the pair is already recorded.
+func addNonDoubleContributorPair(idA, idB string) {
+	if idA > idB {
+		idA, idB = idB, idA
+	}
+	bibExec(`INSERT OR IGNORE INTO non_double_contributors (contributor_id_a, contributor_id_b) VALUES (?, ?)`, //nolint:errcheck
+		idA, idB)
+}
 
-// clearContributorORCIDSeen deletes any seen record for (contributorID, orcid).
-// No-op when the contributor_orcid_seen table does not exist (deployed build).
+// --- contributor_id_oldies table ---
+
+func ensureContributorIDOldiesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS contributor_id_oldies (
+		  absorbed_id   TEXT PRIMARY KEY,
+		  canonical_id  TEXT NOT NULL
+		);`)
+}
+
+// upsertContributorIDOldie records that absorbedID has been merged into canonicalID,
+// following any existing chain so the table always maps directly to the ultimate canonical.
+func upsertContributorIDOldie(absorbedID, canonicalID string) {
+	// Chase existing chain: if canonicalID was itself absorbed, find the ultimate target.
+	ultimate := canonicalID
+	for {
+		var next string
+		if err := db.QueryRow(`SELECT canonical_id FROM contributor_id_oldies WHERE absorbed_id = ?`, ultimate).Scan(&next); err != nil || next == "" {
+			break
+		}
+		ultimate = next
+	}
+	db.Exec(`INSERT INTO contributor_id_oldies (absorbed_id, canonical_id) VALUES (?, ?) ` + //nolint:errcheck
+		`ON CONFLICT(absorbed_id) DO UPDATE SET canonical_id = excluded.canonical_id`,
+		absorbedID, ultimate)
+	// If absorbedID's own oldies chain pointed here, redirect those too.
+	db.Exec(`UPDATE contributor_id_oldies SET canonical_id = ? WHERE canonical_id = ?`, //nolint:errcheck
+		ultimate, absorbedID)
+}
+
+// loadContributorIDOldiesFromDB loads the contributor_id_oldies table into l.ContributorIDOldies.
+func loadContributorIDOldiesFromDB(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT absorbed_id, canonical_id FROM contributor_id_oldies`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var absorbedID, canonicalID string
+		if rows.Scan(&absorbedID, &canonicalID) == nil {
+			l.ContributorIDOldies[absorbedID] = canonicalID
+		}
+	}
+}
+
+// ResolveContributorID returns the current canonical contributor ID for id,
+// following any absorbed-ID chain recorded in ContributorIDOldies. Returns
+// id itself if it is already canonical or unknown.
+func (l *TBibTeXLibrary) ResolveContributorID(id string) string {
+	seen := map[string]bool{id: true}
+	cur := id
+	for {
+		next, ok := l.ContributorIDOldies[cur]
+		if !ok {
+			return cur
+		}
+		if seen[next] {
+			return cur // cycle guard
+		}
+		seen[next] = true
+		cur = next
+	}
+}
+
+// --- contributor_orcid_seen table ---
+
+// ensureContributorORCIDSeenTableExists creates the table that records the last
+// state seen during -enrich_orcid_profiles for each (contributor, ORCID) pair.
+// Columns cover the ORCID-provided name fields AND the canonical at the time,
+// so any change to either the ORCID record or an external canonical update
+// (e.g. a higher-priority DBLP fix) will trigger a fresh challenge.
+func ensureContributorORCIDSeenTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS contributor_orcid_seen (
+		  contributor_id TEXT NOT NULL,
+		  orcid          TEXT NOT NULL,
+		  canonical      TEXT NOT NULL DEFAULT '',
+		  credit_name    TEXT NOT NULL DEFAULT '',
+		  declared_name  TEXT NOT NULL DEFAULT '',
+		  other_names    TEXT NOT NULL DEFAULT '',
+		  PRIMARY KEY (contributor_id, orcid)
+		);`)
+}
+
+// orcidSeenRecord holds the signature stored for one (contributor, ORCID) pair.
+type orcidSeenRecord struct {
+	canonical, creditName, declaredName, otherNames string
+}
+
+// loadORCIDSeen fetches the stored signature for (contributorID, orcid), or
+// returns the zero value when no record exists.
+func loadORCIDSeen(contributorID, orcid string) orcidSeenRecord {
+	var r orcidSeenRecord
+	db.QueryRow( //nolint:errcheck
+		`SELECT canonical, credit_name, declared_name, other_names
+		   FROM contributor_orcid_seen WHERE contributor_id = ? AND orcid = ?`,
+		contributorID, orcid).Scan(&r.canonical, &r.creditName, &r.declaredName, &r.otherNames)
+	return r
+}
+
+// upsertORCIDSeen stores (or updates) the seen signature for (contributorID, orcid).
+func upsertORCIDSeen(contributorID, orcid string, r orcidSeenRecord) {
+	db.Exec( //nolint:errcheck
+		`INSERT INTO contributor_orcid_seen
+		   (contributor_id, orcid, canonical, credit_name, declared_name, other_names)
+		   VALUES (?, ?, ?, ?, ?, ?)
+		   ON CONFLICT(contributor_id, orcid) DO UPDATE SET
+		     canonical = excluded.canonical,
+		     credit_name = excluded.credit_name,
+		     declared_name = excluded.declared_name,
+		     other_names = excluded.other_names`,
+		contributorID, orcid, r.canonical, r.creditName, r.declaredName, r.otherNames)
+}
+
+// clearContributorORCIDSeen deletes the seen record for (contributorID, orcid) so that
+// the next -enrich_contributor_data run re-fetches and re-challenges that contributor.
 func clearContributorORCIDSeen(contributorID, orcid string) {
 	db.Exec(`DELETE FROM contributor_orcid_seen WHERE contributor_id = ? AND orcid = ?`,
 		contributorID, orcid) //nolint:errcheck
 }
 
+// --- contributor_orcids table ---
+
+func ensureContributorORCIDsTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS contributor_orcids (
+		  orcid          TEXT NOT NULL,
+		  contributor_id TEXT NOT NULL REFERENCES contributors(id) ON DELETE CASCADE,
+		  is_canonical   INTEGER NOT NULL DEFAULT 0,
+		  PRIMARY KEY (orcid)
+		);`)
+}
+
+// maybeMigrateContributorORCIDs seeds contributor_orcids from the canonical orcid
+// column in contributors, for DBs opened before contributor_orcids existed.
+func maybeMigrateContributorORCIDs() {
+	db.Exec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) ` + //nolint:errcheck
+		`SELECT orcid, id, 1 FROM contributors WHERE orcid IS NOT NULL AND orcid != ''`)
+}
+
+// upsertContributorORCIDToDB records orcid for id in contributor_orcids.
+// When canonical is true it also sets contributors.orcid if not already set.
+func upsertContributorORCIDToDB(id, orcid string, canonical bool) {
+	if id == "" || orcid == "" {
+		return
+	}
+	isCanon := 0
+	if canonical {
+		isCanon = 1
+	}
+	if err := bibExec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, ?)`,
+		orcid, id, isCanon); err != nil {
+		dbInteraction.Warning("contributor_orcids upsert failed: %s", err)
+		dbWriteFailed = true
+		return
+	}
+	if canonical {
+		if err := bibExec(`UPDATE contributors SET orcid = ? WHERE id = ? AND (orcid IS NULL OR orcid = '')`,
+			orcid, id); err != nil {
+			dbInteraction.Warning("contributors orcid update failed: %s", err)
+			dbWriteFailed = true
+			return
+		}
+		setTableDate("contributors", time.Now().UnixMicro())
+	}
+}
+
+// loadContributorORCIDsFromDB populates l.ORCIDToContributorID from contributor_orcids.
+func loadContributorORCIDsFromDB(l *TBibTeXLibrary) {
+	rows, err := db.Query(`SELECT orcid, contributor_id FROM contributor_orcids`)
+	if err != nil {
+		dbInteraction.Warning("Could not query contributor_orcids: %s", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var orcid, id string
+		if rows.Scan(&orcid, &id) == nil {
+			l.ORCIDToContributorID[orcid] = id
+		}
+	}
+}
+
+// contributorORCIDs returns all ORCIDs for a contributor from contributor_orcids.
+func contributorORCIDs(id string) []string {
+	rows, err := db.Query(`SELECT orcid FROM contributor_orcids WHERE contributor_id = ?`, id)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var result []string
+	for rows.Next() {
+		var orcid string
+		if rows.Scan(&orcid) == nil {
+			result = append(result, orcid)
+		}
+	}
+	return result
+}
+
+// orcidToContributorID returns the contributor ID for an ORCID, or "" if unknown.
+func orcidToContributorID(l *TBibTeXLibrary, orcid string) string {
+	return l.ORCIDToContributorID[orcid]
+}
+
+// contributorAliasesFromDB returns all name forms for a contributor (canonical + aliases)
+// from the contributor_names table.
+func contributorAliasesFromDB(id string) []string {
+	rows, err := db.Query(`SELECT name FROM contributor_names WHERE id = ?`, id)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// contributorEntryKeys returns all library entry keys in which a contributor appears
+// (as author, editor, or any other role) according to contributor_roles.
+func contributorEntryKeys(id string) []string {
+	rows, err := db.Query(`SELECT DISTINCT entry_key FROM contributor_roles WHERE contributor_id = ?`, id)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var key string
+		if rows.Scan(&key) == nil {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+// entryExistsWithDOI reports whether any library entry already carries the given
+// DOI value (case-insensitive, after stripping any "https://doi.org/" prefix).
+func entryExistsWithDOI(doi string) bool {
+	doi = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(doi, "https://doi.org/"), "http://doi.org/"))
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = 'doi' AND lower(value) = ?`, doi).Scan(&count) //nolint:errcheck
+	return count > 0
+}
+
+func setContributorDblpKey(l *TBibTeXLibrary, id, dblpKey string) {
+	if c := l.ContributorByID[id]; c != nil {
+		c.DblpKey = dblpKey
+	}
+	if dblpKey != "" {
+		l.DblpKeyToContributorID[dblpKey] = id
+	}
+	bibExec(`UPDATE contributors SET dblp_key = ? WHERE id = ?`, dblpKey, id) //nolint:errcheck
+}
+
 func upsertContributorToDB(id, name, orcid string) {
-	if err := bibExec(`INSERT INTO contributors (id, name, orcid) VALUES (?, ?, ?)
+	if err := bibExec(`INSERT INTO contributors (id, name, orcid, garbled) VALUES (?, ?, ?, 0)
 	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name,
 	                      orcid = COALESCE(NULLIF(excluded.orcid, ''), orcid)`,
 		id, name, orcid); err != nil {
 		dbInteraction.Warning("contributors upsert failed: %s", err)
+		dbWriteFailed = true
+		return
+	}
+	setTableDate("contributors", time.Now().UnixMicro())
+}
+
+func upsertGarbledContributorToDB(id, name string) {
+	if err := bibExec(`INSERT INTO contributors (id, name, orcid, garbled) VALUES (?, ?, '', 1)
+	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name, garbled = 1`,
+		id, name); err != nil {
+		dbInteraction.Warning("contributors (garbled) upsert failed: %s", err)
 		dbWriteFailed = true
 		return
 	}
@@ -1712,10 +2130,10 @@ func upsertNameMapping(alias, name string) {
 		upsertContributorNameToDB(id, name)
 	}
 
-	// If alias is the canonical of a different contributor, absorb it.
+	// If alias already maps to a contributor different from id, decide how to proceed.
 	if aliasID, mapped := Library.NameToContributorID[alias]; mapped && aliasID != id {
 		if aliasContrib, isContrib := Library.ContributorByID[aliasID]; isContrib && aliasContrib.Name == alias {
-			// Collect all names belonging to the spurious contributor from the DB.
+			// alias is the canonical name of aliasID → absorb aliasID into id.
 			nameRows, qErr := db.Query(`SELECT name FROM contributor_names WHERE id = ?`, aliasID)
 			if qErr == nil {
 				var toMove []string
@@ -1731,8 +2149,28 @@ func upsertNameMapping(alias, name string) {
 				}
 			}
 			db.Exec(`DELETE FROM contributors WHERE id = ?`, aliasID) //nolint:errcheck
+			upsertContributorIDOldie(aliasID, id)
 			delete(Library.ContributorByID, aliasID)
+		} else {
+			// alias is a non-canonical of aliasID → this name is now globally ambiguous.
+			upsertContributorNameToDB(id, alias)
+			makeNameAmbiguous(&Library, alias, aliasID, id)
+			retroactivelyBackfillDisambiguation(&Library, alias)
+			return
 		}
+	}
+
+	// If alias is already in the ambiguous map, add id to the candidate set.
+	if existingIDs, ambiguous := Library.AmbiguousNameToContributorIDs[alias]; ambiguous {
+		upsertContributorNameToDB(id, alias)
+		for _, existingID := range existingIDs {
+			if existingID == id {
+				return
+			}
+		}
+		Library.AmbiguousNameToContributorIDs[alias] = append(existingIDs, id)
+		retroactivelyBackfillDisambiguation(&Library, alias)
+		return
 	}
 
 	upsertContributorNameToDB(id, alias)
@@ -1748,6 +2186,16 @@ func deleteNameMapping(alias string) {
 	if id, ok := Library.NameToContributorID[alias]; ok {
 		deleteContributorNameFromDB(id, alias)
 		delete(Library.NameToContributorID, alias)
+		return
+	}
+	if ids, ok := Library.AmbiguousNameToContributorIDs[alias]; ok {
+		// Remove the first matching ID from the ambiguous set; caller does not
+		// pass the specific ID, so we can only handle the single-entry case here.
+		if len(ids) <= 1 {
+			delete(Library.AmbiguousNameToContributorIDs, alias)
+		}
+		// With 2+ IDs we cannot remove the right one without an id parameter;
+		// the ambiguity record stays until the contributor is merged or deleted.
 	}
 }
 
@@ -1762,7 +2210,12 @@ func maybeMergeSpuriousContributors() {
 		FROM contributors c1
 		JOIN contributor_names cn ON cn.name = c1.name AND cn.id != c1.id
 		JOIN contributors c2 ON c2.id = cn.id
-		WHERE c2.name != c1.name`)
+		WHERE c2.name != c1.name
+		  AND NOT EXISTS (
+		        SELECT 1 FROM non_double_contributors ndc
+		        WHERE ndc.contributor_id_a = CASE WHEN c1.id < c2.id THEN c1.id ELSE c2.id END
+		          AND ndc.contributor_id_b = CASE WHEN c1.id < c2.id THEN c2.id ELSE c1.id END
+		      )`)
 	if err != nil {
 		return
 	}
@@ -1776,6 +2229,7 @@ func maybeMergeSpuriousContributors() {
 		}
 		if !seen[fromID] {
 			seen[fromID] = true
+			seen[intoID] = true // prevent intoID from also being treated as a fromID
 			ops = append(ops, mergeOp{fromID, fromName, intoID, intoName})
 		}
 	}
@@ -1785,34 +2239,182 @@ func maybeMergeSpuriousContributors() {
 	}
 	dbInteraction.Progress("Merging %d spurious contributor duplicate(s)...", len(ops))
 	for _, op := range ops {
-		nameRows, qErr := db.Query(`SELECT name FROM contributor_names WHERE id = ?`, op.fromID)
-		if qErr != nil {
-			continue
+		if mergeContributorInDB(op.fromID, op.intoID) {
+			dbInteraction.Progress("  Merged %q into %q", op.fromName, op.intoName)
 		}
-		var names []string
-		for nameRows.Next() {
-			var name string
-			nameRows.Scan(&name) //nolint:errcheck
-			names = append(names, name)
-		}
-		nameRows.Close()
-
-		tx, txErr := db.Begin()
-		if txErr != nil {
-			dbInteraction.Warning("Could not begin merge transaction: %s", txErr)
-			continue
-		}
-		for _, name := range names {
-			tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, op.intoID, name) //nolint:errcheck
-		}
-		tx.Exec(`DELETE FROM contributors WHERE id = ?`, op.fromID) //nolint:errcheck
-		if commitErr := tx.Commit(); commitErr != nil {
-			tx.Rollback() //nolint:errcheck
-			dbInteraction.Warning("Could not commit contributor merge for %q: %s", op.fromName, commitErr)
-			continue
-		}
-		dbInteraction.Progress("  Merged %q into %q", op.fromName, op.intoName)
 	}
+}
+
+// mergeContributorInDB absorbs fromID into toID at the DB level.
+// Moves contributor_names, contributor_roles, and contributor_orcids to toID,
+// cleans up non_double_contributors rows referencing fromID, then deletes
+// fromID from contributors (which cascades to contributor_names and
+// contributor_orcids). Returns true on success.
+// The caller is responsible for updating in-memory maps after the call.
+func mergeContributorInDB(fromID, toID string) bool {
+	var fromOrcid, toOrcid string
+	db.QueryRow(`SELECT COALESCE(orcid, '') FROM contributors WHERE id = ?`, fromID).Scan(&fromOrcid) //nolint:errcheck
+	db.QueryRow(`SELECT COALESCE(orcid, '') FROM contributors WHERE id = ?`, toID).Scan(&toOrcid)    //nolint:errcheck
+
+	tx, err := db.Begin()
+	if err != nil {
+		dbInteraction.Warning("merge_contributors: could not begin transaction: %s", err)
+		return false
+	}
+
+	// Move contributor_names.
+	tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) ` + //nolint:errcheck
+		`SELECT ?, name FROM contributor_names WHERE id = ?`, toID, fromID)
+
+	// Move contributor_roles: insert non-conflicting, then delete all fromID rows.
+	tx.Exec(`INSERT OR IGNORE INTO contributor_roles (entry_key, role, position, contributor_id) ` + //nolint:errcheck
+		`SELECT entry_key, role, position, ? FROM contributor_roles WHERE contributor_id = ?`, toID, fromID)
+	tx.Exec(`DELETE FROM contributor_roles WHERE contributor_id = ?`, fromID) //nolint:errcheck
+
+	// Move contributor_orcids as non-canonical additional ORCIDs for toID.
+	tx.Exec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) ` + //nolint:errcheck
+		`SELECT orcid, ?, 0 FROM contributor_orcids WHERE contributor_id = ?`, toID, fromID)
+
+	// If toID has no canonical ORCID but fromID does, promote it.
+	if toOrcid == "" && fromOrcid != "" {
+		tx.Exec(`UPDATE contributors SET orcid = ? WHERE id = ?`, fromOrcid, toID) //nolint:errcheck
+		tx.Exec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`, //nolint:errcheck
+			fromOrcid, toID)
+	}
+
+	// Remove non_double_contributors rows referencing fromID (required before delete).
+	tx.Exec(`DELETE FROM non_double_contributors WHERE contributor_id_a = ? OR contributor_id_b = ?`, //nolint:errcheck
+		fromID, fromID)
+
+	// Delete fromID — cascades to contributor_names and contributor_orcids.
+	if _, execErr := tx.Exec(`DELETE FROM contributors WHERE id = ?`, fromID); execErr != nil {
+		tx.Rollback() //nolint:errcheck
+		dbInteraction.Warning("merge_contributors: could not delete contributor %s: %s", fromID, execErr)
+		return false
+	}
+	// Re-seed toID's canonical ORCID: if fromID had the same ORCID, the earlier
+	// INSERT OR IGNORE was blocked by a PRIMARY KEY conflict; now that the CASCADE
+	// delete removed the fromID row, we can insert the correct (orcid, toID, 1) row.
+	if toOrcid != "" {
+		tx.Exec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`, //nolint:errcheck
+			toOrcid, toID)
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		tx.Rollback() //nolint:errcheck
+		dbInteraction.Warning("merge_contributors: commit failed: %s", commitErr)
+		return false
+	}
+	upsertContributorIDOldie(fromID, toID)
+	return true
+}
+
+// maybeCleanupOrphanedContributors removes contributor records (and their
+// contributor_names rows via CASCADE) for any contributor that has no
+// contributor_roles entries — i.e. no longer appears as an author or editor in
+// any library entry. Only runs when contributorRolesActive is true, to avoid
+// deleting contributors that were seeded but not yet migrated to roles.
+// The "others" sentinel is always exempt.
+func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
+	if !contributorRolesActive {
+		return
+	}
+	// Collect orphans with their canonical name and all registered alias forms.
+	type orphanInfo struct {
+		id      string
+		name    string
+		aliases []string
+	}
+	rows, err := db.Query(`
+		SELECT c.id, c.name, COALESCE(cn.name, '')
+		FROM contributors c
+		LEFT JOIN contributor_names cn ON cn.id = c.id AND cn.name != c.name
+		WHERE c.id NOT IN (SELECT DISTINCT contributor_id FROM contributor_roles)
+		  AND c.name != 'others'
+		ORDER BY c.name, c.id, cn.name`)
+	if err != nil {
+		return
+	}
+	orphanMap := map[string]*orphanInfo{}
+	var orphanOrder []string
+	for rows.Next() {
+		var id, name, alias string
+		if rows.Scan(&id, &name, &alias) != nil {
+			continue
+		}
+		if _, seen := orphanMap[id]; !seen {
+			orphanMap[id] = &orphanInfo{id: id, name: name}
+			orphanOrder = append(orphanOrder, id)
+		}
+		if alias != "" {
+			orphanMap[id].aliases = append(orphanMap[id].aliases, alias)
+		}
+	}
+	rows.Close()
+	if len(orphanMap) == 0 {
+		return
+	}
+
+	orphanIDs := make([]string, 0, len(orphanMap))
+	for _, id := range orphanOrder {
+		orphanIDs = append(orphanIDs, id)
+	}
+
+	logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/orphaned_contributors.log"
+	os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+	if f, err := os.Create(logPath); err == nil {
+		fmt.Fprintf(f, "Orphaned contributors removed on %s (%d total)\n\n",
+			time.Now().Format("2006-01-02 15:04:05"), len(orphanIDs))
+		for _, id := range orphanOrder {
+			o := orphanMap[id]
+			sort.Strings(o.aliases)
+			if len(o.aliases) == 0 {
+				fmt.Fprintf(f, "%s  [no aliases]\n", o.name)
+			} else {
+				fmt.Fprintf(f, "%s  [aliases: %s]\n", o.name, strings.Join(o.aliases, " | "))
+			}
+		}
+		f.Close()
+	} else {
+		dbInteraction.Warning("Could not write orphaned_contributors.log: %s", err)
+	}
+
+	l.Progress("Cleaning up %d orphaned contributor(s) with no roles (see orphaned_contributors.log) ...", len(orphanIDs))
+	// Single bulk DELETE instead of per-row deletes — avoids N separate auto-commits.
+	if _, err := db.Exec(`
+		DELETE FROM contributors
+		WHERE id NOT IN (SELECT DISTINCT contributor_id FROM contributor_roles)
+		  AND name != 'others'`); err != nil {
+		dbInteraction.Warning("cleanup orphaned contributors: %s", err)
+		return
+	}
+	deleted := make(map[string]bool, len(orphanIDs))
+	for _, id := range orphanIDs {
+		delete(l.ContributorByID, id)
+		deleted[id] = true
+	}
+	for name, id := range l.NameToContributorID {
+		if deleted[id] {
+			delete(l.NameToContributorID, name)
+		}
+	}
+	for name, ids := range l.AmbiguousNameToContributorIDs {
+		kept := ids[:0]
+		for _, id := range ids {
+			if !deleted[id] {
+				kept = append(kept, id)
+			}
+		}
+		switch len(kept) {
+		case 0:
+			delete(l.AmbiguousNameToContributorIDs, name)
+		case 1:
+			delete(l.AmbiguousNameToContributorIDs, name)
+			l.NameToContributorID[name] = kept[0]
+		default:
+			l.AmbiguousNameToContributorIDs[name] = kept
+		}
+	}
+	l.Progress("Cleaned up %d orphaned contributor(s) with no roles.", len(orphanIDs))
 }
 
 // derivableNameForms returns the complete set of name forms derivable from
@@ -1839,6 +2441,33 @@ func derivableNameForms(baseNames []string) map[string]bool {
 	return derived
 }
 
+// contributorNamePair is used during contributor load to accumulate non-canonical
+// base forms for subsequent NameAliasToName / FindAliases processing.
+type contributorNamePair struct{ alias, canonical string }
+
+// setNameForContributor populates NameToContributorID for one (name, id) pair
+// during load. If name is already mapped to a different contributor, the name is
+// moved to AmbiguousNameToContributorIDs instead.
+func setNameForContributor(l *TBibTeXLibrary, name, id, canonical string, pairs *[]contributorNamePair) {
+	if existingID, exists := l.NameToContributorID[name]; exists && existingID != id {
+		makeNameAmbiguous(l, name, existingID, id)
+		return
+	}
+	if existingIDs, ambiguous := l.AmbiguousNameToContributorIDs[name]; ambiguous {
+		for _, eid := range existingIDs {
+			if eid == id {
+				return
+			}
+		}
+		l.AmbiguousNameToContributorIDs[name] = append(existingIDs, id)
+		return
+	}
+	l.NameToContributorID[name] = id
+	if name != canonical {
+		*pairs = append(*pairs, struct{ alias, canonical string }{alias: name, canonical: canonical})
+	}
+}
+
 // loadContributorsFromDb reads the
 // contributors and contributor_names tables, builds NameAliasToName,
 // NameToAliases, NameToContributorID, and ContributorByID, then prunes any
@@ -1849,18 +2478,25 @@ func loadContributorsFromDb(l *TBibTeXLibrary) {
 	defer func() { contributorsLoading = false }()
 
 	// Load contributor metadata.
-	rows, err := db.Query(`SELECT id, name, COALESCE(orcid, '') FROM contributors`)
+	rows, err := db.Query(`SELECT id, name, COALESCE(orcid, ''), COALESCE(dblp_key, ''), COALESCE(garbled, 0) FROM contributors`)
 	if err != nil {
 		dbInteraction.Warning("Could not query contributors: %s", err)
 		return
 	}
 	for rows.Next() {
-		var id, name, orcid string
-		if err := rows.Scan(&id, &name, &orcid); err != nil {
+		var id, name, orcid, dblpKey string
+		var garbled int
+		if err := rows.Scan(&id, &name, &orcid, &dblpKey, &garbled); err != nil {
 			dbInteraction.Warning("Could not scan contributors row: %s", err)
 			continue
 		}
-		l.ContributorByID[id] = &TContributor{Name: name, ORCID: orcid}
+		l.ContributorByID[id] = &TContributor{Name: name, ORCID: orcid, DblpKey: dblpKey, Garbled: garbled != 0}
+		if orcid != "" {
+			l.ORCIDToContributorID[orcid] = id
+		}
+		if dblpKey != "" {
+			l.DblpKeyToContributorID[dblpKey] = id
+		}
 	}
 	rows.Close()
 
@@ -1882,8 +2518,7 @@ func loadContributorsFromDb(l *TBibTeXLibrary) {
 	nameRows.Close()
 
 	// For each contributor: clean up derivable stored forms, build in-memory maps.
-	type pair struct{ alias, canonical string }
-	var pairs []pair
+	var pairs []contributorNamePair
 	for id, names := range namesPerID {
 		c, ok := l.ContributorByID[id]
 		if !ok {
@@ -1898,13 +2533,10 @@ func loadContributorsFromDb(l *TBibTeXLibrary) {
 				deleteContributorNameFromDB(id, name)
 				continue
 			}
-			// Non-derivable: populate in-memory maps.
-			l.NameToContributorID[name] = id
-			if name != canonical {
-				pairs = append(pairs, pair{alias: name, canonical: canonical})
-			}
+			// Non-derivable: populate in-memory maps; detect cross-contributor collisions.
+			setNameForContributor(l, name, id, canonical, &pairs)
 		}
-		l.NameToContributorID[canonical] = id
+		setNameForContributor(l, canonical, id, canonical, &pairs)
 	}
 
 	// Build NameAliasToName / NameToAliases from the base (non-derivable) pairs.
@@ -1923,6 +2555,9 @@ func loadContributorsFromDb(l *TBibTeXLibrary) {
 	for _, c := range l.ContributorByID {
 		l.FindAliases(c.Name, c.Name)
 	}
+
+	ensureOthersContributor(l)
+	loadContributorORCIDsFromDB(l)
 }
 
 // splitBibNameField splits a BibTeX author/editor value on " and " at brace
@@ -1979,10 +2614,10 @@ func seedContributorsFromEntries(l *TBibTeXLibrary) {
 		if rows.Scan(&value) != nil {
 			continue
 		}
-		for _, name := range splitBibNameField(value) {
+		for _, name := range splitBibNameField(normalizeEtAlTail(value)) {
 			lc := strings.ToLower(name)
 			if lc == "others" || lc == "et.al." || lc == "et al." {
-				continue
+				continue // "others" is handled by ensureOthersContributor, not seeded here
 			}
 			if isGarbledContributorName(name) {
 				continue
@@ -2010,6 +2645,450 @@ func seedContributorsFromEntries(l *TBibTeXLibrary) {
 	}
 	if seeded > 0 {
 		l.Progress("Seeded %d new contributor(s) from author/editor fields.", seeded)
+	}
+}
+
+// --- contributor_roles migration ---
+
+// resolveNameToContributorID returns the contributor ID for name, checking
+// NameToContributorID first (direct or registered derived form), then following
+// NameAliasToName if the direct lookup misses.
+func resolveNameToContributorID(l *TBibTeXLibrary, name string) (string, bool) {
+	if id, ok := l.NameToContributorID[name]; ok {
+		return id, true
+	}
+	if canonical, ok := l.NameAliasToName[name]; ok {
+		if id, ok := l.NameToContributorID[canonical]; ok {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// isGloballyAmbiguous reports whether name maps to more than one contributor.
+func isGloballyAmbiguous(l *TBibTeXLibrary, name string) bool {
+	_, ok := l.AmbiguousNameToContributorIDs[name]
+	return ok
+}
+
+// contributorIDCandidates returns all candidate IDs for name: one element if
+// unambiguous, two or more if globally ambiguous, nil if unknown.
+func contributorIDCandidates(l *TBibTeXLibrary, name string) []string {
+	if ids, ok := l.AmbiguousNameToContributorIDs[name]; ok {
+		return ids
+	}
+	if id, ok := resolveNameToContributorID(l, name); ok {
+		return []string{id}
+	}
+	return nil
+}
+
+// makeNameAmbiguous moves name from NameToContributorID to
+// AmbiguousNameToContributorIDs, adding newID to the set if not already present.
+// existingID is the ID already registered; pass "" to derive it from the map.
+func makeNameAmbiguous(l *TBibTeXLibrary, name, existingID, newID string) {
+	if existingID == "" {
+		existingID = l.NameToContributorID[name]
+	}
+	delete(l.NameToContributorID, name)
+	ids := l.AmbiguousNameToContributorIDs[name]
+	seen := map[string]bool{}
+	for _, id := range ids {
+		seen[id] = true
+	}
+	if existingID != "" && !seen[existingID] {
+		ids = append(ids, existingID)
+		seen[existingID] = true
+	}
+	if newID != "" && !seen[newID] {
+		ids = append(ids, newID)
+	}
+	l.AmbiguousNameToContributorIDs[name] = ids
+}
+
+// retroactivelyBackfillDisambiguation creates entry_contributor_names records for
+// all contributor_roles rows whose contributor is one of the now-ambiguous
+// candidates for name. This preserves correct resolutions that were made while the
+// name was still unambiguous (see §7.2 of ARCHITECTURE.md).
+func retroactivelyBackfillDisambiguation(l *TBibTeXLibrary, name string) {
+	candidates := l.AmbiguousNameToContributorIDs[name]
+	if len(candidates) == 0 {
+		return
+	}
+	for _, cID := range candidates {
+		rows, err := db.Query(
+			`SELECT entry_key, role, position FROM contributor_roles WHERE contributor_id = ?`, cID)
+		if err != nil {
+			continue
+		}
+		var roles []struct{ key, role string; pos int }
+		for rows.Next() {
+			var r struct{ key, role string; pos int }
+			if rows.Scan(&r.key, &r.role, &r.pos) == nil {
+				roles = append(roles, r)
+			}
+		}
+		rows.Close()
+		for _, r := range roles {
+			bibExec( //nolint:errcheck
+				`INSERT OR IGNORE INTO entry_contributor_names
+				 (entry_key, role, position, contributor_id, name_used) VALUES (?, ?, ?, ?, ?)`,
+				r.key, r.role, r.pos, cID, name)
+		}
+	}
+}
+
+// resolveNamesToIDSeq resolves a pre-split name slice to a contributor-ID slice.
+// "others" / garbled names are omitted; ordering is preserved.
+func resolveNamesToIDSeq(l *TBibTeXLibrary, names []string) []string {
+	ids := make([]string, 0, len(names))
+	for _, name := range names {
+		lc := strings.ToLower(name)
+		if lc == "others" || lc == "et.al." || lc == "et al." {
+			continue
+		}
+		if isGarbledContributorName(name) {
+			continue
+		}
+		if id, ok := resolveNameToContributorID(l, name); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// idSeqEqual reports whether two contributor-ID slices are identical.
+func idSeqEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizeEtAlTail replaces trailing "et al." / "et.al." variants in an
+// author/editor field value with "and others" so that the list splits cleanly
+// and the "others" sentinel contributor is recognised.
+func normalizeEtAlTail(value string) string {
+	lower := strings.ToLower(value)
+	for _, sfx := range []string{" and et al.", " and et.al."} {
+		if strings.HasSuffix(lower, sfx) {
+			return value[:len(value)-len(sfx)] + " and others"
+		}
+	}
+	for _, sfx := range []string{" et al.", " et.al."} {
+		if strings.HasSuffix(lower, sfx) {
+			return value[:len(value)-len(sfx)] + " and others"
+		}
+	}
+	return value
+}
+
+// ensureOthersContributor guarantees that the "others" sentinel contributor
+// exists in both the in-memory maps and the database. "others" represents a
+// truncated author/editor list ("... and others"). Safe to call multiple times.
+func ensureOthersContributor(l *TBibTeXLibrary) {
+	if _, ok := l.NameToContributorID["others"]; ok {
+		return
+	}
+	id := l.NewKey()
+	l.ContributorByID[id] = &TContributor{Name: "others"}
+	l.NameToContributorID["others"] = id
+	l.NameToContributorID["{others}"] = id // brace-wrapped form found in old bib_entries
+	upsertContributorToDB(id, "others", "")
+	upsertContributorNameToDB(id, "others")
+}
+
+// lookupEntryContributorID returns the recorded contributor ID for
+// (key, role, position) from entry_contributor_names when the stored name_used
+// matches name. Returns ("", false) if no matching record exists.
+func lookupEntryContributorID(key, role string, position int, name string) (string, bool) {
+	var storedID, storedName string
+	err := db.QueryRow(
+		`SELECT contributor_id, name_used FROM entry_contributor_names
+		 WHERE entry_key = ? AND role = ? AND position = ?`,
+		key, role, position).Scan(&storedID, &storedName)
+	if err != nil || storedName != name {
+		return "", false
+	}
+	return storedID, true
+}
+
+// coauthorInference returns the candidate ID that has the most entries in
+// contributor_roles shared with the already-resolved contributors in the same
+// (entry, role). Returns "" when no candidate has any shared entries.
+func coauthorInference(candidates, resolvedSoFar []string) string {
+	if len(resolvedSoFar) == 0 {
+		return ""
+	}
+	bestCount := 0
+	bestID := ""
+	for _, candID := range candidates {
+		count := 0
+		for _, coID := range resolvedSoFar {
+			var n int
+			db.QueryRow( //nolint:errcheck
+				`SELECT COUNT(*) FROM contributor_roles cr1
+				 JOIN contributor_roles cr2
+				   ON cr2.entry_key = cr1.entry_key AND cr2.role = cr1.role
+				 WHERE cr1.contributor_id = ? AND cr2.contributor_id = ?`,
+				candID, coID).Scan(&n)
+			count += n
+		}
+		if count > bestCount {
+			bestCount = count
+			bestID = candID
+		}
+	}
+	return bestID
+}
+
+// resolveContributorForPosition implements the 4-step resolution hierarchy for
+// a contributor name at a specific (key, role, position):
+//
+//  1. Entry-specific override — look up entry_contributor_names.
+//  2. Global unambiguous — NameToContributorID has exactly one match.
+//  3. Co-author inference — pick the candidate with the most shared entries
+//     with already-resolved co-contributors in resolvedSoFar.
+//  4. Fallback — use the first ambiguous candidate and emit a warning.
+//
+// Returns ("", false) when name is entirely unknown (step 4 never triggers for
+// unknown names; the caller should create a new contributor in that case).
+func resolveContributorForPosition(l *TBibTeXLibrary, key, role string, position int, name string, resolvedSoFar []string) (string, bool) {
+	if id, ok := lookupEntryContributorID(key, role, position, name); ok {
+		return id, true
+	}
+	if id, ok := resolveNameToContributorID(l, name); ok {
+		return id, true
+	}
+	candidates := l.AmbiguousNameToContributorIDs[name]
+	if len(candidates) == 0 {
+		return "", false
+	}
+	if id := coauthorInference(candidates, resolvedSoFar); id != "" {
+		return id, true
+	}
+	l.Warning("Ambiguous contributor %q at (%s %s pos %d): using %s",
+		name, key, role, position, candidates[0])
+	return candidates[0], true
+}
+
+// maybeMigrateAuthorEditorToContributorRoles populates contributor_roles and
+// entry_contributor_names from the author/editor rows in bib_entries, retires
+// losing_field_values challengers whose ID sequence matches the winner, then
+// removes author/editor rows from bib_entries. Runs once: skipped if
+// contributor_roles already has rows.
+func maybeMigrateAuthorEditorToContributorRoles(l *TBibTeXLibrary) {
+	var roleCount int
+	db.QueryRow(`SELECT COUNT(*) FROM contributor_roles`).Scan(&roleCount) //nolint:errcheck
+	if roleCount > 0 {
+		contributorRolesActive = true
+		return
+	}
+	var entryCount int
+	db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field IN ('author', 'editor')`).Scan(&entryCount) //nolint:errcheck
+	if entryCount == 0 {
+		return
+	}
+
+	l.Progress("Migrating %d author/editor rows to contributor_roles ...", entryCount)
+
+	rows, err := db.Query(
+		`SELECT entry_key, field, value FROM bib_entries
+		 WHERE field IN ('author', 'editor') ORDER BY entry_key, field`)
+	if err != nil {
+		dbInteraction.Warning("contributor_roles migration: cannot query bib_entries: %s", err)
+		return
+	}
+	type entryRole struct{ key, field, value string }
+	var toMigrate []entryRole
+	for rows.Next() {
+		var er entryRole
+		if rows.Scan(&er.key, &er.field, &er.value) == nil {
+			toMigrate = append(toMigrate, er)
+		}
+	}
+	rows.Close()
+
+	tx, err := db.Begin()
+	if err != nil {
+		dbInteraction.Warning("contributor_roles migration: begin tx: %s", err)
+		return
+	}
+
+	// Ensure the "others" sentinel contributor exists so it resolves normally
+	// below — "others" is kept in contributor_roles so " and others" round-trips.
+	ensureOthersContributor(l)
+
+	// winnerSeqs[entry_key][role] holds the resolved ID sequence for each entry,
+	// used below to retire identical-sequence losers from losing_field_values.
+	winnerSeqs := map[string]map[string][]string{}
+
+	rolesMigrated, aliasesMigrated, newContributors, garbledSkipped := 0, 0, 0, 0
+
+	// cleanlyMigrated tracks (entry_key, field) pairs that were fully migrated to
+	// contributor_roles. Only these rows are deleted from bib_entries at the end.
+	// Fields with any garbled name are left in bib_entries untouched so that no
+	// information is lost; the normal check pass will warn about them.
+	type migKey struct{ key, field string }
+	cleanlyMigrated := map[migKey]bool{}
+
+	for _, er := range toMigrate {
+		// Normalise trailing et-al variants to "others" before splitting.
+		names := splitBibNameField(normalizeEtAlTail(er.value))
+		var seq []string
+		position := 0
+		entryHadGarbled := false
+		for _, name := range names {
+			lc := strings.ToLower(name)
+			if lc == "et.al." || lc == "et al." {
+				continue
+			}
+
+			storeName := name
+			garbled := false
+			if isGarbledContributorName(name) {
+				// Wrap in braces only if not already brace-wrapped; names like
+				// {Fortuna, M.H.} are already at one level and don't need a second.
+				if !strings.HasPrefix(name, "{") {
+					storeName = "{" + name + "}"
+				}
+				garbled = true
+				garbledSkipped++
+				entryHadGarbled = true
+			}
+
+			id, ok := resolveNameToContributorID(l, storeName)
+			if !ok {
+				id = l.NewKey()
+				l.ContributorByID[id] = &TContributor{Name: storeName, Garbled: garbled}
+				l.NameToContributorID[storeName] = id
+				// Use tx.Exec, not bibExec/db.Exec — db already has this tx open;
+				// a second write path on the same connection produces SQLITE_BUSY.
+				garbledInt := 0
+				if garbled {
+					garbledInt = 1
+				} else {
+					newContributors++
+					l.Progress("  Unexpected new contributor during migration: %q", storeName)
+				}
+				if _, err := tx.Exec(
+					`INSERT INTO contributors (id, name, orcid, garbled) VALUES (?, ?, '', ?)
+					 ON CONFLICT(id) DO UPDATE SET name = excluded.name, garbled = MAX(garbled, excluded.garbled)`,
+					id, storeName, garbledInt); err != nil {
+					tx.Rollback() //nolint:errcheck
+					dbInteraction.Warning("contributor_roles migration: insert contributor: %s", err)
+					return
+				}
+				if _, err := tx.Exec(
+					`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`,
+					id, storeName); err != nil {
+					tx.Rollback() //nolint:errcheck
+					dbInteraction.Warning("contributor_roles migration: insert contributor_name: %s", err)
+					return
+				}
+			} else if garbled {
+				if c := l.ContributorByID[id]; c != nil {
+					c.Garbled = true
+				}
+				// Mark the existing contributor as garbled in the DB too.
+				tx.Exec(`UPDATE contributors SET garbled = 1 WHERE id = ?`, id) //nolint:errcheck
+			}
+
+			position++
+			if _, err := tx.Exec(
+				`INSERT OR IGNORE INTO contributor_roles
+				 (entry_key, role, position, contributor_id) VALUES (?, ?, ?, ?)`,
+				er.key, er.field, position, id); err != nil {
+				tx.Rollback() //nolint:errcheck
+				dbInteraction.Warning("contributor_roles migration: insert role: %s", err)
+				return
+			}
+			rolesMigrated++
+			seq = append(seq, id)
+
+			// Record name_used evidence when the stored name differs from canonical.
+			if contrib := l.ContributorByID[id]; contrib != nil && storeName != contrib.Name {
+				if _, err := tx.Exec(
+					`INSERT OR IGNORE INTO entry_contributor_names
+					 (entry_key, role, position, contributor_id, name_used) VALUES (?, ?, ?, ?, ?)`,
+					er.key, er.field, position, id, storeName); err != nil {
+					tx.Rollback() //nolint:errcheck
+					dbInteraction.Warning("contributor_roles migration: insert entry name: %s", err)
+					return
+				}
+				aliasesMigrated++
+			}
+		}
+		cleanlyMigrated[migKey{er.key, er.field}] = true
+		if winnerSeqs[er.key] == nil {
+			winnerSeqs[er.key] = map[string][]string{}
+		}
+		winnerSeqs[er.key][er.field] = seq
+
+		// When any name was garble-wrapped, register the original field value as a
+		// losing form so that loadAuthorEditorFieldMappingsFromCache can register
+		// the alias old-form → new-wrapped-form after the migration commits.
+		if entryHadGarbled {
+			tx.Exec( //nolint:errcheck
+				`INSERT OR IGNORE INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?)`,
+				er.key, er.field, er.value)
+		}
+	}
+
+	// Retire losing_field_values rows whose loser resolves to the same ID sequence
+	// as the winner just migrated into contributor_roles.
+	lfvRetired := 0
+	lfvRows, lfvErr := db.Query(
+		`SELECT entry_key, field, value FROM losing_field_values
+		 WHERE field IN ('author', 'editor')`)
+	if lfvErr == nil {
+		type lfvRow struct{ key, field, loser string }
+		var lfvAll []lfvRow
+		for lfvRows.Next() {
+			var r lfvRow
+			if lfvRows.Scan(&r.key, &r.field, &r.loser) == nil {
+				lfvAll = append(lfvAll, r)
+			}
+		}
+		lfvRows.Close()
+		for _, r := range lfvAll {
+			loserSeq := resolveNamesToIDSeq(l, splitBibNameField(r.loser))
+			if winner, ok := winnerSeqs[r.key][r.field]; ok && idSeqEqual(winner, loserSeq) {
+				if _, err := tx.Exec(
+					`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`,
+					r.key, r.field, r.loser); err == nil {
+					lfvRetired++
+				}
+			}
+		}
+	}
+
+	// Delete only the cleanly-migrated rows; garbled-field rows stay in bib_entries.
+	deleteStmt := `DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`
+	for mk := range cleanlyMigrated {
+		if _, err := tx.Exec(deleteStmt, mk.key, mk.field); err != nil {
+			tx.Rollback() //nolint:errcheck
+			dbInteraction.Warning("contributor_roles migration: delete row: %s", err)
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		dbInteraction.Warning("contributor_roles migration: commit: %s", err)
+		return
+	}
+
+	setTableDate("contributor_roles", time.Now().UnixMicro())
+	contributorRolesActive = true
+	l.Progress("  Done: %d positions (%d garbled name(s) wrapped), %d entry aliases, %d loser(s) retired.",
+		rolesMigrated, garbledSkipped, aliasesMigrated, lfvRetired)
+	if newContributors > 0 {
+		l.Progress("  Warning: %d unexpected new contributor(s) created.", newContributors)
 	}
 }
 
@@ -2624,22 +3703,59 @@ func saveCrossFieldMappingsToDb(l *TBibTeXLibrary) {
 	setTableDate("cross_field_mappings", time.Now().UnixMicro())
 }
 
-// --- filter_entry_field_mappings table ---
+// loadAuthorEditorFieldMappingsFromCache loads author/editor entry-field alias
+// mappings from losing_field_values using the in-memory entry cache to find the
+// winner. Must be called after initEntryCache() and only when contributorRolesActive.
+// After the contributor_roles migration, author/editor fields are no longer in
+// bib_entries, so loadEntryFieldMappingsFromDb's JOIN misses them; this is the
+// second-pass fix.
+func loadAuthorEditorFieldMappingsFromCache(l *TBibTeXLibrary) {
+	if entryCache == nil {
+		return
+	}
+	entryFieldMappingsLoading = true
+	defer func() { entryFieldMappingsLoading = false }()
 
-func ensureEntryFieldMappingsTableExists() {
-	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS filter_entry_field_mappings (
-		  entry_key  TEXT NOT NULL,
-		  field      TEXT NOT NULL,
-		  winner     TEXT NOT NULL,
-		  challenger TEXT NOT NULL,
-		  PRIMARY KEY (entry_key, field, challenger)
-		);`)
+	rows, err := db.Query(`
+		SELECT entry_key, field, value FROM losing_field_values
+		WHERE field IN ('author', 'editor')`)
+	if err != nil {
+		dbInteraction.Warning("Could not query losing_field_values for author/editor: %s", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, field, loser string
+		if err := rows.Scan(&key, &field, &loser); err != nil {
+			continue
+		}
+		e, ok := entryCache[key]
+		if !ok {
+			continue
+		}
+		winner := e.Fields[field]
+		if winner == "" {
+			continue
+		}
+		normWinner := l.MapFieldValue(field, winner)
+		normLoser := l.MapFieldValue(field, loser)
+		// If the loser is already registered with a stale winner (e.g. from a
+		// loadEntryFieldMappingsFromDb pass that ran before migration deleted the
+		// bib_entries author row), cascade the update from the old winner to the
+		// new one so that all aliases pointing to the old winner get fixed too.
+		if existingWinner, alreadyMapped := l.EntryFieldSourceToTarget[key][field][normLoser]; alreadyMapped && existingWinner != normWinner {
+			l.UpdateEntryFieldAlias(key, field, existingWinner, normWinner)
+		} else {
+			l.AddEntryFieldAlias(key, field, normLoser, normWinner, true)
+		}
+	}
 }
 
 // loadEntryFieldMappingsFromDb populates l.EntryFieldSourceToTarget from the DB.
 // The winner is read from bib_entries (current accepted value); only the loser is stored
 // in losing_field_values. Rows with no matching bib_entries value are skipped.
+// After the contributor_roles migration, author/editor fields are absent from
+// bib_entries; those losers are handled by loadAuthorEditorFieldMappingsFromCache.
 // Returns true when at least one value was remapped by MapFieldValue, so the caller
 // can arrange a write-back.
 func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
@@ -2912,40 +4028,13 @@ func ensureLosingFieldValuesTableExists() {
 	db.Exec(`ALTER TABLE losing_field_values ADD COLUMN triage_status TEXT`) //nolint:errcheck
 }
 
-// maybeMigrateToLosingFieldValues copies challengers from the legacy
-// filter_entry_field_mappings table into losing_field_values on the first run
-// after the 21.x upgrade.
-func maybeMigrateToLosingFieldValues() {
-	var newCount int
-	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values`).Scan(&newCount)
-	if newCount > 0 {
-		return
-	}
-	var oldCount int
-	db.QueryRow(`SELECT COUNT(*) FROM filter_entry_field_mappings`).Scan(&oldCount)
-	if oldCount == 0 {
-		return
-	}
-	if _, err := db.Exec(`
-		INSERT OR IGNORE INTO losing_field_values (entry_key, field, value)
-		SELECT entry_key, field, challenger FROM filter_entry_field_mappings
-	`); err != nil {
-		dbInteraction.Warning("Could not migrate entry field mappings: %s", err)
-		return
-	}
-	// Stamp the timestamp beyond all upstream tables so a future -import of those
-	// tables does not silently overwrite the migrated data.
-	maxT := tableModTime("filter_entry_field_mappings")
-	for _, dep := range []string{
-		"state_names", "state_countries", "country_names",
-		"generic_field_mappings",
-	} {
-		if t := tableModTime(dep); t > maxT {
-			maxT = t
-		}
-	}
-	setTableDate("losing_field_values", maxT)
-	dbInteraction.Progress("Migrated entry field mappings to losing_field_values")
+// maybeDropFilterEntryFieldMappings drops the legacy filter_entry_field_mappings
+// table if it still exists. Data was migrated to losing_field_values in 21.x;
+// the table is now dead code and should be removed from every database.
+// TODO: remove this function (and its call sites) once all databases have been
+// opened at least once with 26.41+.
+func maybeDropFilterEntryFieldMappings() {
+	db.Exec(`DROP TABLE IF EXISTS filter_entry_field_mappings`) //nolint:errcheck
 }
 
 // maybeMigrateStripLocalURL deletes all local-url rows from bib_entries on the first
@@ -3111,68 +4200,6 @@ func ensureBibTablesExist() {
 		);`)
 }
 
-// --- contributor_id_oldies ---
-
-func ensureContributorIDOldiesTableExists() {
-	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS contributor_id_oldies (
-		  absorbed_id  TEXT NOT NULL PRIMARY KEY,
-		  canonical_id TEXT NOT NULL
-		);`)
-}
-
-func upsertContributorIDOldie(absorbedID, canonicalID string) {
-	db.Exec(`INSERT INTO contributor_id_oldies (absorbed_id, canonical_id) VALUES (?, ?)
-		ON CONFLICT(absorbed_id) DO UPDATE SET canonical_id = excluded.canonical_id`,
-		absorbedID, canonicalID) //nolint:errcheck
-}
-
-func loadContributorIDOldiesFromDB(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT absorbed_id, canonical_id FROM contributor_id_oldies`)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var absorbedID, canonicalID string
-		if rows.Scan(&absorbedID, &canonicalID) == nil {
-			l.ContributorIDOldies[absorbedID] = canonicalID
-		}
-	}
-}
-
-// ResolveContributorID returns the current canonical contributor ID for id,
-// following any absorbed-ID chain in ContributorIDOldies. Returns id itself
-// when already canonical or unknown.
-func (l *TBibTeXLibrary) ResolveContributorID(id string) string {
-	seen := map[string]bool{id: true}
-	cur := id
-	for {
-		next, ok := l.ContributorIDOldies[cur]
-		if !ok {
-			return cur
-		}
-		if seen[next] {
-			return cur
-		}
-		seen[next] = true
-		cur = next
-	}
-}
-
-// forceCommitBibTransaction commits any open bib transaction regardless of
-// nesting depth. Used before graceful quit to ensure pending writes survive.
-func forceCommitBibTransaction() {
-	if activeTx == nil {
-		return
-	}
-	if err := activeTx.Commit(); err != nil {
-		dbInteraction.Warning("Could not commit bib transaction on quit: %s", err)
-	}
-	activeTx = nil
-	txDepth = 0
-}
-
 // --- bib entry write primitives ---
 
 // activeTx, when non-nil, is used by bibExec so that parse and check passes can
@@ -3309,6 +4336,20 @@ func rollbackBibTransaction() {
 	}
 }
 
+// forceCommitBibTransaction commits and clears any open bib transaction regardless of
+// nesting depth. Called during graceful quit so that writes made earlier in the run are
+// not rolled back when the database connection is closed.
+func forceCommitBibTransaction() {
+	if activeTx == nil {
+		return
+	}
+	if err := activeTx.Commit(); err != nil {
+		dbInteraction.Warning("Could not commit bib transaction on quit: %s", err)
+	}
+	activeTx = nil
+	txDepth = 0
+}
+
 // openEntry snapshots entry.Fields so that subsequent setEntryField / deleteEntryField
 // calls only update the in-memory struct (and the cache when active) without issuing any
 // DB writes. closeEntry then diffs the snapshot against the current fields and writes only
@@ -3348,18 +4389,22 @@ func closeEntry(entry *TBibTeXEntry) bool {
 	for field, value := range entry.Fields {
 		if snapshot[field] != value {
 			changed = true
-			var err error
-			if value == "" {
-				err = bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, entry.Key, field)
+			if contributorRolesActive && (field == "author" || field == "editor") {
+				upsertContributorRolesForField(&Library, entry.Key, field, value)
 			} else {
-				err = bibExec(
-					`INSERT INTO bib_entries (entry_key, field, value) VALUES (?, ?, ?)
-					   ON CONFLICT(entry_key, field) DO UPDATE SET value = excluded.value;`,
-					entry.Key, field, value)
-			}
-			if err != nil {
-				dbInteraction.Warning("bib_entries write failed for %s.%s: %s", entry.Key, field, err)
-				dbWriteFailed = true
+				var err error
+				if value == "" {
+					err = bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, entry.Key, field)
+				} else {
+					err = bibExec(
+						`INSERT INTO bib_entries (entry_key, field, value) VALUES (?, ?, ?)
+						   ON CONFLICT(entry_key, field) DO UPDATE SET value = excluded.value;`,
+						entry.Key, field, value)
+				}
+				if err != nil {
+					dbInteraction.Warning("bib_entries write failed for %s.%s: %s", entry.Key, field, err)
+					dbWriteFailed = true
+				}
 			}
 		}
 	}
@@ -3367,9 +4412,13 @@ func closeEntry(entry *TBibTeXEntry) bool {
 	for field := range snapshot {
 		if _, exists := entry.Fields[field]; !exists {
 			changed = true
-			if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, entry.Key, field); err != nil {
-				dbInteraction.Warning("bib_entries delete failed for %s.%s: %s", entry.Key, field, err)
-				dbWriteFailed = true
+			if contributorRolesActive && (field == "author" || field == "editor") {
+				upsertContributorRolesForField(&Library, entry.Key, field, "")
+			} else {
+				if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, entry.Key, field); err != nil {
+					dbInteraction.Warning("bib_entries delete failed for %s.%s: %s", entry.Key, field, err)
+					dbWriteFailed = true
+				}
 			}
 		}
 	}
@@ -3588,11 +4637,151 @@ func repairDirtyMappingTables() (entryFieldMappingsRepaired bool) {
 
 // upsertBibEntryField inserts or replaces a single (entry_key, field, value) row.
 // An empty value deletes the row instead.
+// upsertContributorRolesForField replaces the contributor_roles and
+// entry_contributor_names rows for (key, role) with the names parsed from
+// value. An empty value deletes all rows for the role without inserting new
+// ones. Uses bibExec so writes participate in any active bib transaction.
+func upsertContributorRolesForField(l *TBibTeXLibrary, key, field, value string) {
+	bibExec(`DELETE FROM contributor_roles WHERE entry_key = ? AND role = ?`, key, field)       //nolint:errcheck
+	bibExec(`DELETE FROM entry_contributor_names WHERE entry_key = ? AND role = ?`, key, field) //nolint:errcheck
+	if value == "" {
+		setTableDate("contributor_roles", time.Now().UnixMicro())
+		return
+	}
+	value = normalizeEtAlTail(value) // §4.6 step 2: normalise "et al." tails
+	position := 0
+	var resolvedIDs []string
+	var newParts []string
+	anyWrapped := false
+	for _, name := range splitBibNameField(value) {
+		lc := strings.ToLower(name)
+		if lc == "et.al." || lc == "et al." {
+			continue
+		}
+
+		storeName := name
+		garbled := false
+		if isGarbledContributorName(name) {
+			if !strings.HasPrefix(name, "{") {
+				storeName = "{" + name + "}"
+				anyWrapped = true
+			}
+			garbled = true
+		}
+		newParts = append(newParts, storeName)
+
+		position++
+		var id string
+		if garbled {
+			var ok bool
+			id, ok = resolveNameToContributorID(l, storeName)
+			if !ok {
+				id = l.NewKey()
+				l.ContributorByID[id] = &TContributor{Name: storeName, Garbled: true}
+				l.NameToContributorID[storeName] = id
+				upsertGarbledContributorToDB(id, storeName)
+				upsertContributorNameToDB(id, storeName)
+			} else if c := l.ContributorByID[id]; c != nil {
+				c.Garbled = true
+			}
+		} else {
+			var resolved bool
+			id, resolved = resolveContributorForPosition(l, key, field, position, name, resolvedIDs)
+			if !resolved {
+				id = l.NewKey()
+				l.ContributorByID[id] = &TContributor{Name: name}
+				l.NameToContributorID[name] = id
+				upsertContributorToDB(id, name, "")
+				upsertContributorNameToDB(id, name)
+			}
+		}
+		resolvedIDs = append(resolvedIDs, id)
+		bibExec(`INSERT OR IGNORE INTO contributor_roles (entry_key, role, position, contributor_id) VALUES (?, ?, ?, ?)`, //nolint:errcheck
+			key, field, position, id)
+		if contrib := l.ContributorByID[id]; contrib != nil && storeName != contrib.Name {
+			bibExec(`INSERT OR IGNORE INTO entry_contributor_names (entry_key, role, position, contributor_id, name_used) VALUES (?, ?, ?, ?, ?)`, //nolint:errcheck
+				key, field, position, id, storeName)
+		}
+	}
+	// When any name was garble-wrapped, register the original field value as an alias
+	// for the wrapped form and cascade any existing aliases (e.g. DBLP canonical) to
+	// point to the new canonical wrapped form.  This prevents winner-mismatch and
+	// ambiguous-alias warnings on subsequent checks.
+	if anyWrapped {
+		if newValue := strings.Join(newParts, " and "); newValue != value {
+			l.UpdateEntryFieldAlias(key, field, value, newValue)
+		}
+	}
+	setTableDate("contributor_roles", time.Now().UnixMicro())
+}
+
+// applyDblpAuthorORCIDs uses the per-author ORCID data from a TDblpJSONEntry to:
+//   1. Re-assign contributor_roles when the ORCID-identified contributor differs from
+//      the name-based assignment (ORCID takes priority as a more precise identifier).
+//   2. Record orcid_used evidence in entry_contributor_names for every author/editor
+//      whose DBLP entry carries an ORCID, regardless of whether a re-assignment occurred.
+//
+// Called immediately after MergeInMemoryDBLPEntry so the name-based assignment is
+// already in place and can be corrected here.
+func applyDblpAuthorORCIDs(l *TBibTeXLibrary, key string, je *TDblpJSONEntry) {
+	process := func(role string, persons []TDblpJSONPerson) {
+		for i, p := range persons {
+			if p.ORCID == "" {
+				continue
+			}
+			position := i + 1
+			nameLatex := dblpPersonNameToLaTeX(p.Name)
+
+			// What contributor is currently assigned to this position?
+			var currentID string
+			db.QueryRow(`SELECT contributor_id FROM contributor_roles WHERE entry_key = ? AND role = ? AND position = ?`,
+				key, role, position).Scan(&currentID) //nolint:errcheck
+			if currentID == "" {
+				continue // no role record yet — nothing to annotate
+			}
+
+			targetID := l.ORCIDToContributorID[p.ORCID]
+			if targetID != "" && targetID != currentID {
+				// ORCID identifies a different contributor — re-assign.
+				bibExec(`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`, //nolint:errcheck
+					targetID, key, role, position)
+				currentID = targetID
+			}
+
+			// Upsert the evidence record with orcid_used. Alias defaults to the
+			// DBLP name form; if a row already exists, update orcid_used and
+			// contributor_id (in case of re-assignment above).
+			if nameLatex == "" {
+				if c := l.ContributorByID[currentID]; c != nil {
+					nameLatex = c.Name
+				}
+			}
+			personDblpKey := ""
+			if c := l.ContributorByID[currentID]; c != nil {
+				personDblpKey = c.DblpKey
+			}
+			bibExec(`INSERT INTO entry_contributor_names (entry_key, role, position, contributor_id, name_used, orcid_used, dblp_key_used) `+ //nolint:errcheck
+				`VALUES (?, ?, ?, ?, ?, ?, ?) `+
+				`ON CONFLICT(entry_key, role, position) DO UPDATE SET `+
+				`contributor_id = excluded.contributor_id, `+
+				`orcid_used = excluded.orcid_used, `+
+				`dblp_key_used = COALESCE(excluded.dblp_key_used, dblp_key_used)`,
+				key, role, position, currentID, nameLatex, p.ORCID, personDblpKey)
+		}
+	}
+	process("author", je.Authors)
+	process("editor", je.Editors)
+}
+
 // Outside a transaction it compares the old cache value and only marks
 // bibEntriesModified when the value actually changes, then updates the cache.
 // Callers (setEntryField, deleteEntryField) must NOT pre-update the cache entry
 // before calling this function, otherwise the comparison always finds equality.
 func upsertBibEntryField(key, field, value string) {
+	if contributorRolesActive && (field == "author" || field == "editor") {
+		upsertContributorRolesForField(&Library, key, field, value)
+		return
+	}
 	var err error
 	if value == "" {
 		err = bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, key, field)
@@ -3741,6 +4930,32 @@ func loadEntryFromDb(key string) *TBibTeXEntry {
 		}
 		fields[field] = value
 	}
+
+	// When contributor_roles is active, author/editor are absent from bib_entries.
+	// Reconstruct them directly from contributor_roles so that checks which read
+	// entry fields (e.g. CheckWithdrawn) work correctly even while entryCache is nil
+	// (i.e. during a parseSyncBibFile re-import that calls clearBibTables).
+	if contributorRolesActive {
+		roleRows, rErr := bibQuery(
+			`SELECT cr.role, c.name FROM contributor_roles cr
+			 JOIN contributors c ON c.id = cr.contributor_id
+			 WHERE cr.entry_key = ? ORDER BY cr.role, cr.position`, key)
+		if rErr == nil {
+			defer roleRows.Close()
+			for roleRows.Next() {
+				var role, name string
+				if roleRows.Scan(&role, &name) != nil {
+					continue
+				}
+				if fields[role] == "" {
+					fields[role] = name
+				} else {
+					fields[role] += " and " + name
+				}
+			}
+		}
+	}
+
 	return &TBibTeXEntry{Key: key, Fields: fields}
 }
 

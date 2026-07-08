@@ -297,6 +297,14 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 
 	beginBibTransaction()
 	changed := l.MergeInMemoryDBLPEntry(dblpEntry, key)
+	// Apply per-author ORCID evidence from the file store. When DBLP provides an
+	// orcid= attribute on an <author> element in a publication entry, use it to
+	// correct any name-based mis-assignment and record the evidence in
+	// entry_contributor_names.orcid_used. The je (TDblpJSONEntry) is cheap to re-read
+	// because readDblpJSONEntry is cached within the run.
+	if je := readDblpJSONEntry(DBLPKey); je != nil {
+		applyDblpAuthorORCIDs(l, key, je)
+	}
 	if l.EntryFieldValueity(key, DBLPField) != DBLPKey {
 		changed = true
 		l.SetEntryFieldValue(key, DBLPField, DBLPKey)

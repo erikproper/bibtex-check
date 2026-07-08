@@ -20,27 +20,13 @@ import (
 	"fmt"
 	stdlib_html "html"
 	"io"
-	"net"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 )
 
-const (
-	urlCheckMinBytes   = 300
-	onlineProbeHost    = "8.8.8.8:53" // Google public DNS — general connectivity probe
-	onlineProbeTimeout = 3 * time.Second
-)
-
-// Online is set once at startup: true when general internet connectivity is available.
-// All HTTP/network operations (URL checks, PDF downloads) check this flag first.
-var Online bool
-
-func init() {
-	_, err := net.DialTimeout("tcp", onlineProbeHost, onlineProbeTimeout)
-	Online = err == nil
-}
+const urlCheckMinBytes = 300
 
 // dateFromEntryKey extracts YYYY-MM-DD from a key of the form EP-YYYY-MM-DD-HH-MM-SS.
 // Returns "" when the key does not match that pattern.

@@ -62,7 +62,10 @@ func hasSingleLetterSurname(names string) bool {
 // detected here: single-letter name parts occur in legitimate naming conventions
 // and those entries require manual review rather than auto-correction.
 func hasGarbledName(names string) bool {
-	for _, name := range strings.Split(names, " and ") {
+	// Use brace-aware splitting so that org names like
+	// {ISO/IEC JTC 1 on Data management and interchange} are not broken
+	// on the literal " and " that may appear inside their brace group.
+	for _, name := range splitBibNameField(names) {
 		name = strings.TrimSpace(name)
 		if hasUnbalancedBraces(name) {
 			return true
@@ -89,8 +92,10 @@ func hasGarbledName(names string) bool {
 
 // hasStrayBrace returns true when s has brace characters that are not valid
 // TeX encoding.  Two patterns are detected:
-//   - s starts with "{" and the first group contains a comma or is empty
-//     (whole-name wrapping, e.g. "{Bubenko, Jr. J. A.}")
+//   - s starts with "{" and the first group contains a comma whose text before
+//     the comma is a single word — the {Lastname, Firstname} garbled pattern.
+//     Multi-word text before the comma (e.g. {University of Arizona, Tucson})
+//     is treated as a legitimate org name and accepted.
 //   - a "}" brings the running brace depth below zero (a stray closing brace,
 //     e.g. "Jr. J. A.} {Bubenko" from a malformed name inversion)
 //
@@ -100,8 +105,17 @@ func hasGarbledName(names string) bool {
 func hasStrayBrace(s string) bool {
 	if strings.HasPrefix(s, "{") {
 		closingBrace := strings.Index(s, "}")
-		if closingBrace <= 1 || strings.Contains(s[1:closingBrace], ",") {
+		if closingBrace <= 1 {
 			return true
+		}
+		inside := s[1:closingBrace]
+		if idx := strings.Index(inside, ","); idx >= 0 {
+			beforeComma := strings.TrimSpace(inside[:idx])
+			// Single word before comma = garbled person name {Lastname, Firstname}.
+			// Multiple words = org name {Dept of X, Division Y} — not garbled.
+			if !strings.Contains(beforeComma, " ") {
+				return true
+			}
 		}
 	}
 	depth := 0
@@ -135,16 +149,44 @@ func hasUnbalancedBraces(s string) bool {
 	return depth != 0
 }
 
+// isBraceWrappedOrgName reports whether name is a single balanced brace group
+// spanning the entire string — the canonical BibTeX form for an org name such
+// as {ISO/IEC JTC 1/SC 32 Technical Committee on Data management and interchange}.
+// Such names may legitimately contain " and " or commas as English conjunctions,
+// not as BibTeX name separators; the normal person-name garble checks should be
+// skipped for them (hasStrayBrace still applies to catch {Lastname, Firstname}).
+func isBraceWrappedOrgName(s string) bool {
+	if !strings.HasPrefix(s, "{") {
+		return false
+	}
+	depth := 0
+	for i, ch := range s {
+		switch ch {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 && i < len(s)-1 {
+				return false // closing brace before end — not a single wrapping group
+			}
+		}
+	}
+	return depth == 0
+}
+
 // isGarbledContributorName returns true when name is not a valid single-person
 // BibTeX name.  Catches:
-//   - any occurrence of " and " (person names never contain " and ", even inside
-//     brace groups — the brace may have absorbed an entire author list)
+//   - any occurrence of " and " at brace depth 0 (person names never contain
+//     " and " at top level; a brace may have absorbed an entire author list).
+//     Org names like {ISO/IEC on Data management and interchange} are exempt
+//     because they are fully brace-wrapped — hasStrayBrace handles comma-inside
+//     cases like {Bubenko, Jr.} that would otherwise slip through.
 //   - names with ≥3 commas or an ambiguous 2-comma form
-//   - names starting with "{" or containing "} {" (stray braces)
+//   - names starting with "{" and containing a comma before the first "}" (stray braces)
 //   - "ss, ff" names where ff ends with an incomplete TeX accent group like {\c}
 //     indicating truncation at the space inside a group like {\c c}
 func isGarbledContributorName(name string) bool {
-	if strings.Contains(name, " and ") {
+	if !isBraceWrappedOrgName(name) && strings.Contains(name, " and ") {
 		return true
 	}
 	if hasGarbledName(name) {

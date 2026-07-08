@@ -19,9 +19,9 @@ import (
 )
 
 // TWatchEntry is one entry from the watch script file describing a person or ORCID to watch.
-// EntryType is "name" (canonical DBLP author name) or "orcid".
-// Value is the name or ORCID string.
-// Comment holds any inline # annotation (e.g. the person's name for orcid entries).
+// EntryType is "name" (canonical DBLP author name), "orcid", or "contributor" (EP_XXXX ID).
+// Value is the name, ORCID string, or contributor ID.
+// Comment holds any inline # annotation (e.g. the person's canonical name).
 type TWatchEntry struct {
 	EntryType string
 	Value     string
@@ -61,7 +61,7 @@ func ReadWatchFile(path string) []TWatchEntry {
 			return
 		}
 		kind := strings.TrimSpace(line[:idx])
-		if kind != "name" && kind != "orcid" {
+		if kind != "name" && kind != "orcid" && kind != "contributor" {
 			badLines = append(badLines, line)
 			return
 		}
@@ -84,7 +84,7 @@ func ReadWatchFile(path string) []TWatchEntry {
 		}
 	})
 	for _, bl := range badLines {
-		fmt.Fprintf(os.Stderr, "WARNING: %s: unrecognised line (expected: name/orcid \"value\";): %q\n", path, bl)
+		fmt.Fprintf(os.Stderr, "WARNING: %s: unrecognised line (expected: name/orcid/contributor \"value\";): %q\n", path, bl)
 	}
 	return entries
 }

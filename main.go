@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -54,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "26.34.78"
+const AppVersion = "26.217"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -69,8 +70,9 @@ var (
 	cmdHarvestGroup            string         // -group: add all resolved harvest entries to this group
 	cmdHarvestTransferKeysPath string         // resolved .keys path for harvest_transfer target; "" = disabled
 	cmdHarvestWeaveEntries     []TBibTeXEntry // ignored entries accumulated during this harvest run; flushed to follow .sync DB
-	cmdFix                bool // -fix: apply full per-entry checks when combined with -sync or -harvest
-	cmdPull               bool // -pull: with -sync, skip up-sync (phase 1); only write bib output from DB
+	cmdFix                     bool // -fix: apply full per-entry checks when combined with -sync or -harvest
+	cmdPull                    bool // -pull: with -sync, skip up-sync (phase 1); only write bib output from DB
+	cmdMatchedOrcidDataOnly    bool // -matched_orcid_data_only: skip ORCID challenges in step 3
 )
 
 func reportCacheMode() {
@@ -131,6 +133,9 @@ func loadBibFromDb() {
 	resolveGroupEntriesKeys(&Library)
 	initEntryCache()
 	reportCacheMode()
+	if contributorRolesActive {
+		loadAuthorEditorFieldMappingsFromCache(&Library)
+	}
 }
 
 // parseSyncBibFile clears the bib tables and re-parses a sync bib file (full mode).
@@ -149,7 +154,7 @@ func doImportBib(path string) {
 	if !prepareWorkingDatabase() {
 		return
 	}
-	maybeMigrateToLosingFieldValues()
+	maybeDropFilterEntryFieldMappings()
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
@@ -282,7 +287,7 @@ func openLibraryToUpdate() bool {
 		return false
 	}
 	maybeMigrateTableConstraints()
-	maybeMigrateToLosingFieldValues()
+	maybeDropFilterEntryFieldMappings()
 	maybeMigrateStripLocalURL()
 	preCheckRepair()
 	maybeMigrateToFKSchema()
@@ -290,6 +295,8 @@ func openLibraryToUpdate() bool {
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
 	seedContributorsFromEntries(&Library)
+	maybeMigrateAuthorEditorToContributorRoles(&Library)
+	maybeCleanupOrphanedContributors(&Library)
 
 	if skipBibValidation || Library.ValidBibDb() {
 		buildTitleIndexFromDb(&Library)
@@ -328,6 +335,7 @@ func openLibraryToUpdate() bool {
 	}
 	normalizeAuthorEditorEntryFields()
 	retireResolvedAuthorEditorLosers()
+	preCloseHook = reportHomework
 	return true
 }
 
@@ -781,7 +789,6 @@ func doTriageAuthorMappings() {
 	if !openLibraryToUpdate() {
 		return
 	}
-	defer reportHomework()
 
 	maybeMigrateSkippedToNonDoubleContributorNames(&Library)
 	loadNonDoubleContributorNamesFromDb(&Library)
@@ -923,6 +930,13 @@ outer:
 					retireLoser(p.key, p.field, p.loser)
 				} else {
 					addNonDoubleContributorNamePair(&Library, wNames[pos], lNames[pos])
+					if contributorRolesActive {
+						if wID, wOK := resolveNameToContributorID(&Library, wNames[pos]); wOK {
+							if lID, lOK := resolveNameToContributorID(&Library, lNames[pos]); lOK {
+								addNonDoubleContributorPair(wID, lID)
+							}
+						}
+					}
 					markKept(p.key, p.field, p.loser)
 				}
 				_ = resultName
@@ -955,6 +969,333 @@ outer:
 		}
 
 		if stepN > 0 && Library.QuestionWasAsked() {
+			questionCounter++
+			if questionCounter >= stepN {
+				if Library.AskContinueOrQuit() {
+					break outer
+				}
+				questionCounter = 0
+			}
+		}
+	}
+}
+
+func doTriageContributorAliases() {
+	if !openLibraryToUpdate() {
+		return
+	}
+
+	type aliasPair struct {
+		alias, id string
+		count      int
+	}
+	rows, err := db.Query(`
+		SELECT ecn.name_used, ecn.contributor_id, COUNT(*) AS cnt
+		FROM entry_contributor_names ecn
+		WHERE NOT EXISTS (
+		    SELECT 1 FROM contributor_names cn
+		    WHERE cn.id = ecn.contributor_id AND cn.name = ecn.name_used
+		)
+		GROUP BY ecn.name_used, ecn.contributor_id
+		ORDER BY ecn.name_used`)
+	if err != nil {
+		Library.Warning("Could not query entry_contributor_names: %s", err)
+		return
+	}
+	var pairs []aliasPair
+	for rows.Next() {
+		var p aliasPair
+		if rows.Scan(&p.alias, &p.id, &p.count) == nil {
+			pairs = append(pairs, p)
+		}
+	}
+	rows.Close()
+	if len(pairs) == 0 {
+		Library.Progress("No entry-specific contributor aliases pending triage.")
+		return
+	}
+
+	options := TStringSetNew()
+	options.Add("g", "k", "q")
+	generalised := 0
+	stepN := int(cmdStep)
+	questionCounter := 0
+	suffix := func(n int) string {
+		if n == 1 {
+			return "entry"
+		}
+		return "entries"
+	}
+outer:
+	for _, p := range pairs {
+		contrib := Library.ContributorByID[p.id]
+		if contrib == nil {
+			continue
+		}
+		Library.ResetQuestionFlag()
+
+		// {others} is BibTeX's "et al." convention — always auto-generalise to "others".
+		if p.alias == "{others}" && contrib.Name == "others" {
+			upsertContributorNameToDB(p.id, p.alias)
+			Library.NameToContributorID[p.alias] = p.id
+			Library.FindAliases(contrib.Name, p.alias)
+			db.Exec(`DELETE FROM entry_contributor_names WHERE name_used = ? AND contributor_id = ?`, p.alias, p.id) //nolint:errcheck
+			generalised++
+			continue
+		}
+
+		answer := Library.WarningQuestion(
+			"Generalise alias (g), keep local (k), quit (q)?",
+			options,
+			"Entry-specific alias %q → contributor %q (%d %s)",
+			p.alias, contrib.Name, p.count, suffix(p.count))
+		switch answer {
+		case "g":
+			upsertContributorNameToDB(p.id, p.alias)
+			Library.NameToContributorID[p.alias] = p.id
+			Library.FindAliases(contrib.Name, p.alias)
+			db.Exec(`DELETE FROM entry_contributor_names WHERE name_used = ? AND contributor_id = ?`, p.alias, p.id) //nolint:errcheck
+			generalised++
+		case "k":
+			// no action — alias remains entry-specific
+		case "q":
+			break outer
+		}
+		if stepN > 0 && Library.QuestionWasAsked() {
+			questionCounter++
+			if questionCounter >= stepN {
+				if Library.AskContinueOrQuit() {
+					break outer
+				}
+				questionCounter = 0
+			}
+		}
+	}
+	if generalised > 0 {
+		Library.Progress("Generalised %d contributor alias(es) to global contributor_names.", generalised)
+	}
+}
+
+func doDisambiguateContributors() {
+	if !openLibraryToUpdate() {
+		return
+	}
+
+	type ambigRow struct {
+		key, role string
+		position  int
+		id, alias string
+	}
+	rows, err := db.Query(`
+		SELECT entry_key, role, position, contributor_id, name_used
+		FROM entry_contributor_names
+		ORDER BY name_used, entry_key, role, position`)
+	if err != nil {
+		Library.Warning("Could not query entry_contributor_names: %s", err)
+		return
+	}
+	var ambig []ambigRow
+	for rows.Next() {
+		var r ambigRow
+		if rows.Scan(&r.key, &r.role, &r.position, &r.id, &r.alias) == nil {
+			if _, ok := Library.AmbiguousNameToContributorIDs[r.alias]; ok {
+				ambig = append(ambig, r)
+			}
+		}
+	}
+	rows.Close()
+	if len(ambig) == 0 {
+		Library.Progress("No ambiguous contributor assignments found.")
+		return
+	}
+
+	stepN := int(cmdStep)
+	questionCounter := 0
+outer:
+	for _, r := range ambig {
+		candidates := Library.AmbiguousNameToContributorIDs[r.alias]
+		if len(candidates) == 0 {
+			continue
+		}
+		current := Library.ContributorByID[r.id]
+		if current == nil {
+			continue
+		}
+		Library.Progress("Entry %s %s pos %d: name %q is an alias for %d contributors:",
+			r.key, r.role, r.position, r.alias, len(candidates))
+		for i, candID := range candidates {
+			cand := Library.ContributorByID[candID]
+			if cand == nil {
+				continue
+			}
+			var entryCount int
+			db.QueryRow(`SELECT COUNT(*) FROM contributor_roles WHERE contributor_id = ?`, candID).Scan(&entryCount) //nolint:errcheck
+			marker := ""
+			if candID == r.id {
+				marker = "  ← current"
+			}
+			details := fmt.Sprintf("  %d: %s  [id: %s", i+1, cand.Name, candID)
+			if cand.ORCID != "" {
+				details += "  orcid: " + cand.ORCID
+			}
+			if cand.DblpKey != "" {
+				details += "  dblp: " + cand.DblpKey
+			}
+			details += fmt.Sprintf("  entries: %d]%s", entryCount, marker)
+			Library.Progress(details)
+		}
+		// Before offering the choice, check whether any candidate without a DblpKey
+		// has entries with potential DBLP matches. Resolving those first may
+		// automatically collapse the ambiguity via absorbDblpNamesCore.
+		for _, candID := range candidates {
+			cand := Library.ContributorByID[candID]
+			if cand == nil || cand.DblpKey != "" {
+				continue
+			}
+			noCandRows, qErr := db.Query(`
+				SELECT DISTINCT cr.entry_key FROM contributor_roles cr
+				WHERE cr.contributor_id = ?
+				  AND NOT EXISTS (
+				      SELECT 1 FROM bib_entries be
+				      WHERE be.entry_key = cr.entry_key AND be.field = ?
+				  )`, candID, DBLPField)
+			if qErr != nil {
+				continue
+			}
+			var entriesWithCandidates []string
+			for noCandRows.Next() {
+				var entryKey string
+				if noCandRows.Scan(&entryKey) == nil {
+					hash := libraryTitleHash(Library.EntryFieldValueity(entryKey, TitleField))
+					if hash == "" {
+						continue
+					}
+					existing := Library.NonDoubleEntries[entryKey]
+					for _, c := range readDblpTitleLinks(hash) {
+						if !existing.Set().Contains(KeyForDBLP(c)) {
+							entriesWithCandidates = append(entriesWithCandidates, entryKey)
+							break
+						}
+					}
+				}
+			}
+			noCandRows.Close()
+			if len(entriesWithCandidates) == 0 {
+				continue
+			}
+			Library.Progress("  Contributor %s has %d entry/ies with potential DBLP match(es). "+
+				"Resolving these first may eliminate this ambiguity automatically.",
+				candID, len(entriesWithCandidates))
+			Library.ResetQuestionFlag()
+			yn, _ := Library.AskForInput("Fix DBLP for these entries now? (y=yes, n=skip)")
+			if strings.TrimSpace(yn) != "y" {
+				continue
+			}
+			exclusions := TStringSetNew()
+			for _, key := range entriesWithCandidates {
+				key = Library.MapEntryKey(key)
+				if !Library.EntryExists(key) {
+					continue
+				}
+				found := findLibraryEqualWithDblp(key)
+				if !found {
+					found = maybeFindDBLPCandidatesExcluding(key, exclusions)
+				}
+				key = Library.MapEntryKey(key)
+				if found {
+					doAllChecks(key)
+					key = Library.MapEntryKey(key)
+					if d := Library.EntryFieldValueity(key, DBLPField); d != "" {
+						exclusions.Add(normalizeDblpKey(d))
+					}
+				}
+			}
+			// Re-run DBLP name absorption so the contributor gets a DblpKey if
+			// the newly linked entries now match a DBLP person entry.
+			absorbDblpNamesCore()
+			absorbDblpOrcidsCore()
+			// Re-check: if the ambiguity has collapsed (only 1 candidate remains or
+			// all candidates now point to the same contributor), skip the dialog.
+			newCandidates := Library.AmbiguousNameToContributorIDs[r.alias]
+			if len(newCandidates) <= 1 {
+				Library.Progress("Ambiguity for %q resolved automatically after DBLP linking.", r.alias)
+				continue outer
+			}
+			// Refresh candidates for the choice below.
+			candidates = newCandidates
+		}
+
+		// Pre-compute "best" candidate for the merge option so the user can see it.
+		bestIdx := 1
+		bestScore := -1
+		for i, candID := range candidates {
+			if cand := Library.ContributorByID[candID]; cand != nil {
+				score := 0
+				if cand.ORCID != "" {
+					score += 2
+				}
+				if cand.DblpKey != "" {
+					score += 2
+				}
+				var cnt int
+				db.QueryRow(`SELECT COUNT(*) FROM contributor_roles WHERE contributor_id = ?`, candID).Scan(&cnt) //nolint:errcheck
+				score += cnt
+				if score > bestScore {
+					bestScore = score
+					bestIdx = i + 1
+				}
+			}
+		}
+		Library.ResetQuestionFlag()
+		raw, inputErr := Library.AskForInput(fmt.Sprintf("Pick (1-%d), k=keep, m=merge all into #%d, q=quit", len(candidates), bestIdx))
+		if inputErr != nil {
+			break outer
+		}
+		switch strings.TrimSpace(raw) {
+		case "q":
+			break outer
+		case "k":
+			// keep current assignment
+		case "m":
+			// Merge all candidates into pre-computed best (#bestIdx).
+			bestID := candidates[bestIdx-1]
+			for _, candID := range candidates {
+				if candID == bestID {
+					continue
+				}
+				if fromCand := Library.ContributorByID[candID]; fromCand != nil {
+					Library.Progress("Merging %q (%s) into %q (%s).",
+						fromCand.Name, candID,
+						Library.ContributorByID[bestID].Name, bestID)
+					if mergeContributorInDB(candID, bestID) {
+						for n, id := range Library.NameToContributorID {
+							if id == candID {
+								Library.NameToContributorID[n] = bestID
+							}
+						}
+						delete(Library.ContributorByID, candID)
+					}
+				}
+			}
+		default:
+			n, convErr := strconv.Atoi(strings.TrimSpace(raw))
+			if convErr != nil || n < 1 || n > len(candidates) {
+				Library.Warning("Invalid choice %q — skipping.", raw)
+				continue
+			}
+			chosenID := candidates[n-1]
+			if chosenID == r.id {
+				continue
+			}
+			db.Exec(`UPDATE entry_contributor_names SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`, //nolint:errcheck
+				chosenID, r.key, r.role, r.position)
+			db.Exec(`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`, //nolint:errcheck
+				chosenID, r.key, r.role, r.position)
+			if cand := Library.ContributorByID[chosenID]; cand != nil {
+				Library.Progress("Assigned %s %s pos %d → %q.", r.key, r.role, r.position, cand.Name)
+			}
+		}
+		if stepN > 0 {
 			questionCounter++
 			if questionCounter >= stepN {
 				if Library.AskContinueOrQuit() {
@@ -1076,8 +1417,38 @@ func reportHomework() {
 	authorEditorPairs := 0
 	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&authorEditorPairs)
 
-	Library.Progress("Homework:\n  %d title group(s) with unresolved duplicate(s)\n  %d entry/ies with unresolved DBLP candidate(s)\n  %d lone proceedings\n  %d url(s) not yet checked\n  %d author/editor value(s) needing triage",
-		unresolvedGroups, dblpCandidates, loneProceedings, urlUnchecked, authorEditorPairs)
+	// Ambiguous contributor names: names that resolve to more than one contributor.
+	// Each is disambiguation homework — entries using that name can't be auto-resolved.
+	ambiguousNames := 0
+	bibQueryRow(`SELECT COUNT(DISTINCT name) FROM contributor_names
+	    WHERE name IN (SELECT name FROM contributor_names GROUP BY name HAVING COUNT(DISTINCT id) > 1)`).Scan(&ambiguousNames)
+
+	// Count contributors with an ORCID that have never been enriched (no seen record).
+	// Only available when the contributor_orcid_seen table exists (dev tree).
+	newOrcidContributors := 0
+	var seenTableExists int
+	bibQueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='contributor_orcid_seen'`).Scan(&seenTableExists)
+	if seenTableExists > 0 {
+		bibQueryRow(`SELECT COUNT(*) FROM contributors WHERE orcid != '' AND NOT EXISTS (SELECT 1 FROM contributor_orcid_seen s WHERE s.contributor_id = contributors.id AND s.canonical != '')`).Scan(&newOrcidContributors)
+	}
+
+	hint := func(count int, line, cmd string) string {
+		if count == 0 || cmd == "" {
+			return fmt.Sprintf("\n  %s", line)
+		}
+		return fmt.Sprintf("\n  %s  [-%s]", line, cmd)
+	}
+	hw := "Homework:" +
+		hint(unresolvedGroups, fmt.Sprintf("%d title group(s) with unresolved duplicate(s)", unresolvedGroups), "fix_duplicates") +
+		hint(dblpCandidates, fmt.Sprintf("%d entry/ies with unresolved DBLP candidate(s)", dblpCandidates), "fix_candidates") +
+		hint(loneProceedings, fmt.Sprintf("%d lone proceedings", loneProceedings), "") +
+		hint(urlUnchecked, fmt.Sprintf("%d url(s) not yet checked", urlUnchecked), "") +
+		hint(authorEditorPairs, fmt.Sprintf("%d author/editor value(s) needing triage", authorEditorPairs), "triage_author_mappings") +
+		hint(ambiguousNames, fmt.Sprintf("%d ambiguous contributor name(s) needing disambiguation", ambiguousNames), "disambiguate_contributors")
+	if seenTableExists > 0 {
+		hw += hint(newOrcidContributors, fmt.Sprintf("%d contributor(s) with ORCID not yet enriched", newOrcidContributors), "enrich_contributor_data")
+	}
+	Library.Progress(hw)
 }
 
 // doFixCandidates interactively links library entries that have no DBLP key yet
@@ -1087,7 +1458,6 @@ func reportHomework() {
 // are offered candidates; entries that already have one are skipped.
 func doFixCandidates() {
 	if openLibraryToUpdate() {
-		defer reportHomework()
 		stepN := Reporting.StepSize()
 		questionCounter := 0
 		entryCountAtStepStart := countBibEntries()
@@ -1152,7 +1522,6 @@ func doFixCandidates() {
 
 func doDefaultRun() {
 	if openLibraryToUpdate() {
-		defer reportHomework()
 		clearEntryWarnings()
 		Library.ReadURLsIgnoreFile()
 		Library.CheckEntries()
@@ -1375,6 +1744,9 @@ func doRemoveFromGroup(args []string) {
 	}
 }
 
+// doSetGroups implements -set_groups <key> [+] <group>...
+// Without '+': replaces the entry's current group membership with the given list.
+// With '+' as the second argument: adds the given groups to the existing membership.
 func doSetGroups(args []string) {
 	if !openLibraryToUpdate() {
 		return
@@ -1394,6 +1766,7 @@ func doSetGroups(args []string) {
 	}
 
 	if !additive {
+		// Remove the entry from all its current groups.
 		rows, err := db.Query(`SELECT group_name FROM bib_groups WHERE entry_key = ?`, key)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Could not query current groups for %s: %s\n", key, err)
@@ -1775,6 +2148,7 @@ func doUpsertDblpEntries() {
 		commitBibTransaction()
 		spinner.Stop()
 		bibEntriesModified = true
+		absorbDblpNamesCore()
 	}
 }
 
@@ -1881,28 +2255,6 @@ func upgradeWatchEntries(entries []TWatchEntry) ([]TWatchEntry, bool) {
 	changed := false
 	for i, e := range entries {
 		switch e.EntryType {
-		case "contributor":
-			// Resolve stale IDs — follow any absorbed-ID chain to the current canonical.
-			if canonical := Library.ResolveContributorID(e.Value); canonical != e.Value {
-				if _, stillExists := Library.ContributorByID[canonical]; stillExists {
-					Library.Progress("Watch: resolved stale contributor %q → %s", e.Value, canonical)
-					comment := e.Comment
-					if contrib, ok := Library.ContributorByID[canonical]; ok && contrib.Name != "" {
-						comment = contrib.Name
-					}
-					entries[i] = TWatchEntry{EntryType: "contributor", Value: canonical, Comment: comment, Tag: e.Tag}
-					changed = true
-				} else {
-					Library.Warning("Watch: contributor %q (chain → %s) no longer exists — keeping entry", e.Value, canonical)
-				}
-			} else if _, exists := Library.ContributorByID[e.Value]; !exists {
-				Library.Warning("Watch: contributor %q not found and has no oldie record — keeping entry", e.Value)
-			} else if e.Comment == "" {
-				if contrib, ok := Library.ContributorByID[e.Value]; ok && contrib.Name != "" {
-					entries[i].Comment = contrib.Name
-					changed = true
-				}
-			}
 		case "name":
 			orcid := resolveNameToORCID(e.Value)
 			if orcid == "" {
@@ -1926,6 +2278,14 @@ func upgradeWatchEntries(entries []TWatchEntry) ([]TWatchEntry, bool) {
 			}
 			entries[i].Comment = name
 			changed = true
+		case "contributor":
+			if e.Comment != "" {
+				continue
+			}
+			if contrib, ok := Library.ContributorByID[e.Value]; ok && contrib.Name != "" {
+				entries[i].Comment = contrib.Name
+				changed = true
+			}
 		}
 	}
 	return entries, changed
@@ -1969,8 +2329,144 @@ func watchEntryDblpKeys(w TWatchEntry) []string {
 				add(k)
 			}
 		}
+	case "contributor":
+		// Union all ORCID-indexed DBLP entries with person-name-indexed entries for
+		// every name alias the contributor is known by.
+		for _, orcid := range contributorORCIDs(w.Value) {
+			for _, k := range readDblpORCIDEntries(orcid) {
+				add(k)
+			}
+		}
+		for _, alias := range contributorAliasesFromDB(w.Value) {
+			for _, k := range readDblpPersonEntries(alias) {
+				add(k)
+			}
+		}
 	}
 	return keys
+}
+
+// watchEntryORCIDs returns all ORCID values relevant to a watch entry for use in
+// the online ORCID works fetch. For contributor entries this is the full set from
+// contributor_orcids; for orcid entries the single ORCID; for name entries the
+// ORCID resolved via DBLP (if any).
+func watchEntryORCIDs(w TWatchEntry) []string {
+	switch w.EntryType {
+	case "contributor":
+		return contributorORCIDs(w.Value)
+	case "orcid":
+		return []string{w.Value}
+	case "name":
+		if orcid := resolveNameToORCID(w.Value); orcid != "" {
+			return []string{orcid}
+		}
+	}
+	return nil
+}
+
+// parseBibTeXStringToEntry parses a raw BibTeX string and returns the first entry
+// it contains, or nil on failure. Uses the capturedDBLPEntry mechanism so that
+// the entry is captured in memory without being written to the library DB.
+func parseBibTeXStringToEntry(bibtex string) *TBibTeXEntry {
+	// CrossRef occasionally returns BibTeX with unbalanced braces. Append any
+	// missing closing braces so the parser can close the entry cleanly.
+	if extra := strings.Count(bibtex, "{") - strings.Count(bibtex, "}"); extra > 0 {
+		bibtex += strings.Repeat("}", extra)
+	}
+	Library.capturedDBLPEntry = &TBibTeXEntry{Key: "", Fields: map[string]string{}}
+	Library.ignoreIllegalFields = true
+	Library.ParseBibString(bibtex + "\n")
+	Library.ignoreIllegalFields = false
+	entry := Library.capturedDBLPEntry
+	Library.capturedDBLPEntry = nil
+	if entry == nil || !entry.Exists() {
+		return nil
+	}
+	return entry
+}
+
+// addDoiEntry creates a new library entry from a DOI-fetched TBibTeXEntry, assigns
+// a new key, normalises all fields, and runs the standard entry checks.
+// Returns the new library key, or "" if the entry could not be added.
+func addDoiEntry(entry *TBibTeXEntry, label string) string {
+	entryType := entry.EntryType()
+	if entryType == "" || !BibTeXAllowedEntries.Contains(entryType) {
+		return ""
+	}
+	key := Library.NewKey()
+	Library.SetEntryType(key, entryType)
+	for field, value := range entry.Fields {
+		if field == EntryTypeField || !BibTeXAllowedFields.Contains(field) {
+			continue
+		}
+		Library.SetEntryFieldValue(key, field, Library.NormaliseFieldValue(field, value))
+	}
+	Library.Progress("Watch: added from DOI (%s): %s", label, key)
+	doAllChecks(key)
+	return key
+}
+
+// runWatchORCID performs the online pass of the watch loop. For each watch entry
+// it collects all known ORCIDs, fetches the ORCID works list, and for any DOI
+// not already in the library it fetches BibTeX from doi.org and adds the entry.
+func runWatchORCID(w TWatchEntry, label string, stepN int, questionCounter *int, stopped *bool) {
+	orcids := watchEntryORCIDs(w)
+	if len(orcids) == 0 {
+		return
+	}
+	for _, orcid := range orcids {
+		if *stopped {
+			return
+		}
+		works := getORCIDWorks(orcid)
+		seenDOI := map[string]bool{}
+		for _, work := range works {
+			for _, doi := range work.DOIs {
+				if *stopped {
+					return
+				}
+				if seenDOI[doi] {
+					continue
+				}
+				seenDOI[doi] = true
+				if entryExistsWithDOI(doi) {
+					continue
+				}
+				bibtex := fetchDoiBibTeX(doi)
+				if bibtex == "" {
+					continue
+				}
+				entry := parseBibTeXStringToEntry(bibtex)
+				if entry == nil {
+					continue
+				}
+				// The canonical DOI in the fetched BibTeX may differ from the ORCID-reported
+				// DOI (doi aliasing / CrossRef redirects). Check both to avoid re-adding.
+				if resolvedDOI := entry.Fields["doi"]; resolvedDOI != "" && resolvedDOI != doi && entryExistsWithDOI(resolvedDOI) {
+					continue
+				}
+				Library.ResetQuestionFlag()
+				fmt.Fprintf(os.Stderr, "\nWatching %s (ORCID %s) — adding missing publication:\n", label, orcid)
+				fmt.Fprintf(os.Stderr, "  DOI: %s\n", doi)
+				for _, f := range []string{"title", "booktitle", "journal", "year", "author", "editor"} {
+					if v := entry.Fields[f]; v != "" {
+						fmt.Fprintf(os.Stderr, "  %-9s: %s\n", f, v)
+					}
+				}
+				addDoiEntry(entry, label)
+				if stepN > 0 && Library.QuestionWasAsked() {
+					*questionCounter++
+					if *questionCounter >= stepN {
+						if Library.AskContinueOrQuit() {
+							*stopped = true
+							return
+						}
+						*questionCounter = 0
+					}
+				}
+			}
+		}
+	}
 }
 
 // runWatch processes the watch file, adding any missing publications.
@@ -2008,7 +2504,6 @@ func runWatch() bool {
 
 		if len(keys) == 0 {
 			Library.Warning("No DBLP entries found for %s %q — person may not be in file store", w.EntryType, w.Value)
-			continue
 		}
 
 		newCount := 0
@@ -2060,6 +2555,11 @@ func runWatch() bool {
 			Library.Progress("Watching %s: all publications present (%d total)", label, len(keys))
 		} else {
 			Library.Progress("Watching %s: %d missing publication(s) checked", label, newCount)
+		}
+
+		// Online pass: fetch works from ORCID API and add entries not in DBLP yet.
+		if Online && !stopped {
+			runWatchORCID(w, label, stepN, &questionCounter, &stopped)
 		}
 	}
 	return true
@@ -2196,27 +2696,629 @@ func doApplyScript() {
 	}
 }
 
+// resolveContributorArg resolves an EP_XXXX contributor ID or any known name
+// form (canonical or alias) to a contributor ID and canonical name.
+// Prints an error and returns ok=false when the argument cannot be resolved.
+func resolveContributorArg(arg string) (id, name string, ok bool) {
+	if strings.HasPrefix(arg, "EP-") {
+		c, exists := Library.ContributorByID[arg]
+		if !exists {
+			fmt.Fprintf(os.Stderr, "No contributor found with ID %q\n", arg)
+			return "", "", false
+		}
+		return arg, c.Name, true
+	}
+	cid, found := Library.NameToContributorID[arg]
+	if !found {
+		fmt.Fprintf(os.Stderr, "No contributor found for %q\n", arg)
+		return "", "", false
+	}
+	return cid, Library.ContributorByID[cid].Name, true
+}
+
 func doAddNameMapping(args []string) {
-	if openLibraryToUpdate() {
-		Library.AddNameMapping(args[0], args[1])
-		Library.RenormaliseNameFields()
+	if !openLibraryToUpdate() {
+		return
+	}
+	canonical, alias := args[0], args[1]
+	if strings.HasPrefix(args[0], "EP-") {
+		if _, name, ok := resolveContributorArg(args[0]); !ok {
+			return
+		} else {
+			canonical = name
+		}
+	}
+	if strings.HasPrefix(args[1], "EP-") {
+		if _, name, ok := resolveContributorArg(args[1]); !ok {
+			return
+		} else {
+			alias = name
+		}
+	}
+	Library.AddNameMapping(canonical, alias)
+	Library.RenormaliseNameFields()
+}
+
+func doMergeContributors(args []string) {
+	if !openLibraryToUpdate() {
+		return
+	}
+	toID, toName, ok1 := resolveContributorArg(args[0])
+	fromID, fromName, ok2 := resolveContributorArg(args[1])
+	if !ok1 || !ok2 {
+		return
+	}
+	if toID == fromID {
+		fmt.Fprintln(os.Stderr, "Both arguments resolve to the same contributor — nothing to merge.")
+		return
+	}
+	Library.Progress("Merging %q (%s) into %q (%s)", fromName, fromID, toName, toID)
+	if !mergeContributorInDB(fromID, toID) {
+		return
+	}
+	// Update in-memory maps before RenormaliseNameFields reloads contributors.
+	for n, id := range Library.NameToContributorID {
+		if id == fromID {
+			Library.NameToContributorID[n] = toID
+		}
+	}
+	for orcid, id := range Library.ORCIDToContributorID {
+		if id == fromID {
+			Library.ORCIDToContributorID[orcid] = toID
+		}
+	}
+	if toContrib, ok := Library.ContributorByID[toID]; ok {
+		if toContrib.ORCID == "" {
+			if fromContrib, exists := Library.ContributorByID[fromID]; exists {
+				toContrib.ORCID = fromContrib.ORCID
+			}
+		}
+	}
+	delete(Library.ContributorByID, fromID)
+	Library.RenormaliseNameFields()
+	Library.Progress("Merged %q into %q (%s).", fromName, toName, toID)
+}
+
+// isValidORCID checks that s matches the ORCID format NNNN-NNNN-NNNN-NNN[0-9X].
+func isValidORCID(s string) bool {
+	if len(s) != 19 {
+		return false
+	}
+	for i, ch := range s {
+		switch i {
+		case 4, 9, 14:
+			if ch != '-' {
+				return false
+			}
+		case 18:
+			if (ch < '0' || ch > '9') && ch != 'X' {
+				return false
+			}
+		default:
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// doEnrichOrcidProfilesCore is the body of -enrich_orcid_profiles, callable
+// from both the standalone command and the combined -enrich_contributor_data pass.
+// Fetches ORCID person records, adds aliases, and challenges canonical mismatches.
+func doEnrichOrcidProfilesCore() {
+	loadNonDoubleContributorNamesFromDb(&Library)
+
+	if !Online {
+		Library.Progress("Not online — ORCID profile enrichment skipped.")
+		return
+	}
+
+	rows, err := db.Query(`SELECT contributor_id, orcid FROM contributor_orcids`)
+	if err != nil {
+		Library.Warning("Could not query contributor_orcids: %s", err)
+		return
+	}
+	type idOrcid struct{ id, orcid string }
+	var pairs []idOrcid
+	for rows.Next() {
+		var id, orcid string
+		if rows.Scan(&id, &orcid) == nil {
+			pairs = append(pairs, idOrcid{id, orcid})
+		}
+	}
+	rows.Close()
+
+	if len(pairs) == 0 {
+		Library.Progress("No contributors with ORCIDs found.")
+		return
+	}
+
+	// Count contributors that need processing, distinguishing disk-cache hits
+	// (fast) from genuine network fetches (slow, cache miss).
+	needsFetch := 0
+	fromCache := 0
+	fromNetwork := 0
+	reCheckCount := 0
+	for _, p := range pairs {
+		if c, ok := Library.ContributorByID[p.id]; ok {
+			s := loadORCIDSeen(p.id, p.orcid)
+			if s.canonical == c.Name && s.canonical != "" {
+				continue // already up to date
+			}
+			needsFetch++
+			if loadCachedORCIDPerson(p.orcid) != nil {
+				fromCache++
+			} else {
+				fromNetwork++
+			}
+			if s.canonical != "" {
+				reCheckCount++
+			}
+		}
+	}
+	if needsFetch == 0 {
+		Library.Progress("All %d ORCID contributor record(s) already up to date.", len(pairs))
+		return
+	}
+	Library.Progress("%d ORCID contributor record(s) to process: %d from cache, %d need network fetch, %d re-check (%d already up to date).",
+		needsFetch, fromCache, fromNetwork, reCheckCount, len(pairs)-needsFetch)
+	newAliases := 0
+	stepN := int(cmdStep)
+	matchedOnly := cmdMatchedOrcidDataOnly
+	questionCounter := 0
+	stopped := false
+	skipped := 0
+	spinner := Library.NewSpinner("Fetching ORCID person records")
+	fetched := 0
+	if matchedOnly {
+		Library.Progress("Matched-only pass: challenges will be skipped (they remain as homework).")
+	}
+
+	for _, p := range pairs {
+		if stopped {
+			break
+		}
+		contrib, ok := Library.ContributorByID[p.id]
+		if !ok {
+			continue
+		}
+		Library.ResetQuestionFlag()
+
+		// Fast path: if the seen record's canonical matches the current canonical, the
+		// ORCID data is unchanged and no challenge is needed — skip the network fetch.
+		storedSeen := loadORCIDSeen(p.id, p.orcid)
+		if storedSeen.canonical == contrib.Name && storedSeen.canonical != "" {
+			continue
+		}
+
+		// Slow path: canonical changed or never seen — use cache then network.
+		fetched++
+		spinner.Update(fetched, needsFetch)
+		person := getORCIDPerson(p.orcid)
+		if person == nil {
+			continue
+		}
+
+		// Build the full set of name forms from the ORCID record:
+		// credit-name, declared (Last,First), natural order (First Last), other-names.
+		passportNatural := "" // given-names + " " + family-name (First Last order)
+		if person.DeclaredName != "" {
+			passportNatural = swapBibTeXNameFormat(person.DeclaredName) // Last,First → First Last
+		}
+		swappedCredit := swapBibTeXNameFormat(person.CreditName)
+		inferredName := inferBibTeXFromCreditName(person.CreditName, person.DeclaredName)
+		allForms := uniqueForms(
+			append([]string{person.CreditName, person.DeclaredName, passportNatural, swappedCredit, inferredName},
+				person.OtherNames...)...)
+
+		// Full seen-record check: compare all ORCID-provided name values (canonical
+		// already confirmed to match above for the fast path; this catches cases where
+		// the canonical changed externally, which bypasses the fast path).
+		sortedOtherNames := append([]string(nil), person.OtherNames...)
+		sort.Strings(sortedOtherNames)
+		currentSeen := orcidSeenRecord{
+			canonical:    contrib.Name,
+			creditName:   person.CreditName,
+			declaredName: person.DeclaredName,
+			otherNames:   strings.Join(sortedOtherNames, "|"),
+		}
+		alreadySeen := storedSeen == currentSeen
+
+		// Empty profile: ORCID has no names at all — nothing to decide.
+		// Mark as seen silently so it doesn't recur as homework.
+		if person.CreditName == "" && person.DeclaredName == "" && len(person.OtherNames) == 0 {
+			upsertORCIDSeen(p.id, p.orcid, currentSeen)
+			continue
+		}
+
+		// Determine credit-name and declared-name status BEFORE registering new aliases
+		// so the "was it already explicitly mapped?" signal is not contaminated by this run.
+		//
+		// The manual canonical wins (suppresses challenge) when any of:
+		//   (a) credit-name matches the canonical in some ordering,
+		//   (b) credit-name (or its swap) was already mapped to this canonical in a prior run,
+		//   (c) declared name (ORCID family+given) matches the canonical exactly or via swap —
+		//       this is the most authoritative signal: ORCID's own passport-name matches.
+		// Exception: a different surname in the declared name overrides all of the above,
+		// since it suggests the canonical's surname boundary may be wrong.
+		priorCreditMapped := Library.NameAliasToName[person.CreditName] == contrib.Name ||
+			(swappedCredit != "" && Library.NameAliasToName[swappedCredit] == contrib.Name)
+		creditMatches := creditNameMatches(contrib.Name, person.CreditName)
+		declaredMatches := creditNameMatches(contrib.Name, person.DeclaredName)
+		surnameBoundaryDiffers := declaredNameHasDifferentSurname(contrib.Name, person.DeclaredName)
+		manualNameWins := ((creditMatches || priorCreditMapped || declaredMatches) && !surnameBoundaryDiffers) ||
+			(alreadySeen && !surnameBoundaryDiffers)
+
+		// Register all unambiguous, unmapped forms as aliases for this contributor.
+		for _, form := range allForms {
+			if form == contrib.Name {
+				continue
+			}
+			_, mapped := Library.NameToContributorID[form]
+			_, ambiguous := Library.AmbiguousNameToContributorIDs[form]
+			if mapped || ambiguous {
+				continue
+			}
+			upsertContributorNameToDB(p.id, form)
+			Library.NameToContributorID[form] = p.id
+			Library.AddNameMapping(contrib.Name, form)
+			newAliases++
+		}
+		// Also register swapped forms of other-names.
+		for _, alias := range person.OtherNames {
+			if swapped := swapBibTeXNameFormat(alias); swapped != "" && swapped != contrib.Name {
+				_, mapped := Library.NameToContributorID[swapped]
+				_, ambiguous := Library.AmbiguousNameToContributorIDs[swapped]
+				if !mapped && !ambiguous {
+					upsertContributorNameToDB(p.id, swapped)
+					Library.NameToContributorID[swapped] = p.id
+					Library.AddNameMapping(contrib.Name, swapped)
+					newAliases++
+				}
+			}
+		}
+
+		// Manual name wins: credit-name or declared-name matches, or already mapped.
+		if manualNameWins {
+			if !alreadySeen {
+				upsertORCIDSeen(p.id, p.orcid, currentSeen)
+			}
+			continue
+		}
+
+		// For contributors with a DBLP key, DBLP has established their identity —
+		// add ORCID aliases without a challenge. One exception: if the ORCID declared
+		// surname differs significantly from the DBLP canonical, the ORCID↔DBLP link
+		// may be wrong on either side. Flag it and skip rather than auto-apply.
+		if contrib.DblpKey != "" {
+			// DBLP has established this contributor's identity. If the ORCID declared
+			// surname still differs (after case-fold and containment normalisation), the
+			// DBLP↔ORCID link may be imprecise (cultural naming conventions, wrong link,
+			// etc.) but there is nothing actionable here at run time. Mark as seen;
+			// enrichment will be limited to the aliases already registered above.
+			upsertORCIDSeen(p.id, p.orcid, currentSeen)
+			continue
+		}
+
+		// Contributor has no DBLP key — fall through to challenge logic.
+		if matchedOnly {
+			skipped++
+			continue
+		}
+
+		if person.CreditName == "" {
+			// No credit-name to challenge with — mark as seen so this ORCID does not
+			// recur as homework.  We still registered any declared-name aliases above.
+			upsertORCIDSeen(p.id, p.orcid, currentSeen)
+			continue
+		}
+		_, ambiguous := Library.AmbiguousNameToContributorIDs[person.CreditName]
+		existingID, mapped := Library.NameToContributorID[person.CreditName]
+		if ambiguous || (mapped && existingID != p.id) {
+			Library.Warning("ORCID %s: credit-name %q is ambiguous or claimed by another contributor — not challenging",
+				p.orcid, person.CreditName)
+			upsertORCIDSeen(p.id, p.orcid, currentSeen)
+			continue
+		}
+
+		// Commit the spinner line (make it permanently visible) before the challenge
+		// dialog so the user can see the fetch count above the dialog.
+		SpinnerCommit()
+
+		// Present the options for the new canonical.
+		options := TStringSetNew()
+		options.Add("k", "c")
+		offerDeclared := person.DeclaredName != ""
+		if offerDeclared {
+			options.Add("d")
+		}
+		if passportNatural != "" && passportNatural != person.CreditName && passportNatural != person.DeclaredName {
+			options.Add("n") // natural order of declared name
+		}
+		offerInferred := inferredName != "" && inferredName != contrib.Name &&
+			inferredName != person.DeclaredName && inferredName != person.CreditName
+		if offerInferred {
+			options.Add("i")
+		}
+		options.Add("e")
+		fmt.Fprintf(os.Stderr,
+			"ORCID %s  %s\n  Current canonical : %q\n  Credit-name       : %q\n",
+			p.orcid, p.id, contrib.Name, person.CreditName)
+		if person.DeclaredName != "" {
+			fmt.Fprintf(os.Stderr, "  Declared name     : %q\n", person.DeclaredName)
+		}
+		if surnameBoundaryDiffers {
+			fmt.Fprintf(os.Stderr, "  ^ surname boundary differs from current canonical\n")
+		}
+		if offerInferred {
+			fmt.Fprintf(os.Stderr, "  Inferred name     : %q  (credit-name parsed using declared surname)\n", inferredName)
+		}
+		fmt.Fprintf(os.Stderr, "  k=keep current  c=use credit-name")
+		if offerDeclared {
+			if person.DeclaredName == contrib.Name {
+				fmt.Fprintf(os.Stderr, "  d=use declared (%q = current)", person.DeclaredName)
+			} else {
+				fmt.Fprintf(os.Stderr, "  d=use declared (%q)", person.DeclaredName)
+			}
+		}
+		if options.Contains("n") {
+			fmt.Fprintf(os.Stderr, "  n=natural order of declared (%q)", passportNatural)
+		}
+		if offerInferred {
+			fmt.Fprintf(os.Stderr, "  i=use inferred (%q)", inferredName)
+		}
+		fmt.Fprintf(os.Stderr, "  e=edit\n")
+
+		answer := Library.WarningQuestion("", options,
+			"ORCID %s: credit-name %q differs from canonical %q for %s",
+			p.orcid, person.CreditName, contrib.Name, p.id)
+
+		var newCanon string
+		switch answer {
+		case "c":
+			newCanon = person.CreditName
+		case "d":
+			newCanon = person.DeclaredName
+		case "i":
+			newCanon = inferredName
+		case "n":
+			newCanon = passportNatural
+		case "e":
+			raw, _ := Library.AskForInput("Enter new canonical name")
+			newCanon = strings.TrimSpace(raw)
+		default: // "k" or empty → keep
+		}
+
+		if newCanon != "" && newCanon != contrib.Name {
+			oldCanon := contrib.Name
+			contrib.Name = newCanon
+			upsertContributorToDB(p.id, newCanon, contrib.ORCID)
+			upsertContributorNameToDB(p.id, oldCanon)
+			Library.NameToContributorID[oldCanon] = p.id
+			Library.NameToContributorID[newCanon] = p.id
+			Library.AddNameMapping(newCanon, oldCanon)
+			newAliases++
+		}
+
+		// Record the seen signature with the final canonical (after any promotion).
+		// On future runs: if canonical, credit-name, declared-name, and other-names
+		// all match this record, the challenge is suppressed. Any change to any of
+		// these values — including an external canonical update — triggers a re-challenge.
+		currentSeen.canonical = contrib.Name
+		upsertORCIDSeen(p.id, p.orcid, currentSeen)
+
+		Library.Progress("ORCID %s processed (%d/%d fetched, %d new alias(es) so far).",
+			p.orcid, fetched, needsFetch, newAliases)
+
+		if stepN > 0 && Library.QuestionWasAsked() {
+			questionCounter++
+			if questionCounter >= stepN {
+				if Library.AskContinueOrQuit() {
+					stopped = true
+				}
+				questionCounter = 0
+			}
+		}
+	}
+	spinner.Stop()
+	if matchedOnly && skipped > 0 {
+		Library.Progress("ORCID profile enrichment: %d new alias(es) added; %d challenge(s) skipped (run without -matched_orcid_data_only to process them).", newAliases, skipped)
+	} else {
+		Library.Progress("ORCID profile enrichment: %d new alias(es) added.", newAliases)
 	}
 }
 
-// gracefulQuit runs the normal post-check and DB finalisation sequence, then
-// exits with code 0. Called when the user presses 'q' during interactive name
-// resolution so that changes made earlier in the run are not lost.
-func gracefulQuit() {
-	forceCommitBibTransaction()
-	saveKeyNonDoublesToDb(&Library)
-
-	if !postCheckGate() {
-		dbInteraction.Warning("Post-check gate failed — home database not updated")
-		abandonWorkingDatabase()
-	} else {
-		finaliseWorkingDatabase()
+// doEnrichOrcidProfiles is the -enrich_orcid_profiles entry point.
+func doEnrichOrcidProfiles() {
+	if !openLibraryToUpdate() {
+		return
 	}
-	os.Exit(0)
+	doEnrichOrcidProfilesCore()
+}
+
+// doUpgradeWatchActions rewrites the watch file, replacing name/orcid entries with
+// contributor "EP_XXXX" where the contributor is known. Ambiguous names are resolved
+// interactively. Duplicate entries for the same contributor are collapsed to one.
+func doUpgradeWatchActions() {
+	if !openLibraryToUpdate() {
+		return
+	}
+	pm, _ := loadDblpPersonMaps()
+	filePath := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix + "/watch"
+	entries := ReadWatchFile(filePath)
+	if len(entries) == 0 {
+		Library.Progress("Watch file empty or absent: %s", filePath)
+		return
+	}
+
+	var upgraded []TWatchEntry
+	seenIDs := map[string]bool{}
+	changed := false
+
+	for _, e := range entries {
+		switch e.EntryType {
+		case "contributor":
+			id := e.Value
+			// Resolve stale IDs — follow any absorbed-ID chain to the current canonical.
+			if canonical := Library.ResolveContributorID(id); canonical != id {
+				if _, stillExists := Library.ContributorByID[canonical]; stillExists {
+					Library.Progress("Watch: resolved stale contributor %q → %s", id, canonical)
+					e = TWatchEntry{EntryType: "contributor", Value: canonical, Comment: e.Comment, Tag: e.Tag}
+					id = canonical
+					changed = true
+				} else {
+					Library.Warning("Watch: contributor %q (chain → %s) no longer exists — keeping entry", id, canonical)
+				}
+			} else if _, exists := Library.ContributorByID[id]; !exists {
+				Library.Warning("Watch: contributor %q not found and has no oldie record — keeping entry", id)
+			}
+			if seenIDs[id] {
+				Library.Progress("Watch: removed duplicate contributor %q", id)
+				changed = true
+				continue
+			}
+			seenIDs[id] = true
+			// Fill comment if missing or stale.
+			if contrib, ok := Library.ContributorByID[id]; ok && contrib.Name != "" && e.Comment != contrib.Name {
+				e.Comment = contrib.Name
+				changed = true
+			}
+			upgraded = append(upgraded, e)
+
+		case "name":
+			// Normalize HTML entities before lookup; the name may have been written
+			// with &atilde; etc. from a raw DBLP/ORCID source.
+			if clean := applyHtmlCharMap(e.Value); clean != e.Value {
+				Library.Progress("Watch: normalized HTML in name %q → %q", e.Value, clean)
+				e = TWatchEntry{EntryType: "name", Value: clean, Comment: e.Comment, Tag: e.Tag}
+				changed = true
+			}
+			id, known := Library.NameToContributorID[e.Value]
+			if !known {
+				// Check for ambiguity.
+				if ids, ambig := Library.AmbiguousNameToContributorIDs[e.Value]; ambig {
+					fmt.Printf("\nAmbiguous name %q — which contributor?\n", e.Value)
+					for i, cid := range ids {
+						name := cid
+						if contrib, ok := Library.ContributorByID[cid]; ok {
+							name = contrib.Name
+						}
+						fmt.Printf("  %d) %s (%s)\n", i+1, name, cid)
+					}
+					fmt.Printf("  0) keep as name entry\n> ")
+					var choice string
+					fmt.Scanln(&choice)
+					n := 0
+					fmt.Sscan(choice, &n)
+					if n >= 1 && n <= len(ids) {
+						id = ids[n-1]
+						known = true
+					}
+				}
+			}
+			if !known {
+				upgraded = append(upgraded, e)
+				continue
+			}
+			if seenIDs[id] {
+				Library.Progress("Watch: removed duplicate name %q (same contributor as earlier entry)", e.Value)
+				changed = true
+				continue
+			}
+			seenIDs[id] = true
+			comment := e.Value
+			if contrib, ok := Library.ContributorByID[id]; ok && contrib.Name != "" {
+				comment = contrib.Name
+			}
+			upgraded = append(upgraded, TWatchEntry{EntryType: "contributor", Value: id, Comment: comment})
+			Library.Progress("Watch: upgraded name %q → contributor %s", e.Value, id)
+			changed = true
+
+		case "orcid":
+			id := Library.ORCIDToContributorID[e.Value]
+			if id == "" {
+				if dblpKey := pm.orcidToKey[e.Value]; dblpKey != "" {
+					id = Library.DblpKeyToContributorID[dblpKey]
+					if id == "" {
+						// DblpKey not yet set in DB — try resolving via canonical name.
+						if canonical := pm.keyToCanonical[dblpKey]; canonical != "" {
+							id = Library.NameToContributorID[canonical]
+						}
+					}
+				}
+			}
+			if id == "" {
+				upgraded = append(upgraded, e)
+				continue
+			}
+			if seenIDs[id] {
+				Library.Progress("Watch: removed duplicate orcid %q (same contributor as earlier entry)", e.Value)
+				changed = true
+				continue
+			}
+			seenIDs[id] = true
+			comment := e.Comment
+			if comment == "" {
+				if contrib, ok := Library.ContributorByID[id]; ok && contrib.Name != "" {
+					comment = contrib.Name
+				}
+			}
+			upgraded = append(upgraded, TWatchEntry{EntryType: "contributor", Value: id, Comment: comment})
+			Library.Progress("Watch: upgraded orcid %q → contributor %s", e.Value, id)
+			changed = true
+
+		default:
+			upgraded = append(upgraded, e)
+		}
+	}
+
+	if changed {
+		WriteWatchFile(filePath, upgraded)
+		Library.Progress("Watch file updated: %s", filePath)
+	} else {
+		Library.Progress("Watch file already up to date.")
+	}
+}
+
+func doAssignOrcid(args []string) {
+	if !openLibraryToUpdate() {
+		return
+	}
+	loadNonDoubleContributorNamesFromDb(&Library)
+
+	orcid := strings.ToUpper(strings.TrimSpace(args[1]))
+
+	if !isValidORCID(orcid) {
+		fmt.Fprintf(os.Stderr, "Invalid ORCID format %q — expected NNNN-NNNN-NNNN-NNN[0-9X]\n", orcid)
+		return
+	}
+
+	id, _, ok := resolveContributorArg(args[0])
+	if !ok {
+		return
+	}
+
+	contrib := Library.ContributorByID[id]
+
+	// Check for ownership conflict.
+	if existingID := orcidToContributorID(&Library, orcid); existingID != "" && existingID != id {
+		existing := Library.ContributorByID[existingID]
+		fmt.Fprintf(os.Stderr, "ORCID %s is already assigned to contributor %s (%s)\n",
+			orcid, existingID, existing.Name)
+		return
+	}
+
+	canonical := contrib.ORCID == ""
+	upsertContributorORCIDToDB(id, orcid, canonical)
+	Library.ORCIDToContributorID[orcid] = id
+	if canonical {
+		contrib.ORCID = orcid
+		Library.Progress("Set canonical ORCID %s for contributor %s (%s)", orcid, id, contrib.Name)
+	} else {
+		Library.Progress("Added additional ORCID %s for contributor %s (%s) — canonical is %s",
+			orcid, id, contrib.Name, contrib.ORCID)
+	}
 }
 
 func main() {
@@ -2244,9 +3346,13 @@ func main() {
 		cmdFixEntries         bool
 		cmdFixDuplicates        bool // -fix_duplicates: fix entries in unresolved title groups
 		cmdFixCandidates        bool // -fix_candidates: link unmatched entries to DBLP
-		cmdTriageAuthorMappings bool // -triage_author_mappings: triage author/editor losing_field_values
-		cmdAbsorbDblpNames      bool // -absorb_dblp_names: absorb www-based name mappings from DBLP XML
-		cmdMergeOrcidDuplicates bool // -merge_orcid_duplicates: merge contributors sharing the same ORCID
+		cmdTriageAuthorMappings    bool // -triage_author_mappings: triage author/editor losing_field_values
+		cmdTriageContributorAliases bool // -triage_contributor_aliases: generalise or keep entry-specific contributor aliases
+		cmdDisambiguateContributors bool // -disambiguate_contributors: resolve ambiguous contributor-name assignments
+		cmdUpgradeWatchActions      bool // -upgrade_watch_actions: rewrite watch file to contributor format
+		cmdAssignOrcid              bool // -assign_orcid: assign an ORCID to a contributor
+		cmdEnrichContributorData    bool // -enrich_contributor_data: run full contributor enrichment pipeline
+		cmdMergeContributors     bool // -merge_contributors: merge two contributors into one
 		cmdAddDblpEntry   bool
 		cmdAddDblpEntries bool
 		cmdWatch             bool
@@ -2270,6 +3376,7 @@ func main() {
 		cmdRenderAsText       bool
 		cmdCheckPdfs                bool
 		cmdAlignBooktitleCountries  bool
+		cmdUpdateOrcidCache         bool
 		cmdLoadDblpXml              bool
 		cmdUpdateDblp               bool
 		cmdRepairDblpManifest       bool
@@ -2305,8 +3412,13 @@ func main() {
 	flag.BoolVar(&cmdFixDuplicates, "fix_duplicates", false, "interactively resolve title-duplicate pairs in the library")
 	flag.BoolVar(&cmdFixDuplicates, "fix_all_entries", false, "alias for -fix_duplicates")
 	flag.BoolVar(&cmdTriageAuthorMappings, "triage_author_mappings", false, "triage author/editor entries in losing_field_values")
-	flag.BoolVar(&cmdAbsorbDblpNames, "absorb_dblp_names", false, "absorb www-based name variant→canonical mappings from the stored DBLP XML")
-	flag.BoolVar(&cmdMergeOrcidDuplicates, "merge_orcid_duplicates", false, "merge contributors that share the same non-empty ORCID")
+	flag.BoolVar(&cmdTriageContributorAliases, "triage_contributor_aliases", false, "generalise or keep entry-specific contributor aliases")
+	flag.BoolVar(&cmdDisambiguateContributors, "disambiguate_contributors", false, "resolve ambiguous contributor-name assignments in entry_contributor_names")
+	flag.BoolVar(&cmdUpgradeWatchActions, "upgrade_watch_actions", false, "rewrite watch file replacing name/orcid entries with contributor EP_XXXX")
+	flag.BoolVar(&cmdAssignOrcid, "assign_orcid", false, "assign an ORCID to a contributor: -assign_orcid <name-or-EP-id> <orcid>")
+	flag.BoolVar(&cmdEnrichContributorData, "enrich_contributor_data", false, "run full contributor enrichment pipeline: absorb DBLP names+ORCIDs, enrich from ORCID profiles, merge ORCID duplicates")
+	flag.BoolVar(&cmdMatchedOrcidDataOnly, "matched_orcid_data_only", false, "with -enrich_contributor_data: skip ORCID challenges in step 3, leaving them as homework")
+	flag.BoolVar(&cmdMergeContributors, "merge_contributors", false, "merge second contributor into first: -merge_contributors <into> <from>")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
 	flag.BoolVar(&cmdFixCandidates, "fix_candidates", false, "interactively link library entries without a DBLP key to DBLP records")
 	flag.BoolVar(&cmdFixCandidates, "extend_dblp_coverage", false, "alias for -fix_candidates")
@@ -2335,6 +3447,7 @@ func main() {
 	flag.BoolVar(&cmdRenderAsText, "render_as_text", false, "render entry as plain-text bibliography reference")
 	flag.BoolVar(&cmdCheckPdfs, "check_pdfs", false, "check PDF health, orphan files, and duplicates in the files folder")
 flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "detect and fix unbraced country names in booktitle fields")
+	flag.BoolVar(&cmdUpdateOrcidCache, "update_orcid", false, "refresh the ORCID disk cache for all known contributors (oldest-first, q+Enter to stop)")
 	flag.BoolVar(&cmdLoadDblpXml, "load_dblp_xml", false, "load a DBLP .xml.gz export into the local DBLP file store")
 	flag.BoolVar(&cmdUpdateDblp, "update_dblp", false, "download the latest DBLP XML export from dblp.uni-trier.de")
 	flag.BoolVar(&cmdRepairDblpManifest, "repair_dblp_manifest", false, "rebuild DBLP manifest and title index from a .xml.gz export")
@@ -2573,11 +3686,34 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	case cmdTriageAuthorMappings:
 		doTriageAuthorMappings()
 
-	case cmdAbsorbDblpNames:
-		doAbsorbDblpNames()
+	case cmdTriageContributorAliases:
+		doTriageContributorAliases()
 
-	case cmdMergeOrcidDuplicates:
-		doMergeOrcidDuplicates()
+	case cmdDisambiguateContributors:
+		doDisambiguateContributors()
+
+	case cmdUpgradeWatchActions:
+		doUpgradeWatchActions()
+
+	case cmdAssignOrcid:
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -assign_orcid <name-or-EP-id> <orcid>")
+			os.Exit(1)
+		}
+		doAssignOrcid(args)
+
+	case cmdUpdateOrcidCache:
+		doUpdateOrcidCache()
+
+	case cmdEnrichContributorData:
+		doEnrichContributorData()
+
+	case cmdMergeContributors:
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -merge_contributors <into> <from>")
+			os.Exit(1)
+		}
+		doMergeContributors(args)
 
 	case cmdRestoreKeyHints:
 		doRestoreKeyHints(restoreKeyHintsPath)
@@ -2783,7 +3919,7 @@ case cmdAlignBooktitleCountries:
 		// Does not require ValidBibDb: mapping tables are imported independently of bib entries.
 		if prepareWorkingDatabase() {
 			maybeMigrateTableConstraints()
-			maybeMigrateToLosingFieldValues()
+			maybeDropFilterEntryFieldMappings()
 			if ImportAllCSVExchangeFiles() {
 				dbInteraction.Progress("All CSV exchange files imported successfully.")
 			}
@@ -2829,4 +3965,20 @@ case cmdAlignBooktitleCountries:
 	} else {
 		finaliseWorkingDatabase()
 	}
+}
+
+// gracefulQuit runs the normal post-check and DB finalisation sequence, then
+// exits with code 0. Called when the user presses 'q' during interactive name
+// resolution so that changes made earlier in the run are not lost.
+func gracefulQuit() {
+	forceCommitBibTransaction()
+	saveKeyNonDoublesToDb(&Library)
+
+	if !postCheckGate() {
+		dbInteraction.Warning("Post-check gate failed — home database not updated")
+		abandonWorkingDatabase()
+	} else {
+		finaliseWorkingDatabase()
+	}
+	os.Exit(0)
 }

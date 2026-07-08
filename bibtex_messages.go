@@ -147,6 +147,7 @@ const (
 	ProgressBuildingTitleIndex = "Building title index"
 	ProgressBuildingKeyAliases = "Building key aliases"
 
+	ProgressScanningOrcids           = "Scanning DBLP for ORCIDs"
 	ProgressFixingDblpEntries        = "Fixing DBLP entries"
 	ProgressFixingDblpHierarchy      = "Resolving DBLP parent ambiguities"
 	WarningCrossrefCycle             = "Crossref cycle detected: %s"

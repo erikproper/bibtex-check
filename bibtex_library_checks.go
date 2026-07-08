@@ -1291,9 +1291,9 @@ func (l *TBibTeXLibrary) CheckYear(entry *TBibTeXEntry) {
 
 
 var (
-	urlDateDMY      = regexp.MustCompile(`^(\d{2})[./](\d{2})[./](\d{4})$`)
+	urlDateDMY     = regexp.MustCompile(`^(\d{2})[./](\d{2})[./](\d{4})$`)
 	urlDateYMDSlash = regexp.MustCompile(`^(\d{4})/(\d{2})/(\d{2})$`)
-	urlDatePrefix   = regexp.MustCompile(`(?i)^(accessed|last accessed|last visited|zugegriffen|abgerufen|aufgerufen)[:\s]+`)
+	urlDatePrefix  = regexp.MustCompile(`(?i)^(accessed|last accessed|last visited|zugegriffen|abgerufen|aufgerufen)[:\s]+`)
 )
 
 // normaliseURLDate attempts to convert common non-ISO urldate formats to YYYY-MM-DD.
@@ -1546,7 +1546,36 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 			l.CheckYear(entry)
 			l.CheckURLDate(entry)
 			l.CheckWithdrawn(entry)
+			l.CheckGarbledContributors(entry)
 		}
+	}
+}
+
+// CheckGarbledContributors warns when an entry has author or editor contributors
+// that were stored as garbled (the raw name could not be parsed as a valid BibTeX
+// person name and was brace-wrapped during migration or harvest). The warning
+// appears as homework so the user can fix the underlying data.
+func (l *TBibTeXLibrary) CheckGarbledContributors(entry *TBibTeXEntry) {
+	if !contributorRolesActive {
+		return
+	}
+	rows, err := bibQuery(
+		`SELECT cr.role, c.name
+		 FROM contributor_roles cr
+		 JOIN contributors c ON c.id = cr.contributor_id
+		 WHERE cr.entry_key = ? AND c.garbled = 1
+		 ORDER BY cr.role, cr.position`,
+		entry.Key)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role, name string
+		if rows.Scan(&role, &name) != nil {
+			continue
+		}
+		l.ReportEntryWarning(entry.Key, "Garbled %s name (needs fixing): %s", role, name)
 	}
 }
 

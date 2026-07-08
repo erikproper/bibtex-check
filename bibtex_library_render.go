@@ -197,7 +197,8 @@ func texToHTML(s string) string {
 		s = strings.ReplaceAll(s, p[0], p[1])
 	}
 
-	// Standalone ~ is a TeX non-breaking space tie; replace after accent pairs.
+	// Standalone ~ is a TeX non-breaking space tie; replace after accent pairs so
+	// {\~a}, {\~o} etc. are already consumed and can't be corrupted here.
 	s = strings.ReplaceAll(s, "~", "&nbsp;")
 
 	// Special letter sequences (handle before brace removal)

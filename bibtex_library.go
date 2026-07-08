@@ -22,6 +22,9 @@ import (
 	"time"
 )
 
+// bibParseCount is incremented atomically for each entry completed by the
+// bib-file parser. Reset at parse start; read by the ticker loop to show
+// live progress without requiring the goroutine to send explicit messages.
 var bibParseCount int64
 
 /*
@@ -32,8 +35,10 @@ var bibParseCount int64
 
 // TContributor holds the persistent data for one person (contributor).
 type TContributor struct {
-	Name  string // preferred display name (from contributors.name)
-	ORCID string // ORCID identifier, may be empty
+	Name    string // preferred display name (from contributors.name)
+	ORCID   string // ORCID identifier, may be empty
+	DblpKey string // DBLP homepages key (e.g. "homepages/93/4573"), may be empty
+	Garbled bool   // true when the contributor represents a raw garbled name value
 }
 
 type (
@@ -57,9 +62,12 @@ type (
 		KeyIsTemporary                    TStringSet                // Keys that are generated for temporary reasons
 		NameAliasToName                   TStringMap                // Mapping from name aliases to the actual name.
 		NameToAliases                     TStringSetMap             // The inverted version of NameAliasToName
-		NameToContributorID               map[string]string         // any recognized name form → contributor ID
+		NameToContributorID               map[string]string         // unambiguous: exactly one contributor for this name form
+		AmbiguousNameToContributorIDs     map[string][]string       // globally ambiguous: 2+ contributors share this name form
 		ContributorByID                   map[string]*TContributor  // contributor ID → contributor data
 		ContributorIDOldies               map[string]string         // absorbed contributor ID → current canonical contributor ID
+		ORCIDToContributorID              map[string]string         // reverse: ORCID → contributor ID (all ORCIDs, not just canonical)
+		DblpKeyToContributorID            map[string]string         // reverse: DBLP homepages key → contributor ID
 		StateAliasToCanonical             TStringMap                // Mapping from state name aliases to canonical state names.
 		StateToCountry                    TStringMap                // Mapping from canonical state names to canonical country names.
 		CountryAliasToCanonical           TStringMap                // Mapping from country name aliases to canonical country names.
@@ -127,8 +135,11 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.KeyIsTemporary = TStringSetNew()
 	l.NameAliasToName = TStringMap{}
 	l.NameToContributorID = map[string]string{}
+	l.AmbiguousNameToContributorIDs = map[string][]string{}
 	l.ContributorByID = map[string]*TContributor{}
 	l.ContributorIDOldies = map[string]string{}
+	l.ORCIDToContributorID = map[string]string{}
+	l.DblpKeyToContributorID = map[string]string{}
 	l.StateAliasToCanonical = TStringMap{}
 	l.StateToCountry = TStringMap{}
 	l.CountryAliasToCanonical = TStringMap{}

@@ -171,6 +171,78 @@ func importContributorNamesFromCSV(replace bool) {
 	}
 }
 
+// ── contributor_id_oldies ────────────────────────────────────────────────────
+// CSV format: absorbed_id;canonical_id
+
+func ExportContributorIDOldies() {
+	ensureTablesDir()
+	path := tablesFilePath(ContributorIDOldiesFilePath)
+	rows, err := db.Query(`SELECT absorbed_id, canonical_id FROM contributor_id_oldies ORDER BY absorbed_id`)
+	if err != nil {
+		dbInteraction.Warning("Could not query contributor_id_oldies: %s", err)
+		return
+	}
+	defer rows.Close()
+	writeCSVExport(path, rows, 2)
+}
+
+func importContributorIDOldiesFromCSV(replace bool) {
+	path := tablesFilePath(ContributorIDOldiesFilePath)
+	upsert := `INSERT INTO contributor_id_oldies (absorbed_id, canonical_id) VALUES (?, ?)
+	             ON CONFLICT(absorbed_id) DO UPDATE SET canonical_id = excluded.canonical_id`
+	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
+	var clearFn func()
+	if replace {
+		clearFn = func() { db.Exec(`DELETE FROM contributor_id_oldies`) } //nolint:errcheck
+	}
+	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
+		tx.Exec(upsert, f[0], f[1]) //nolint:errcheck
+	})
+	if ok {
+		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
+	}
+}
+
+// ── contributor_orcid_seen ───────────────────────────────────────────────────
+// CSV format: contributor_id;orcid;canonical;credit_name;declared_name;other_names
+
+func ExportContributorORCIDSeen() {
+	ensureTablesDir()
+	path := tablesFilePath(ContributorORCIDSeenFilePath)
+	rows, err := db.Query(
+		`SELECT contributor_id, orcid, canonical, credit_name, declared_name, other_names
+		   FROM contributor_orcid_seen ORDER BY contributor_id, orcid`)
+	if err != nil {
+		dbInteraction.Warning("Could not query contributor_orcid_seen: %s", err)
+		return
+	}
+	defer rows.Close()
+	writeCSVExport(path, rows, 6)
+}
+
+func importContributorORCIDSeenFromCSV(replace bool) {
+	path := tablesFilePath(ContributorORCIDSeenFilePath)
+	upsert := `INSERT INTO contributor_orcid_seen
+	             (contributor_id, orcid, canonical, credit_name, declared_name, other_names)
+	             VALUES (?, ?, ?, ?, ?, ?)
+	             ON CONFLICT(contributor_id, orcid) DO UPDATE SET
+	               canonical = excluded.canonical,
+	               credit_name = excluded.credit_name,
+	               declared_name = excluded.declared_name,
+	               other_names = excluded.other_names`
+	validate := func(f []string) bool { return len(f) >= 6 && f[0] != "" && f[1] != "" }
+	var clearFn func()
+	if replace {
+		clearFn = func() { db.Exec(`DELETE FROM contributor_orcid_seen`) } //nolint:errcheck
+	}
+	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
+		tx.Exec(upsert, f[0], f[1], f[2], f[3], f[4], f[5]) //nolint:errcheck
+	})
+	if ok {
+		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
+	}
+}
+
 // ── key_hints ────────────────────────────────────────────────────────────────
 // CSV format: key;hint  (elements[0]=key, elements[1]=hint)
 

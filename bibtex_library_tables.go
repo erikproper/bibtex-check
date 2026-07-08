@@ -73,6 +73,10 @@ func init() {
 				loadContributorsFromDb(l)
 				cascadeRenormaliseFields(l, "author", "editor")
 			}},
+		{"contributor_id_oldies", ContributorIDOldiesFilePath,
+			ExportContributorIDOldies, func() { importContributorIDOldiesFromCSV(true) }, nil},
+		{"contributor_orcid_seen", ContributorORCIDSeenFilePath,
+			ExportContributorORCIDSeen, func() { importContributorORCIDSeenFromCSV(true) }, nil},
 
 		// Field mapping tables — all cascade into bib_entries.
 		// generic_field_mappings and cross_field_mappings import to their legacy tables;
