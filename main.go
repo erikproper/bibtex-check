@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.0"
+const AppVersion = "27.5"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1103,6 +1103,8 @@ func doDisambiguateContributors() {
 	rows.Close()
 	if len(ambig) == 0 {
 		Library.Progress("No ambiguous contributor assignments found.")
+		absorbDblpNamesCore()
+		absorbDblpOrcidsCore()
 		return
 	}
 

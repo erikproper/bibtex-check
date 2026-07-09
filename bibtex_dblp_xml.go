@@ -1764,6 +1764,8 @@ func absorbDblpNamesCore() {
 			keysLinked++
 		}
 	}
+	keysLinked += detectMisattributedDblpEntries(&Library, pm, keyToNames)
+	keysLinked += detectUnkeyedContributorSplits(&Library, pm, keyToNames)
 
 	Library.Progress("Linked %d DBLP person key(s), absorbed %d name alias(es), set %d ORCID(s).",
 		keysLinked, absorbed, orcidsSet)
@@ -1895,6 +1897,330 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
 	l.Progress("  DBLP split: moved %d entry/ies from %q (%s) to new contributor %q (%s).",
 		len(toNew), contrib.Name, sc.existingKey, newName, sc.newKey)
 	return true
+}
+
+// detectMisattributedDblpEntries scans contributors that have a DBLP key and
+// looks for entries attributed to them whose DBLP publication key does not
+// appear in that person's publication index. For each such entry it reads the
+// DBLP JSON to find the actual author's person key and schedules a split.
+// Returns the number of successful splits.
+func detectMisattributedDblpEntries(l *TBibTeXLibrary, pm dblpPersonMaps, keyToNames map[string][]string) int {
+	type splitTarget struct{ contribID, existingKey, newKey string }
+	var splits []splitTarget
+
+	// Pre-fetch only contributor IDs that have entries with a dblp field, to
+	// avoid reading person-entry files for the large majority of keyed
+	// contributors whose attributed entries carry no dblp value.
+	contribsWithDblpEntries := make(map[string]bool)
+	{
+		rows, err := db.Query(`
+			SELECT DISTINCT cr.contributor_id
+			FROM contributor_roles cr
+			JOIN bib_entries be ON be.entry_key = cr.entry_key AND be.field = ?
+			JOIN contributors c ON c.id = cr.contributor_id
+			WHERE c.dblp_key IS NOT NULL AND c.dblp_key != ''`, DBLPField)
+		if err == nil {
+			for rows.Next() {
+				var id string
+				if rows.Scan(&id) == nil {
+					contribsWithDblpEntries[id] = true
+				}
+			}
+			rows.Close()
+		}
+	}
+
+	// Collect the unique DBLP person keys that need their entries.txt loaded.
+	type candidateContrib struct {
+		contribID string
+		contrib   *TContributor
+		canonical string
+	}
+	var candidates []candidateContrib
+	seenDblpKey := make(map[string]bool)
+	uniqueKeys := make([]struct{ dblpKey, canonical string }, 0)
+	for contribID, contrib := range l.ContributorByID {
+		if contrib.DblpKey == "" || !contribsWithDblpEntries[contribID] {
+			continue
+		}
+		canonical := pm.keyToCanonical[contrib.DblpKey]
+		if canonical == "" {
+			continue
+		}
+		candidates = append(candidates, candidateContrib{contribID, contrib, canonical})
+		if !seenDblpKey[contrib.DblpKey] {
+			seenDblpKey[contrib.DblpKey] = true
+			uniqueKeys = append(uniqueKeys, struct{ dblpKey, canonical string }{contrib.DblpKey, canonical})
+		}
+	}
+	total := len(candidates)
+	if total == 0 {
+		return 0
+	}
+
+	// Load all entries.txt files using a fixed worker pool to avoid sequential
+	// disk seeks without spawning per-key goroutines.
+	Library.Progress("Loading publication sets for %d unique DBLP person key(s)...", len(uniqueKeys))
+	pubSets := make(map[string]map[string]bool, len(uniqueKeys))
+	var pubSetsMu sync.Mutex
+	var loadedCount atomic.Int64
+	type workItem struct{ dblpKey, canonical string }
+	workCh := make(chan workItem, len(uniqueKeys))
+	for _, ki := range uniqueKeys {
+		workCh <- workItem{ki.dblpKey, ki.canonical}
+	}
+	close(workCh)
+	loadTicker := time.NewTicker(5 * time.Second)
+	loadDone := make(chan struct{})
+	go func() {
+		defer loadTicker.Stop()
+		for {
+			select {
+			case <-loadTicker.C:
+				fmt.Fprintf(os.Stderr, "\r  %d/%d person key(s) loaded...", loadedCount.Load(), len(uniqueKeys))
+			case <-loadDone:
+				fmt.Fprintf(os.Stderr, "\r")
+				return
+			}
+		}
+	}()
+	const workerCount = 32
+	var loadWg sync.WaitGroup
+	for range workerCount {
+		loadWg.Add(1)
+		go func() {
+			defer loadWg.Done()
+			for item := range workCh {
+				entries := readDblpPersonEntries(item.canonical)
+				ps := make(map[string]bool, len(entries))
+				for _, e := range entries {
+					ps[e] = true
+				}
+				pubSetsMu.Lock()
+				pubSets[item.dblpKey] = ps
+				pubSetsMu.Unlock()
+				loadedCount.Add(1)
+			}
+		}()
+	}
+	loadWg.Wait()
+	close(loadDone)
+
+	Library.Progress("Scanning %d DBLP-keyed contributor(s) for misattributed entries...", total)
+
+	jsonCache := make(map[string]*TDblpJSONEntry)
+
+	for _, c := range candidates {
+		pubSet := pubSets[c.contrib.DblpKey]
+		if len(pubSet) == 0 {
+			continue
+		}
+		rows, err := db.Query(`
+			SELECT DISTINCT cr.entry_key, be.value
+			FROM contributor_roles cr
+			JOIN bib_entries be ON be.entry_key = cr.entry_key AND be.field = ?
+			WHERE cr.contributor_id = ?`, DBLPField, c.contribID)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var entryKey, dblpVal string
+			if rows.Scan(&entryKey, &dblpVal) != nil {
+				continue
+			}
+			normKey := normalizeDblpKey(dblpVal)
+			if normKey == "" || pubSet[normKey] {
+				continue
+			}
+			if _, seen := jsonCache[normKey]; !seen {
+				jsonCache[normKey] = readDblpJSONEntry(normKey)
+			}
+			je := jsonCache[normKey]
+			if je == nil {
+				continue
+			}
+			for _, person := range append(je.Authors, je.Editors...) {
+				k2 := pm.nameToKey[person.Name]
+				if k2 == "" || k2 == c.contrib.DblpKey {
+					continue
+				}
+				splits = append(splits, splitTarget{c.contribID, c.contrib.DblpKey, k2})
+			}
+		}
+		rows.Close()
+	}
+
+	done := 0
+	seen := make(map[splitTarget]bool)
+	for _, st := range splits {
+		if seen[st] {
+			continue
+		}
+		seen[st] = true
+		newCanonical := pm.keyToCanonical[st.newKey]
+		newName := simpleSurnameSwap(newCanonical)
+		if newName == "" {
+			newName = newCanonical
+		}
+		sc := dblpSplitCandidate{
+			contribID:    st.contribID,
+			existingKey:  st.existingKey,
+			newKey:       st.newKey,
+			newCanonical: newCanonical,
+			newName:      newName,
+			newForms:     keyToNames[st.newKey],
+		}
+		if splitContributorByDblpKeys(l, sc) {
+			done++
+		}
+	}
+	return done
+}
+
+// detectUnkeyedContributorSplits handles contributors that have no dblp_key but
+// whose attributed entries carry a dblp field. For each such entry it reads the
+// DBLP JSON to identify which DBLP person authored it (via ORCID or unambiguous
+// name lookup combined with a surname match against the contributor). If all
+// entries map to a single person key the key is simply assigned to the
+// contributor. If entries map to multiple distinct person keys the contributor
+// is split: the largest group retains the original record (with its key
+// assigned), and each remaining group is split off via splitContributorByDblpKeys.
+// Returns the total number of successful splits + key assignments > 0.
+func detectUnkeyedContributorSplits(l *TBibTeXLibrary, pm dblpPersonMaps, keyToNames map[string][]string) int {
+	type candidateRow struct{ contribID, contribName, entryKey, dblpVal string }
+
+	// dblp_key is NULL (not '') for contributors that have never been keyed.
+	rows, err := db.Query(`
+		SELECT cr.contributor_id, c.name, cr.entry_key, be.value
+		FROM contributor_roles cr
+		JOIN bib_entries be ON be.entry_key = cr.entry_key AND be.field = ?
+		JOIN contributors c ON c.id = cr.contributor_id
+		WHERE COALESCE(c.dblp_key, '') = ''`, DBLPField)
+	if err != nil {
+		return 0
+	}
+	var candidates []candidateRow
+	for rows.Next() {
+		var r candidateRow
+		if rows.Scan(&r.contribID, &r.contribName, &r.entryKey, &r.dblpVal) == nil {
+			candidates = append(candidates, r)
+		}
+	}
+	rows.Close()
+	if len(candidates) == 0 {
+		return 0
+	}
+	Library.Progress("Inferring person keys for %d entry/ies (contributors without DBLP key)...", len(candidates))
+
+	// Read each distinct DBLP entry JSON once and cache it.
+	jsonCache := make(map[string]*TDblpJSONEntry)
+	for i, c := range candidates {
+		if i%500 == 0 {
+			fmt.Fprintf(os.Stderr, "\r  reading JSON: %d/%d...", i, len(candidates))
+		}
+		normKey := normalizeDblpKey(c.dblpVal)
+		if normKey == "" {
+			continue
+		}
+		if _, seen := jsonCache[normKey]; !seen {
+			jsonCache[normKey] = readDblpJSONEntry(normKey) // nil if not in file store
+		}
+	}
+	fmt.Fprintf(os.Stderr, "\r")
+
+	// contribPersonEntries: contribID → personKey → deduplicated set of entryKeys
+	contribPersonEntries := make(map[string]map[string]map[string]bool)
+
+	for _, c := range candidates {
+		// Skip org names (braced) — they are not person contributors.
+		if strings.HasPrefix(c.contribName, "{") {
+			continue
+		}
+		normKey := normalizeDblpKey(c.dblpVal)
+		if normKey == "" {
+			continue
+		}
+		je := jsonCache[normKey]
+		if je == nil {
+			continue
+		}
+		// Find the person key for this contributor's author slot.
+		// A candidate key is accepted only when its DBLP canonical name (swapped
+		// to Last,First form) exactly matches the contributor name — this prevents
+		// assigning the wrong homonym (e.g. "Mark Mulder" ≠ "Mulder, Mark A. T.").
+		personKey := ""
+		for _, person := range append(je.Authors, je.Editors...) {
+			var k string
+			if person.ORCID != "" {
+				k = pm.orcidToKey[person.ORCID]
+			}
+			if k == "" {
+				k = pm.nameToKey[person.Name]
+			}
+			if k == "" {
+				continue
+			}
+			if strings.TrimSpace(simpleSurnameSwap(pm.keyToCanonical[k])) == strings.TrimSpace(c.contribName) {
+				personKey = k
+				break
+			}
+		}
+		if personKey == "" {
+			continue
+		}
+		if contribPersonEntries[c.contribID] == nil {
+			contribPersonEntries[c.contribID] = make(map[string]map[string]bool)
+		}
+		if contribPersonEntries[c.contribID][personKey] == nil {
+			contribPersonEntries[c.contribID][personKey] = make(map[string]bool)
+		}
+		contribPersonEntries[c.contribID][personKey][c.entryKey] = true
+	}
+
+	done := 0
+	for contribID, personEntries := range contribPersonEntries {
+		if len(personEntries) == 0 {
+			continue
+		}
+		// Find the primary key (most entries).
+		primaryKey := ""
+		maxCount := 0
+		for k, entries := range personEntries {
+			if len(entries) > maxCount {
+				maxCount = len(entries)
+				primaryKey = k
+			}
+		}
+		// Assign primary key to the contributor.
+		setContributorDblpKey(l, contribID, primaryKey)
+		done++
+		if len(personEntries) == 1 {
+			continue
+		}
+		// Split off each remaining person key.
+		for k := range personEntries {
+			if k == primaryKey {
+				continue
+			}
+			newCanonical := pm.keyToCanonical[k]
+			newName := simpleSurnameSwap(newCanonical)
+			if newName == "" {
+				newName = newCanonical
+			}
+			sc := dblpSplitCandidate{
+				contribID:    contribID,
+				existingKey:  primaryKey,
+				newKey:       k,
+				newCanonical: newCanonical,
+				newName:      newName,
+				newForms:     keyToNames[k],
+			}
+			if splitContributorByDblpKeys(l, sc) {
+				done++
+			}
+		}
+	}
+	return done
 }
 
 // absorbDblpOrcidsCore sweeps contributors for ORCID assignment using the DBLP
