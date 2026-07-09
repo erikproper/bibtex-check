@@ -398,6 +398,10 @@ func (p *scriptParser) parseCond() scriptCond {
 }
 
 func (p *scriptParser) parseSimpleCond() scriptCond {
+	// Allow "is ..." as shorthand for "the entry is ..." in continuation clauses.
+	if p.is("is") {
+		return p.parseEntryCond()
+	}
 	if !p.eat("the") {
 		return nil
 	}

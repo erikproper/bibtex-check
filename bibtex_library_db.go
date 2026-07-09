@@ -2524,6 +2524,20 @@ func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
 		     WHERE id NOT IN (SELECT DISTINCT contributor_id FROM contributor_roles)
 		       AND name != 'others'
 		 )`)
+	// Case 3: non_double_contributors has no CASCADE on its two FKs to contributors.
+	// Remove any non-double pair that references an orphaned contributor.
+	db.Exec( //nolint:errcheck
+		`DELETE FROM non_double_contributors
+		 WHERE contributor_id_a IN (
+		     SELECT id FROM contributors
+		     WHERE id NOT IN (SELECT DISTINCT contributor_id FROM contributor_roles)
+		       AND name != 'others'
+		 )
+		 OR contributor_id_b IN (
+		     SELECT id FROM contributors
+		     WHERE id NOT IN (SELECT DISTINCT contributor_id FROM contributor_roles)
+		       AND name != 'others'
+		 )`)
 	// Single bulk DELETE instead of per-row deletes — avoids N separate auto-commits.
 	if _, err := db.Exec(`
 		DELETE FROM contributors
