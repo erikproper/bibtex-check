@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.22"
+const AppVersion = "27.23"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2464,7 +2464,7 @@ func runWatchORCID(w TWatchEntry, label string, stepN int, questionCounter *int,
 					continue
 				}
 				seenDOI[doi] = true
-				if entryExistsWithDOI(doi) || doiHasLoserRecord(doi) {
+				if entryExistsWithDOI(doi) || doiHasLoserRecord(doi) || doiHasAlias(doi) {
 					continue
 				}
 				bibtex := fetchDoiBibTeX(doi)
@@ -2477,7 +2477,7 @@ func runWatchORCID(w TWatchEntry, label string, stepN int, questionCounter *int,
 				}
 				// The canonical DOI in the fetched BibTeX may differ from the ORCID-reported
 				// DOI (doi aliasing / CrossRef redirects). Check both to avoid re-adding.
-				if resolvedDOI := entry.Fields["doi"]; resolvedDOI != "" && resolvedDOI != doi && (entryExistsWithDOI(resolvedDOI) || doiHasLoserRecord(resolvedDOI)) {
+				if resolvedDOI := entry.Fields["doi"]; resolvedDOI != "" && resolvedDOI != doi && (entryExistsWithDOI(resolvedDOI) || doiHasLoserRecord(resolvedDOI) || doiHasAlias(resolvedDOI)) {
 					continue
 				}
 				Library.ResetQuestionFlag()
@@ -3397,6 +3397,7 @@ func main() {
 		cmdAddKeyMapping         bool
 		cmdMergeEntries       bool
 		cmdAddNameMapping     bool
+		cmdAddDoiAlias        bool
 		cmdSetPreferredAlias  bool
 		cmdNewKey             bool
 		cmdDeleteEntry        bool
@@ -3469,6 +3470,7 @@ func main() {
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mappings", false, "alias for -add_key_mapping")
 	flag.BoolVar(&cmdMergeEntries, "merge_entries", false, "merge entries into target: -merge_entries <key>... <target>")
 	flag.BoolVar(&cmdAddNameMapping, "add_name_mapping", false, "add a name alias mapping: -add_name_mapping <canonical> <alias>")
+	flag.BoolVar(&cmdAddDoiAlias, "add_doi_alias", false, "record a DOI as an alias for an entry: -add_doi_alias <entry_key> <doi>")
 	flag.BoolVar(&cmdSetPreferredAlias, "set_preferred_alias", false, "set preferred alias for a key: -set_preferred_alias <key> <alias>")
 	flag.BoolVar(&cmdNewKey, "new_key", false, "print a fresh canonical key and exit")
 	flag.BoolVar(&cmdDeleteEntry, "delete_entry", false, "delete one or more library entries: -delete_entry <key>...")
@@ -3824,6 +3826,16 @@ case cmdWatch:
 			os.Exit(1)
 		}
 		doAddNameMapping(args)
+
+	case cmdAddDoiAlias:
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -add_doi_alias <entry_key> <doi>")
+			os.Exit(1)
+		}
+		if !openLibraryToUpdate() {
+			os.Exit(1)
+		}
+		addEntryDoiAlias(args[0], args[1])
 
 	case cmdDeleteEntry:
 		if len(args) == 0 {

@@ -517,6 +517,7 @@ func connectToDatabase() {
 	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
 	ensureLosingFieldValuesTableExists()
+	ensureEntryDoiAliasesTableExists()
 	ensureEntryWarningsTableExists()
 	ensureDeletedEntriesTableExists()
 	ensureConfigTableExists()
@@ -733,6 +734,7 @@ func reopenDb(path string) {
 	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
 	ensureLosingFieldValuesTableExists()
+	ensureEntryDoiAliasesTableExists()
 	ensureConfigTableExists()
 	ensureShortenMappingsTableExists()
 	ensureBibEntryKeysTableExists()
@@ -2103,8 +2105,15 @@ func contributorEntryKeys(id string) []string {
 
 // entryExistsWithDOI reports whether any library entry already carries the given
 // DOI value (case-insensitive, after stripping any "https://doi.org/" prefix).
+// normalizeDOI returns the canonical lower-case DOI without any https?://doi.org/ prefix.
+func normalizeDOI(doi string) string {
+	doi = strings.TrimPrefix(doi, "https://doi.org/")
+	doi = strings.TrimPrefix(doi, "http://doi.org/")
+	return strings.ToLower(doi)
+}
+
 func entryExistsWithDOI(doi string) bool {
-	doi = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(doi, "https://doi.org/"), "http://doi.org/"))
+	doi = normalizeDOI(doi)
 	var count int
 	db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = 'doi' AND lower(value) = ?`, doi).Scan(&count) //nolint:errcheck
 	return count > 0
@@ -2117,9 +2126,49 @@ func entryExistsWithDOI(doi string) bool {
 // sufficient evidence that the DOI is already known to the system, so the watch
 // need not create another stub.
 func doiHasLoserRecord(doi string) bool {
-	doi = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(doi, "https://doi.org/"), "http://doi.org/"))
+	doi = normalizeDOI(doi)
 	var count int
 	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field = 'doi' AND lower(value) = ?`, doi).Scan(&count) //nolint:errcheck
+	return count > 0
+}
+
+// --- entry_doi_aliases table ---
+
+func ensureEntryDoiAliasesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS entry_doi_aliases (
+		  doi       TEXT NOT NULL PRIMARY KEY,
+		  entry_key TEXT NOT NULL,
+		  FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE
+		);`)
+}
+
+// addEntryDoiAlias registers doi as an alternative/absorbed identifier for entryKey.
+// The DOI is normalised before storage. Silent no-op when the DOI is already aliased
+// to the same entry; warns if it maps to a different entry (data conflict).
+func addEntryDoiAlias(entryKey, doi string) {
+	doi = normalizeDOI(doi)
+	if doi == "" || entryKey == "" {
+		return
+	}
+	var existing string
+	db.QueryRow(`SELECT entry_key FROM entry_doi_aliases WHERE doi = ?`, doi).Scan(&existing) //nolint:errcheck
+	if existing == entryKey {
+		return
+	}
+	if existing != "" {
+		dbInteraction.Warning("addEntryDoiAlias: DOI %s already aliased to %s (requested %s) — skipped", doi, existing, entryKey)
+		return
+	}
+	db.Exec(`INSERT INTO entry_doi_aliases (doi, entry_key) VALUES (?, ?)`, doi, entryKey) //nolint:errcheck
+}
+
+// doiHasAlias reports whether doi has been explicitly registered as an alias for
+// an existing entry via entry_doi_aliases.
+func doiHasAlias(doi string) bool {
+	doi = normalizeDOI(doi)
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM entry_doi_aliases WHERE doi = ?`, doi).Scan(&count) //nolint:errcheck
 	return count > 0
 }
 

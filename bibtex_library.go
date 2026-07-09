@@ -782,6 +782,16 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 					merged = l.MaybeResolveFieldValue(target, source, regularField, sourceVal, targetVal)
 				}
 				l.setEntryField(targetEntry, regularField, merged)
+				// When a doi is dropped during a merge, register it as an alias of the
+				// surviving entry so the watch does not re-add it as a missing publication.
+				if regularField == "doi" && merged != "" {
+					if sourceVal != "" && !strings.EqualFold(sourceVal, merged) {
+						addEntryDoiAlias(target, sourceVal)
+					}
+					if targetVal != "" && !strings.EqualFold(targetVal, merged) {
+						addEntryDoiAlias(target, targetVal)
+					}
+				}
 			}
 
 			// Inherit lineage records from source for fields where target has none.
