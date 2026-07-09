@@ -2311,63 +2311,60 @@ func maybeMergeSpuriousContributors() {
 }
 
 // mergeContributorInDB absorbs fromID into toID at the DB level.
-// Moves contributor_names, contributor_roles, and contributor_orcids to toID,
-// cleans up non_double_contributors rows referencing fromID, then deletes
-// fromID from contributors (which cascades to contributor_names and
-// contributor_orcids). Returns true on success.
+// Moves contributor_names, contributor_roles, entry_contributor_names, and
+// contributor_orcids to toID, cleans up non_double_contributors rows referencing
+// fromID, then deletes fromID from contributors (which cascades to contributor_names
+// and contributor_orcids). Returns true on success.
+// Uses bibExec so the writes participate in any active bib transaction rather than
+// opening a competing transaction that could cause SQLITE_BUSY.
 // The caller is responsible for updating in-memory maps after the call.
 func mergeContributorInDB(fromID, toID string) bool {
 	var fromOrcid, toOrcid string
 	db.QueryRow(`SELECT COALESCE(orcid, '') FROM contributors WHERE id = ?`, fromID).Scan(&fromOrcid) //nolint:errcheck
 	db.QueryRow(`SELECT COALESCE(orcid, '') FROM contributors WHERE id = ?`, toID).Scan(&toOrcid)    //nolint:errcheck
 
-	tx, err := db.Begin()
-	if err != nil {
-		dbInteraction.Warning("merge_contributors: could not begin transaction: %s", err)
-		return false
-	}
-
 	// Move contributor_names.
-	tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) ` + //nolint:errcheck
+	bibExec(`INSERT OR IGNORE INTO contributor_names (id, name) `+ //nolint:errcheck
 		`SELECT ?, name FROM contributor_names WHERE id = ?`, toID, fromID)
 
-	// Move contributor_roles: insert non-conflicting, then delete all fromID rows.
-	tx.Exec(`INSERT OR IGNORE INTO contributor_roles (entry_key, role, position, contributor_id) ` + //nolint:errcheck
-		`SELECT entry_key, role, position, ? FROM contributor_roles WHERE contributor_id = ?`, toID, fromID)
-	tx.Exec(`DELETE FROM contributor_roles WHERE contributor_id = ?`, fromID) //nolint:errcheck
+	// Re-assign contributor_roles rows from fromID to toID. The primary key is
+	// (entry_key, role, position); one position belongs to at most one contributor,
+	// so updating contributor_id in-place never causes a PK conflict.
+	bibExec(`UPDATE contributor_roles SET contributor_id = ? WHERE contributor_id = ?`, toID, fromID) //nolint:errcheck
+
+	// Re-point entry_contributor_names rows that still reference fromID. This covers
+	// both the normal migration path and the case where contributor_roles was already
+	// updated to a different contributor (e.g. by ORCID re-assignment via
+	// applyDblpAuthorORCIDs) without a matching update to entry_contributor_names,
+	// which would otherwise leave a dangling FK that blocks the DELETE below.
+	bibExec(`UPDATE entry_contributor_names SET contributor_id = ? WHERE contributor_id = ?`, toID, fromID) //nolint:errcheck
 
 	// Move contributor_orcids as non-canonical additional ORCIDs for toID.
-	tx.Exec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) ` + //nolint:errcheck
+	bibExec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) `+ //nolint:errcheck
 		`SELECT orcid, ?, 0 FROM contributor_orcids WHERE contributor_id = ?`, toID, fromID)
 
 	// If toID has no canonical ORCID but fromID does, promote it.
 	if toOrcid == "" && fromOrcid != "" {
-		tx.Exec(`UPDATE contributors SET orcid = ? WHERE id = ?`, fromOrcid, toID) //nolint:errcheck
-		tx.Exec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`, //nolint:errcheck
+		bibExec(`UPDATE contributors SET orcid = ? WHERE id = ?`, fromOrcid, toID)                                    //nolint:errcheck
+		bibExec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`,    //nolint:errcheck
 			fromOrcid, toID)
 	}
 
 	// Remove non_double_contributors rows referencing fromID (required before delete).
-	tx.Exec(`DELETE FROM non_double_contributors WHERE contributor_id_a = ? OR contributor_id_b = ?`, //nolint:errcheck
+	bibExec(`DELETE FROM non_double_contributors WHERE contributor_id_a = ? OR contributor_id_b = ?`, //nolint:errcheck
 		fromID, fromID)
 
 	// Delete fromID — cascades to contributor_names and contributor_orcids.
-	if _, execErr := tx.Exec(`DELETE FROM contributors WHERE id = ?`, fromID); execErr != nil {
-		tx.Rollback() //nolint:errcheck
-		dbInteraction.Warning("merge_contributors: could not delete contributor %s: %s", fromID, execErr)
+	if err := bibExec(`DELETE FROM contributors WHERE id = ?`, fromID); err != nil {
+		dbInteraction.Warning("merge_contributors: could not delete contributor %s: %s", fromID, err)
 		return false
 	}
-	// Re-seed toID's canonical ORCID: if fromID had the same ORCID, the earlier
-	// INSERT OR IGNORE was blocked by a PRIMARY KEY conflict; now that the CASCADE
-	// delete removed the fromID row, we can insert the correct (orcid, toID, 1) row.
+	// Re-seed toID's canonical ORCID: if fromID held the same ORCID, the earlier
+	// INSERT OR IGNORE was blocked by a PRIMARY KEY conflict on orcid; now that the
+	// CASCADE delete removed the fromID row from contributor_orcids, the seed works.
 	if toOrcid != "" {
-		tx.Exec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`, //nolint:errcheck
+		bibExec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`, //nolint:errcheck
 			toOrcid, toID)
-	}
-	if commitErr := tx.Commit(); commitErr != nil {
-		tx.Rollback() //nolint:errcheck
-		dbInteraction.Warning("merge_contributors: commit failed: %s", commitErr)
-		return false
 	}
 	upsertContributorIDOldie(fromID, toID)
 	return true
