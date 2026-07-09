@@ -72,6 +72,7 @@ const (
 	ShortenMappingsFilePath       = tablesFolderSuffix + "/shorten_mappings.csv"
 	EntryFlagsFilePath            = tablesFolderSuffix + "/entry_flags.csv"
 	URLsIgnoreFilePath            = tablesFolderSuffix + "/urls_ignore.csv"
+	IgnoreTitlesFilePath          = tablesFolderSuffix + "/ignore_titles.csv"
 	BibEntriesFilePath            = tablesFolderSuffix + "/bib_entries.csv"
 	FoldersCSVFilePath            = tablesFolderSuffix + "/folders.csv"
 	ConfigCSVFilePath             = tablesFolderSuffix + "/config.csv"

@@ -135,6 +135,9 @@ func init() {
 		// It is imported directly via ImportAllCSVExchangeFiles; no registry entry needed.
 		{"urls_ignore", URLsIgnoreFilePath,
 			ExportURLsIgnore, func() { importURLsIgnoreFromCSV(true) }, nil},
+		{"ignore_titles", IgnoreTitlesFilePath,
+			ExportIgnoreTitles, func() { importIgnoreTitlesFromCSV(true) },
+			func(l *TBibTeXLibrary) { loadIgnoreTitlesFromDb(l) }},
 		{"config", ConfigCSVFilePath,
 			ExportConfig, func() { importConfigFromCSV(true) }, nil},
 	}

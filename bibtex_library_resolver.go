@@ -16,6 +16,10 @@ package main
 
 import "strings"
 
+// inDblpUpdate is set while doUpsertDblpEntries is running so that per-name
+// differences from DBLP are auto-accepted without prompting the user.
+var inDblpUpdate bool
+
 func (l *TBibTeXLibrary) ResolveFileReferences(key, otherKey string) string {
 	regularFileReference := l.FilesFolder + key + ".pdf"
 	otherFileReference := l.FileReferencety(otherKey)
@@ -381,6 +385,14 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 		l.Progress("Auto-resolved (different ORCIDs: %s vs %s): using loser %q for entry %s pos %d",
 			winnerORCID, loserORCID, loserName, key, namePos)
 		return loserName, false, false
+	}
+
+	// During DBLP update the loser is the DBLP-authoritative name form.
+	// Accept it and record the canonical mapping so future runs skip the question.
+	if inDblpUpdate {
+		l.Progress("Auto-accepted DBLP name form %q for %s (mapping from %q)", loserName, key, winnerName)
+		l.AddNameMapping(loserName, winnerName)
+		return loserName, false, true
 	}
 
 	winnerDisplay := winnerName

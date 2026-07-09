@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.5"
+const AppVersion = "27.8"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -115,6 +115,7 @@ func loadMappingFiles() {
 	Library.CheckAddressMappings()
 	Library.ReadKeyHintsFile()
 	Library.ReadKeyNonDoublesFile()
+	Library.ReadIgnoreTitlesFile()
 	Library.ReadNameMappingsFile()
 	Library.ReadFieldMappingsFile()
 	Library.ReadEntryFieldMappingsFile()
@@ -321,6 +322,7 @@ func openLibraryToUpdate() bool {
 		}
 	}
 
+	cleanupIgnoredTitleNonDoubles(&Library)
 	Library.LoadPDFFiles()
 	Library.ReportLibrarySize()
 	if !skipStartupChecks {
@@ -2068,6 +2070,20 @@ func doUpsertDblpEntries() {
 		Library.FixDblpHierarchy()
 		total := countBibEntries()
 
+		// Load DBLP person maps once for contributor role cross-checking during
+		// entry processing. If unavailable (no dblp import yet), the check is skipped.
+		pm, pmOk := loadDblpPersonMaps()
+		keyToNames := make(map[string][]string)
+		if pmOk {
+			for name, key := range pm.nameToKey {
+				if key != "" {
+					keyToNames[key] = append(keyToNames[key], name)
+				}
+			}
+		}
+		contribPersonEntries := make(map[string]map[string]map[string]bool)
+		contribExistingKey := make(map[string]string)
+
 		// Collect bookish and non-bookish keys separately so bookish entries are
 		// processed first — proceedings/books establish venue field mappings that
 		// inpapers/incollections then inherit, preventing double-counting artifacts
@@ -2086,6 +2102,7 @@ func doUpsertDblpEntries() {
 			}
 		})
 
+		inDblpUpdate = true
 		quit := false
 		scanned := 0
 		stepN := int(cmdStep)
@@ -2095,11 +2112,17 @@ func doUpsertDblpEntries() {
 		processKey := func(key string) {
 			scanned++
 			spinner.Update(scanned, total)
-			if Library.EntryFieldValueity(key, DBLPField) != "" {
+			if dblpVal := Library.EntryFieldValueity(key, DBLPField); dblpVal != "" {
 				Library.ResetQuestionFlag()
 				doC1Checks(key)
 				Library.MaybeFixDBLPEntry(key)
 				doC3Checks(key)
+				if pmOk {
+					if normKey := normalizeDblpKey(dblpVal); normKey != "" {
+						accumulateContributorMatchesFromEntry(key, normKey, pm,
+							contribPersonEntries, contribExistingKey)
+					}
+				}
 				if stepN > 0 && Library.QuestionWasAsked() {
 					questionCounter++
 					if questionCounter >= stepN {
@@ -2145,8 +2168,16 @@ func doUpsertDblpEntries() {
 			processKey(key)
 		}
 		commitBibTransaction()
+		inDblpUpdate = false
 		spinner.Stop()
 		bibEntriesModified = true
+		if pmOk && len(contribPersonEntries) > 0 {
+			n := applyContributorMatchesFromEntries(&Library, pm, keyToNames,
+				contribPersonEntries, contribExistingKey)
+			if n > 0 {
+				Library.Progress("DBLP contributor role cross-check: %d assignment(s)/split(s).", n)
+			}
+		}
 		absorbDblpNamesCore()
 	}
 }

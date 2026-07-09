@@ -1764,9 +1764,6 @@ func absorbDblpNamesCore() {
 			keysLinked++
 		}
 	}
-	keysLinked += detectMisattributedDblpEntries(&Library, pm, keyToNames)
-	keysLinked += detectUnkeyedContributorSplits(&Library, pm, keyToNames)
-
 	Library.Progress("Linked %d DBLP person key(s), absorbed %d name alias(es), set %d ORCID(s).",
 		keysLinked, absorbed, orcidsSet)
 	Library.Progress("Re-normalising author/editor fields...")
@@ -1897,6 +1894,168 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
 	l.Progress("  DBLP split: moved %d entry/ies from %q (%s) to new contributor %q (%s).",
 		len(toNew), contrib.Name, sc.existingKey, newName, sc.newKey)
 	return true
+}
+
+// accumulateContributorMatchesFromEntry reads the DBLP JSON for dblpKey and
+// queries contributor_roles for libraryKey. For each contributor that is either
+// unkeyed or has a key not in the entry's expected author set, it tries to
+// match the contributor's name against the entry's authors by comparing against
+// the bibtex= form (stripped of disambiguation number) and the surname-swapped
+// canonical. Matches are accumulated into contribPersonEntries (contribID →
+// personKey → set of entry keys) for later batch application.
+func accumulateContributorMatchesFromEntry(
+	libraryKey, dblpKey string,
+	pm dblpPersonMaps,
+	contribPersonEntries map[string]map[string]map[string]bool,
+	contribExistingKey map[string]string,
+) {
+	je := readDblpJSONEntry(dblpKey)
+	if je == nil {
+		return
+	}
+
+	type expPerson struct{ key string }
+	var expected []expPerson
+	expKeySet := make(map[string]bool)
+	for _, p := range append(je.Authors, je.Editors...) {
+		k := ""
+		if p.ORCID != "" {
+			k = pm.orcidToKey[p.ORCID]
+		}
+		if k == "" {
+			k = pm.nameToKey[p.Name]
+		}
+		if k != "" && !expKeySet[k] {
+			expKeySet[k] = true
+			expected = append(expected, expPerson{k})
+		}
+	}
+	if len(expected) == 0 {
+		return
+	}
+
+	matchName := func(contribName string) string {
+		contribName = strings.TrimSpace(contribName)
+		for _, ep := range expected {
+			bibtex := strings.TrimSpace(pm.keyToBibtex[ep.key])
+			canonical := strings.TrimSpace(pm.keyToCanonical[ep.key])
+			if bibtex != "" {
+				if bibtex == contribName || strings.TrimSpace(simpleSurnameSwap(bibtex)) == contribName {
+					return ep.key
+				}
+			}
+			if canonical != "" {
+				if canonical == contribName || strings.TrimSpace(simpleSurnameSwap(canonical)) == contribName {
+					return ep.key
+				}
+			}
+		}
+		return ""
+	}
+
+	rows, err := db.Query(`
+		SELECT cr.contributor_id, c.name, COALESCE(c.dblp_key, '')
+		FROM contributor_roles cr
+		JOIN contributors c ON c.id = cr.contributor_id
+		WHERE cr.entry_key = ?`, libraryKey)
+	if err != nil {
+		return
+	}
+	for rows.Next() {
+		var contribID, contribName, existingKey string
+		if rows.Scan(&contribID, &contribName, &existingKey) != nil {
+			continue
+		}
+		if strings.HasPrefix(contribName, "{") {
+			continue
+		}
+
+		var matchedKey string
+		if existingKey != "" {
+			if expKeySet[existingKey] {
+				continue // correctly attributed
+			}
+			matchedKey = matchName(contribName)
+			if matchedKey == "" || matchedKey == existingKey {
+				continue
+			}
+		} else {
+			matchedKey = matchName(contribName)
+			if matchedKey == "" {
+				continue
+			}
+		}
+
+		if contribPersonEntries[contribID] == nil {
+			contribPersonEntries[contribID] = make(map[string]map[string]bool)
+			contribExistingKey[contribID] = existingKey
+		}
+		if contribPersonEntries[contribID][matchedKey] == nil {
+			contribPersonEntries[contribID][matchedKey] = make(map[string]bool)
+		}
+		contribPersonEntries[contribID][matchedKey][libraryKey] = true
+	}
+	rows.Close()
+}
+
+// applyContributorMatchesFromEntries processes the contributor-to-person matches
+// accumulated by accumulateContributorMatchesFromEntry and applies them:
+// unkeyed contributors receive the dominant person key directly; contributors
+// with a mismatching key get split via splitContributorByDblpKeys. Returns the
+// number of assignments and splits executed.
+func applyContributorMatchesFromEntries(
+	l *TBibTeXLibrary,
+	pm dblpPersonMaps,
+	keyToNames map[string][]string,
+	contribPersonEntries map[string]map[string]map[string]bool,
+	contribExistingKey map[string]string,
+) int {
+	done := 0
+	for contribID, personEntries := range contribPersonEntries {
+		existingKey := contribExistingKey[contribID]
+
+		primaryKey := ""
+		maxCount := 0
+		for k, entries := range personEntries {
+			if len(entries) > maxCount {
+				maxCount = len(entries)
+				primaryKey = k
+			}
+		}
+		if primaryKey == "" {
+			continue
+		}
+
+		splitBase := existingKey
+		if existingKey == "" {
+			setContributorDblpKey(l, contribID, primaryKey)
+			done++
+			splitBase = primaryKey
+		}
+
+		for k := range personEntries {
+			if existingKey == "" && k == primaryKey {
+				continue
+			}
+			newCanonical := pm.keyToCanonical[k]
+			newName := simpleSurnameSwap(newCanonical)
+			if newName == "" {
+				newName = newCanonical
+			}
+			sc := dblpSplitCandidate{
+				contribID:    contribID,
+				existingKey:  splitBase,
+				newKey:       k,
+				newCanonical: newCanonical,
+				newName:      newName,
+				newForms:     keyToNames[k],
+			}
+			if splitContributorByDblpKeys(l, sc) {
+				done++
+			}
+		}
+	}
+	return done
 }
 
 // detectMisattributedDblpEntries scans contributors that have a DBLP key and

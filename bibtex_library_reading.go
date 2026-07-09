@@ -182,6 +182,11 @@ func (l *TBibTeXLibrary) ReadURLsIgnoreFile() {
 	loadURLsIgnoreFromDb(l)
 }
 
+func (l *TBibTeXLibrary) ReadIgnoreTitlesFile() {
+	maybeBootstrapIgnoreTitlesTable()
+	loadIgnoreTitlesFromDb(l)
+}
+
 func (l *TBibTeXLibrary) ReadEntryFlagsFile() {
 	loadEntryFlagsFromDb(l)
 	total := 0

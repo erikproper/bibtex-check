@@ -597,6 +597,37 @@ func importURLsIgnoreFromCSV(replace bool) {
 	}
 }
 
+// ── ignore_titles ─────────────────────────────────────────────────────────────
+// CSV format: title  (one per line; human-readable title text)
+
+func ExportIgnoreTitles() {
+	ensureTablesDir()
+	path := tablesFilePath(IgnoreTitlesFilePath)
+	rows, err := db.Query(`SELECT title FROM ignore_titles ORDER BY title`)
+	if err != nil {
+		dbInteraction.Warning("Could not query ignore_titles: %s", err)
+		return
+	}
+	defer rows.Close()
+	writeCSVExport(path, rows, 1)
+}
+
+func importIgnoreTitlesFromCSV(replace bool) {
+	path := tablesFilePath(IgnoreTitlesFilePath)
+	insert := `INSERT INTO ignore_titles (title) VALUES (?) ON CONFLICT(title) DO NOTHING`
+	validate := func(f []string) bool { return len(f) >= 1 && f[0] != "" }
+	var clearFn func()
+	if replace {
+		clearFn = func() { db.Exec(`DELETE FROM ignore_titles`) } //nolint:errcheck
+	}
+	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
+		tx.Exec(insert, strings.TrimSpace(f[0])) //nolint:errcheck
+	})
+	if ok {
+		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
+	}
+}
+
 // ── shorten_mappings ─────────────────────────────────────────────────────────
 // CSV format: field;original;shortened  (global file, not per-library)
 

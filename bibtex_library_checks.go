@@ -1384,6 +1384,9 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
 	// Why not do l.MapEntryKey(key) always as part of l.EntryFieldValueity ???
 	title := l.EntryFieldValueity(l.MapEntryKey(key), TitleField)
 	if title != "" {
+		if l.IgnoredTitleIndexes.Contains(TeXStringIndexer(title)) {
+			return
+		}
 		// Should be via a function!
 		Keys := l.TitleIndex[TeXStringIndexer(title)]
 		if Keys.Size() > 1 {

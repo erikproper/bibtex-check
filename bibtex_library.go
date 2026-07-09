@@ -95,6 +95,7 @@ type (
 		capturedDBLPEntry                 *TBibTeXEntry
 		capturedHarvestEntries            *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB
 		URLsIgnore                        TStringSet
+		IgnoredTitleIndexes               TStringSet // indexed forms of titles to skip in double-title detection
 		ignoreIllegalFields               bool
 		PreMergeCheck                     func(source, target string) // called before proposing a merge; may associate DBLP keys
 
@@ -158,6 +159,7 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.newKeyHints = TStringMap{}
 	l.Metadata = TEntryMetadata{}
 	l.URLsIgnore = TStringSetNew()
+	l.IgnoredTitleIndexes = TStringSetNew()
 	l.DblpParent = newDblpParentTable()
 	l.DblpWaived = newDblpWaivedTable()
 	l.EntryFlags = map[string]TStringSet{}

@@ -513,6 +513,7 @@ func connectToDatabase() {
 	ensureFieldMappingsTableExists()
 	maybeMigrateToFieldMappings()
 	ensureURLsIgnoreTableExists()
+	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
 	ensureLosingFieldValuesTableExists()
 	ensureEntryWarningsTableExists()
@@ -728,6 +729,7 @@ func reopenDb(path string) {
 	ensureGenericFieldMappingsTableExists()
 	ensureFieldMappingsTableExists()
 	ensureURLsIgnoreTableExists()
+	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
 	ensureLosingFieldValuesTableExists()
 	ensureConfigTableExists()
@@ -1803,7 +1805,8 @@ func addNonDoubleContributorPair(idA, idB string) {
 	if idA > idB {
 		idA, idB = idB, idA
 	}
-	bibExec(`INSERT OR IGNORE INTO non_double_contributors (contributor_id_a, contributor_id_b) VALUES (?, ?)`, //nolint:errcheck
+	dbExecSave("non_double_contributors insert",
+		`INSERT OR IGNORE INTO non_double_contributors (contributor_id_a, contributor_id_b) VALUES (?, ?)`,
 		idA, idB)
 }
 
@@ -2064,7 +2067,8 @@ func setContributorDblpKey(l *TBibTeXLibrary, id, dblpKey string) {
 	if dblpKey != "" {
 		l.DblpKeyToContributorID[dblpKey] = id
 	}
-	bibExec(`UPDATE contributors SET dblp_key = ? WHERE id = ?`, dblpKey, id) //nolint:errcheck
+	dbExecSave("contributors dblp_key update",
+		`UPDATE contributors SET dblp_key = ? WHERE id = ?`, dblpKey, id)
 }
 
 func upsertContributorToDB(id, name, orcid string) {
@@ -2752,7 +2756,7 @@ func retroactivelyBackfillDisambiguation(l *TBibTeXLibrary, name string) {
 		}
 		rows.Close()
 		for _, r := range roles {
-			bibExec( //nolint:errcheck
+			dbExecSave("entry_contributor_names insert",
 				`INSERT OR IGNORE INTO entry_contributor_names
 				 (entry_key, role, position, contributor_id, name_used) VALUES (?, ?, ?, ?, ?)`,
 				r.key, r.role, r.pos, cID, name)
@@ -3305,7 +3309,7 @@ func upsertDblpCanonical(dblpKey, canonicalKey string) {
 	if dblpKey == "" {
 		return
 	}
-	bibExec( //nolint:errcheck
+	dbExecSave("dblp_canonical upsert",
 		`INSERT INTO dblp_canonical (dblp_key, canonical_key) VALUES (?, ?)
 		 ON CONFLICT(dblp_key) DO UPDATE SET canonical_key = excluded.canonical_key`,
 		dblpKey, canonicalKey)
@@ -3316,13 +3320,15 @@ func deleteDblpCanonicalByDblpKey(dblpKey string) {
 	if dblpKey == "" {
 		return
 	}
-	bibExec(`DELETE FROM dblp_canonical WHERE dblp_key = ?`, dblpKey) //nolint:errcheck
+	dbExecSave("dblp_canonical delete by dblp_key",
+		`DELETE FROM dblp_canonical WHERE dblp_key = ?`, dblpKey)
 }
 
 // deleteDblpCanonicalByCanonicalKey removes all rows for canonicalKey from dblp_canonical.
 // Used when an entry's dblp field is cleared (value = "").
 func deleteDblpCanonicalByCanonicalKey(canonicalKey string) {
-	bibExec(`DELETE FROM dblp_canonical WHERE canonical_key = ?`, canonicalKey) //nolint:errcheck
+	dbExecSave("dblp_canonical delete by canonical_key",
+		`DELETE FROM dblp_canonical WHERE canonical_key = ?`, canonicalKey)
 }
 
 // LookupDblpCanonical returns the canonical library key for a DBLP key by querying
@@ -3746,6 +3752,83 @@ func loadURLsIgnoreFromDb(l *TBibTeXLibrary) {
 			continue
 		}
 		l.URLsIgnore.Add(url)
+	}
+}
+
+// --- ignore_titles table ---
+
+func ensureIgnoreTitlesTableExists() {
+	tryCreateTableIfNeeded(`
+		CREATE TABLE IF NOT EXISTS ignore_titles (
+		  title TEXT PRIMARY KEY
+		);`)
+}
+
+// maybeBootstrapIgnoreTitlesTable inserts the built-in seed titles when the
+// table is empty. Runs once on first use; does nothing when rows already exist.
+func maybeBootstrapIgnoreTitlesTable() {
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM ignore_titles`).Scan(&count) //nolint:errcheck
+	if count > 0 {
+		return
+	}
+	for _, t := range []string{"Preface", "Introduction", "Conclusion"} {
+		dbExecSave("ignore_titles bootstrap",
+			`INSERT OR IGNORE INTO ignore_titles (title) VALUES (?)`, t)
+	}
+}
+
+func loadIgnoreTitlesFromDb(l *TBibTeXLibrary) {
+	l.IgnoredTitleIndexes = TStringSetNew()
+	rows, err := db.Query(`SELECT title FROM ignore_titles`)
+	if err != nil {
+		dbInteraction.Warning("Could not query ignore_titles: %s", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var title string
+		if err := rows.Scan(&title); err != nil {
+			dbInteraction.Warning("Could not scan ignore_titles row: %s", err)
+			continue
+		}
+		l.IgnoredTitleIndexes.Add(TeXStringIndexer(title))
+	}
+}
+
+// cleanupIgnoredTitleNonDoubles removes pairs from non_double_entries where
+// both entries have titles in l.IgnoredTitleIndexes. Called after the entry
+// cache is fully loaded so title lookups are available.
+func cleanupIgnoredTitleNonDoubles(l *TBibTeXLibrary) {
+	if l.IgnoredTitleIndexes.Size() == 0 {
+		return
+	}
+	rows, err := db.Query(`SELECT key1, key2 FROM non_double_entries`)
+	if err != nil {
+		return
+	}
+	type pair struct{ k1, k2 string }
+	var toDrop []pair
+	for rows.Next() {
+		var k1, k2 string
+		if rows.Scan(&k1, &k2) != nil {
+			continue
+		}
+		t1 := TeXStringIndexer(l.EntryFieldValueity(l.MapEntryKey(k1), TitleField))
+		t2 := TeXStringIndexer(l.EntryFieldValueity(l.MapEntryKey(k2), TitleField))
+		if t1 != "" && t2 != "" &&
+			l.IgnoredTitleIndexes.Contains(t1) &&
+			l.IgnoredTitleIndexes.Contains(t2) {
+			toDrop = append(toDrop, pair{k1, k2})
+		}
+	}
+	rows.Close()
+	for _, p := range toDrop {
+		db.Exec(`DELETE FROM non_double_entries WHERE key1 = ? AND key2 = ?`, p.k1, p.k2) //nolint:errcheck
+		db.Exec(`DELETE FROM non_double_entries WHERE key1 = ? AND key2 = ?`, p.k2, p.k1) //nolint:errcheck
+		l.NonDoubleEntries.DeleteValueFromStringSetMap(p.k1, p.k2)
+		l.NonDoubleEntries.DeleteValueFromStringSetMap(p.k2, p.k1)
+		l.Progress("Retired non-double pair (%s, %s): both have ignored titles", p.k1, p.k2)
 	}
 }
 
