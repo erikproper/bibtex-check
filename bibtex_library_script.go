@@ -425,6 +425,14 @@ func (p *scriptParser) parseEntryCond() scriptCond {
 			p.lx.next()
 			p.eat("member")
 			p.eat("of")
+			if p.is("the") {
+				// the entry is not a member of the group "<name>"
+				p.lx.next()
+				p.eat("group")
+				name, _ := p.eatString()
+				return &sCondInGroup{group: name, negated: true}
+			}
+			// the entry is not a member of a group in the group set "<name>"
 			p.eat("a")
 			p.eat("group")
 			p.eat("in")
@@ -449,6 +457,14 @@ func (p *scriptParser) parseEntryCond() scriptCond {
 		p.lx.next()
 		p.eat("member")
 		p.eat("of")
+		if p.is("the") {
+			// the entry is a member of the group "<name>"
+			p.lx.next()
+			p.eat("group")
+			name, _ := p.eatString()
+			return &sCondInGroup{group: name, negated: false}
+		}
+		// the entry is a member of a group in the group set "<name>"
 		p.eat("a")
 		p.eat("group")
 		p.eat("in")
