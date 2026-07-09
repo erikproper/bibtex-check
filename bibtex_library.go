@@ -96,6 +96,8 @@ type (
 		capturedHarvestEntries            *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB
 		URLsIgnore                        TStringSet
 		IgnoredTitleIndexes               TStringSet // indexed forms of titles to skip in double-title detection
+		ambiguousAssignmentCount          map[string]int    // name → number of fallback assignments this run
+		ambiguousAssignmentPick           map[string]string // name → contributor ID that was picked
 		ignoreIllegalFields               bool
 		PreMergeCheck                     func(source, target string) // called before proposing a merge; may associate DBLP keys
 
@@ -160,6 +162,8 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.Metadata = TEntryMetadata{}
 	l.URLsIgnore = TStringSetNew()
 	l.IgnoredTitleIndexes = TStringSetNew()
+	l.ambiguousAssignmentCount = map[string]int{}
+	l.ambiguousAssignmentPick = map[string]string{}
 	l.DblpParent = newDblpParentTable()
 	l.DblpWaived = newDblpWaivedTable()
 	l.EntryFlags = map[string]TStringSet{}
@@ -758,7 +762,19 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			regularFields := TStringSet{}
 			regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
 			for regularField := range regularFields.Elements() {
-				merged := l.MaybeResolveFieldValue(target, source, regularField, sourceEntry.FieldValue(regularField), targetEntry.FieldValue(regularField))
+				sourceVal := sourceEntry.FieldValue(regularField)
+				targetVal := targetEntry.FieldValue(regularField)
+				var merged string
+				if targetVal == "" && sourceVal != "" {
+					// Explicit merge: adopt source value for fields the target lacks.
+					// MaybeResolveFieldValue would hit stale loser-records (made in earlier
+					// contexts, e.g. DBLP challenges or prior interactive resolution) and
+					// silently drop the value. In an explicit bib.merge the user has decided
+					// these entries represent the same work, so missing fields are filled.
+					merged = l.MapFieldValue(regularField, l.NormaliseFieldValue(regularField, sourceVal))
+				} else {
+					merged = l.MaybeResolveFieldValue(target, source, regularField, sourceVal, targetVal)
+				}
 				l.setEntryField(targetEntry, regularField, merged)
 			}
 

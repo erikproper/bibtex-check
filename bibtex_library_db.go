@@ -52,6 +52,7 @@ var (
 	dbWriteSessionActive        bool
 	dbWriteFailed               bool  // set when any end-of-run DB write fails; blocks finaliseWorkingDatabase
 	changesAtSessionOpen        int64 // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
+	homeDbSizeAtOpen            int64 // size of the home DB as stat'd in prepareWorkingDatabase; safeguards against overwriting home with a shrunken working copy
 	fieldMappingsLoading        bool  // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
 	entryFieldMappingsLoading   bool  // suppresses DB write-through in AddEntryFieldAlias during initial load
 	contributorsLoading         bool  // suppresses DB write-through while loading contributors table
@@ -1103,6 +1104,7 @@ func prepareWorkingDatabase() bool {
 	// sqlite3 edits to the home DB — SQLite DELETE does not shrink the file, so a
 	// size-only check would silently reuse a stale working copy).
 	if wErr == nil && writeSessionIsClean() && wInfo.Size() == hInfo.Size() && !hInfo.ModTime().After(wInfo.ModTime()) {
+		homeDbSizeAtOpen = hInfo.Size()
 		markWriteSessionOpen()
 		db.QueryRow(`SELECT total_changes()`).Scan(&changesAtSessionOpen)
 		dbWriteSessionActive = true
@@ -1176,6 +1178,7 @@ func prepareWorkingDatabase() bool {
 		}
 	}
 
+	homeDbSizeAtOpen = hInfo.Size()
 	if keyPrefix == "" {
 		loadBibTeXSettings()
 	}
@@ -1204,8 +1207,12 @@ func flushWorkingDbToHome() {
 	if reopenTx {
 		commitBibTransaction()
 	}
-	db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
-	if err := copyFile(dbPath(), dbHomePath()); err != nil {
+	db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)                       //nolint:errcheck
+	working := dbPath()
+	wFlush, wFlushErr := os.Stat(working)
+	if homeDbSizeAtOpen > 10*1024*1024 && wFlushErr == nil && wFlush.Size() < homeDbSizeAtOpen/10 {
+		dbInteraction.Warning("Working database (%d bytes) is implausibly smaller than home was at session open (%d bytes) — skipping mid-session flush to prevent data loss.", wFlush.Size(), homeDbSizeAtOpen)
+	} else if err := copyFileAtomic(working, dbHomePath()); err != nil {
 		dbInteraction.Warning("Could not flush working database to home: %s", err)
 	}
 	if reopenTx {
@@ -1279,6 +1286,10 @@ func finaliseWorkingDatabase() {
 
 	dbInteraction.Progress(ProgressSavingDatabaseToHome)
 	wInfo, wErr := os.Stat(working)
+	if homeDbSizeAtOpen > 10*1024*1024 && wErr == nil && wInfo.Size() < homeDbSizeAtOpen/10 {
+		dbInteraction.Warning("Working database (%d bytes) is implausibly smaller than home was at session open (%d bytes) — refusing to overwrite home to prevent data loss; working copy left at %s for inspection.", wInfo.Size(), homeDbSizeAtOpen, working)
+		return
+	}
 	if err := copyFileAtomic(working, home); err != nil {
 		dbInteraction.Warning("Could not save working database to home: %s", err)
 		return
@@ -1497,6 +1508,45 @@ func doRestoreFromDump() {
 		os.Remove(newPath)
 	}
 	fmt.Fprintf(os.Stderr, "Restore complete: %s\n", homePath)
+}
+
+// doRestoreFromBackup copies a named backup file back to the home database path.
+// backupName is the timestamp portion of the backup filename (e.g. "ErikProper_20260709_123456");
+// the full path is resolved as backupFolder/backupName.sqlite3.
+// Clears both home and working sidecar files before restoring.
+func doRestoreFromBackup(backupName string) {
+	bkDir := backupFolder
+	if bkDir == "" {
+		bkDir = bibTeXFolder + bibTeXBaseName + ".backups/"
+	}
+	backupPath := bkDir + backupName + cacheFileExtension
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Backup not found: %s\n", backupPath)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "Restoring from %s (%.0f MB)...\n", backupPath, float64(info.Size())/1e6)
+
+	homePath := dbHomePath()
+
+	// Remove stale sidecar files at home before overwriting.
+	os.Remove(homePath + "-wal")
+	os.Remove(homePath + "-shm")
+
+	// Also wipe the working DB so the next run starts with a fresh copy from home.
+	if workPath := dbPath(); workPath != homePath {
+		os.Remove(workPath)
+		os.Remove(workPath + "-wal")
+		os.Remove(workPath + "-shm")
+		fmt.Fprintf(os.Stderr, "Cleared working database at %s\n", workPath)
+	}
+
+	if err := copyFileAtomic(backupPath, homePath); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not restore %s → %s: %s\n", backupPath, homePath, err)
+		os.Exit(1)
+	}
+	restored, _ := os.Stat(homePath)
+	fmt.Fprintf(os.Stderr, "Restore complete: %s (%d bytes)\n", homePath, restored.Size())
 }
 
 // --- table_modification_times table ---
@@ -2060,6 +2110,19 @@ func entryExistsWithDOI(doi string) bool {
 	return count > 0
 }
 
+// doiHasLoserRecord reports whether the given DOI appears in losing_field_values
+// for any entry's doi field. This catches the case where a DOI stub was merged
+// into a library entry but the DOI was not transferred to the surviving entry
+// (possible for merges performed before v27.14); the persisted loser record is
+// sufficient evidence that the DOI is already known to the system, so the watch
+// need not create another stub.
+func doiHasLoserRecord(doi string) bool {
+	doi = strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(doi, "https://doi.org/"), "http://doi.org/"))
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field = 'doi' AND lower(value) = ?`, doi).Scan(&count) //nolint:errcheck
+	return count > 0
+}
+
 func setContributorDblpKey(l *TBibTeXLibrary, id, dblpKey string) {
 	if c := l.ContributorByID[id]; c != nil {
 		c.DblpKey = dblpKey
@@ -2137,24 +2200,22 @@ func upsertNameMapping(alias, name string) {
 	// If alias already maps to a contributor different from id, decide how to proceed.
 	if aliasID, mapped := Library.NameToContributorID[alias]; mapped && aliasID != id {
 		if aliasContrib, isContrib := Library.ContributorByID[aliasID]; isContrib && aliasContrib.Name == alias {
-			// alias is the canonical name of aliasID → absorb aliasID into id.
-			nameRows, qErr := db.Query(`SELECT name FROM contributor_names WHERE id = ?`, aliasID)
-			if qErr == nil {
-				var toMove []string
-				for nameRows.Next() {
-					var n string
-					nameRows.Scan(&n) //nolint:errcheck
-					toMove = append(toMove, n)
+			// alias is the canonical name of aliasID → absorb aliasID into id using
+			// the full merge routine so that contributor_roles FK constraints are
+			// satisfied and no silent failures occur.
+			if mergeContributorInDB(aliasID, id) {
+				for n, nid := range Library.NameToContributorID {
+					if nid == aliasID {
+						Library.NameToContributorID[n] = id
+					}
 				}
-				nameRows.Close()
-				for _, n := range toMove {
-					upsertContributorNameToDB(id, n)
-					Library.NameToContributorID[n] = id
+				for orcid, nid := range Library.ORCIDToContributorID {
+					if nid == aliasID {
+						Library.ORCIDToContributorID[orcid] = id
+					}
 				}
+				delete(Library.ContributorByID, aliasID)
 			}
-			db.Exec(`DELETE FROM contributors WHERE id = ?`, aliasID) //nolint:errcheck
-			upsertContributorIDOldie(aliasID, id)
-			delete(Library.ContributorByID, aliasID)
 		} else {
 			// alias is a non-canonical of aliasID → this name is now globally ambiguous.
 			upsertContributorNameToDB(id, alias)
@@ -2867,9 +2928,30 @@ func resolveContributorForPosition(l *TBibTeXLibrary, key, role string, position
 	if id := coauthorInference(candidates, resolvedSoFar); id != "" {
 		return id, true
 	}
-	l.Warning("Ambiguous contributor %q at (%s %s pos %d): using %s",
-		name, key, role, position, candidates[0])
+	l.ambiguousAssignmentCount[name]++
+	if _, seen := l.ambiguousAssignmentPick[name]; !seen {
+		l.ambiguousAssignmentPick[name] = candidates[0]
+	}
 	return candidates[0], true
+}
+
+// FlushAmbiguousAssignments reports any accumulated fallback contributor assignments as
+// a single grouped WARNING and resets the accumulation maps for the next run.
+func (l *TBibTeXLibrary) FlushAmbiguousAssignments() {
+	if len(l.ambiguousAssignmentCount) == 0 {
+		return
+	}
+	names := make([]string, 0, len(l.ambiguousAssignmentCount))
+	for name := range l.ambiguousAssignmentCount {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	l.Warning("Ambiguous contributor assignments (%d unique name(s)):", len(names))
+	for _, name := range names {
+		l.Warning("  %q: %d occurrence(s), using %s", name, l.ambiguousAssignmentCount[name], l.ambiguousAssignmentPick[name])
+	}
+	l.ambiguousAssignmentCount = map[string]int{}
+	l.ambiguousAssignmentPick = map[string]string{}
 }
 
 // --- key_hints table ---
@@ -3004,12 +3086,20 @@ func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
 	isValidNonDoubleKey := func(k string) bool {
 		return k == l.MapEntryKey(k) && (l.EntryExists(k) || strings.HasPrefix(k, "DBLP:"))
 	}
+	hasIgnoredTitle := func(k string) bool {
+		t := TeXStringIndexer(l.EntryFieldValueity(l.MapEntryKey(k), TitleField))
+		return t != "" && l.IgnoredTitleIndexes.Contains(t)
+	}
 	for key, set := range l.NonDoubleEntries {
 		if !isValidNonDoubleKey(key) {
 			continue
 		}
+		keyIgnored := hasIgnoredTitle(key)
 		for nonDouble := range set.Elements() {
 			if nonDouble == key || !isValidNonDoubleKey(nonDouble) {
+				continue
+			}
+			if keyIgnored && hasIgnoredTitle(nonDouble) {
 				continue
 			}
 			dbExecSave("non_double_entries insert failed", insert, key, nonDouble)
@@ -3519,7 +3609,7 @@ func loadAuthorEditorFieldMappingsFromCache(l *TBibTeXLibrary) {
 		if winner == "" {
 			continue
 		}
-		normWinner := l.MapFieldValue(field, winner)
+		normWinner := l.MapFieldValue(field, l.NormaliseFieldValue(field, winner))
 		normLoser := l.MapFieldValue(field, loser)
 		// If the loser is already registered with a stale winner (e.g. from a
 		// loadEntryFieldMappingsFromDb pass that ran before migration deleted the

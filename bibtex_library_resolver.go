@@ -204,20 +204,30 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	// per-name breakdown: the comparison model already identified which positions
 	// differ, so presenting the full-string y/n/b question is redundant.
 	if contributorRolesActive && (field == "author" || field == "editor") {
+		// If the challenge is a recorded loser for this entry+field, honour the prior
+		// decision without re-asking. The strict EntryFieldAliasHasTarget check above
+		// can miss this when the stored winner drifted due to name normalisation across
+		// runs; checking the map key alone is sufficient.
+		if !forceInteractive {
+			if fieldMap, hasField := l.EntryFieldSourceToTarget[key][field]; hasField {
+				if _, isLoser := fieldMap[challenge]; isLoser {
+					return current
+				}
+			}
+		}
 		result, quit := l.resolveAuthorBreakdown(key, field, challenge, current)
 		if quit {
 			gracefulQuit()
-		}
-		if result == "" && !subsetMergeActive {
-			// Different name counts — cannot break down; keep current.
-			result = current
 		}
 		if result != "" {
 			l.UpdateEntryFieldAlias(key, field, challenge, result)
 			l.setLineage(key, field, challengeSource, result != challenge)
 			return result
 		}
-		// subsetMergeActive with different name counts: fall through to y/n challenge.
+		// result == "": name counts differ and breakdown is impossible.
+		// Fall through to the full-field y/n challenge so the user can explicitly
+		// accept or reject the differently-sized challenger rather than silently
+		// keeping current.
 	}
 
 	var currentAuthorNames, challengeAuthorNames []string
@@ -459,7 +469,7 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 	othersExpansion := currentEndsWithOthers && !challengeEndsWithOthers && nChallenge >= nCurrent
 
 	if nChallenge != nCurrent && !othersExpansion {
-		l.Warning("Cannot break down %s %s by name: challenger has %d name(s), current has %d — keeping current.",
+		l.Warning("Cannot break down %s %s by name: challenger has %d name(s), current has %d — presenting full-field challenge.",
 			key, field, nChallenge, nCurrent)
 		return "", false
 	}

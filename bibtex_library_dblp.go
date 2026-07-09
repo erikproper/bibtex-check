@@ -369,6 +369,14 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 
 	l.CheckAndEnforcePreferredAlias(l.buildEntry(key))
 
+	// Check for an existing library entry with the same title. This catches the
+	// case where the same publication was added before without a DBLP key, so
+	// LookupDBLPKey above could not short-circuit. Re-resolve key after the check
+	// because a merge would make key an alias of the surviving entry; the children
+	// loop must use the resolved key to crossref to the correct parent.
+	l.CheckNeedToMergeForEqualTitles(key)
+	key = l.MapEntryKey(key)
+
 	// For bookish entries (proceedings/book) add all children from the DBLP file store,
 	// unless the entry carries the no_dblp_children flag.
 	// Alias registration above must complete first so that LookupDBLPKey on this parent

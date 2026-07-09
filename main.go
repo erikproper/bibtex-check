@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.8"
+const AppVersion = "27.18"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1418,11 +1418,15 @@ func reportHomework() {
 	authorEditorPairs := 0
 	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&authorEditorPairs)
 
-	// Ambiguous contributor names: names that resolve to more than one contributor.
-	// Each is disambiguation homework — entries using that name can't be auto-resolved.
+	// Ambiguous contributor names: name strings currently used in entry_contributor_names
+	// that map to more than one contributor ID. Names that are only recorded in the
+	// contributor_names history but not in any active assignment are not counted.
 	ambiguousNames := 0
-	bibQueryRow(`SELECT COUNT(DISTINCT name) FROM contributor_names
-	    WHERE name IN (SELECT name FROM contributor_names GROUP BY name HAVING COUNT(DISTINCT id) > 1)`).Scan(&ambiguousNames)
+	bibQueryRow(`SELECT COUNT(DISTINCT ecn.name_used)
+	    FROM entry_contributor_names ecn
+	    WHERE ecn.name_used IN (
+	        SELECT name FROM contributor_names GROUP BY name HAVING COUNT(DISTINCT id) > 1
+	    )`).Scan(&ambiguousNames)
 
 	// Count contributors with an ORCID that have never been enriched (no seen record).
 	// Only available when the contributor_orcid_seen table exists (dev tree).
@@ -2179,6 +2183,7 @@ func doUpsertDblpEntries() {
 			}
 		}
 		absorbDblpNamesCore()
+		Library.FlushAmbiguousAssignments()
 	}
 }
 
@@ -2459,7 +2464,7 @@ func runWatchORCID(w TWatchEntry, label string, stepN int, questionCounter *int,
 					continue
 				}
 				seenDOI[doi] = true
-				if entryExistsWithDOI(doi) {
+				if entryExistsWithDOI(doi) || doiHasLoserRecord(doi) {
 					continue
 				}
 				bibtex := fetchDoiBibTeX(doi)
@@ -2472,7 +2477,7 @@ func runWatchORCID(w TWatchEntry, label string, stepN int, questionCounter *int,
 				}
 				// The canonical DOI in the fetched BibTeX may differ from the ORCID-reported
 				// DOI (doi aliasing / CrossRef redirects). Check both to avoid re-adding.
-				if resolvedDOI := entry.Fields["doi"]; resolvedDOI != "" && resolvedDOI != doi && entryExistsWithDOI(resolvedDOI) {
+				if resolvedDOI := entry.Fields["doi"]; resolvedDOI != "" && resolvedDOI != doi && (entryExistsWithDOI(resolvedDOI) || doiHasLoserRecord(resolvedDOI)) {
 					continue
 				}
 				Library.ResetQuestionFlag()
@@ -2927,6 +2932,9 @@ func doEnrichOrcidProfilesCore() {
 		spinner.Update(fetched, needsFetch)
 		person := getORCIDPerson(p.orcid)
 		if person == nil {
+			// Profile unavailable (private or not found): record as seen so the
+			// homework counter and fast-path don't keep flagging this contributor.
+			upsertORCIDSeen(p.id, p.orcid, orcidSeenRecord{canonical: contrib.Name})
 			continue
 		}
 
@@ -3416,6 +3424,7 @@ func main() {
 		restoreKeyHintsPath     string
 		cmdDeleteGarbage            bool
 		cmdRestoreFromDump          bool
+		cmdRestoreBackupName        string // -restore <name>: restore named backup to home DB
 		cmdApplyScript              bool
 		// Unified table export/import (v23.0).
 		// Bare flag (-export) means "all"; with value (-export t1,t2) means those tables.
@@ -3487,6 +3496,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	flag.StringVar(&restoreKeyHintsPath, "hints_csv", "", "path to the backup key_hints.csv for -restore_key_hints")
 	flag.BoolVar(&cmdDeleteGarbage, "delete_garbage", false, "delete DBLP trash folder contents and exit")
 	flag.BoolVar(&cmdRestoreFromDump, "restore_from_dump", false, "restore home database from $base.dump (use after corruption to rebuild from SQL dump)")
+	flag.StringVar(&cmdRestoreBackupName, "restore", "", "restore home database from a named backup (e.g. -restore ErikProper_20260709_123456)")
 	flag.BoolVar(&cmdNoGarbageCleaning, "no_garbage_cleaning", false, "skip background cleanup of the DBLP trash folder")
 	flag.BoolVar(&cmdApplyScript, "do_entry_actions", false, "evaluate group assignment rules from <base>.scripts/entry_actions")
 	// Unified table export / import (v23.0)
@@ -3642,6 +3652,11 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 
 	if cmdRestoreFromDump {
 		doRestoreFromDump()
+		os.Exit(0)
+	}
+
+	if cmdRestoreBackupName != "" {
+		doRestoreFromBackup(cmdRestoreBackupName)
 		os.Exit(0)
 	}
 

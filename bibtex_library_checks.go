@@ -1372,6 +1372,13 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 
 				l.SetEntryFieldValue(key, "crossref", crossrefKey)
 
+				// Check for an existing library entry with the same title so the
+				// split-off parent does not silently duplicate a known publication.
+				// Re-resolve after a potential merge: the surviving entry becomes
+				// the effective crossref target even if key still stores the temp key.
+				l.CheckNeedToMergeForEqualTitles(crossrefKey)
+				crossrefKey = l.MapEntryKey(crossrefKey)
+
 				return crossrefKey
 			}
 		}
