@@ -2441,6 +2441,23 @@ func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
 	}
 
 	l.Progress("Cleaning up %d orphaned contributor(s) with no roles (see orphaned_contributors.log) ...", len(orphanIDs))
+	// Fix stale entry_contributor_names rows that reference orphaned contributors
+	// before the DELETE: contributor_id in entry_contributor_names has no ON DELETE
+	// CASCADE, so the bulk delete fails with an FK constraint if any such rows remain.
+	// Update them to the contributor currently in contributor_roles for that position.
+	db.Exec( //nolint:errcheck
+		`UPDATE entry_contributor_names
+		 SET contributor_id = (
+		     SELECT cr.contributor_id FROM contributor_roles cr
+		     WHERE cr.entry_key  = entry_contributor_names.entry_key
+		       AND cr.role       = entry_contributor_names.role
+		       AND cr.position   = entry_contributor_names.position
+		 )
+		 WHERE contributor_id IN (
+		     SELECT id FROM contributors
+		     WHERE id NOT IN (SELECT DISTINCT contributor_id FROM contributor_roles)
+		       AND name != 'others'
+		 )`)
 	// Single bulk DELETE instead of per-row deletes — avoids N separate auto-commits.
 	if _, err := db.Exec(`
 		DELETE FROM contributors

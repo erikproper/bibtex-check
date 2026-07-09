@@ -1874,6 +1874,10 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
 			`UPDATE entry_contributor_names SET contributor_id = ? WHERE entry_key = ? AND contributor_id = ?`,
 			newID, entryKey, sc.contribID)
 	}
+	// Remove newName from the old contributor's names. After the split newName is a
+	// canonical contributor in its own right; leaving it as an alias of the old
+	// contributor creates NameAliasToName cycles on subsequent runs.
+	tx.Exec(`DELETE FROM contributor_names WHERE id = ? AND name = ?`, sc.contribID, newName) //nolint:errcheck
 	if err := tx.Commit(); err != nil {
 		l.Warning("splitContributorByDblpKeys: commit: %s", err)
 		return false
@@ -1882,6 +1886,11 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
 		l.ContributorByID[newID] = &TContributor{Name: newName, DblpKey: sc.newKey}
 		l.NameToContributorID[newName] = newID
 		l.DblpKeyToContributorID[sc.newKey] = newID
+	}
+	// Mirror the DB cleanup in-memory: drop any alias edge that pointed newName → old.
+	if l.NameAliasToName[newName] == contrib.Name {
+		delete(l.NameAliasToName, newName)
+		l.NameToAliases.DeleteValueFromStringSetMap(contrib.Name, newName)
 	}
 
 	// Register DBLP name forms for the new contributor as aliases.

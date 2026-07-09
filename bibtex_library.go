@@ -567,6 +567,13 @@ func (l *TBibTeXLibrary) maybeAddFoundAlias(canonical, alias string) bool {
 		}
 		return false
 	}
+	// Don't alias a name that is already a canonical contributor — that would
+	// redirect its lookups to another contributor and create alias cycles.
+	if id, ok := l.NameToContributorID[alias]; ok {
+		if c, isC := l.ContributorByID[id]; isC && c.Name == alias {
+			return false
+		}
+	}
 	l.NameAliasToName[alias] = canonical
 	l.NameToAliases.AddValueToStringSetMap(canonical, alias)
 	// Derived aliases are not persisted — only in-memory.
@@ -678,14 +685,13 @@ func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
 	for _, r := range removals {
 		l.NameToAliases.DeleteValueFromStringSetMap(r.to, r.from)
 		delete(l.NameAliasToName, r.from)
-		// Only delete from the DB when r.from is a non-canonical alias. If r.from IS a
-		// contributor's canonical name, deleteNameMapping would remove the canonical from
-		// contributor_names and corrupt that contributor. The spurious reverse edge exists
-		// only because loading saw r.from as a non-canonical name for another contributor;
-		// that entry is cleaned up by subsequent merges and re-loads.
 		if id, ok := l.NameToContributorID[r.from]; ok {
 			if c, isC := l.ContributorByID[id]; isC && c.Name == r.from {
-				// r.from is a canonical name — skip the DB delete.
+				// r.from is a canonical contributor. The alias edge was created by
+				// FindAliases (in-memory) or by a stale contributor_names entry where
+				// another contributor incorrectly claims r.from as an alias. Remove
+				// the stale DB rows so the cycle is not recreated on the next run.
+				db.Exec(`DELETE FROM contributor_names WHERE name = ? AND id != ?`, r.from, id) //nolint:errcheck
 			} else {
 				deleteNameMapping(r.from)
 			}
