@@ -2800,7 +2800,7 @@ func retroactivelyBackfillDisambiguation(l *TBibTeXLibrary, name string) {
 		return
 	}
 	for _, cID := range candidates {
-		rows, err := db.Query(
+		rows, err := bibQuery(
 			`SELECT entry_key, role, position FROM contributor_roles WHERE contributor_id = ?`, cID)
 		if err != nil {
 			continue
