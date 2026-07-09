@@ -103,6 +103,8 @@ func init() {
 		{"losing_field_values", LosingFieldValuesFilePath,
 			ExportLosingFieldValues, func() { importLosingFieldValuesFromCSV(true) },
 			func(l *TBibTeXLibrary) { cascadeRenormaliseAllFields(l) }},
+		{"entry_doi_aliases", EntryDoiAliasesFilePath,
+			ExportEntryDoiAliases, func() { importEntryDoiAliasesFromCSV(true) }, nil},
 
 		// Core entry data — comprehensive renormalisation using all maps above.
 		{"bib_entries", BibEntriesFilePath,

@@ -416,6 +416,37 @@ func importLosingFieldValuesFromCSV(replace bool) {
 	}
 }
 
+// ── entry_doi_aliases ────────────────────────────────────────────────────────
+
+func ExportEntryDoiAliases() {
+	ensureTablesDir()
+	path := tablesFilePath(EntryDoiAliasesFilePath)
+	rows, err := db.Query(`SELECT doi, entry_key FROM entry_doi_aliases ORDER BY doi`)
+	if err != nil {
+		dbInteraction.Warning("Could not query entry_doi_aliases: %s", err)
+		return
+	}
+	defer rows.Close()
+	writeCSVExport(path, rows, 2)
+}
+
+func importEntryDoiAliasesFromCSV(replace bool) {
+	path := tablesFilePath(EntryDoiAliasesFilePath)
+	upsert := `INSERT INTO entry_doi_aliases (doi, entry_key) VALUES (?, ?)
+	             ON CONFLICT(doi) DO UPDATE SET entry_key = excluded.entry_key`
+	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
+	var clearFn func()
+	if replace {
+		clearFn = func() { db.Exec(`DELETE FROM entry_doi_aliases`) } //nolint:errcheck
+	}
+	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
+		tx.Exec(upsert, f[0], f[1]) //nolint:errcheck
+	})
+	if ok {
+		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
+	}
+}
+
 // ── cross_field_mappings ─────────────────────────────────────────────────────
 // CSV format: source_field;source_value;target_field;target_value
 // source_field may be "field:entrytype" (e.g. "author:techreport") to restrict
