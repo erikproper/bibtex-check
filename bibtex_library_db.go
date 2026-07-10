@@ -478,6 +478,11 @@ func connectToDatabase() {
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", dbName, err.Error())
 	}
+	// SQLite WAL mode: a pool of connections can hold diverging read snapshots; when
+	// one snapshot is stale relative to a newer WAL write, any attempt to upgrade to
+	// a write transaction returns SQLITE_BUSY_SNAPSHOT (517) which busy_timeout does
+	// not retry. A single connection eliminates the snapshot-staleness problem entirely.
+	db.SetMaxOpenConns(1)
 	if !configureDatabasePragmas() && dbIsolationActive() {
 		dbInteraction.Progress("Working database stale or corrupt — will refresh from home database")
 		return
@@ -4069,6 +4074,28 @@ func ensureLosingFieldValuesTableExists() {
 		);`)
 	// Add triage_status to databases created before this column existed.
 	db.Exec(`ALTER TABLE losing_field_values ADD COLUMN triage_status TEXT`) //nolint:errcheck
+}
+
+// cleanupRedundantLosers removes losing_field_values rows whose value is identical
+// to the current winner in bib_entries. These arise when a field is later set back
+// to a value that was previously recorded as a loser (e.g. after DBLP re-import
+// agrees with the library value).
+func cleanupRedundantLosers() {
+	res, err := db.Exec(`
+		DELETE FROM losing_field_values
+		WHERE EXISTS (
+		    SELECT 1 FROM bib_entries
+		    WHERE bib_entries.entry_key = losing_field_values.entry_key
+		      AND bib_entries.field     = losing_field_values.field
+		      AND bib_entries.value     = losing_field_values.value
+		)`)
+	if err != nil {
+		dbInteraction.Warning("cleanupRedundantLosers: %s", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		dbInteraction.Progress("Removed %d redundant loser(s) (value matches current winner)", n)
+	}
 }
 
 // maybeMigrateStripLocalURL deletes all local-url rows from bib_entries on the first
