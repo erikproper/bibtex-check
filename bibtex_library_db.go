@@ -39,6 +39,13 @@ const (
 	sqliteDatabaseDriver = "sqlite"
 )
 
+// sqliteDSN appends the DSN parameters needed for correct WAL-mode behaviour.
+// _txlock=immediate: every db.Begin() issues BEGIN IMMEDIATE, acquiring the write
+// lock upfront. This prevents SQLITE_BUSY_SNAPSHOT (517) — the error that occurs
+// when a deferred transaction tries to upgrade from read to write after another
+// connection has already advanced the WAL.
+func sqliteDSN(path string) string { return path + "?_txlock=immediate" }
+
 var (
 	dbInteraction               TInteraction
 	db                          *sql.DB
@@ -474,15 +481,10 @@ func connectToDatabase() {
 	dbName := dbPath()
 
 	var err error
-	db, err = sql.Open(sqliteDatabaseDriver, dbName)
+	db, err = sql.Open(sqliteDatabaseDriver, sqliteDSN(dbName))
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", dbName, err.Error())
 	}
-	// SQLite WAL mode: a pool of connections can hold diverging read snapshots; when
-	// one snapshot is stale relative to a newer WAL write, any attempt to upgrade to
-	// a write transaction returns SQLITE_BUSY_SNAPSHOT (517) which busy_timeout does
-	// not retry. A single connection eliminates the snapshot-staleness problem entirely.
-	db.SetMaxOpenConns(1)
 	if !configureDatabasePragmas() && dbIsolationActive() {
 		dbInteraction.Progress("Working database stale or corrupt — will refresh from home database")
 		return
@@ -703,7 +705,7 @@ func reopenDb(path string) {
 		db.Close()
 	}
 	var err error
-	db, err = sql.Open(sqliteDatabaseDriver, path)
+	db, err = sql.Open(sqliteDatabaseDriver, sqliteDSN(path))
 	if err != nil {
 		dbInteraction.Progress("Could not open sqlite database %s: %s", path, err)
 	}
