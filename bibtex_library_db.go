@@ -3711,7 +3711,10 @@ func loadAuthorEditorFieldMappingsFromCache(l *TBibTeXLibrary) {
 			continue
 		}
 		normWinner := l.MapFieldValue(field, l.NormaliseFieldValue(field, winner))
-		normLoser := l.MapFieldValue(field, loser)
+		// Apply NormaliseFieldValue to the stored loser so that name-mapping changes
+		// made after the loser was first recorded don't produce a stale key that no
+		// longer matches the incoming DBLP challenge (which is also normalised).
+		normLoser := l.MapFieldValue(field, l.NormaliseFieldValue(field, loser))
 		// If the loser is already registered with a stale winner (e.g. from a
 		// loadEntryFieldMappingsFromDb pass that ran before migration deleted the
 		// bib_entries author row), cascade the update from the old winner to the
