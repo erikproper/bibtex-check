@@ -3624,6 +3624,7 @@ func ensureCrossFieldMappingsTableExists() {
 		);`)
 }
 
+
 // loadAuthorEditorFieldMappingsFromCache loads author/editor entry-field alias
 // mappings from losing_field_values using the in-memory entry cache to find the
 // winner. Must be called after initEntryCache() and only when contributorRolesActive.
