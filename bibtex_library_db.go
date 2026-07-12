@@ -520,6 +520,8 @@ func connectToDatabase() {
 	ensureGenericFieldMappingsTableExists()
 	ensureFieldMappingsTableExists()
 	maybeMigrateToFieldMappings()
+	db.Exec(`DELETE FROM generic_field_mappings`) //nolint:errcheck
+	db.Exec(`DELETE FROM cross_field_mappings`)   //nolint:errcheck
 	ensureURLsIgnoreTableExists()
 	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
