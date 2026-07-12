@@ -78,25 +78,10 @@ func init() {
 		{"contributor_orcid_seen", ContributorORCIDSeenFilePath,
 			ExportContributorORCIDSeen, func() { importContributorORCIDSeenFromCSV(true) }, nil},
 
-		// Field mapping tables — all cascade into bib_entries.
-		// generic_field_mappings and cross_field_mappings import to their legacy tables;
-		// the cascade syncs rows into the unified field_mappings table and reloads the
-		// in-memory maps before renormalising, so newly imported mappings take effect.
-		{"generic_field_mappings", GenericFieldMappingsFilePath,
-			ExportGenericFieldMappings, func() { importGenericFieldMappingsFromCSV(true) },
+		// Field mapping table — cascades into bib_entries after import.
+		{"field_mappings", FieldMappingsFilePath,
+			ExportFieldMappings, func() { importFieldMappingsFromCSV(true) },
 			func(l *TBibTeXLibrary) {
-				db.Exec(`INSERT OR IGNORE INTO field_mappings
-				           (source_field, source_value, target_field, target_value)
-				         SELECT field, challenger, field, winner FROM generic_field_mappings`)
-				loadFieldMappingsFromDb(l)
-				cascadeRenormaliseAllFields(l)
-			}},
-		{"cross_field_mappings", CrossFieldMappingsFilePath,
-			ExportCrossFieldMappings, func() { importCrossFieldMappingsFromCSV(true) },
-			func(l *TBibTeXLibrary) {
-				db.Exec(`INSERT OR IGNORE INTO field_mappings
-				           (source_field, source_value, target_field, target_value)
-				         SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings`)
 				loadFieldMappingsFromDb(l)
 				cascadeRenormaliseAllFields(l)
 			}},

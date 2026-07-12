@@ -338,46 +338,41 @@ func importKeyNonDoublesFromCSV(replace bool) {
 	}
 }
 
-// ── generic_field_mappings ───────────────────────────────────────────────────
-// CSV format: field;winner;challenger
+// ── field_mappings ───────────────────────────────────────────────────────────
+// CSV format: source_field;source_value;target_field;target_value
+// Same-field rows (source_field == target_field) are generic aliases;
+// cross-field rows propagate values across fields.
 
-func ExportGenericFieldMappings() {
+func ExportFieldMappings() {
 	ensureTablesDir()
-	path := tablesFilePath(GenericFieldMappingsFilePath)
-	rows, err := db.Query(`SELECT field, winner, challenger FROM generic_field_mappings ORDER BY field, winner, challenger`)
+	path := tablesFilePath(FieldMappingsFilePath)
+	rows, err := db.Query(`SELECT source_field, source_value, target_field, target_value FROM field_mappings ORDER BY source_field, source_value, target_field`)
 	if err != nil {
-		dbInteraction.Warning("Could not query generic_field_mappings: %s", err)
+		dbInteraction.Warning("Could not query field_mappings: %s", err)
 		return
 	}
 	defer rows.Close()
-	writeCSVExport(path, rows, 3)
+	writeCSVExport(path, rows, 4)
 }
 
-func importGenericFieldMappingsFromCSV(replace bool) {
-	path := tablesFilePath(GenericFieldMappingsFilePath)
-	upsert := `INSERT INTO generic_field_mappings (field, winner, challenger) VALUES (?, ?, ?)
-	             ON CONFLICT(field, challenger) DO UPDATE SET winner = excluded.winner`
-	validate := func(f []string) bool { return len(f) >= 3 && f[0] != "" && f[1] != "" && f[2] != "" }
+func importFieldMappingsFromCSV(replace bool) {
+	path := tablesFilePath(FieldMappingsFilePath)
+	upsert := `INSERT INTO field_mappings (source_field, source_value, target_field, target_value) VALUES (?, ?, ?, ?)
+	             ON CONFLICT(source_field, source_value, target_field) DO UPDATE SET target_value = excluded.target_value`
+	validate := func(f []string) bool { return len(f) >= 4 && f[0] != "" && f[2] != "" }
 	skip := func(f []string) bool {
-		if len(f) < 1 || (f[0] != "author" && f[0] != "editor") {
+		if len(f) < 4 || f[0] != f[2] || (f[0] != "author" && f[0] != "editor") {
 			return false
 		}
-		winner, challenger := "", ""
-		if len(f) >= 2 {
-			winner = f[1]
-		}
-		if len(f) >= 3 {
-			challenger = f[2]
-		}
-		dbInteraction.Warning(WarningGenericFieldMappingAuthorEditor, f[0], winner, challenger)
+		dbInteraction.Warning(WarningGenericFieldMappingAuthorEditor, f[0], f[3], f[1])
 		return true
 	}
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM generic_field_mappings`) }
+		clearFn = func() { db.Exec(`DELETE FROM field_mappings`) }
 	}
 	n, ok := importTwoPhaseFiltered(path, skip, validate, clearFn, func(tx *sql.Tx, f []string) {
-		tx.Exec(upsert, f[0], f[1], f[2])
+		tx.Exec(upsert, f[0], f[1], f[2], f[3])
 	})
 	if ok {
 		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
@@ -441,42 +436,6 @@ func importEntryDoiAliasesFromCSV(replace bool) {
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		tx.Exec(upsert, f[0], f[1]) //nolint:errcheck
-	})
-	if ok {
-		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
-	}
-}
-
-// ── cross_field_mappings ─────────────────────────────────────────────────────
-// CSV format: source_field;source_value;target_field;target_value
-// source_field may be "field:entrytype" (e.g. "author:techreport") to restrict
-// the rule to entries of the given type. This keeps all rules for a given field
-// grouped together when the CSV is sorted by source_field.
-
-func ExportCrossFieldMappings() {
-	ensureTablesDir()
-	path := tablesFilePath(CrossFieldMappingsFilePath)
-	rows, err := db.Query(`SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings ORDER BY source_field, source_value, target_field`)
-	if err != nil {
-		dbInteraction.Warning("Could not query cross_field_mappings: %s", err)
-		return
-	}
-	defer rows.Close()
-	writeCSVExport(path, rows, 4)
-}
-
-func importCrossFieldMappingsFromCSV(replace bool) {
-	path := tablesFilePath(CrossFieldMappingsFilePath)
-	upsert := `INSERT INTO cross_field_mappings
-	             (source_field, source_value, target_field, target_value) VALUES (?, ?, ?, ?)
-	             ON CONFLICT(source_field, source_value, target_field) DO UPDATE SET target_value = excluded.target_value`
-	validate := func(f []string) bool { return len(f) >= 4 && f[0] != "" && f[2] != "" }
-	var clearFn func()
-	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM cross_field_mappings`) }
-	}
-	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
-		tx.Exec(upsert, f[0], f[1], f[2], f[3])
 	})
 	if ok {
 		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
@@ -916,9 +875,8 @@ func ImportAllCSVExchangeFiles() bool {
 		{"key_hints", tablesFilePath(KeyHintsFilePath), importKeyHintsFromCSV},
 		{"key_oldies", tablesFilePath(KeyOldiesFilePath), importKeyOldiesFromCSV},
 		{"non_double_entries", tablesFilePath(KeyNonDoublesFilePath), importKeyNonDoublesFromCSV},
-		{"generic_field_mappings", tablesFilePath(GenericFieldMappingsFilePath), importGenericFieldMappingsFromCSV},
+		{"field_mappings", tablesFilePath(FieldMappingsFilePath), importFieldMappingsFromCSV},
 		{"losing_field_values", tablesFilePath(LosingFieldValuesFilePath), importLosingFieldValuesFromCSV},
-		{"cross_field_mappings", tablesFilePath(CrossFieldMappingsFilePath), importCrossFieldMappingsFromCSV},
 		{"dblp_parent", tablesFilePath(DblpParentFilePath), importDblpParentFromCSV},
 		{"dblp_waived", tablesFilePath(DblpWaivedFilePath), importDblpWaivedFromCSV},
 		{"entry_flags", tablesFilePath(EntryFlagsFilePath), importEntryFlagsFromCSV},

@@ -1722,10 +1722,8 @@ func tryCreateTableIfNeeded(command string) {
 //
 //  2. name_mappings: author/editor name canonicalisation; independent of others.
 //
-//  3. generic_field_mappings: per-field value normalisation.
+//  3. field_mappings: unified per-field value normalisation and cross-field propagation.
 //     Depends on name_mappings (name values are normalised via name aliases).
-//
-//  4. cross_field_mappings: source-field → target-field value propagation.
 //
 //  6. key_hints, key_oldies, non_double_entries: key alias tables.
 //
@@ -3611,7 +3609,7 @@ func saveEntryFlagsToDb(l *TBibTeXLibrary) {
 	}
 }
 
-// --- cross_field_mappings table ---
+// --- cross_field_mappings table (legacy; kept for existing DBs, no longer primary load path) ---
 
 func ensureCrossFieldMappingsTableExists() {
 	tryCreateTableIfNeeded(`
@@ -3622,58 +3620,6 @@ func ensureCrossFieldMappingsTableExists() {
 		  target_value TEXT NOT NULL,
 		  PRIMARY KEY (source_field, source_value, target_field)
 		);`)
-}
-
-// loadCrossFieldMappingsFromDb populates l.FieldMappings from the DB.
-// Normalises source and target values via MapFieldValue / NormaliseFieldValue.
-// When source_field contains "field:entrytype" (e.g. "author:techreport"), only
-// the field part (left of ":") is used for source-value normalisation; the full
-// "field:entrytype" string is kept as the FieldMappings key so
-// MaybeApplyFieldMappings can match it by entry type.
-// Returns true when at least one stored value was changed by normalisation, so
-// the caller can arrange a write-back to persist the canonical form.
-func loadCrossFieldMappingsFromDb(l *TBibTeXLibrary) bool {
-	rows, err := db.Query(
-		`SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings`)
-	if err != nil {
-		dbInteraction.Warning("Could not query cross_field_mappings: %s", err)
-		return false
-	}
-	defer rows.Close()
-
-	normalisationChanged := false
-	for rows.Next() {
-		var sourceField, sourceValue, targetField, targetValue string
-		if err := rows.Scan(&sourceField, &sourceValue, &targetField, &targetValue); err != nil {
-			dbInteraction.Warning("Could not scan cross_field_mappings row: %s", err)
-			continue
-		}
-		normField, _, _ := strings.Cut(sourceField, ":")
-		normSourceValue := l.MapFieldValue(normField, sourceValue)
-		normTargetValue := l.NormaliseFieldValue(targetField, targetValue)
-		if normSourceValue != sourceValue || normTargetValue != targetValue {
-			normalisationChanged = true
-		}
-		l.AddFieldMapping(sourceField, normSourceValue, targetField, normTargetValue)
-	}
-	return normalisationChanged
-}
-
-// saveCrossFieldMappingsToDb writes the field mappings directly to the DB without a file roundtrip.
-func saveCrossFieldMappingsToDb(l *TBibTeXLibrary) {
-	dbExecSave("Could not clear cross_field_mappings", `DELETE FROM cross_field_mappings;`)
-	upsert := `INSERT INTO cross_field_mappings
-	             (source_field, source_value, target_field, target_value) VALUES (?, ?, ?, ?)
-	             ON CONFLICT(source_field, source_value, target_field)
-	               DO UPDATE SET target_value = excluded.target_value;`
-	for sourceField, sourceFieldMappings := range l.FieldMappings {
-		for sourceValue, targetFieldMappings := range sourceFieldMappings {
-			for targetField, targetValue := range targetFieldMappings {
-				dbExecSave("cross_field_mappings insert failed", upsert, sourceField, sourceValue, targetField, targetValue)
-			}
-		}
-	}
-	setTableDate("cross_field_mappings", time.Now().UnixMicro())
 }
 
 // loadAuthorEditorFieldMappingsFromCache loads author/editor entry-field alias
@@ -3786,7 +3732,7 @@ func saveEntryFieldMappingsToDb(l *TBibTeXLibrary) {
 	setTableDate("losing_field_values", time.Now().UnixMicro())
 }
 
-// --- generic_field_mappings table ---
+// --- generic_field_mappings table (legacy; kept for existing DBs, no longer primary load path) ---
 
 func ensureGenericFieldMappingsTableExists() {
 	tryCreateTableIfNeeded(`
@@ -3796,58 +3742,6 @@ func ensureGenericFieldMappingsTableExists() {
 		  challenger TEXT NOT NULL,
 		  PRIMARY KEY (field, challenger)
 		);`)
-}
-
-// loadGenericFieldMappingsFromDb populates l.GenericFieldSourceToTarget from the DB.
-// Normalises challenger and winner via NormaliseFieldValue. Returns true when at least
-// one stored value was changed by normalisation, so the caller can arrange a write-back.
-func loadGenericFieldMappingsFromDb(l *TBibTeXLibrary) bool {
-	fieldMappingsLoading = true
-	defer func() { fieldMappingsLoading = false }()
-
-	rows, err := db.Query(
-		`SELECT field, winner, challenger FROM generic_field_mappings`)
-	if err != nil {
-		dbInteraction.Warning("Could not query generic_field_mappings: %s", err)
-		return false
-	}
-	defer rows.Close()
-
-	normalisationChanged := false
-	for rows.Next() {
-		var field, winner, challenger string
-		if err := rows.Scan(&field, &winner, &challenger); err != nil {
-			dbInteraction.Warning("Could not scan generic_field_mappings row: %s", err)
-			continue
-		}
-		normChallenger := l.MapFieldValue(field, challenger)
-		normWinner := l.MapFieldValue(field, winner)
-		if normChallenger != challenger || normWinner != winner {
-			normalisationChanged = true
-		}
-		l.AddGenericFieldAlias(field, normChallenger, normWinner, true)
-	}
-	return normalisationChanged
-}
-
-// saveGenericFieldMappingsToDb writes the filtered generic field aliases directly to the DB without a file roundtrip.
-func saveGenericFieldMappingsToDb(l *TBibTeXLibrary) {
-	dbExecSave("Could not clear generic_field_mappings", `DELETE FROM generic_field_mappings;`)
-	upsert := `INSERT INTO generic_field_mappings
-	             (field, winner, challenger) VALUES (?, ?, ?)
-	             ON CONFLICT(field, challenger)
-	               DO UPDATE SET winner = excluded.winner;`
-	for field, challenges := range l.GenericFieldSourceToTarget {
-		if field != PreferredAliasField {
-			for challenger, winner := range challenges {
-				if challenger != winner {
-					dbExecSave("generic_field_mappings insert failed", upsert, field, l.MapFieldValue(field, winner), challenger)
-				}
-			}
-		}
-	}
-	setTableDate("generic_field_mappings", time.Now().UnixMicro())
-	setTableDate("losing_field_values", 0)
 }
 
 // --- field_mappings table (unified generic + cross-field) ---
@@ -4640,10 +4534,10 @@ func repairDirtyMappingTables() (entryFieldMappingsRepaired bool) {
 		}
 	}
 
-	// cross_field_mappings: "source_field;source_value;target_field;target_value"
-	if repair("cross_field_mappings", base+CrossFieldMappingsFilePath) {
+	// field_mappings: "source_field;source_value;target_field;target_value"
+	if repair("field_mappings", base+FieldMappingsFilePath) {
 		rows, err := db.Query(
-			`SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings`)
+			`SELECT source_field, source_value, target_field, target_value FROM field_mappings`)
 		if err == nil {
 			var lines []string
 			for rows.Next() {
@@ -4653,8 +4547,8 @@ func repairDirtyMappingTables() (entryFieldMappingsRepaired bool) {
 				}
 			}
 			rows.Close()
-			if writeRepairCSV(base+CrossFieldMappingsFilePath, lines) {
-				finishRepair("cross_field_mappings")
+			if writeRepairCSV(base+FieldMappingsFilePath, lines) {
+				finishRepair("field_mappings")
 			}
 		}
 	}
@@ -4675,25 +4569,6 @@ func repairDirtyMappingTables() (entryFieldMappingsRepaired bool) {
 			if writeRepairCSV(base+LosingFieldValuesFilePath, lines) {
 				finishRepair("losing_field_values")
 				entryFieldMappingsRepaired = true
-			}
-		}
-	}
-
-	// generic_field_mappings: "field;winner;challenger"
-	if repair("generic_field_mappings", base+GenericFieldMappingsFilePath) {
-		rows, err := db.Query(
-			`SELECT field, winner, challenger FROM generic_field_mappings`)
-		if err == nil {
-			var lines []string
-			for rows.Next() {
-				var field, winner, challenger string
-				if rows.Scan(&field, &winner, &challenger) == nil {
-					lines = append(lines, csvLine(field, winner, challenger))
-				}
-			}
-			rows.Close()
-			if writeRepairCSV(base+GenericFieldMappingsFilePath, lines) {
-				finishRepair("generic_field_mappings")
 			}
 		}
 	}

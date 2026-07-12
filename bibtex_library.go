@@ -369,6 +369,39 @@ func (l *TBibTeXLibrary) UpdateGenericFieldAlias(field, alias, target string) {
 	}
 }
 
+// fieldMappingReachable reports whether (goalField, goalValue) is reachable from
+// (startField, startValue) in the unified field-mapping graph. Nodes are (field, value)
+// pairs; edges come from GenericFieldSourceToTarget (same-field aliases) and FieldMappings
+// (cross-field mappings). Used by AddGenericFieldAlias and AddFieldMapping to detect cycles
+// before committing a new edge.
+func (l *TBibTeXLibrary) fieldMappingReachable(startField, startValue, goalField, goalValue string) bool {
+	type node struct{ field, value string }
+	visited := map[node]bool{}
+	queue := []node{{startField, startValue}}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if visited[cur] {
+			continue
+		}
+		visited[cur] = true
+		if cur.field == goalField && cur.value == goalValue {
+			return true
+		}
+		if dst, ok := l.GenericFieldSourceToTarget[cur.field][cur.value]; ok {
+			if next := (node{cur.field, dst}); !visited[next] {
+				queue = append(queue, next)
+			}
+		}
+		for tgtField, tgtValue := range l.FieldMappings[cur.field][cur.value] {
+			if next := (node{tgtField, tgtValue}); !visited[next] {
+				queue = append(queue, next)
+			}
+		}
+	}
+	return false
+}
+
 // Initial registration of a target over a alias for a given field.
 func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check bool) {
 	if alias == "" {
@@ -396,6 +429,12 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 				return
 			}
 		}
+	}
+
+	// Cycle check: would (field, alias) → (field, target) close a cycle?
+	if l.fieldMappingReachable(field, target, field, alias) {
+		l.Warning(WarningFieldMappingCycle, field, alias, field, target)
+		return
 	}
 
 	// Set the actual mapping
@@ -1034,6 +1073,11 @@ func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
 }
 
 func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, targetValue string) {
+	// Cycle check: would (sourceField, sourceValue) → (targetField, targetValue) close a cycle?
+	if l.fieldMappingReachable(targetField, targetValue, sourceField, sourceValue) {
+		l.Warning(WarningFieldMappingCycle, sourceField, sourceValue, targetField, targetValue)
+		return
+	}
 	l.FieldMappings.SetValueForStringTripleMap(sourceField, sourceValue, targetField, targetValue)
 	if !fieldMappingsLoading {
 		bibExec( //nolint:errcheck
