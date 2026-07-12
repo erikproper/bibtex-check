@@ -591,6 +591,28 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		}
 	}
 
+	// Step 2.5: DBLP key match (only when source already has a dblp field).
+	// LookupDblpCanonical queries dblp_canonical directly for an exact key hit,
+	// which is more authoritative than a title search.
+	if dblpKey := e.Fields[DBLPField]; dblpKey != "" {
+		if canon := LookupDblpCanonical(dblpKey); canon != "" {
+			if matched := l.MapEntryKey(canon); l.EntryExists(matched) {
+				fmt.Fprintf(os.Stderr, "DBLP key match in library:\n")
+				fmt.Fprint(os.Stderr, l.entryDisplayString(matched))
+				if pick := l.askHarvestLibraryChoice(1); pick > 0 {
+					finalKey := mergeAndCheck(addHarvestEntry(l, e), matched)
+					maybeCollectKeyHint(l, e.Key, finalKey)
+					l.maybeHarvestPDF(e, finalKey)
+					l.maybeHarvestGroups(e, finalKey, syncState)
+					addToHarvestGroup(l, finalKey)
+					transferHarvestKey(e.Key, finalKey)
+					recordStatus(finalKey)
+					return finalKey, false
+				}
+			}
+		}
+	}
+
 	// Step 3: DBLP title match (only when source has no dblp field yet).
 	if e.Fields[DBLPField] == "" {
 		if chosen := l.harvestFindDblpCandidates(e); chosen != "" {
@@ -624,9 +646,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 	case "m":
 		for {
 			fmt.Fprint(os.Stderr, "Merge into EP key: ")
-			var targetKey string
-			fmt.Fscan(os.Stdin, &targetKey)
-			targetKey = strings.TrimSpace(targetKey)
+			targetKey := readStdinLine()
 			canon := l.MapEntryKey(targetKey)
 			if !l.EntryExists(canon) {
 				fmt.Fprintf(os.Stderr, "  Entry %q not found in library — try again.\n", targetKey)
