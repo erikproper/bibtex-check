@@ -449,6 +449,14 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 			  ON CONFLICT(source_field, source_value, target_field) DO UPDATE SET target_value = excluded.target_value`,
 			field, alias, field, l.MapFieldValue(field, target))
 	}
+
+	// A BibTeX source may write series={{LNCS}} (double braces → stored as {LNCS}) while
+	// another writes series={LNCS} (stored as LNCS). Both spellings mean the same thing,
+	// so for simple single-level brace wrappers register the bare form too.
+	if len(alias) > 2 && alias[0] == '{' && alias[len(alias)-1] == '}' &&
+		!strings.ContainsAny(alias[1:len(alias)-1], "{}") {
+		l.AddGenericFieldAlias(field, alias[1:len(alias)-1], target, check)
+	}
 }
 
 // Update the registration of a target over a alias for a given entry and its field.

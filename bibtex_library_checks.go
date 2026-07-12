@@ -1504,11 +1504,31 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 					l.EntryInvolvedInWarning(key)
 					fmt.Fprintf(os.Stderr, "\nChild entry:\n%s\nParent entry:\n%s\n",
 						l.entryDisplayString(childKey), l.entryDisplayString(key))
-					if l.WarningYesNoQuestion(QuestionAddToDblpWaived, "") {
-						l.DblpWaived.Set(childKey, true)
-						// Waived: remove from entry_warnings so it doesn't appear in repair.bib.
-						deleteEntryWarning(childKey, msg)
-						deleteEntryWarning(key, "")
+					// First offer unassigned DBLP children of the parent as candidates.
+					var candidates []string
+					for _, c := range readDblpCrossrefChildren(entryDBLP) {
+						if l.LookupDBLPKey(c) == "" {
+							candidates = append(candidates, c)
+						}
+					}
+					if len(candidates) > 9 {
+						candidates = candidates[:9]
+					}
+					resolved := false
+					if len(candidates) > 0 {
+						if chosen := l.AskCandidateDblpKey(childKey, candidates); chosen != "" {
+							l.AssociateDblpKey(childKey, chosen)
+							resolved = true
+						}
+					}
+					// Only offer waive when no candidate was selected.
+					if !resolved {
+						if l.WarningYesNoQuestion(QuestionAddToDblpWaived, "") {
+							l.DblpWaived.Set(childKey, true)
+							// Waived: remove from entry_warnings so it doesn't appear in repair.bib.
+							deleteEntryWarning(childKey, msg)
+							deleteEntryWarning(key, "")
+						}
 					}
 				}
 			})
