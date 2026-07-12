@@ -888,15 +888,15 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 			resolved++
 		}
 	}
-	Library.Progress("Harvest result: %s", cfg.FileName)
-	Library.Progress("  Total  : %d source entr%s",
-		len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1])
-	Library.Progress("  Resolved (merged/added) : %d", resolved)
-	Library.Progress("  Ignored                 : %d", ignored)
-	Library.Progress("  Skipped (skip-content)  : %d", skippedContent)
-	Library.Progress("  Pending (not yet seen)  : %d", stillPending)
-	Library.Progress("  PDFs harvested          : %d", pdfsHarvested)
-	Library.Progress("  Key hints added         : %d", hintsAdded)
+	printStatBlock("Harvest result: "+cfg.FileName, []statRow{
+		{"total source entries", fmt.Sprintf("%d", len(entries)), ""},
+		{"resolved (merged/added)", fmt.Sprintf("%d", resolved), ""},
+		{"ignored", fmt.Sprintf("%d", ignored), ""},
+		{"skipped (skip-content)", fmt.Sprintf("%d", skippedContent), ""},
+		{"pending (not yet seen)", fmt.Sprintf("%d", stillPending), ""},
+		{"PDFs harvested", fmt.Sprintf("%d", pdfsHarvested), ""},
+		{"key hints added", fmt.Sprintf("%d", hintsAdded), ""},
+	})
 	// Mirror local groups and weave entries into the harvest_transfer target's .sync DB.
 	if cmdHarvestTransferKeysPath != "" {
 		followBase := strings.TrimSuffix(cmdHarvestTransferKeysPath, KeysFileExtension)

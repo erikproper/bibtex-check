@@ -3346,7 +3346,7 @@ func ensureDblpParentTableExists() {
 
 // newDblpParentTable returns a write-through cache backed by the dblp_parent SQLite table.
 func newDblpParentTable() *TCachedTable[string, string] {
-	return newCachedTable(&TSQLiteTable[string, string]{
+	t := newCachedTable(&TSQLiteTable[string, string]{
 		upsertSQL: `INSERT INTO dblp_parent (child_key, parent_key) VALUES (?, ?)
 		            ON CONFLICT(child_key) DO UPDATE SET parent_key = excluded.parent_key;`,
 		deleteSQL: `DELETE FROM dblp_parent WHERE child_key = ?`,
@@ -3358,6 +3358,8 @@ func newDblpParentTable() *TCachedTable[string, string] {
 			return child, parent, rows.Scan(&child, &parent)
 		},
 	})
+	t.onModify = func() { setTableDate("dblp_parent", time.Now().UnixMicro()) }
+	return t
 }
 
 // --- dblp_waived table ---
@@ -3372,7 +3374,7 @@ func ensureDblpWaivedTableExists() {
 // newDblpWaivedTable returns a write-through cache backed by the dblp_waived SQLite table.
 // The bool value is always true; only key presence matters (set semantics).
 func newDblpWaivedTable() *TCachedTable[string, bool] {
-	return newCachedTable(&TSQLiteTable[string, bool]{
+	t := newCachedTable(&TSQLiteTable[string, bool]{
 		upsertSQL:  `INSERT INTO dblp_waived (key) VALUES (?) ON CONFLICT(key) DO NOTHING;`,
 		deleteSQL:  `DELETE FROM dblp_waived WHERE key = ?`,
 		selectSQL:  `SELECT key FROM dblp_waived`,
@@ -3383,6 +3385,8 @@ func newDblpWaivedTable() *TCachedTable[string, bool] {
 			return key, true, rows.Scan(&key)
 		},
 	})
+	t.onModify = func() { setTableDate("dblp_waived", time.Now().UnixMicro()) }
+	return t
 }
 
 // --- dblp_canonical table ---
@@ -3758,6 +3762,23 @@ func ensureFieldMappingsTableExists() {
 		  target_value TEXT NOT NULL,
 		  PRIMARY KEY (source_field, source_value, target_field)
 		);`)
+}
+
+// maybeMigrateDblpExportDirty marks dblp_waived and dblp_parent as dirty once.
+// Before v27.40 their TCachedTable constructors lacked onModify hooks, so writes
+// never updated table_modification_times. The export staleness check would skip
+// re-exporting even when the DB had more rows than the CSV. Marking dirty forces
+// the next -export to re-sync both files.
+func maybeMigrateDblpExportDirty() {
+	var count int
+	db.QueryRow(`SELECT COUNT(*) FROM table_modification_times WHERE table_name = 'dblp_export_resynced_v1'`).Scan(&count)
+	if count > 0 {
+		return
+	}
+	setTableDirty("dblp_waived")
+	setTableDirty("dblp_parent")
+	db.Exec(`INSERT OR IGNORE INTO table_modification_times (table_name, modification_time) VALUES ('dblp_export_resynced_v1', ?)`, //nolint:errcheck
+		time.Now().UnixMicro())
 }
 
 // maybeMigrateToFieldMappings populates field_mappings from the two legacy tables on first use.

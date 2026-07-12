@@ -138,13 +138,14 @@ func (s *TTermSpinner) Stop() {
 }
 
 type TInteraction struct {
-	silenced          bool
-	questionWasAsked  bool
-	outputWasProduced bool
-	stepMode          bool
-	stepSize          int
-	quitRequested     bool // set when user answers "q" to AskContinueOrQuit
-	questionsAnswered int  // total questions answered; snapshotted before/after runHarvestEntry
+	silenced           bool
+	progressSuppressed bool // suppress Progress() output without silencing warnings/questions
+	questionWasAsked   bool
+	outputWasProduced  bool
+	stepMode           bool
+	stepSize           int
+	quitRequested      bool // set when user answers "q" to AskContinueOrQuit
+	questionsAnswered  int  // total questions answered; snapshotted before/after runHarvestEntry
 }
 
 // QuitWasRequested reports whether the user asked to stop in any AskContinueOrQuit prompt.
@@ -350,10 +351,38 @@ func (r *TInteraction) WarningYesNoQuestion(question, warning string, context ..
 	return answer == "y"
 }
 
+// statRow is a label/value/comment triple for printStatBlock.
+// comment is optional; when non-empty it is printed after the value.
+type statRow struct {
+	label   string
+	value   string
+	comment string
+}
+
+// printStatBlock prints header then rows with labels left-aligned to a column
+// wide enough that the longest label+colon is followed by exactly one space
+// before the value. An optional comment is appended after two spaces.
+func printStatBlock(header string, rows []statRow) {
+	maxLen := 0
+	for _, r := range rows {
+		if n := len(r.label) + 1; n > maxLen { // +1 for the colon
+			maxLen = n
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", header)
+	for _, r := range rows {
+		if r.comment != "" {
+			fmt.Fprintf(os.Stderr, "  %-*s %s  %s\n", maxLen, r.label+":", r.value, r.comment)
+		} else {
+			fmt.Fprintf(os.Stderr, "  %-*s %s\n", maxLen, r.label+":", r.value)
+		}
+	}
+}
+
 // Reporting progres.
 // The progress message should provide the formatting.
 func (r *TInteraction) Progress(progress string, context ...any) bool {
-	if !r.silenced {
+	if !r.silenced && !r.progressSuppressed {
 		SpinnerInterrupt()
 		fmt.Fprintf(os.Stderr, "PROGRESS: "+progress+"\n", context...)
 	}

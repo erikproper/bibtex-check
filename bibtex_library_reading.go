@@ -155,27 +155,22 @@ func (l *TBibTeXLibrary) ReadEntryFieldMappingsFile() {
 
 func (l *TBibTeXLibrary) ReadKeyOldiesFile() {
 	l.KeyOldies.Load()
-	l.Progress("Key oldies: %d entries", l.KeyOldies.Len())
 }
 
 func (l *TBibTeXLibrary) ReadKeyHintsFile() {
 	l.HintToKey.Load()
-	l.Progress("Key hints: %d entries", l.HintToKey.Len())
 }
 
 func (l *TBibTeXLibrary) ReadKeyNonDoublesFile() {
 	loadKeyNonDoublesFromDb(l)
-	l.Progress("Key non-doubles: %d entries", len(l.NonDoubleEntries))
 }
 
 func (l *TBibTeXLibrary) ReadDblpParentFile() {
 	l.DblpParent.Load()
-	l.Progress("DBLP parent overrides: %d entries", l.DblpParent.Len())
 }
 
 func (l *TBibTeXLibrary) ReadDblpWaivedFile() {
 	l.DblpWaived.Load()
-	l.Progress("DBLP waived: %d entries", l.DblpWaived.Len())
 }
 
 func (l *TBibTeXLibrary) ReadURLsIgnoreFile() {
@@ -189,11 +184,6 @@ func (l *TBibTeXLibrary) ReadIgnoreTitlesFile() {
 
 func (l *TBibTeXLibrary) ReadEntryFlagsFile() {
 	loadEntryFlagsFromDb(l)
-	total := 0
-	for _, s := range l.EntryFlags {
-		total += len(s.Elements())
-	}
-	l.Progress("Entry flags: %d flags on %d entries", total, len(l.EntryFlags))
 }
 
 func (l *TBibTeXLibrary) ReadAddressMappings() {

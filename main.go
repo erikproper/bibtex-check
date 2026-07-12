@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.38"
+const AppVersion = "27.52"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -282,6 +282,76 @@ bibParseLoop:
 	return true
 }
 
+// sessionStart* capture library metrics at the beginning of a write session so
+// that reportHomework() can print deltas at the end.
+var (
+	sessionStartEntryCount    int
+	sessionStartDblpKeyCount  int
+	sessionStartFieldMapCount int
+)
+
+func countDblpKeyedEntries() int {
+	if entryCache != nil {
+		n := 0
+		for _, e := range entryCache {
+			if e.Fields[DBLPField] != "" {
+				n++
+			}
+		}
+		return n
+	}
+	var n int
+	bibQueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = ?`, DBLPField).Scan(&n)
+	return n
+}
+
+// printSessionStats prints a library-state summary at the start of a write
+// session and captures the current counts for the session-change report at end.
+func printSessionStats() {
+	total := countBibEntries()
+	var contributors, nameStrings, fieldMaps, losingValues int
+	bibQueryRow(`SELECT COUNT(*) FROM contributors`).Scan(&contributors)
+	bibQueryRow(`SELECT COUNT(DISTINCT name_used) FROM entry_contributor_names`).Scan(&nameStrings)
+	bibQueryRow(`SELECT COUNT(*) FROM field_mappings`).Scan(&fieldMaps)
+	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values`).Scan(&losingValues)
+	dblpKeys := countDblpKeyedEntries()
+
+	sessionStartEntryCount = total
+	sessionStartDblpKeyCount = dblpKeys
+	sessionStartFieldMapCount = fieldMaps
+
+	entryFlags := 0
+	for _, s := range Library.EntryFlags {
+		entryFlags += len(s.Elements())
+	}
+
+	var ndEntries, ndContributors, ndNames int
+	bibQueryRow(`SELECT COUNT(*) FROM non_double_entries`).Scan(&ndEntries)
+	bibQueryRow(`SELECT COUNT(*) FROM non_double_contributors`).Scan(&ndContributors)
+	bibQueryRow(`SELECT COUNT(*) FROM non_double_contributor_names`).Scan(&ndNames)
+
+	pct := 0.0
+	if total > 0 {
+		pct = float64(dblpKeys) * 100.0 / float64(total)
+	}
+	printStatBlock("Library statistics:", []statRow{
+		{"entries", fmt.Sprintf("%d", total), ""},
+		{"contributors", fmt.Sprintf("%d", contributors), ""},
+		{"name spellings", fmt.Sprintf("%d", nameStrings), ""},
+		{"field mappings", fmt.Sprintf("%d", fieldMaps), ""},
+		{"losing values", fmt.Sprintf("%d", losingValues), ""},
+		{"DBLP coverage", fmt.Sprintf("%d/%d (%.0f%%)", dblpKeys, total, pct), ""},
+		{"DBLP crossref overrides", fmt.Sprintf("%d", Library.DblpParent.Len()), ""},
+		{"DBLP waived children", fmt.Sprintf("%d", Library.DblpWaived.Len()), ""},
+		{"key oldies", fmt.Sprintf("%d", Library.KeyOldies.Len()), ""},
+		{"key hints", fmt.Sprintf("%d", Library.HintToKey.Len()), ""},
+		{"non-double entry pairs", fmt.Sprintf("%d", ndEntries), ""},
+		{"non-double contributor pairs", fmt.Sprintf("%d", ndContributors), ""},
+		{"non-double name pairs", fmt.Sprintf("%d", ndNames), ""},
+		{"entry flags", fmt.Sprintf("%d", entryFlags), ""},
+	})
+}
+
 func openLibraryToUpdate() bool {
 	if !prepareWorkingDatabase() {
 		return false
@@ -290,6 +360,7 @@ func openLibraryToUpdate() bool {
 	maybeMigrateStripLocalURL()
 	preCheckRepair()
 	maybeMigrateToFKSchema()
+	maybeMigrateDblpExportDirty()
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
@@ -324,7 +395,6 @@ func openLibraryToUpdate() bool {
 
 	cleanupIgnoredTitleNonDoubles(&Library)
 	Library.LoadPDFFiles()
-	Library.ReportLibrarySize()
 	if !skipStartupChecks {
 		Library.CheckDblpDuplicates()
 		Library.CheckKeyOldiesConsistency()
@@ -335,12 +405,14 @@ func openLibraryToUpdate() bool {
 	normalizeAuthorEditorEntryFields()
 	retireResolvedAuthorEditorLosers()
 	cleanupRedundantLosers()
+	printSessionStats()
 	preCloseHook = reportHomework
 	return true
 }
 
 func openLibraryToReport() bool {
 	initialiseLibrary()
+	Library.progressSuppressed = true // read-only session: suppress routine progress noise
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
 
@@ -1315,7 +1387,28 @@ outer:
 //   - number of entries without a dblp field that have at least one unresolved DBLP
 //     title-index candidate (not already in non_doubles)
 func reportHomework() {
-	Library.Progress("Computing homework summary...")
+	// Session-change summary: compare current state to what was captured at session open.
+	currentEntries := countBibEntries()
+	currentDblpKeys := countDblpKeyedEntries()
+	var currentFieldMaps int
+	bibQueryRow(`SELECT COUNT(*) FROM field_mappings`).Scan(&currentFieldMaps)
+	newEntries := currentEntries - sessionStartEntryCount
+	newDblpLinks := currentDblpKeys - sessionStartDblpKeyCount
+	newFieldMaps := currentFieldMaps - sessionStartFieldMapCount
+	var changeRows []statRow
+	if newEntries != 0 {
+		changeRows = append(changeRows, statRow{"entries", fmt.Sprintf("%+d", newEntries), ""})
+	}
+	if newDblpLinks != 0 {
+		changeRows = append(changeRows, statRow{"DBLP links", fmt.Sprintf("%+d", newDblpLinks), ""})
+	}
+	if newFieldMaps != 0 {
+		changeRows = append(changeRows, statRow{"field mappings", fmt.Sprintf("%+d", newFieldMaps), ""})
+	}
+	if len(changeRows) > 0 {
+		printStatBlock("Session changes:", changeRows)
+	}
+
 	// A title group is unresolved when it contains at least two canonical keys
 	// whose pair has neither a non_doubles declaration nor field-value evidence
 	// of being different entries (divergent DBLP key or DOI).
@@ -1438,23 +1531,24 @@ func reportHomework() {
 		bibQueryRow(`SELECT COUNT(*) FROM contributors WHERE orcid != '' AND NOT EXISTS (SELECT 1 FROM contributor_orcid_seen s WHERE s.contributor_id = contributors.id AND s.canonical != '')`).Scan(&newOrcidContributors)
 	}
 
-	hint := func(count int, line, cmd string) string {
-		if count == 0 || cmd == "" {
-			return fmt.Sprintf("\n  %s", line)
+	hintComment := func(count int, cmd string) string {
+		if cmd != "" && count > 0 {
+			return "[-" + cmd + "]"
 		}
-		return fmt.Sprintf("\n  %s  [-%s]", line, cmd)
+		return ""
 	}
-	hw := "Homework:" +
-		hint(unresolvedGroups, fmt.Sprintf("%d title group(s) with unresolved duplicate(s)", unresolvedGroups), "fix_duplicates") +
-		hint(dblpCandidates, fmt.Sprintf("%d entry/ies with unresolved DBLP candidate(s)", dblpCandidates), "fix_candidates") +
-		hint(loneProceedings, fmt.Sprintf("%d lone proceedings", loneProceedings), "") +
-		hint(urlUnchecked, fmt.Sprintf("%d url(s) not yet checked", urlUnchecked), "") +
-		hint(authorEditorPairs, fmt.Sprintf("%d author/editor value(s) needing triage", authorEditorPairs), "triage_author_mappings") +
-		hint(ambiguousNames, fmt.Sprintf("%d ambiguous contributor name(s) needing disambiguation", ambiguousNames), "disambiguate_contributors")
+	hwRows := []statRow{
+		{"title groups with unresolved duplicates", fmt.Sprintf("%d", unresolvedGroups), hintComment(unresolvedGroups, "fix_duplicates")},
+		{"entries with unresolved DBLP candidates", fmt.Sprintf("%d", dblpCandidates), hintComment(dblpCandidates, "fix_candidates")},
+		{"lone proceedings", fmt.Sprintf("%d", loneProceedings), ""},
+		{"urls not yet checked", fmt.Sprintf("%d", urlUnchecked), ""},
+		{"author/editor values needing triage", fmt.Sprintf("%d", authorEditorPairs), hintComment(authorEditorPairs, "triage_author_mappings")},
+		{"ambiguous contributor names", fmt.Sprintf("%d", ambiguousNames), hintComment(ambiguousNames, "disambiguate_contributors")},
+	}
 	if seenTableExists > 0 {
-		hw += hint(newOrcidContributors, fmt.Sprintf("%d contributor(s) with ORCID not yet enriched", newOrcidContributors), "enrich_contributor_data")
+		hwRows = append(hwRows, statRow{"contributors with ORCID not yet enriched", fmt.Sprintf("%d", newOrcidContributors), hintComment(newOrcidContributors, "enrich_contributor_data")})
 	}
-	Library.Progress(hw)
+	printStatBlock("Homework:", hwRows)
 }
 
 // doFixCandidates interactively links library entries that have no DBLP key yet
