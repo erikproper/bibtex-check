@@ -610,15 +610,38 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		}
 	}
 
-	// Step 4: no match — offer add, skip, ignore, or quit.
+	// Step 4: no match — offer add, manual-merge, skip, ignore, or quit.
+	// "m" lets the user type an EP key to merge into when they know the entry
+	// is already in the library but wasn't found by title/key matching.
 	// "i" ignores permanently (re-presents only if content changes) and, when
 	// harvest_transfer is configured, also writes the entry verbatim to the
 	// follow bib via the .sync DB weave table.
 	validActions := TStringSetNew()
-	validActions.Add("a").Add("s").Add("i").Add("q")
+	validActions.Add("a").Add("m").Add("s").Add("i").Add("q")
 	switch l.WarningQuestion(QuestionHarvestAction, validActions, "") {
 	case "q":
 		return "", true
+	case "m":
+		for {
+			fmt.Fprint(os.Stderr, "Merge into EP key: ")
+			var targetKey string
+			fmt.Fscan(os.Stdin, &targetKey)
+			targetKey = strings.TrimSpace(targetKey)
+			canon := l.MapEntryKey(targetKey)
+			if !l.EntryExists(canon) {
+				fmt.Fprintf(os.Stderr, "  Entry %q not found in library — try again.\n", targetKey)
+				continue
+			}
+			fmt.Fprint(os.Stderr, l.entryDisplayString(canon))
+			finalKey := mergeAndCheck(addHarvestEntry(l, e), canon)
+			maybeCollectKeyHint(l, e.Key, finalKey)
+			l.maybeHarvestPDF(e, finalKey)
+			l.maybeHarvestGroups(e, finalKey, syncState)
+			addToHarvestGroup(l, finalKey)
+			transferHarvestKey(e.Key, finalKey)
+			recordStatus(finalKey)
+			return finalKey, false
+		}
 	case "i":
 		recordStatus(SyncStatusIgnored + ":" + harvestContentFingerprint(e))
 		addToHarvestWeave(e)
