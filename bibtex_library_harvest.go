@@ -182,6 +182,35 @@ func (l *TBibTeXLibrary) preDeduplicateHarvestEntries(entries []TBibTeXEntry) []
 	return result
 }
 
+// reorderHarvestCrossrefsFirst performs a stable reorder so that any entry
+// whose key is referenced as a crossref by another source entry appears before
+// those children. This ensures that by the time a child is processed, the
+// parent's key alias (e.g. EP-2013-ECIS-ECIS → EP-2026-06-17-09-15-42) is
+// already in KeyToKey, so MapEntryKey silently resolves the crossref and the
+// conflict prompt is suppressed entirely — for all children, not only the first.
+// BibTeX crossrefs are one level deep, so one stable pass suffices.
+func reorderHarvestCrossrefsFirst(entries []TBibTeXEntry) []TBibTeXEntry {
+	isParent := map[string]bool{}
+	for _, e := range entries {
+		if cr := e.Fields["crossref"]; cr != "" {
+			isParent[cr] = true
+		}
+	}
+	if len(isParent) == 0 {
+		return entries
+	}
+	parents := make([]TBibTeXEntry, 0, len(isParent))
+	others := make([]TBibTeXEntry, 0, len(entries)-len(isParent))
+	for _, e := range entries {
+		if isParent[e.Key] {
+			parents = append(parents, e)
+		} else {
+			others = append(others, e)
+		}
+	}
+	return append(parents, others...)
+}
+
 // --- Entry matching pipeline ---
 
 // harvestKeyMatch returns the canonical library key matching e's source key via
@@ -719,6 +748,7 @@ func doHarvest(sourcePath string) {
 	Library.Progress(ProgressHarvestParsed, len(entries), plural, sourcePath)
 
 	entries = Library.preDeduplicateHarvestEntries(entries)
+	entries = reorderHarvestCrossrefsFirst(entries)
 	Library.runHarvestLoop(entries, nil)
 }
 
@@ -779,6 +809,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	}
 
 	entries = Library.preDeduplicateHarvestEntries(entries)
+	entries = reorderHarvestCrossrefsFirst(entries)
 
 	skipped := 0
 	for _, e := range entries {
