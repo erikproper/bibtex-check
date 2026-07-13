@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.56"
+const AppVersion = "27.58"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -407,6 +407,9 @@ func openLibraryToUpdate() bool {
 	retireResolvedAuthorEditorLosers()
 	cleanupRedundantLosers()
 	printSessionStats()
+	if !Online {
+		Library.Progress("Offline: actions requiring network connectivity will be skipped.")
+	}
 	preCloseHook = reportHomework
 	return true
 }
@@ -1498,19 +1501,6 @@ func reportHomework() {
 		return true
 	})
 
-	// Entries with url but no urldate/doi/isbn/issn that haven't been URL-checked yet.
-	urlUnchecked := 0
-	forEachBibEntryKey(func(key string) bool {
-		entry := Library.buildEntry(key)
-		if !URLCheckNeeded(&Library, entry) {
-			return true
-		}
-		if Library.GetMetadata(key, MetaPropUrlCheckStatus) == "" {
-			urlUnchecked++
-		}
-		return true
-	})
-
 	authorEditorPairs := 0
 	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&authorEditorPairs)
 
@@ -1533,29 +1523,23 @@ func reportHomework() {
 		bibQueryRow(`SELECT COUNT(*) FROM contributors WHERE orcid != '' AND NOT EXISTS (SELECT 1 FROM contributor_orcid_seen s WHERE s.contributor_id = contributors.id AND s.canonical != '')`).Scan(&newOrcidContributors)
 	}
 
-	var hwRows []statRow
-	addHW := func(label string, count int, cmd string) {
-		if count == 0 {
-			return
+	hwComment := func(count int, cmd string) string {
+		if cmd != "" && count > 0 {
+			return "[-" + cmd + "]"
 		}
-		comment := ""
-		if cmd != "" {
-			comment = "[-" + cmd + "]"
-		}
-		hwRows = append(hwRows, statRow{label, fmt.Sprintf("%d", count), comment})
+		return ""
 	}
-	addHW("title groups with unresolved duplicates", unresolvedGroups, "fix_duplicates")
-	addHW("entries with unresolved DBLP candidates", dblpCandidates, "fix_candidates")
-	addHW("lone proceedings", loneProceedings, "")
-	addHW("urls not yet checked", urlUnchecked, "")
-	addHW("author/editor values needing triage", authorEditorPairs, "triage_author_mappings")
-	addHW("ambiguous contributor names", ambiguousNames, "disambiguate_contributors")
+	hwRows := []statRow{
+		{"title groups with unresolved duplicates", fmt.Sprintf("%d", unresolvedGroups), hwComment(unresolvedGroups, "fix_duplicates")},
+		{"entries with unresolved DBLP candidates", fmt.Sprintf("%d", dblpCandidates), hwComment(dblpCandidates, "fix_candidates")},
+		{"lone proceedings", fmt.Sprintf("%d", loneProceedings), ""},
+		{"author/editor values needing triage", fmt.Sprintf("%d", authorEditorPairs), hwComment(authorEditorPairs, "triage_author_mappings")},
+		{"ambiguous contributor names", fmt.Sprintf("%d", ambiguousNames), hwComment(ambiguousNames, "disambiguate_contributors")},
+	}
 	if seenTableExists > 0 {
-		addHW("contributors with ORCID not yet enriched", newOrcidContributors, "enrich_contributor_data")
+		hwRows = append(hwRows, statRow{"contributors with ORCID not yet enriched", fmt.Sprintf("%d", newOrcidContributors), hwComment(newOrcidContributors, "enrich_contributor_data")})
 	}
-	if len(hwRows) > 0 {
-		printStatBlock("Homework:", hwRows)
-	}
+	printStatBlock("Homework:", hwRows)
 }
 
 // doFixCandidates interactively links library entries that have no DBLP key yet
