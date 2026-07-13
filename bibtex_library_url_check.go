@@ -28,6 +28,11 @@ import (
 
 const urlCheckMinBytes = 300
 
+// pdfDownloadAttempted tracks keys for which a PDF download was attempted in this
+// session, so that a second CheckURLPlausibility call (e.g. from CheckAllURLs)
+// does not repeat a download that already ran during CheckEntries.
+var pdfDownloadAttempted = TStringSetNew()
+
 // dateFromEntryKey extracts YYYY-MM-DD from a key of the form EP-YYYY-MM-DD-HH-MM-SS.
 // Returns "" when the key does not match that pattern.
 func dateFromEntryKey(key string) string {
@@ -152,7 +157,8 @@ func (l *TBibTeXLibrary) CheckURLPlausibility(entry *TBibTeXEntry) {
 	if strings.HasSuffix(strings.ToLower(url), ".pdf") {
 		filesDir := l.FilesRoot + l.FilesFolder
 		filePath := filesDir + key + ".pdf"
-		if !FileExists(filePath) {
+		if !FileExists(filePath) && !pdfDownloadAttempted.Contains(key) {
+			pdfDownloadAttempted.Add(key)
 			l.Progress("Downloading PDF for %s: %s", key, url)
 			if err := downloadPDF(url, filePath); err != nil {
 				l.Warning(WarningPDFDownloadFailed, key, url, err)

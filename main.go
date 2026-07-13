@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.74"
+const AppVersion = "27.77"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1465,6 +1465,7 @@ func reportHomework() {
 		hwRows = append(hwRows, statRow{StatContributorsWithOrcidNotYetEnriched, fmt.Sprintf("%d", newOrcidContributors), hwComment(newOrcidContributors, "enrich_contributor_data")})
 	}
 	printStatBlock("Homework:", hwRows)
+	fmt.Fprintf(os.Stderr, "\n")
 }
 
 // doFixCandidates interactively links library entries that have no DBLP key yet

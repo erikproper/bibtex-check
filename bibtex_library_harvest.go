@@ -239,10 +239,20 @@ func (l *TBibTeXLibrary) harvestTitleMatches(e TBibTeXEntry) []string {
 	if title == "" {
 		return nil
 	}
-	if peers := l.TitleIndex[TeXStringIndexer(title)]; peers.Size() > 0 {
-		return peers.ElementsSorted()
+	peers := l.TitleIndex[TeXStringIndexer(title)]
+	if peers.Size() == 0 {
+		return nil
 	}
-	return nil
+	seen := TStringSetNew()
+	var result []string
+	for _, k := range peers.ElementsSorted() {
+		canon := l.MapEntryKey(k)
+		if l.EntryExists(canon) && !seen.Contains(canon) {
+			seen.Add(canon)
+			result = append(result, canon)
+		}
+	}
+	return result
 }
 
 // askHarvestLibraryChoice asks the user to pick one of n numbered library candidates.
@@ -509,6 +519,22 @@ func addHarvestEntry(l *TBibTeXLibrary, e TBibTeXEntry) string {
 			// temp key — it will be merged immediately and the canonical entry
 			// already owns these mappings.
 			l.SetEntryFieldValue(key, field, value)
+		case "date":
+			// biblatex date field: derive year if not already present.
+			if e.Fields["year"] == "" && len(value) >= 4 {
+				year := value[:4]
+				allDigits := true
+				for _, c := range year {
+					if c < '0' || c > '9' {
+						allDigits = false
+						break
+					}
+				}
+				if allDigits {
+					l.ProcessRawEntryFieldValue(key, "year", year)
+				}
+			}
+			// date itself is not stored
 		default:
 			l.ProcessRawEntryFieldValue(key, field, value)
 		}
