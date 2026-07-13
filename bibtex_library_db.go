@@ -2375,6 +2375,77 @@ func deleteNameMapping(alias string) {
 	}
 }
 
+// correctContributorNameInDB renames every occurrence of oldName to newName across
+// all contributor tables and bib_entries author/editor fields. Returns true on
+// success; false if any step fails (errors are logged via dbInteraction).
+func correctContributorNameInDB(oldName, newName string) bool {
+	// contributors: update canonical name if oldName is canonical for any contributor.
+	if err := bibExec(`UPDATE contributors SET name = ? WHERE name = ?`, newName, oldName); err != nil {
+		dbInteraction.Error("contributors update failed: %s", err)
+		return false
+	}
+
+	// contributor_names: insert newName for every id that had oldName (respects UNIQUE),
+	// then delete the oldName rows.
+	if err := bibExec(`INSERT OR IGNORE INTO contributor_names (id, name) SELECT id, ? FROM contributor_names WHERE name = ?`, newName, oldName); err != nil {
+		dbInteraction.Error("contributor_names insert failed: %s", err)
+		return false
+	}
+	if err := bibExec(`DELETE FROM contributor_names WHERE name = ?`, oldName); err != nil {
+		dbInteraction.Error("contributor_names delete failed: %s", err)
+		return false
+	}
+
+	// entry_contributor_names: update the form recorded per-entry.
+	if err := bibExec(`UPDATE entry_contributor_names SET name_used = ? WHERE name_used = ?`, newName, oldName); err != nil {
+		dbInteraction.Error("entry_contributor_names update failed: %s", err)
+		return false
+	}
+
+	// bib_entries: replace oldName inside author/editor field values.
+	if err := bibExec(`UPDATE bib_entries SET value = REPLACE(value, ?, ?) WHERE field IN ('author','editor') AND value LIKE '%' || ? || '%'`, oldName, newName, oldName); err != nil {
+		dbInteraction.Error("bib_entries update failed: %s", err)
+		return false
+	}
+
+	// non_double_contributor_names: rewire pairs involving oldName; the CHECK (name1 < name2)
+	// constraint requires delete + re-insert with the pair re-sorted.
+	rows, err := bibQuery(`SELECT name1, name2 FROM non_double_contributor_names WHERE name1 = ? OR name2 = ?`, oldName, oldName)
+	if err != nil {
+		dbInteraction.Error("non_double_contributor_names query failed: %s", err)
+		return false
+	}
+	var pairs [][2]string
+	for rows.Next() {
+		var n1, n2 string
+		if scanErr := rows.Scan(&n1, &n2); scanErr != nil {
+			rows.Close()
+			dbInteraction.Error("non_double_contributor_names scan failed: %s", scanErr)
+			return false
+		}
+		pairs = append(pairs, [2]string{n1, n2})
+	}
+	rows.Close()
+	for _, p := range pairs {
+		bibExec(`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, p[0], p[1]) //nolint:errcheck
+		n1, n2 := p[0], p[1]
+		if n1 == oldName {
+			n1 = newName
+		}
+		if n2 == oldName {
+			n2 = newName
+		}
+		if n1 != n2 {
+			if n1 > n2 {
+				n1, n2 = n2, n1
+			}
+			bibExec(`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, n1, n2) //nolint:errcheck
+		}
+	}
+
+	return true
+}
+
 // maybeMergeSpuriousContributors detects and merges contributors whose canonical
 // name appears as a non-canonical entry in another contributor's name list.
 // This repairs data produced by the transitivity-blind migration: chains like

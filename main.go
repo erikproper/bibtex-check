@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.77"
+const AppVersion = "27.78"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2733,6 +2733,44 @@ func doAddNameMapping(args []string) {
 	Library.RenormaliseNameFields()
 }
 
+func doCorrectName(args []string) {
+	if !openLibraryToUpdate() {
+		return
+	}
+	oldName, newName := args[0], args[1]
+	if oldName == newName {
+		fmt.Fprintln(os.Stderr, "Old and new names are identical — nothing to do.")
+		return
+	}
+
+	var cntContribNames, cntEntryNames, cntBibEntries int
+	bibQueryRow(`SELECT COUNT(*) FROM contributor_names WHERE name = ?`, oldName).Scan(&cntContribNames)                                                                    //nolint:errcheck
+	bibQueryRow(`SELECT COUNT(*) FROM entry_contributor_names WHERE name_used = ?`, oldName).Scan(&cntEntryNames)                                                           //nolint:errcheck
+	bibQueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field IN ('author','editor') AND value LIKE '%' || ? || '%'`, oldName).Scan(&cntBibEntries)                         //nolint:errcheck
+
+	if cntContribNames+cntEntryNames+cntBibEntries == 0 {
+		fmt.Fprintf(os.Stderr, "Name not found anywhere: %q\n", oldName)
+		return
+	}
+
+	Library.Progress("Renaming contributor name:")
+	Library.Progress("  bad:     %s", oldName)
+	Library.Progress("  correct: %s", newName)
+	Library.Progress("Occurrences: %d in contributor_names, %d in entry_contributor_names, %d in bib entries",
+		cntContribNames, cntEntryNames, cntBibEntries)
+
+	if !Reporting.ConfirmAction("Proceed with name correction?") {
+		return
+	}
+
+	if !correctContributorNameInDB(oldName, newName) {
+		return
+	}
+	loadContributorsFromDb(&Library)
+	Library.CheckNameMappingConsistency()
+	Library.Progress("Name correction complete.")
+}
+
 func doMergeContributors(args []string) {
 	if !openLibraryToUpdate() {
 		return
@@ -3346,6 +3384,7 @@ func main() {
 		cmdAddKeyMapping         bool
 		cmdMergeEntries       bool
 		cmdAddNameMapping     bool
+		cmdCorrectName        bool
 		cmdAddDoiAlias        bool
 		cmdSetPreferredAlias  bool
 		cmdNewKey             bool
@@ -3419,6 +3458,7 @@ func main() {
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mappings", false, "alias for -add_key_mapping")
 	flag.BoolVar(&cmdMergeEntries, "merge_entries", false, "merge entries into target: -merge_entries <key>... <target>")
 	flag.BoolVar(&cmdAddNameMapping, "add_name_mapping", false, "add a name alias mapping: -add_name_mapping <canonical> <alias>")
+	flag.BoolVar(&cmdCorrectName, "correct_name", false, "correct a name spelling everywhere: -correct_name <bad_name> <correct_name>")
 	flag.BoolVar(&cmdAddDoiAlias, "add_doi_alias", false, "record a DOI as an alias for an entry: -add_doi_alias <entry_key> <doi>")
 	flag.BoolVar(&cmdSetPreferredAlias, "set_preferred_alias", false, "set preferred alias for a key: -set_preferred_alias <key> <alias>")
 	flag.BoolVar(&cmdNewKey, "new_key", false, "print a fresh canonical key and exit")
@@ -3762,6 +3802,13 @@ case cmdWatch:
 			os.Exit(1)
 		}
 		doAddNameMapping(args)
+
+	case cmdCorrectName:
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -correct_name <bad_name> <correct_name>")
+			os.Exit(1)
+		}
+		doCorrectName(args)
 
 	case cmdAddDoiAlias:
 		if len(args) != 2 {
