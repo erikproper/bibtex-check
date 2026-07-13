@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.61"
+const AppVersion = "27.62"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1472,10 +1472,10 @@ func reportHomework() {
 		changeRows = append(changeRows, statRow{"field mappings", fmt.Sprintf("%+d", newFieldMaps), ""})
 	}
 	if delta := unresolvedGroups - sessionStartUnresolvedGroups; delta != 0 {
-		changeRows = append(changeRows, statRow{"title groups with duplicates", fmt.Sprintf("%+d", delta), ""})
+		changeRows = append(changeRows, statRow{"title groups with unresolved duplicates", fmt.Sprintf("%+d", delta), ""})
 	}
 	if delta := dblpCandidates - sessionStartDblpCandidates; delta != 0 {
-		changeRows = append(changeRows, statRow{"DBLP candidates", fmt.Sprintf("%+d", delta), ""})
+		changeRows = append(changeRows, statRow{"entries with unresolved DBLP candidates", fmt.Sprintf("%+d", delta), ""})
 	}
 	if len(changeRows) > 0 {
 		printStatBlock("Session changes:", changeRows)
