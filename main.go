@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.58"
+const AppVersion = "27.59"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1468,52 +1468,6 @@ func reportHomework() {
 		return true
 	})
 
-	// Lone proceedings: proceedings with no library crossref children, no DBLP children
-	// in the file store, and no waive flag. Excludes DBLP-backed entries (they are safe).
-	// Also excludes proceedings that have a PDF file — CheckLoneProceedings silently skips
-	// those too, so they should not be counted as outstanding work.
-	loneProceedings := 0
-	crossrefTargets := TStringSetNew()
-	forEachBibEntryKey(func(key string) bool {
-		if cr := Library.EntryFieldValueity(key, "crossref"); cr != "" {
-			crossrefTargets.Add(Library.MapEntryKey(cr))
-		}
-		return true
-	})
-	filesDir := Library.FilesRoot + Library.FilesFolder
-	forEachBibEntryKey(func(key string) bool {
-		if Library.EntryFieldValueity(key, EntryTypeField) != "proceedings" {
-			return true
-		}
-		if crossrefTargets.Contains(key) {
-			return true
-		}
-		if Library.EntryHasFlag(key, FlagLoneProceedingsWaived) {
-			return true
-		}
-		if Library.EntryFieldValueity(key, DBLPField) != "" {
-			return true // DBLP-backed: not spurious
-		}
-		if FileExists(filesDir + key + ".pdf") {
-			return true // has PDF content — not a problem
-		}
-		loneProceedings++
-		return true
-	})
-
-	authorEditorPairs := 0
-	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&authorEditorPairs)
-
-	// Ambiguous contributor names: name strings currently used in entry_contributor_names
-	// that map to more than one contributor ID. Names that are only recorded in the
-	// contributor_names history but not in any active assignment are not counted.
-	ambiguousNames := 0
-	bibQueryRow(`SELECT COUNT(DISTINCT ecn.name_used)
-	    FROM entry_contributor_names ecn
-	    WHERE ecn.name_used IN (
-	        SELECT name FROM contributor_names GROUP BY name HAVING COUNT(DISTINCT id) > 1
-	    )`).Scan(&ambiguousNames)
-
 	// Count contributors with an ORCID that have never been enriched (no seen record).
 	// Only available when the contributor_orcid_seen table exists (dev tree).
 	newOrcidContributors := 0
@@ -1532,9 +1486,6 @@ func reportHomework() {
 	hwRows := []statRow{
 		{"title groups with unresolved duplicates", fmt.Sprintf("%d", unresolvedGroups), hwComment(unresolvedGroups, "fix_duplicates")},
 		{"entries with unresolved DBLP candidates", fmt.Sprintf("%d", dblpCandidates), hwComment(dblpCandidates, "fix_candidates")},
-		{"lone proceedings", fmt.Sprintf("%d", loneProceedings), ""},
-		{"author/editor values needing triage", fmt.Sprintf("%d", authorEditorPairs), hwComment(authorEditorPairs, "triage_author_mappings")},
-		{"ambiguous contributor names", fmt.Sprintf("%d", ambiguousNames), hwComment(ambiguousNames, "disambiguate_contributors")},
 	}
 	if seenTableExists > 0 {
 		hwRows = append(hwRows, statRow{"contributors with ORCID not yet enriched", fmt.Sprintf("%d", newOrcidContributors), hwComment(newOrcidContributors, "enrich_contributor_data")})
