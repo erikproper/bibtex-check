@@ -1546,6 +1546,9 @@ func (l *TBibTeXLibrary) MaybeApplyFieldMappings(entry *TBibTeXEntry, writeToDb 
 
 func (l *TBibTeXLibrary) CheckIfFieldsAreAllowed(entry *TBibTeXEntry, violationHandler func(string, string, string)) {
 	for field, value := range entry.Fields {
+		if l.QuitWasRequested() {
+			return
+		}
 		if !l.EntryAllowsForField(entry.Key, field) {
 			violationHandler(entry.Key, field, value)
 		}
@@ -1577,7 +1580,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 		l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
 			if l.ignoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
 				l.deleteEntryField(entry, field)
-			} else {
+			} else if !l.QuitWasRequested() {
 				l.Warning("Stopping programme. Please fix this manually.")
 				os.Exit(0)
 			}

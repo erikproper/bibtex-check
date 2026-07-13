@@ -277,7 +277,7 @@ func init() {
 	BibTeXEntryMap["patent"] = "misc"
 	BibTeXEntryMap["unpublished"] = "misc"
 	BibTeXEntryMap["report"] = "techreport"
-	BibTeXEntryMap["standard"] = "techreport"
+	BibTeXEntryMap["standard"] = "book"
 	BibTeXEntryMap["thesis"] = "mastersthesis"
 	BibTeXEntryMap["inreference"] = "misc"
 

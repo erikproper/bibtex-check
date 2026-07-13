@@ -308,7 +308,7 @@ func printStatBlock(header string, rows []statRow) {
 			maxLen = n
 		}
 	}
-	fmt.Fprintf(os.Stderr, "%s\n", header)
+	fmt.Fprintf(os.Stderr, "\n%s\n", header)
 	for _, r := range rows {
 		if r.comment != "" {
 			fmt.Fprintf(os.Stderr, "  %-*s %s  %s\n", maxLen, r.label+":", r.value, r.comment)

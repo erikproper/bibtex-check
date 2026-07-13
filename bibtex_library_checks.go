@@ -1566,6 +1566,7 @@ func (l *TBibTeXLibrary) NormaliseEntryFields(entry *TBibTeXEntry) {
 
 func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 	if entry.Exists() {
+		originalType := entry.EntryType()
 		l.CheckKeyValidity(entry)
 
 		// CheckCrossref can lead to a merger of entries for now ...
@@ -1574,11 +1575,18 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 				l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
 					if l.ignoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
 						l.deleteEntryField(entry, field)
-					} else {
+					} else if !l.QuitWasRequested() {
 						l.Warning("Stopping programme. Please fix this manually.")
 						os.Exit(0)
 					}
 				})
+				if l.QuitWasRequested() {
+					if currentType := entry.EntryType(); currentType != originalType {
+						l.SetEntryType(entry.Key, originalType)
+						entry.Fields[EntryTypeField] = originalType
+					}
+					return
+				}
 			}
 			l.NormaliseEntryFields(entry)
 			l.MaybeApplyFieldMappings(entry, true)
