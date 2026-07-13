@@ -192,4 +192,25 @@ const (
 
 	WarningGenericFieldMappingAuthorEditor = "field_mappings: field %q not allowed as same-field mapping (winner=%q, challenger=%q) — use losing_field_values instead"
 	WarningFieldMappingCycle               = "Field mapping cycle rejected: (%s, %q) → (%s, %q) would close a cycle"
+
+	// Stat row labels — used in Library statistics, Session changes, and Homework blocks.
+	StatEntries                            = "entries"
+	StatPDFFiles                           = "PDF files"
+	StatContributors                       = "contributors"
+	StatNameSpellings                      = "name spellings"
+	StatFieldMappings                      = "field mappings"
+	StatLosingValues                       = "losing values"
+	StatDblpCoverage                       = "DBLP coverage"
+	StatDblpCrossrefOverrides              = "DBLP crossref overrides"
+	StatDblpWaivedChildren                 = "DBLP waived children"
+	StatKeyOldies                          = "key oldies"
+	StatKeyHints                           = "key hints"
+	StatNonDoubleEntryPairs                = "non-double entry pairs"
+	StatNonDoubleContributorPairs          = "non-double contributor pairs"
+	StatNonDoubleNamePairs                 = "non-double name pairs"
+	StatEntryFlags                         = "entry flags"
+	StatDblpLinks                          = "DBLP links"
+	StatTitleGroupsWithUnresolvedDuplicates = "title groups with unresolved duplicates"
+	StatEntriesWithUnresolvedDblpCandidates = "entries with unresolved DBLP candidates"
+	StatContributorsWithOrcidNotYetEnriched = "contributors with ORCID not yet enriched"
 )

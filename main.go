@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.62"
+const AppVersion = "27.63"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -339,21 +339,21 @@ func printSessionStats() {
 		pct = float64(dblpKeys) * 100.0 / float64(total)
 	}
 	printStatBlock("Library statistics:", []statRow{
-		{"entries", fmt.Sprintf("%d", total), ""},
-		{"PDF files", fmt.Sprintf("%d", len(Library.PDFFiles)), ""},
-		{"contributors", fmt.Sprintf("%d", contributors), ""},
-		{"name spellings", fmt.Sprintf("%d", nameStrings), ""},
-		{"field mappings", fmt.Sprintf("%d", fieldMaps), ""},
-		{"losing values", fmt.Sprintf("%d", losingValues), ""},
-		{"DBLP coverage", fmt.Sprintf("%d/%d (%.0f%%)", dblpKeys, total, pct), ""},
-		{"DBLP crossref overrides", fmt.Sprintf("%d", Library.DblpParent.Len()), ""},
-		{"DBLP waived children", fmt.Sprintf("%d", Library.DblpWaived.Len()), ""},
-		{"key oldies", fmt.Sprintf("%d", Library.KeyOldies.Len()), ""},
-		{"key hints", fmt.Sprintf("%d", Library.HintToKey.Len()), ""},
-		{"non-double entry pairs", fmt.Sprintf("%d", ndEntries), ""},
-		{"non-double contributor pairs", fmt.Sprintf("%d", ndContributors), ""},
-		{"non-double name pairs", fmt.Sprintf("%d", ndNames), ""},
-		{"entry flags", fmt.Sprintf("%d", entryFlags), ""},
+		{StatEntries, fmt.Sprintf("%d", total), ""},
+		{StatPDFFiles, fmt.Sprintf("%d", len(Library.PDFFiles)), ""},
+		{StatContributors, fmt.Sprintf("%d", contributors), ""},
+		{StatNameSpellings, fmt.Sprintf("%d", nameStrings), ""},
+		{StatFieldMappings, fmt.Sprintf("%d", fieldMaps), ""},
+		{StatLosingValues, fmt.Sprintf("%d", losingValues), ""},
+		{StatDblpCoverage, fmt.Sprintf("%d/%d (%.0f%%)", dblpKeys, total, pct), ""},
+		{StatDblpCrossrefOverrides, fmt.Sprintf("%d", Library.DblpParent.Len()), ""},
+		{StatDblpWaivedChildren, fmt.Sprintf("%d", Library.DblpWaived.Len()), ""},
+		{StatKeyOldies, fmt.Sprintf("%d", Library.KeyOldies.Len()), ""},
+		{StatKeyHints, fmt.Sprintf("%d", Library.HintToKey.Len()), ""},
+		{StatNonDoubleEntryPairs, fmt.Sprintf("%d", ndEntries), ""},
+		{StatNonDoubleContributorPairs, fmt.Sprintf("%d", ndContributors), ""},
+		{StatNonDoubleNamePairs, fmt.Sprintf("%d", ndNames), ""},
+		{StatEntryFlags, fmt.Sprintf("%d", entryFlags), ""},
 	})
 }
 
@@ -1463,19 +1463,19 @@ func reportHomework() {
 
 	var changeRows []statRow
 	if newEntries != 0 {
-		changeRows = append(changeRows, statRow{"entries", fmt.Sprintf("%+d", newEntries), ""})
+		changeRows = append(changeRows, statRow{StatEntries, fmt.Sprintf("%+d", newEntries), ""})
 	}
 	if newDblpLinks != 0 {
-		changeRows = append(changeRows, statRow{"DBLP links", fmt.Sprintf("%+d", newDblpLinks), ""})
+		changeRows = append(changeRows, statRow{StatDblpLinks, fmt.Sprintf("%+d", newDblpLinks), ""})
 	}
 	if newFieldMaps != 0 {
-		changeRows = append(changeRows, statRow{"field mappings", fmt.Sprintf("%+d", newFieldMaps), ""})
+		changeRows = append(changeRows, statRow{StatFieldMappings, fmt.Sprintf("%+d", newFieldMaps), ""})
 	}
 	if delta := unresolvedGroups - sessionStartUnresolvedGroups; delta != 0 {
-		changeRows = append(changeRows, statRow{"title groups with unresolved duplicates", fmt.Sprintf("%+d", delta), ""})
+		changeRows = append(changeRows, statRow{StatTitleGroupsWithUnresolvedDuplicates, fmt.Sprintf("%+d", delta), ""})
 	}
 	if delta := dblpCandidates - sessionStartDblpCandidates; delta != 0 {
-		changeRows = append(changeRows, statRow{"entries with unresolved DBLP candidates", fmt.Sprintf("%+d", delta), ""})
+		changeRows = append(changeRows, statRow{StatEntriesWithUnresolvedDblpCandidates, fmt.Sprintf("%+d", delta), ""})
 	}
 	if len(changeRows) > 0 {
 		printStatBlock("Session changes:", changeRows)
@@ -1497,11 +1497,11 @@ func reportHomework() {
 		return ""
 	}
 	hwRows := []statRow{
-		{"title groups with unresolved duplicates", fmt.Sprintf("%d", unresolvedGroups), hwComment(unresolvedGroups, "fix_duplicates")},
-		{"entries with unresolved DBLP candidates", fmt.Sprintf("%d", dblpCandidates), hwComment(dblpCandidates, "fix_candidates")},
+		{StatTitleGroupsWithUnresolvedDuplicates, fmt.Sprintf("%d", unresolvedGroups), hwComment(unresolvedGroups, "fix_duplicates")},
+		{StatEntriesWithUnresolvedDblpCandidates, fmt.Sprintf("%d", dblpCandidates), hwComment(dblpCandidates, "fix_candidates")},
 	}
 	if seenTableExists > 0 {
-		hwRows = append(hwRows, statRow{"contributors with ORCID not yet enriched", fmt.Sprintf("%d", newOrcidContributors), hwComment(newOrcidContributors, "enrich_contributor_data")})
+		hwRows = append(hwRows, statRow{StatContributorsWithOrcidNotYetEnriched, fmt.Sprintf("%d", newOrcidContributors), hwComment(newOrcidContributors, "enrich_contributor_data")})
 	}
 	printStatBlock("Homework:", hwRows)
 }
