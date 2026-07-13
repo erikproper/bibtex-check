@@ -932,8 +932,6 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath string, syncSta
 
 	var toProcess []categorizedEntry
 	bibSeenCanonicals := map[string]bool{}
-	stepN := int(cmdStep)
-	questions := 0
 
 	for _, e := range bibEntries {
 		// Match bib entry back to its canonical library key via output key or alias lookup.
@@ -1086,7 +1084,7 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath string, syncSta
 
 	// Process bib-changed entries.
 	for _, c := range toProcess {
-		if quit || (stepN > 0 && questions >= stepN) {
+		if quit {
 			break
 		}
 		if c.status != statusBibChanged && c.status != statusBothChanged {
@@ -1103,25 +1101,22 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath string, syncSta
 			}
 		}
 		applySubsetBibToDb(c.bibEntry, c.canonicalKey, cfg.TrustedSubset)
-		questions++
 	}
 
 	// Process new entries via harvest pipeline.
 	if !quit {
 		for _, c := range toProcess {
-			if quit || (stepN > 0 && questions >= stepN) {
+			if quit {
 				break
 			}
 			if c.status != statusNew {
 				continue
 			}
-			before := Library.QuestionsAnswered()
 			var canonicalKey string
 			canonicalKey, quit = Library.runHarvestEntry(c.bibEntry, nil)
 			if canonicalKey != "" {
 				bibSeenCanonicals[canonicalKey] = true
 			}
-			questions += Library.QuestionsAnswered() - before
 		}
 	}
 
@@ -1134,7 +1129,7 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath string, syncSta
 	// Process deleted entries.
 	if !quit {
 		for _, canonical := range deletedCanonicals {
-			if quit || (stepN > 0 && questions >= stepN) {
+			if quit {
 				break
 			}
 			outputKey := ""
@@ -1143,9 +1138,6 @@ func runSubsetUpSync(cfg TBibGetConfig, sourcePath, keysBasePath string, syncSta
 			}
 			if deleteSubsetEntry(canonical, localFilesDir, outputKey, cfg.TrustedSubset) {
 				syncState.delete(canonical)
-			}
-			if !cfg.TrustedSubset {
-				questions++
 			}
 		}
 	}

@@ -22,7 +22,7 @@ import (
 
 // stdinCh is the single source of stdin lines for all interactive prompts.
 // One pump goroutine reads os.Stdin here; every consumer (WarningQuestion,
-// AskContinueOrQuit, DBLP scan, etc.) pulls from this channel so there is
+// DBLP scan, etc.) pulls from this channel so there is
 // never more than one reader competing for the same input byte.
 var stdinCh = make(chan string, 1)
 
@@ -173,16 +173,11 @@ func (t *TProgressTicker) Done() {
 type TInteraction struct {
 	silenced           bool
 	progressSuppressed bool // suppress Progress() output without silencing warnings/questions
-	questionWasAsked   bool
-	outputWasProduced  bool
-	stepMode           bool
-	stepSize           int
-	stepCounter        int  // running count of questions answered in the current step batch
-	quitRequested      bool // set when user answers "q" to AskContinueOrQuit
+	quitRequested      bool // set when user answers "q" to any question or ticker
 	questionsAnswered  int  // total questions answered; snapshotted before/after runHarvestEntry
 }
 
-// QuitWasRequested reports whether the user asked to stop in any AskContinueOrQuit prompt.
+// QuitWasRequested reports whether the user asked to stop at any prompt or ticker.
 func (r *TInteraction) QuitWasRequested() bool {
 	return r.quitRequested
 }
@@ -192,165 +187,19 @@ func (r *TInteraction) QuestionsAnswered() int {
 	return r.questionsAnswered
 }
 
-// ResetQuestionFlag clears the per-entry trackers before processing each entry
-// in a "for all" loop.
-func (r *TInteraction) ResetQuestionFlag() {
-	r.questionWasAsked = false
-	r.outputWasProduced = false
-}
-
-// QuestionWasAsked reports whether any WarningQuestion was issued since the
-// last ResetQuestionFlag call.
-func (r *TInteraction) QuestionWasAsked() bool {
-	return r.questionWasAsked
-}
-
-// OutputWasProduced reports whether any Progress/Warning/Error was emitted
-// since the last ResetQuestionFlag call.
-func (r *TInteraction) OutputWasProduced() bool {
-	return r.outputWasProduced
-}
+// ResetQuestionFlag is a no-op retained for call-site compatibility; to be removed in 17.2 cleanup.
+func (r *TInteraction) ResetQuestionFlag() {}
 
 // AskForInput prints prompt and returns the trimmed line the user types.
-// The second return value is non-nil when stdin is closed (EOF or read error).
-// Does not set questionWasAsked (setup prompts, not entry-processing questions).
+// Typing "q" sets quitRequested and returns "".
 func (r *TInteraction) AskForInput(prompt string) (string, error) {
-	fmt.Fprintf(os.Stderr, "INPUT:    %s: ", prompt)
-	return readStdinLine(), nil
-}
-
-// SetStepMode enables or disables per-entry stepping (size 1).
-func (r *TInteraction) SetStepMode(on bool) {
-	if on {
-		r.stepSize = 1
-	} else {
-		r.stepSize = 0
+	fmt.Fprintf(os.Stderr, "INPUT:    %s (q=quit): ", prompt)
+	line := readStdinLine()
+	if line == "q" {
+		r.quitRequested = true
+		return "", nil
 	}
-	r.stepMode = r.stepSize > 0
-	r.stepCounter = 0
-}
-
-// SetStepSize sets the batch size for step mode (0 = off, 1 = per-entry, N = every N entries).
-func (r *TInteraction) SetStepSize(n int) {
-	r.stepSize = n
-	r.stepMode = n > 0
-	r.stepCounter = 0
-}
-
-// StepMode reports whether step mode is currently enabled.
-func (r *TInteraction) StepMode() bool {
-	return r.stepMode
-}
-
-// StepSize returns the current step batch size (0 = off).
-func (r *TInteraction) StepSize() int {
-	return r.stepSize
-}
-
-// PressEnterToContinue pauses and waits for the user to press Enter,
-// but only when step mode is on and something was actually printed for this entry.
-func (r *TInteraction) PressEnterToContinue() {
-	if r.silenced || !r.stepMode || !r.outputWasProduced {
-		return
-	}
-	fmt.Fprint(os.Stderr, "--- Press Enter to continue ---")
-	readStdinLine()
-}
-
-// PressBatchEnterToContinue unconditionally pauses for Enter; used after
-// every N entries in batch step mode (stepSize > 1).
-func (r *TInteraction) PressBatchEnterToContinue() {
-	if r.silenced {
-		return
-	}
-	fmt.Fprint(os.Stderr, "--- Press Enter to continue ---")
-	readStdinLine()
-}
-
-// StepCheckReady returns true when a question was asked for this entry and the
-// step batch counter has reached the configured size, then resets the counter.
-// The caller is responsible for prompting the user. Returns false when step mode
-// is off, no question was asked, or the batch is not yet full.
-func (r *TInteraction) StepCheckReady() bool {
-	if r.stepSize <= 0 || !r.questionWasAsked {
-		return false
-	}
-	r.stepCounter++
-	if r.stepCounter >= r.stepSize {
-		r.stepCounter = 0
-		return true
-	}
-	return false
-}
-
-// StepCheckReadyEvery is like StepCheckReady but fires on every call regardless
-// of whether a question was asked. Use when the loop unconditionally presents a prompt.
-func (r *TInteraction) StepCheckReadyEvery() bool {
-	if r.stepSize <= 0 {
-		return false
-	}
-	r.stepCounter++
-	if r.stepCounter >= r.stepSize {
-		r.stepCounter = 0
-		return true
-	}
-	return false
-}
-
-// StepCheck combines StepCheckReady with AskContinueOrQuit. Call at the end of
-// each entry in a loop where questions are asked conditionally.
-// Returns true when the user asked to quit.
-func (r *TInteraction) StepCheck() bool {
-	if !r.StepCheckReady() {
-		return r.quitRequested
-	}
-	return r.AskContinueOrQuit()
-}
-
-// StepCheckEvery combines StepCheckReadyEvery with AskContinueOrQuit.
-// Returns true when the user asked to quit.
-func (r *TInteraction) StepCheckEvery() bool {
-	if !r.StepCheckReadyEvery() {
-		return r.quitRequested
-	}
-	return r.AskContinueOrQuit()
-}
-
-// AskContinueOrQuit asks the user whether to continue or quit after an entry
-// that required interaction. Returns true if the user chose to quit.
-// When interaction is silenced, always continues.
-func (r *TInteraction) AskContinueOrQuit() bool {
-	if r.silenced {
-		return false
-	}
-	SpinnerInterrupt()
-	fmt.Fprint(os.Stderr, "QUESTION: Continue with next entry, or quit? (Enter/c/q): ")
-	for {
-		answer := readStdinLine()
-		if answer == "" || answer == "c" || answer == "y" {
-			return false
-		}
-		if answer == "q" {
-			r.quitRequested = true
-			return true
-		}
-		fmt.Fprint(os.Stderr, "(Enter/c/q): ")
-	}
-}
-
-// ConfirmAction always prompts the user for y/n confirmation, even when the
-// interaction is silenced. Use for safety gates that must not be skipped
-// by batch-mode callers.
-func (r *TInteraction) ConfirmAction(prompt string) bool {
-	r.questionsAnswered++
-	fmt.Fprintf(os.Stderr, "CONFIRM:  %s (y/n): ", prompt)
-	for {
-		answer := readStdinLine()
-		if answer == "y" || answer == "n" {
-			return answer == "y"
-		}
-		fmt.Fprint(os.Stderr, "(y/n): ")
-	}
+	return line, nil
 }
 
 // Disable any output to standard out.
@@ -378,7 +227,6 @@ func (r *TInteraction) SetInteraction(status bool) {
 func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 	if !r.silenced {
 		SpinnerInterrupt()
-		r.outputWasProduced = true
 		fmt.Fprintf(os.Stderr, "ERROR:    "+errorMessage+"\n", context...)
 	}
 
@@ -390,17 +238,16 @@ func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 func (r *TInteraction) Warning(warning string, context ...any) bool {
 	if !r.silenced {
 		SpinnerInterrupt()
-		r.outputWasProduced = true
 		fmt.Fprintf(os.Stderr, "WARNING: "+warning+"\n", context...)
 	}
 
 	return true
 }
 
-// Reporting warnings that involve a choice on how to proceed.
-// The warning message should provide the formatting.
+// WarningQuestion presents a question and waits for one of the listed options.
+// "q" is always accepted (in addition to the named options) and triggers a
+// graceful quit: quitRequested is set and "q" is returned to the caller.
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
-	r.questionWasAsked = true
 	r.questionsAnswered++
 	if warning != "" {
 		r.Warning(warning, context...)
@@ -412,12 +259,19 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 		optionSet += separator + option
 		separator = "/"
 	}
+	if !options.Contains("q") {
+		optionSet += separator + "q"
+	}
 	optionSet += "): "
 
 	fmt.Fprint(os.Stderr, "QUESTION: "+question+" "+optionSet)
 
 	for {
 		option := readStdinLine()
+		if option == "q" {
+			r.quitRequested = true
+			return "q"
+		}
 		if options.Contains(option) {
 			return option
 		}
@@ -425,8 +279,8 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 	}
 }
 
-// Reporting warnings that involve a choice on how to proceed.
-// The warning message should provide the formatting.
+// WarningYesNoQuestion presents a yes/no question; returns true for "y".
+// "q" is also accepted and triggers a graceful quit (returns false).
 func (r *TInteraction) WarningYesNoQuestion(question, warning string, context ...any) bool {
 	options := TStringSetNew()
 	options.Add("y", "n")
@@ -461,6 +315,25 @@ func printStatBlock(header string, rows []statRow) {
 		} else {
 			fmt.Fprintf(os.Stderr, "  %-*s %s\n", maxLen, r.label+":", r.value)
 		}
+	}
+}
+
+// ConfirmAction always prompts the user for y/n/q confirmation, even when the
+// interaction is silenced. Use for safety gates that must not be skipped
+// by batch-mode callers. "q" sets quitRequested and returns false.
+func (r *TInteraction) ConfirmAction(prompt string) bool {
+	r.questionsAnswered++
+	fmt.Fprintf(os.Stderr, "CONFIRM:  %s (y/n/q): ", prompt)
+	for {
+		answer := readStdinLine()
+		if answer == "y" || answer == "n" {
+			return answer == "y"
+		}
+		if answer == "q" {
+			r.quitRequested = true
+			return false
+		}
+		fmt.Fprint(os.Stderr, "(y/n/q): ")
 	}
 }
 

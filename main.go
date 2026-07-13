@@ -31,31 +31,12 @@ func (f *tableListFlag) Set(s string) error {
 	return nil
 }
 
-// stepFlag implements flag.Value for -step [N].
-// -step alone means step size 1; -step=N or -step N means step size N.
-type stepFlag int
-
-func (f *stepFlag) String() string   { return strconv.Itoa(int(*f)) }
-func (f *stepFlag) IsBoolFlag() bool { return true }
-func (f *stepFlag) Set(s string) error {
-	if s == "true" {
-		*f = 1
-		return nil
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 1 {
-		return fmt.Errorf("step: expected a positive integer, got %q", s)
-	}
-	*f = stepFlag(n)
-	return nil
-}
-
 var (
 	Library   TBibTeXLibrary
 	Reporting TInteraction
 )
 
-const AppVersion = "27.67"
+const AppVersion = "27.68"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -63,7 +44,6 @@ var (
 	skipBibValidation     bool
 	skipStartupChecks     bool // set by -import so the import runs before consistency checks
 	forceWrite            bool
-	cmdStep               stepFlag
 	cmdNoGarbageCleaning  bool
 	cmdTrustHints              bool   // -trust_hints: auto-accept key-hint matches in harvest
 	cmdCollectKeys             bool   // -collect_keys: add source keys to hints DB when unambiguous
@@ -290,6 +270,7 @@ var (
 	sessionStartFieldMapCount     int
 	sessionStartUnresolvedGroups  int
 	sessionStartDblpCandidates    int
+	sessionManualDblpAssignments  int // gross count of manually entered DBLP keys this session
 )
 
 func countDblpKeyedEntries() int {
@@ -1048,7 +1029,7 @@ outer:
 			}
 		}
 
-		if Reporting.StepCheck() {
+		if Reporting.QuitWasRequested() {
 			break outer
 		}
 	}
@@ -1133,7 +1114,7 @@ outer:
 		case "q":
 			break outer
 		}
-		if Reporting.StepCheck() {
+		if Reporting.QuitWasRequested() {
 			break outer
 		}
 	}
@@ -1361,7 +1342,7 @@ outer:
 				Library.Progress("Assigned %s %s pos %d → %q.", r.key, r.role, r.position, cand.Name)
 			}
 		}
-		if Reporting.StepCheckEvery() {
+		if Reporting.QuitWasRequested() {
 			break outer
 		}
 	}
@@ -1454,6 +1435,9 @@ func reportHomework() {
 	if delta := dblpCandidates - sessionStartDblpCandidates; delta != 0 {
 		changeRows = append(changeRows, statRow{StatEntriesWithUnresolvedDblpCandidates, fmt.Sprintf("%+d", delta), ""})
 	}
+	if sessionManualDblpAssignments > 0 {
+		changeRows = append(changeRows, statRow{StatDblpKeysManuallyEntered, fmt.Sprintf("%d", sessionManualDblpAssignments), ""})
+	}
 	if len(changeRows) > 0 {
 		printStatBlock("Session changes:", changeRows)
 	}
@@ -1490,7 +1474,6 @@ func reportHomework() {
 // are offered candidates; entries that already have one are skipped.
 func doFixCandidates() {
 	if openLibraryToUpdate() {
-		entryCountAtStepStart := countBibEntries()
 	outer:
 		for _, keySet := range Library.TitleIndex {
 			// Collect canonicals that still need a DBLP key; build exclusion set
@@ -1531,15 +1514,8 @@ func doFixCandidates() {
 					}
 				}
 			}
-			if Reporting.StepCheckReady() {
-				if added := countBibEntries() - entryCountAtStepStart; added > 0 {
-					Library.Progress("Step added %d new entr%s to the library",
-						added, map[bool]string{true: "y", false: "ies"}[added == 1])
-				}
-				if Library.AskContinueOrQuit() {
-					break outer
-				}
-				entryCountAtStepStart = countBibEntries()
+			if Library.QuitWasRequested() {
+				break outer
 			}
 		}
 	}
@@ -2073,7 +2049,7 @@ func doFixDuplicates() {
 			Library.ResetQuestionFlag()
 			variations := Library.ResolveVariationSet(canonicals)
 			doVariationSetDblpLinking(variations)
-			if Reporting.StepCheck() {
+			if Reporting.QuitWasRequested() {
 				break outer
 			}
 		}
@@ -2136,7 +2112,6 @@ func doUpsertDblpEntries() {
 							contribPersonEntries, contribExistingKey)
 					}
 				}
-				Reporting.StepCheck()
 			}
 		}
 		for _, key := range bookishKeys {
@@ -2490,7 +2465,7 @@ func runWatchORCID(w TWatchEntry, label string) {
 					}
 				}
 				addDoiEntry(entry, label)
-				if Reporting.StepCheck() {
+				if Reporting.QuitWasRequested() {
 					return
 				}
 			}
@@ -2564,7 +2539,7 @@ func runWatch() bool {
 				doAllChecks(added)
 			}
 
-			if Reporting.StepCheck() {
+			if Reporting.QuitWasRequested() {
 				break
 			}
 		}
@@ -3129,7 +3104,9 @@ func doEnrichOrcidProfilesCore() {
 		Library.Progress("ORCID %s processed (%d/%d fetched, %d new alias(es) so far).",
 			p.orcid, fetched, needsFetch, newAliases)
 
-		Reporting.StepCheck()
+		if Library.QuitWasRequested() {
+			break
+		}
 	}
 	ticker.Done()
 	if matchedOnly && skipped > 0 {
@@ -3337,7 +3314,6 @@ func main() {
 	baseFlag := flag.String("base", "", "path/basename of the library (required)")
 	flag.BoolVar(&forceWrite, "force_write", false, "force write even if unchanged")
 
-	flag.Var(&cmdStep, "step", "pause every N entries in for-all loops (default N=1 when flag is given)")
 	flag.BoolVar(&cmdTrustHints, "trust_hints", false, "harvest: auto-accept key-hint matches without confirmation")
 	flag.BoolVar(&cmdCollectKeys, "collect_keys", false, "harvest: add source entry keys to the hints DB when unambiguous")
 	flag.StringVar(&cmdHarvestGroup, "group", "", "harvest: add all resolved entries to this group")
@@ -3481,18 +3457,6 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	flag.BoolVar(&cmdImportBib, "import_bib", false, "import a bib file into the DB (requires filename argument; use to initialise or reinitialise bib_entries)")
 	flag.BoolVar(&cmdHarvest, "harvest", false, "interactively ingest entries from a bib file (path from args) or stdin into the library")
 
-
-	// Normalise "-step N" (space-separated) to "-step=N" before flag.Parse so
-	// that IsBoolFlag-style parsing handles "-step" (no value) correctly too.
-	for i := 1; i < len(os.Args)-1; i++ {
-		if os.Args[i] == "-step" || os.Args[i] == "--step" {
-			if _, err := strconv.Atoi(os.Args[i+1]); err == nil {
-				os.Args[i] = os.Args[i] + "=" + os.Args[i+1]
-				os.Args = append(os.Args[:i+1], os.Args[i+2:]...)
-				break
-			}
-		}
-	}
 	flag.Parse()
 	args := flag.Args()
 
@@ -3542,7 +3506,6 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	BibFile = bibTeXBaseName + BibFileExtension
 
 	Reporting = TInteraction{}
-	Reporting.SetStepSize(int(cmdStep))
 
 	loadBibTeXFolders(bibTeXFolder + bibTeXBaseName + FoldersFileExtension)
 	if backupFolder == "" {

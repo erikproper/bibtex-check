@@ -639,10 +639,32 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 	// harvest_transfer is configured, also writes the entry verbatim to the
 	// follow bib via the .sync DB weave table.
 	validActions := TStringSetNew()
-	validActions.Add("a").Add("m").Add("s").Add("i").Add("q")
+	validActions.Add("a").Add("k").Add("m").Add("s").Add("i").Add("q")
 	switch l.WarningQuestion(QuestionHarvestAction, validActions, "") {
 	case "q":
 		return "", true
+	case "k":
+		dblpKey, err := Reporting.AskForInput("DBLP key")
+		if err == nil && dblpKey != "" {
+			if dblpEntryFromFile(dblpKey) == nil {
+				l.Warning("DBLP key %q not found in file store", dblpKey)
+			} else {
+				newKey := addHarvestEntry(l, e)
+				l.AssociateDblpKey(newKey, dblpKey)
+				sessionManualDblpAssignments++
+				finalKey := l.MapEntryKey(newKey)
+				doAllChecks(finalKey)
+				finalKey = l.MapEntryKey(finalKey)
+				fixEntry(finalKey)
+				maybeCollectKeyHint(l, e.Key, finalKey)
+				l.maybeHarvestPDF(e, finalKey)
+				addToHarvestGroup(l, finalKey)
+				transferHarvestKey(e.Key, finalKey)
+				recordStatus(finalKey)
+				return finalKey, false
+			}
+		}
+		return "", false
 	case "m":
 		for {
 			fmt.Fprint(os.Stderr, "Merge into EP key: ")
@@ -689,9 +711,6 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 // skipped when syncState is non-nil. For previously resolved entries, PDF sync and
 // key-hint registration are re-run on each pass.
 func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSyncState) {
-	stepN := int(cmdStep)
-	questionCounter := 0
-
 	for _, e := range entries {
 		// Pre-normalise non-interactively before display and fingerprinting so the
 		// candidate entry compares cleanly against the current library content.
@@ -712,19 +731,9 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 			}
 			continue
 		}
-		before := l.QuestionsAnswered()
 		_, quit := l.runHarvestEntry(e, syncState)
 		if quit {
 			return
-		}
-		if stepN > 0 {
-			questionCounter += l.QuestionsAnswered() - before
-			if questionCounter >= stepN {
-				if l.AskContinueOrQuit() {
-					return
-				}
-				questionCounter = 0
-			}
 		}
 	}
 }

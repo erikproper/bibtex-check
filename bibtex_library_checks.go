@@ -1530,6 +1530,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 									l.Warning("DBLP key %q not found in file store", dblpKey)
 								} else {
 									l.AssociateDblpKey(childKey, dblpKey)
+									sessionManualDblpAssignments++
 									deleteEntryWarning(childKey, msg)
 									deleteEntryWarning(key, "")
 								}
@@ -1628,7 +1629,7 @@ func (l *TBibTeXLibrary) CheckEntries() {
 		ticker.Step()
 		l.ResetQuestionFlag()
 		l.CheckEntry(l.buildEntry(key))
-		return !Reporting.StepCheck()
+		return !Reporting.QuitWasRequested()
 	})
 
 	ticker.Done()
@@ -1784,6 +1785,7 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 					l.Warning("DBLP key %q not found in file store", dblpKey)
 				} else {
 					Library.AssociateDblpKey(key, dblpKey)
+					sessionManualDblpAssignments++
 					if newDblpKey := l.EntryFieldValueity(key, DBLPField); newDblpKey != "" {
 						addDblpChildrenForKey(key, newDblpKey)
 					}
@@ -1795,7 +1797,7 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 			l.DeleteEntry(key)
 		}
 
-		return !Reporting.StepCheckEvery()
+		return !Reporting.QuitWasRequested()
 	})
 }
 

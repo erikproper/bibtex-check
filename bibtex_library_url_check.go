@@ -325,9 +325,7 @@ func URLCheckNeeded(l *TBibTeXLibrary, entry *TBibTeXEntry) bool {
 }
 
 // CheckAllURLs runs CheckURLPlausibility for every qualifying entry.
-// Runs as part of the normal check routine; respects -step N.
 func (l *TBibTeXLibrary) CheckAllURLs() {
-	stepN := Reporting.StepSize()
 	checked := 0
 	forEachBibEntryKey(func(key string) bool {
 		entry := l.buildEntry(key)
@@ -337,10 +335,7 @@ func (l *TBibTeXLibrary) CheckAllURLs() {
 		l.CheckURLPlausibility(entry)
 		flushWorkingDbToHome()
 		checked++
-		if stepN > 0 && checked >= stepN {
-			return false
-		}
-		return true
+		return !Reporting.QuitWasRequested()
 	})
 	l.Progress("URL check complete: %d entries checked", checked)
 }
