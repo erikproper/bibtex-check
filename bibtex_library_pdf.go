@@ -579,13 +579,11 @@ func (l *TBibTeXLibrary) CheckPDFHealth() {
 	}
 
 	total := len(pdfFiles)
-	count := 0
 	md5Index := TStringSetMap{}
-	spinner := l.NewSpinner(fmt.Sprintf(ProgressCheckingPDFHealth, filesDir))
+	ticker := l.NewProgressTicker(fmt.Sprintf(ProgressCheckingPDFHealth, filesDir), total)
 
 	for _, fileName := range pdfFiles {
-		count++
-		spinner.Update(count, total)
+		ticker.Step()
 		key := strings.TrimSuffix(fileName, ".pdf")
 		fullPath := filesDir + fileName
 
@@ -607,11 +605,11 @@ func (l *TBibTeXLibrary) CheckPDFHealth() {
 			continue
 		}
 		if l.handleBrokenPDF(key, fullPath, reason) {
-			spinner.Stop()
+			ticker.Done()
 			return
 		}
 	}
-	spinner.Stop()
+	ticker.Done()
 
 	validAnswers := TStringSetNew()
 	validAnswers.Add("w", "m", "s")

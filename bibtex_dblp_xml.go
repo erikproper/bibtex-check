@@ -2413,7 +2413,7 @@ func absorbDblpOrcidsCore() {
 	}
 
 	Library.Progress("Scanning for ORCIDs via DBLP person keys (%d contributors).", total)
-	spinner := Library.NewSpinner(ProgressScanningOrcids)
+	ticker := Library.NewProgressTicker(ProgressScanningOrcids, total)
 	orcidsSet, keysLinked, merged, checked := 0, 0, 0, 0
 
 	for id, contrib := range Library.ContributorByID {
@@ -2421,7 +2421,7 @@ func absorbDblpOrcidsCore() {
 			continue
 		}
 		checked++
-		spinner.Update(checked, total)
+		ticker.SetCount(checked)
 
 		// For contributors without a DblpKey: try ORCID-based lookup first (direct,
 		// authoritative), then fall back to name-based lookup.
@@ -2484,7 +2484,7 @@ func absorbDblpOrcidsCore() {
 		orcidsSet++
 	}
 
-	spinner.Stop()
+	ticker.Done()
 	if merged > 0 {
 		Library.Progress("DBLP key sweep: merged %d duplicate contributor(s) into existing DBLP-keyed records.", merged)
 		Library.RenormaliseNameFields()

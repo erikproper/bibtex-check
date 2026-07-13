@@ -118,24 +118,21 @@ func (l *TBibTeXLibrary) CheckFieldMappings() {
 		total += len(fieldValueMapping)
 	}
 
-	spinner := l.NewSpinner(ProgressCheckingFieldMappings)
-	done := 0
+	ticker := l.NewProgressTicker(ProgressCheckingFieldMappings, total)
 
 	for field, valueMapping := range l.GenericFieldSourceToTarget {
-		done++
-		spinner.Update(done, total)
+		ticker.Step()
 		l.checkValueMapping(valueMapping, l.GenericFieldTargetToSource[field], ".")
 	}
 
 	for key, fieldValueMapping := range l.EntryFieldSourceToTarget {
 		for field, valueMapping := range fieldValueMapping {
-			done++
-			spinner.Update(done, total)
+			ticker.Step()
 			l.checkValueMapping(valueMapping, l.EntryFieldTargetToSource[key][field], WarningMappingForKey+key+".")
 		}
 	}
 
-	spinner.Stop()
+	ticker.Done()
 }
 
 // CheckEntryFieldMappingWinners verifies that every winner recorded in the
@@ -1471,8 +1468,8 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) && entryDBLP != "" {
 		children := readDblpCrossrefChildren(entryDBLP)
 		if len(children) > 0 {
-			spinner := l.NewSpinner(fmt.Sprintf("Checking %d children of %s", len(children), entryDBLP))
-			for i, childDBLP := range children {
+			ticker := l.NewProgressTicker(fmt.Sprintf("Checking %d children of %s", len(children), entryDBLP), len(children))
+			for _, childDBLP := range children {
 				childKey := l.LookupDBLPKey(childDBLP)
 				if childKey != "" {
 					// Same guard as MaybeAddDBLPEntry: don't redirect away from a live
@@ -1485,9 +1482,9 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}
-				spinner.Update(i+1, len(children))
+				ticker.Step()
 			}
-			spinner.Stop()
+			ticker.Done()
 		}
 
 		// Check that every library child of this DBLP-keyed parent also has a DBLP key.
@@ -1611,14 +1608,12 @@ func (l *TBibTeXLibrary) CheckGarbledContributors(entry *TBibTeXEntry) {
 
 func (l *TBibTeXLibrary) CheckEntries() {
 	total := countBibEntries()
-	spinner := l.NewSpinner(ProgressCheckingConsistencyOfEntries)
-	done := 0
+	ticker := l.NewProgressTicker(ProgressCheckingConsistencyOfEntries, total)
 	stepN := Reporting.StepSize()
 	questionCounter := 0
 
 	forEachBibEntryKey(func(key string) bool {
-		done++
-		spinner.Update(done, total)
+		ticker.Step()
 		l.ResetQuestionFlag()
 		l.CheckEntry(l.buildEntry(key))
 		if stepN > 0 && l.QuestionWasAsked() {
@@ -1633,7 +1628,7 @@ func (l *TBibTeXLibrary) CheckEntries() {
 		return true
 	})
 
-	spinner.Stop()
+	ticker.Done()
 }
 
 // RenormaliseNameFields reloads name_mappings from the DB (picking up any mappings
@@ -1646,11 +1641,9 @@ func (l *TBibTeXLibrary) RenormaliseNameFields() {
 	l.CheckNameMappingConsistency()
 
 	total := countBibEntries()
-	spinner := l.NewSpinner("Re-normalising author/editor fields")
-	done := 0
+	ticker := l.NewProgressTicker("Re-normalising author/editor fields", total)
 	forEachBibEntryKey(func(key string) bool {
-		done++
-		spinner.Update(done, total)
+		ticker.Step()
 		entry := l.buildEntry(key)
 		for _, field := range []string{"author", "editor"} {
 			current := entry.FieldValue(field)
@@ -1663,7 +1656,7 @@ func (l *TBibTeXLibrary) RenormaliseNameFields() {
 		}
 		return true
 	})
-	spinner.Stop()
+	ticker.Done()
 }
 
 // CheckDuplicateDBLPKeys detects library entries that share the same DBLP key and

@@ -1653,8 +1653,7 @@ func readFileConfig(baseCfg TBibGetConfig, name, baseDir string) (TBibGetConfig,
 // local-url is derived from Library.PDFFiles; absolute paths are emitted for each key that has a PDF.
 func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
 	total := len(entryTypes)
-	spinner := Library.NewSpinner(fmt.Sprintf(ProgressBuildingSyncBib, label))
-	done := 0
+	ticker := Library.NewProgressTicker(fmt.Sprintf(ProgressBuildingSyncBib, label), total)
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
@@ -1663,16 +1662,14 @@ func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
 		if !BibTeXBookish.Contains(entryType) {
 			w.WriteString(Library.EntryString(entry, ""))
 			w.WriteString("\n")
-			done++
-			spinner.Update(done, total)
+			ticker.Step()
 		}
 	}
 	for entry, entryType := range entryTypes {
 		if BibTeXBookish.Contains(entryType) {
 			w.WriteString(Library.EntryString(entry, ""))
 			w.WriteString("\n")
-			done++
-			spinner.Update(done, total)
+			ticker.Step()
 		}
 	}
 	for _, comment := range Library.Comments {
@@ -1703,7 +1700,7 @@ func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
 	}
 
 	w.Flush()
-	spinner.Stop()
+	ticker.Done()
 	return buf.Bytes()
 }
 

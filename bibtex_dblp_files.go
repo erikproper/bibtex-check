@@ -711,7 +711,7 @@ func deleteStaleDblpEntries(original, updated TDblpManifest) {
 	}
 
 	entriesDir := dblpFolder() + "entries/"
-	done := 0
+	ticker := dbInteraction.NewProgressTicker("Pruning stale entries", total)
 	for parentDir, originalEntries := range original {
 		updatedEntries := updated[parentDir]
 		for entryName := range originalEntries {
@@ -723,16 +723,13 @@ func deleteStaleDblpEntries(original, updated TDblpManifest) {
 			removeKeyFromAllIndexes(dblpKey, readDblpJSONEntry(dblpKey))
 			os.Remove(entryDir + "/data.json")
 			os.Remove(entryDir) // succeeds only when empty
-			done++
-			pct := float64(done) * 100.0 / float64(total)
-			fmt.Fprintf(os.Stderr, "\r%s Pruning stale entries %d/%d (%.0f%%)",
-				spinnerChars[done%len(spinnerChars)], done, total, pct)
+			ticker.Step()
 		}
 		if len(updatedEntries) == 0 {
 			os.Remove(entriesDir + parentDir)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\r\033[KPruned %d stale entries.\n", done)
+	ticker.Done()
 }
 
 // dblpEntriesDirHasContent reports whether entries/ has any subdirectories,

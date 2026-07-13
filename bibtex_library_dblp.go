@@ -385,8 +385,8 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) {
 		children := readDblpCrossrefChildren(DBLPKey)
 		if len(children) > 0 {
-			spinner := l.NewSpinner(fmt.Sprintf("Adding %d children of %s", len(children), DBLPKey))
-			for i, childDBLP := range children {
+			ticker := l.NewProgressTicker(fmt.Sprintf("Adding %d children of %s", len(children), DBLPKey), len(children))
+			for _, childDBLP := range children {
 				if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
 					// Only redirect if the child has no existing crossref, or its current
 					// crossref no longer exists, or it already points to a DBLP-backed entry.
@@ -400,9 +400,9 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}
-				spinner.Update(i+1, len(children))
+				ticker.Step()
 			}
-			spinner.Stop()
+			ticker.Done()
 		}
 	}
 

@@ -321,11 +321,11 @@ func (l *TBibTeXLibrary) FixDblpHierarchy() {
 	}
 
 	total := len(entries)
-	spinner := l.NewSpinner(ProgressFixingDblpHierarchy)
+	ticker := l.NewProgressTicker(ProgressFixingDblpHierarchy, total)
 	dirCache := map[string][]string{}
 	jsonCache := map[string]*TDblpJSONEntry{}
-	for n, info := range entries {
-		spinner.Update(n+1, total)
+	for _, info := range entries {
+		ticker.Step()
 		if l.DblpParent.Contains(info.dblpKey) {
 			continue
 		}
@@ -338,7 +338,7 @@ func (l *TBibTeXLibrary) FixDblpHierarchy() {
 			l.SetDblpParentOverride(info.dblpKey, resolved)
 		}
 	}
-	spinner.Stop()
+	ticker.Done()
 	l.CheckCrossrefAcyclicity()
 
 	setTableDate("dblp_hierarchy", time.Now().UnixMicro())

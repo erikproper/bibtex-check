@@ -313,11 +313,9 @@ func (l *TBibTeXLibrary) CheckAlignBooktitleCountries() {
 	var allHits []keyedHit
 
 	total := countBibEntries()
-	count := 0
-	spinner := l.NewSpinner("Scanning for booktitle country normalisation candidates")
+	ticker := l.NewProgressTicker("Scanning for booktitle country normalisation candidates", total)
 	forEachBibEntryKey(func(key string) bool {
-		count++
-		spinner.Update(count, total)
+		ticker.Step()
 		if l.HasMetadata(key, MetaPropAlignCountryWaived) {
 			return true
 		}
@@ -326,7 +324,7 @@ func (l *TBibTeXLibrary) CheckAlignBooktitleCountries() {
 		}
 		return true
 	})
-	spinner.Stop()
+	ticker.Done()
 
 	if len(allHits) == 0 {
 		fmt.Fprintf(os.Stderr, "No booktitle country normalisation candidates found.\n")
@@ -375,16 +373,14 @@ func (l *TBibTeXLibrary) CheckAlignBooktitleCountries() {
 // and presents an interactive prompt for each non-waived candidate.
 func (l *TBibTeXLibrary) CheckAlignTitles(autoAccept bool) {
 	total := countBibEntries()
-	count := 0
 	found := 0
 	quit := false
-	spinner := l.NewSpinner("Scanning for title/volume/edition alignment candidates")
+	ticker := l.NewProgressTicker("Scanning for title/volume/edition alignment candidates", total)
 	forEachBibEntryKey(func(key string) bool {
 		if quit {
 			return false
 		}
-		count++
-		spinner.Update(count, total)
+		ticker.Step()
 		hits := append(detectTitleVolumes(l, key), detectTitleEditions(l, key)...)
 		for _, h := range hits {
 			if l.HasMetadata(key, waiverPropForKind(h.kind)) {
@@ -399,7 +395,7 @@ func (l *TBibTeXLibrary) CheckAlignTitles(autoAccept bool) {
 		}
 		return true
 	})
-	spinner.Stop()
+	ticker.Done()
 	fmt.Fprintf(os.Stderr, "Found %d candidate(s)\n", found)
 }
 

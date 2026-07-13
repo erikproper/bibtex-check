@@ -379,18 +379,18 @@ func doUpdateOrcidCache() {
 	if len(entries) > 0 {
 		Library.Progress("Refreshing ORCID cache: %d person(s) to fetch (%d missing, %d stale); %d fresh, skipped. q+Enter to stop.",
 			len(entries), missing, stale, fresh)
-		spinner := Library.NewSpinner("Refreshing ORCID cache")
+		ticker := Library.NewProgressTicker("Refreshing ORCID cache", len(entries))
 		fetched, failed, consecutiveFails := 0, 0, 0
 		for i, e := range entries {
 			select {
 			case <-quitCh:
-				spinner.Stop()
+				ticker.Done()
 				Library.Progress("ORCID cache refresh stopped after %d/%d; %d fetched, %d failed.",
 					i, len(entries), fetched, failed)
 				return
 			default:
 			}
-			spinner.Update(i+1, len(entries))
+			ticker.Step()
 			result, status := fetchORCIDPersonWithStatus(e.orcid)
 			switch status {
 			case orcidFetchOK:
@@ -411,7 +411,7 @@ func doUpdateOrcidCache() {
 				failed++
 				consecutiveFails++
 				if consecutiveFails >= 5 {
-					spinner.Stop()
+					ticker.Done()
 					Library.Progress("ORCID cache refresh paused: rate-limited after %d attempts. "+
 						"Re-run later; %d cached so far.", consecutiveFails, fetched)
 					return
@@ -421,7 +421,7 @@ func doUpdateOrcidCache() {
 				failed++
 				consecutiveFails++
 				if consecutiveFails >= 5 {
-					spinner.Stop()
+					ticker.Done()
 					Library.Progress("ORCID cache refresh paused after %d consecutive errors. "+
 						"Re-run later; %d cached so far.", consecutiveFails, fetched)
 					return
@@ -429,25 +429,25 @@ func doUpdateOrcidCache() {
 				time.Sleep(2 * time.Second)
 			}
 		}
-		spinner.Stop()
+		ticker.Done()
 		Library.Progress("ORCID cache refresh complete: %d fetched, %d failed.", fetched, failed)
 	}
 
 	// Works-backfill pass — one API call per entry; person data already fresh.
 	if len(worksEntries) > 0 {
 		Library.Progress("Backfilling ORCID works cache: %d entries missing works data. q+Enter to stop.", len(worksEntries))
-		spinner := Library.NewSpinner("Backfilling works cache")
+		ticker := Library.NewProgressTicker("Backfilling works cache", len(worksEntries))
 		fetched, failed := 0, 0
 		for i, orcid := range worksEntries {
 			select {
 			case <-quitCh:
-				spinner.Stop()
+				ticker.Done()
 				Library.Progress("Works backfill stopped after %d/%d; %d fetched, %d failed.",
 					i, len(worksEntries), fetched, failed)
 				return
 			default:
 			}
-			spinner.Update(i+1, len(worksEntries))
+			ticker.Step()
 			works, wStatus := fetchORCIDWorks(orcid)
 			switch wStatus {
 			case orcidFetchOK, orcidFetchNotFound:
@@ -462,7 +462,7 @@ func doUpdateOrcidCache() {
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-		spinner.Stop()
+		ticker.Done()
 		Library.Progress("Works backfill complete: %d fetched, %d failed.", fetched, failed)
 	}
 }

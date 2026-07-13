@@ -46,95 +46,128 @@ func readStdinLine() string {
 	return strings.TrimSpace(line)
 }
 
-// TTermSpinner renders an in-place spinner + progress counter on stderr.
-// A nil receiver is safe on all methods, so callers can do:
-//
-//	spinner := r.NewSpinner(label)
-//	defer spinner.Stop()
-//
-// and the whole thing is a no-op when interaction is silenced.
-type TTermSpinner struct {
-	label   string
-	frame   int
-	updated bool // true after the first visible render
+// TProgressTicker renders an in-place progress counter on stderr.
+// A nil receiver is safe on all methods.
+// Create with (r *TInteraction).NewProgressTicker.
+type TProgressTicker struct {
+	label       string
+	total       int // 0 = indeterminate
+	current     int
+	totalWidth  int // digits in total; 0 when indeterminate
+	rendered    bool
+	interaction *TInteraction
 }
 
-var spinnerChars = []string{"|", "/", "-", "\\"}
-var activeSpinner *TTermSpinner
+var activeTicker *TProgressTicker
 
-// SpinnerInterrupt clears the current spinner line so that a warning/error/progress
-// message can print cleanly on its own line. The spinner is not stopped; the next
-// Update call will redraw it.
+// SpinnerInterrupt clears the current ticker line so a warning/error/progress
+// message can print cleanly on its own line. The ticker is not stopped; the next
+// Step/Tick call redraws it.
 func SpinnerInterrupt() {
-	if activeSpinner != nil {
+	if activeTicker != nil {
 		fmt.Fprint(os.Stderr, "\r\033[K")
-		activeSpinner.updated = false
+		activeTicker.rendered = false
 	}
 }
 
-// SpinnerCommit makes the current spinner line permanently visible by ending it with
-// a newline. Use this immediately before a multi-line interactive dialog (e.g. a
-// challenge prompt) so the user can see the progress count above the dialog.
+// SpinnerCommit makes the current ticker line permanently visible by ending it
+// with a newline. Use immediately before a multi-line interactive dialog so the
+// user can see the progress count above the dialog.
 func SpinnerCommit() {
-	if activeSpinner != nil && activeSpinner.updated {
-		fmt.Fprint(os.Stderr, "\r\n")
-		activeSpinner.updated = false
+	if activeTicker != nil && activeTicker.rendered {
+		fmt.Fprint(os.Stderr, "\n")
+		activeTicker.rendered = false
 	}
 }
 
-// NewSpinner creates and activates a spinner with the given label.
-// Returns nil (no-op) when the interaction is silenced.
-func (r *TInteraction) NewSpinner(label string) *TTermSpinner {
-	if r.silenced {
+// NewProgressTicker creates and activates a ticker with the given label and total.
+// Pass total=0 for indeterminate progress (running count without a percentage).
+// Returns nil (no-op) when interaction is silenced or progress is suppressed.
+func (r *TInteraction) NewProgressTicker(label string, total int) *TProgressTicker {
+	if r.silenced || r.progressSuppressed {
 		return nil
 	}
-	s := &TTermSpinner{label: label}
-	activeSpinner = s
-	return s
-}
-
-// Update redraws the spinner in place showing done/total progress.
-func (s *TTermSpinner) Update(done, total int) {
-	if s == nil {
-		return
-	}
-	pct := 0.0
+	w := 0
 	if total > 0 {
-		pct = float64(done) * 100.0 / float64(total)
+		w = len(fmt.Sprintf("%d", total))
 	}
-	s.frame = (s.frame + 1) % len(spinnerChars)
-	s.updated = true
-	fmt.Fprintf(os.Stderr, "\r%s %s %d/%d (%.0f%%)", spinnerChars[s.frame], s.label, done, total, pct)
+	t := &TProgressTicker{
+		label:       label,
+		total:       total,
+		totalWidth:  w,
+		interaction: r,
+	}
+	activeTicker = t
+	return t
 }
 
-// Tick advances the spinner one frame without any progress counts. Use this
-// when the total work is unknown — e.g. while waiting for a background task.
-func (s *TTermSpinner) Tick() {
-	if s == nil {
+// render redraws the progress line in place via \r.
+// Determined mode:   label:  N/Total (XX%)
+// Indeterminate:     label: N
+// Indeterminate/idle: label: ...
+func (t *TProgressTicker) render() {
+	if t == nil {
 		return
 	}
-	s.frame = (s.frame + 1) % len(spinnerChars)
-	s.updated = true
-	fmt.Fprintf(os.Stderr, "\r%s %s...", spinnerChars[s.frame], s.label)
+	if t.total > 0 {
+		pct := float64(t.current) * 100.0 / float64(t.total)
+		fmt.Fprintf(os.Stderr, "\r%s:  %*d/%d (%.0f%%)",
+			t.label, t.totalWidth, t.current, t.total, pct)
+	} else if t.current > 0 {
+		fmt.Fprintf(os.Stderr, "\r%s: %d", t.label, t.current)
+	} else {
+		fmt.Fprintf(os.Stderr, "\r%s: ...", t.label)
+	}
+	t.rendered = true
 }
 
-// TickCount advances the spinner one frame and shows a running entry count.
-func (s *TTermSpinner) TickCount(n int) {
-	if s == nil {
+// Step increments the count by one, redraws the line, and non-blockingly checks
+// whether the user typed 'q' to request a quit.
+func (t *TProgressTicker) Step() {
+	if t == nil {
 		return
 	}
-	s.frame = (s.frame + 1) % len(spinnerChars)
-	s.updated = true
-	fmt.Fprintf(os.Stderr, "\r%s %s... (%d entries)", spinnerChars[s.frame], s.label, n)
+	t.current++
+	select {
+	case line, ok := <-stdinCh:
+		if ok && strings.TrimSpace(line) == "q" && t.interaction != nil {
+			t.interaction.quitRequested = true
+		}
+	default:
+	}
+	t.render()
 }
 
-// Stop prints a "done" completion line and deactivates the global spinner.
-func (s *TTermSpinner) Stop() {
-	if s == nil {
+// SetCount sets the count to n (without incrementing) and redraws.
+// Use when the count comes from an external source such as an atomic counter.
+func (t *TProgressTicker) SetCount(n int) {
+	if t == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\r\033[KPROGRESS: %s - done\n", s.label)
-	activeSpinner = nil
+	t.current = n
+	t.render()
+}
+
+// Tick redraws without incrementing. Use in time-based polling loops where no
+// per-iteration count is available (e.g. waiting for an async background task).
+func (t *TProgressTicker) Tick() {
+	if t == nil {
+		return
+	}
+	t.render()
+}
+
+// Done prints "label: done", advances to a new line, and deactivates the ticker.
+func (t *TProgressTicker) Done() {
+	if t == nil {
+		return
+	}
+	if t.rendered {
+		fmt.Fprint(os.Stderr, "\r\033[K")
+	}
+	fmt.Fprintf(os.Stderr, "%s: done\n", t.label)
+	t.rendered = false
+	activeTicker = nil
 }
 
 type TInteraction struct {

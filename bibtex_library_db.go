@@ -101,12 +101,12 @@ func initEntryCache() {
 	}
 	defer rows.Close()
 
-	spinner := dbInteraction.NewSpinner(ProgressLoadingEntryCache)
+	ticker := dbInteraction.NewProgressTicker(ProgressLoadingEntryCache, int(count))
 	cache := map[string]*TBibTeXEntry{}
 	for rows.Next() {
 		var key, field, value string
 		if err := rows.Scan(&key, &field, &value); err != nil {
-			spinner.Stop()
+			ticker.Done()
 			dbInteraction.Warning("Could not scan bib_entries for cache: %s", err)
 			return
 		}
@@ -114,11 +114,11 @@ func initEntryCache() {
 		if !ok {
 			e = &TBibTeXEntry{Key: key, Fields: map[string]string{}}
 			cache[key] = e
-			spinner.Update(len(cache), int(count))
+			ticker.Step()
 		}
 		e.Fields[field] = value
 	}
-	spinner.Stop()
+	ticker.Done()
 
 	// When contributor_roles is populated, reconstruct author/editor fields.
 	// Rows arrive in (entry_key, role, position) order so appending gives the
@@ -763,18 +763,18 @@ func beginSafeParse() bool {
 
 	safeParseOriginalCount = countDistinctBibEntries()
 
-	spinner := dbInteraction.NewSpinner(ProgressBackingUpDatabase)
+	progressTicker := dbInteraction.NewProgressTicker(ProgressBackingUpDatabase, 0)
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := db.Exec(`VACUUM INTO ?`, safeParseTemp)
 		errCh <- err
 	}()
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
+	timeTicker := time.NewTicker(200 * time.Millisecond)
+	defer timeTicker.Stop()
 	for {
 		select {
 		case err := <-errCh:
-			spinner.Stop()
+			progressTicker.Done()
 			if err != nil {
 				dbInteraction.Warning("Safe parse: could not back up database: %s", err)
 				os.Remove(safeParseTemp)
@@ -783,8 +783,8 @@ func beginSafeParse() bool {
 			}
 			reopenDb(safeParseTemp)
 			return true
-		case <-ticker.C:
-			spinner.Tick()
+		case <-timeTicker.C:
+			progressTicker.Tick()
 		}
 	}
 }

@@ -710,17 +710,15 @@ func (l *TBibTeXLibrary) ApplyScript(path string) {
 		return
 	}
 	total := countBibEntries()
-	count := 0
-	spinner := l.NewSpinner(fmt.Sprintf("Applying script %s", path))
+	ticker := l.NewProgressTicker(fmt.Sprintf("Applying script %s", path), total)
 	forEachBibEntryKey(func(key string) bool {
-		count++
-		spinner.Update(count, total)
+		ticker.Step()
 		for _, rule := range prog.rules {
 			scriptEvalStmt(l, key, prog, rule)
 		}
 		return true
 	})
-	spinner.Stop()
+	ticker.Done()
 	if prog.changes > 0 {
 		l.Progress("Script %s: %d group change(s)", path, prog.changes)
 	} else {

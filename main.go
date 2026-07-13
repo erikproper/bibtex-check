@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.52"
+const AppVersion = "27.53"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -183,19 +183,19 @@ func parseSyncBibFile(path string) bool {
 	beginBibTransaction()
 	parseCh := make(chan bool, 1)
 	go func() { parseCh <- Library.ParseBibFile(path) }()
-	parseSpinner := Library.NewSpinner(ProgressParsingBibFile)
-	parseTicker := time.NewTicker(200 * time.Millisecond)
+	parseTicker := Library.NewProgressTicker(ProgressParsingBibFile, 0)
+	parseTimeTicker := time.NewTicker(200 * time.Millisecond)
 	var parseOk bool
 syncParseLoop:
 	for {
 		select {
 		case ok := <-parseCh:
-			parseTicker.Stop()
-			parseSpinner.Stop()
+			parseTimeTicker.Stop()
+			parseTicker.Done()
 			parseOk = ok
 			break syncParseLoop
-		case <-parseTicker.C:
-			parseSpinner.TickCount(int(atomic.LoadInt64(&bibParseCount)))
+		case <-parseTimeTicker.C:
+			parseTicker.SetCount(int(atomic.LoadInt64(&bibParseCount)))
 		}
 	}
 	if !parseOk {
@@ -243,19 +243,19 @@ func parseBibIntoDb() bool {
 	beginBibTransaction()
 	readCh := make(chan bool, 1)
 	go func() { readCh <- Library.ReadBib(BibFile) }()
-	readSpinner := Library.NewSpinner(ProgressParsingBibFile)
-	readTicker := time.NewTicker(200 * time.Millisecond)
+	readTicker := Library.NewProgressTicker(ProgressParsingBibFile, 0)
+	readTimeTicker := time.NewTicker(200 * time.Millisecond)
 	var readOk bool
 bibParseLoop:
 	for {
 		select {
 		case ok := <-readCh:
-			readTicker.Stop()
-			readSpinner.Stop()
+			readTimeTicker.Stop()
+			readTicker.Done()
 			readOk = ok
 			break bibParseLoop
-		case <-readTicker.C:
-			readSpinner.TickCount(int(atomic.LoadInt64(&bibParseCount)))
+		case <-readTimeTicker.C:
+			readTicker.SetCount(int(atomic.LoadInt64(&bibParseCount)))
 		}
 	}
 	if !readOk {
@@ -412,6 +412,7 @@ func openLibraryToUpdate() bool {
 
 func openLibraryToReport() bool {
 	initialiseLibrary()
+	maybeMigrateDblpExportDirty()
 	Library.progressSuppressed = true // read-only session: suppress routine progress noise
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
@@ -2206,11 +2207,11 @@ func doUpsertDblpEntries() {
 		scanned := 0
 		stepN := int(cmdStep)
 		questionCounter := 0
-		spinner := Library.NewSpinner(ProgressFixingDblpEntries)
+		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
 		processKey := func(key string) {
 			scanned++
-			spinner.Update(scanned, total)
+			ticker.SetCount(scanned)
 			if dblpVal := Library.EntryFieldValueity(key, DBLPField); dblpVal != "" {
 				Library.ResetQuestionFlag()
 				doC1Checks(key)
@@ -2268,7 +2269,7 @@ func doUpsertDblpEntries() {
 		}
 		commitBibTransaction()
 		inDblpUpdate = false
-		spinner.Stop()
+		ticker.Done()
 		bibEntriesModified = true
 		if pmOk && len(contribPersonEntries) > 0 {
 			n := applyContributorMatchesFromEntries(&Library, pm, keyToNames,
@@ -2999,7 +3000,7 @@ func doEnrichOrcidProfilesCore() {
 	questionCounter := 0
 	stopped := false
 	skipped := 0
-	spinner := Library.NewSpinner("Fetching ORCID person records")
+	ticker := Library.NewProgressTicker("Fetching ORCID person records", needsFetch)
 	fetched := 0
 	if matchedOnly {
 		Library.Progress("Matched-only pass: challenges will be skipped (they remain as homework).")
@@ -3024,7 +3025,7 @@ func doEnrichOrcidProfilesCore() {
 
 		// Slow path: canonical changed or never seen — use cache then network.
 		fetched++
-		spinner.Update(fetched, needsFetch)
+		ticker.SetCount(fetched)
 		person := getORCIDPerson(p.orcid)
 		if person == nil {
 			// Profile unavailable (private or not found): record as seen so the
@@ -3254,7 +3255,7 @@ func doEnrichOrcidProfilesCore() {
 			}
 		}
 	}
-	spinner.Stop()
+	ticker.Done()
 	if matchedOnly && skipped > 0 {
 		Library.Progress("ORCID profile enrichment: %d new alias(es) added; %d challenge(s) skipped (run without -matched_orcid_data_only to process them).", newAliases, skipped)
 	} else {
