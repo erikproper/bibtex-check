@@ -454,6 +454,61 @@ func maybeMigrateToFKSchema() {
 	db.Exec(`PRAGMA foreign_keys = ON`)
 }
 
+var contributorRolesCascadeMigrated bool
+
+// maybeMigrateContributorRolesCascade adds ON DELETE CASCADE to the entry_key FK
+// on contributor_roles. Without it, deleting an entry leaves orphan rows in
+// contributor_roles (and via its own cascade, in entry_contributor_names), requiring
+// preCheckRepair to sweep them up on every run. entry_contributor_names references
+// contributor_roles by name and needs no change — it re-attaches automatically after
+// the rename.
+func maybeMigrateContributorRolesCascade() {
+	if contributorRolesCascadeMigrated {
+		return
+	}
+	contributorRolesCascadeMigrated = true
+
+	var createSQL string
+	db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='contributor_roles'`).Scan(&createSQL)
+	if strings.Contains(strings.ToUpper(createSQL), "ON DELETE CASCADE") {
+		return
+	}
+
+	dbInteraction.Progress("Migrating schema: adding ON DELETE CASCADE to contributor_roles.entry_key")
+	db.Exec(`PRAGMA foreign_keys = OFF`)
+
+	// Remove orphans before recreating so the new FK constraints are not violated.
+	db.Exec(`DELETE FROM contributor_roles WHERE entry_key NOT IN (SELECT entry_key FROM bib_entry_keys)`)
+
+	const tmp = "contributor_roles_cascade_tmp"
+	stmts := []string{
+		`DROP TABLE IF EXISTS ` + tmp,
+		`CREATE TABLE ` + tmp + ` (
+		   entry_key      TEXT    NOT NULL REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE,
+		   role           TEXT    NOT NULL,
+		   position       INTEGER NOT NULL,
+		   contributor_id TEXT    NOT NULL REFERENCES contributors(id),
+		   PRIMARY KEY (entry_key, role, position)
+		 )`,
+		`INSERT OR IGNORE INTO ` + tmp + ` (entry_key, role, position, contributor_id)
+		   SELECT entry_key, role, position, contributor_id FROM contributor_roles`,
+		`DROP TABLE contributor_roles`,
+		`ALTER TABLE ` + tmp + ` RENAME TO contributor_roles`,
+	}
+	ok := true
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			dbInteraction.Warning("contributor_roles CASCADE migration failed: %s", err)
+			ok = false
+			break
+		}
+	}
+	if ok {
+		dbInteraction.Progress("Added ON DELETE CASCADE to contributor_roles.entry_key")
+	}
+	db.Exec(`PRAGMA foreign_keys = ON`)
+}
+
 // configureDatabasePragmas sets WAL journal mode and a busy timeout on the
 // current db connection. WAL allows a writer to proceed concurrently with open
 // read cursors (eliminating SQLITE_BUSY when setTableDirty is called from
@@ -1340,7 +1395,7 @@ func preCheckRepair() {
 	if res, err := db.Exec(`DELETE FROM bib_entry_keys
 		                   WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`); err == nil {
 		if n, _ := res.RowsAffected(); n > 0 {
-			dbInteraction.Warning("Removed %d stale anchor row(s) — cascading to dependent tables", n)
+			dbInteraction.Progress("Removed %d stale anchor row(s) — cascading to dependent tables", n)
 		}
 	}
 	repairOrphanRows()
@@ -1361,7 +1416,7 @@ func repairOrphanRows() {
 			return
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
-			dbInteraction.Warning("Repaired %d orphan row(s) in %s", n, table)
+			dbInteraction.Progress("Repaired %d orphan row(s) in %s", n, table)
 		}
 	}
 	repair("bib_groups", "entry_key")
