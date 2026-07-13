@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.59"
+const AppVersion = "27.61"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -285,9 +285,11 @@ bibParseLoop:
 // sessionStart* capture library metrics at the beginning of a write session so
 // that reportHomework() can print deltas at the end.
 var (
-	sessionStartEntryCount    int
-	sessionStartDblpKeyCount  int
-	sessionStartFieldMapCount int
+	sessionStartEntryCount        int
+	sessionStartDblpKeyCount      int
+	sessionStartFieldMapCount     int
+	sessionStartUnresolvedGroups  int
+	sessionStartDblpCandidates    int
 )
 
 func countDblpKeyedEntries() int {
@@ -319,6 +321,8 @@ func printSessionStats() {
 	sessionStartEntryCount = total
 	sessionStartDblpKeyCount = dblpKeys
 	sessionStartFieldMapCount = fieldMaps
+	sessionStartUnresolvedGroups = countUnresolvedGroups()
+	sessionStartDblpCandidates = countDblpCandidates()
 
 	entryFlags := 0
 	for _, s := range Library.EntryFlags {
@@ -1387,37 +1391,8 @@ outer:
 }
 
 // reportHomework prints a summary of remaining work:
-//   - number of title-hash groups that contain at least one unresolved potential
-//     duplicate pair (title-equal, not in non_doubles, no divergent DBLP/DOI evidence)
-//   - number of entries without a dblp field that have at least one unresolved DBLP
-//     title-index candidate (not already in non_doubles)
-func reportHomework() {
-	// Session-change summary: compare current state to what was captured at session open.
-	currentEntries := countBibEntries()
-	currentDblpKeys := countDblpKeyedEntries()
-	var currentFieldMaps int
-	bibQueryRow(`SELECT COUNT(*) FROM field_mappings`).Scan(&currentFieldMaps)
-	newEntries := currentEntries - sessionStartEntryCount
-	newDblpLinks := currentDblpKeys - sessionStartDblpKeyCount
-	newFieldMaps := currentFieldMaps - sessionStartFieldMapCount
-	var changeRows []statRow
-	if newEntries != 0 {
-		changeRows = append(changeRows, statRow{"entries", fmt.Sprintf("%+d", newEntries), ""})
-	}
-	if newDblpLinks != 0 {
-		changeRows = append(changeRows, statRow{"DBLP links", fmt.Sprintf("%+d", newDblpLinks), ""})
-	}
-	if newFieldMaps != 0 {
-		changeRows = append(changeRows, statRow{"field mappings", fmt.Sprintf("%+d", newFieldMaps), ""})
-	}
-	if len(changeRows) > 0 {
-		printStatBlock("Session changes:", changeRows)
-	}
-
-	// A title group is unresolved when it contains at least two canonical keys
-	// whose pair has neither a non_doubles declaration nor field-value evidence
-	// of being different entries (divergent DBLP key or DOI).
-	unresolvedGroups := 0
+func countUnresolvedGroups() int {
+	n := 0
 	for _, keys := range Library.TitleIndex {
 		var canonicals []string
 		for _, k := range keys.ElementsSorted() {
@@ -1442,14 +1417,14 @@ func reportHomework() {
 			}
 		}
 		if groupUnresolved {
-			unresolvedGroups++
+			n++
 		}
 	}
+	return n
+}
 
-	// Entries with at least one unresolved DBLP candidate not already in non-doubles.
-	// Year-range filtering is skipped here (it requires disk I/O per candidate); the
-	// count may be a slight overestimate but avoids file reads on every run.
-	dblpCandidates := 0
+func countDblpCandidates() int {
+	n := 0
 	forEachBibEntryKey(func(key string) bool {
 		if Library.EntryFieldValueity(key, DBLPField) != "" {
 			return true
@@ -1461,12 +1436,50 @@ func reportHomework() {
 		existing := Library.NonDoubleEntries[key]
 		for _, c := range readDblpTitleLinks(hash) {
 			if !existing.Set().Contains(KeyForDBLP(c)) {
-				dblpCandidates++
+				n++
 				return true
 			}
 		}
 		return true
 	})
+	return n
+}
+
+//   - number of title-hash groups that contain at least one unresolved potential
+//     duplicate pair (title-equal, not in non_doubles, no divergent DBLP/DOI evidence)
+//   - number of entries without a dblp field that have at least one unresolved DBLP
+//     title-index candidate (not already in non_doubles)
+func reportHomework() {
+	// Session-change summary: compare current state to what was captured at session open.
+	currentEntries := countBibEntries()
+	currentDblpKeys := countDblpKeyedEntries()
+	var currentFieldMaps int
+	bibQueryRow(`SELECT COUNT(*) FROM field_mappings`).Scan(&currentFieldMaps)
+	newEntries := currentEntries - sessionStartEntryCount
+	newDblpLinks := currentDblpKeys - sessionStartDblpKeyCount
+	newFieldMaps := currentFieldMaps - sessionStartFieldMapCount
+	unresolvedGroups := countUnresolvedGroups()
+	dblpCandidates := countDblpCandidates()
+
+	var changeRows []statRow
+	if newEntries != 0 {
+		changeRows = append(changeRows, statRow{"entries", fmt.Sprintf("%+d", newEntries), ""})
+	}
+	if newDblpLinks != 0 {
+		changeRows = append(changeRows, statRow{"DBLP links", fmt.Sprintf("%+d", newDblpLinks), ""})
+	}
+	if newFieldMaps != 0 {
+		changeRows = append(changeRows, statRow{"field mappings", fmt.Sprintf("%+d", newFieldMaps), ""})
+	}
+	if delta := unresolvedGroups - sessionStartUnresolvedGroups; delta != 0 {
+		changeRows = append(changeRows, statRow{"title groups with duplicates", fmt.Sprintf("%+d", delta), ""})
+	}
+	if delta := dblpCandidates - sessionStartDblpCandidates; delta != 0 {
+		changeRows = append(changeRows, statRow{"DBLP candidates", fmt.Sprintf("%+d", delta), ""})
+	}
+	if len(changeRows) > 0 {
+		printStatBlock("Session changes:", changeRows)
+	}
 
 	// Count contributors with an ORCID that have never been enriched (no seen record).
 	// Only available when the contributor_orcid_seen table exists (dev tree).

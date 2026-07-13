@@ -1519,9 +1519,22 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 							resolved = true
 						}
 					}
-					// Only offer waive when no candidate was selected.
+					// No candidate selected: offer manual key entry, waive, or skip.
 					if !resolved {
-						if l.WarningYesNoQuestion(QuestionAddToDblpWaived, "") {
+						childOptions := TStringSetNew()
+						childOptions.Add("k", "y", "n")
+						switch l.WarningQuestion(QuestionNoDblpKeyForChildAction, childOptions, "") {
+						case "k":
+							if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
+								if dblpEntryFromFile(dblpKey) == nil {
+									l.Warning("DBLP key %q not found in file store", dblpKey)
+								} else {
+									l.AssociateDblpKey(childKey, dblpKey)
+									deleteEntryWarning(childKey, msg)
+									deleteEntryWarning(key, "")
+								}
+							}
+						case "y":
 							l.DblpWaived.Set(childKey, true)
 							// Waived: remove from entry_warnings so it doesn't appear in repair.bib.
 							deleteEntryWarning(childKey, msg)
