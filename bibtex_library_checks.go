@@ -1185,6 +1185,7 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 	if crossrefety == entry.Key {
 		l.ReportEntryWarning(entry.Key, "Found self-referencing crossref; cleaned up.")
 		l.setEntryField(entry, "crossref", "")
+		crossrefety = ""
 	}
 
 	if allowedCrossrefType, hasAllowedCrossrefType := BibTeXCrossrefType[entryType]; hasAllowedCrossrefType {
