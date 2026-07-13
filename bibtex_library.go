@@ -824,7 +824,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 					// contexts, e.g. DBLP challenges or prior interactive resolution) and
 					// silently drop the value. In an explicit bib.merge the user has decided
 					// these entries represent the same work, so missing fields are filled.
-					merged = l.MapFieldValue(regularField, l.NormaliseFieldValue(regularField, sourceVal))
+					merged = l.MapEntryFieldValue(target, regularField, l.NormaliseFieldValue(regularField, sourceVal))
 				} else {
 					merged = l.MaybeResolveFieldValue(target, source, regularField, sourceVal, targetVal)
 				}

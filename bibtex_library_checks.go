@@ -1415,8 +1415,13 @@ func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {
 	}
 	if entryType := entry.EntryType(); entryType != "" {
 		if _, known := BibTeXAllowedEntryFields[entryType]; !known {
-			l.Error("Entry %s has unknown entry type %q — bib file writing disabled", entry.Key, entryType)
-			l.NoDBUpdating = true
+			if mapped, hasMapped := BibTeXEntryMap[entryType]; hasMapped {
+				l.Progress(ProgressFixedEntryType, entry.Key, entryType, mapped)
+				l.SetEntryType(entry.Key, mapped)
+				entry.Fields[EntryTypeField] = mapped
+			} else {
+				l.Warning(WarningUnknownEntryType, entry.Key, entryType)
+			}
 		}
 	}
 }
@@ -1565,6 +1570,16 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 
 		// CheckCrossref can lead to a merger of entries for now ...
 		if entry.Exists() && l.EntryExists(entry.Key) {
+			if !l.InteractionIsOff() {
+				l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
+					if l.ignoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
+						l.deleteEntryField(entry, field)
+					} else {
+						l.Warning("Stopping programme. Please fix this manually.")
+						os.Exit(0)
+					}
+				})
+			}
 			l.NormaliseEntryFields(entry)
 			l.MaybeApplyFieldMappings(entry, true)
 			l.CheckDOIPresence(entry)

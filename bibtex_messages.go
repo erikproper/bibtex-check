@@ -87,6 +87,7 @@ const (
 	QuestionSubsetDeleteEntry = "Entry removed from subset bib — delete from library?"
 	QuestionSubsetBothChanged = "Both bib and DB changed — apply bib changes to library? (y=yes, n=keep DB version)"
 
+	ProgressFixedEntryType                  = "Auto-fixed entry type for %s: %s → %s"
 	ProgressFixedParentType                 = "Auto-fixed parent type for %s: %s → %s (required by child %s)"
 	ProgressFixedChildYear                  = "Auto-fixed year for %s: %s → %s (aligned to parent)"
 	ProgressFixedChildType                  = "Auto-fixed child type for %s: %s → %s (parent is proceedings)"

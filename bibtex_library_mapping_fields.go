@@ -21,7 +21,10 @@ func (l *TBibTeXLibrary) MapNormalisedEntryFieldValue(key, field, valueRAW strin
 
 func (l *TBibTeXLibrary) MapEntryFieldValue(key, field, value string) string {
 	if field == "crossref" {
-		return l.MapEntryKey(value)
+		if resolved := l.MapEntryKey(value); resolved != key {
+			return resolved
+		}
+		return ""
 	}
 
 	if unAliased, hasAlias := l.GenericFieldSourceToTarget[field][value]; hasAlias {

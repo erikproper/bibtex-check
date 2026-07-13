@@ -132,17 +132,22 @@ func openSyncState(keysBasePath string) *TSyncState {
 	return s
 }
 
-// close closes the DB connection and copies the working DB back to the home
-// path if isolation is active and any writes were made during this session.
+// close closes the DB connection, copies the working DB back to the home path
+// if isolation is active and any writes were made, then removes the working copy.
 func (s *TSyncState) close() {
 	if s == nil || s.db == nil {
 		return
 	}
 	s.db.Close()
 	s.db = nil
-	if s.isolated && s.dirty {
-		if err := copyFile(s.workingPath, s.homePath); err != nil {
-			dbInteraction.Warning("sync: cannot copy working sync DB back to %s: %s", s.homePath, err)
+	if s.isolated {
+		if s.dirty {
+			if err := copyFile(s.workingPath, s.homePath); err != nil {
+				dbInteraction.Warning("sync: cannot copy working sync DB back to %s: %s", s.homePath, err)
+			}
+		}
+		if err := os.Remove(s.workingPath); err != nil && !os.IsNotExist(err) {
+			dbInteraction.Warning("sync: cannot remove working sync DB %s: %s", s.workingPath, err)
 		}
 	}
 }

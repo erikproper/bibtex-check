@@ -277,7 +277,9 @@ func init() {
 	BibTeXEntryMap["patent"] = "misc"
 	BibTeXEntryMap["unpublished"] = "misc"
 	BibTeXEntryMap["report"] = "techreport"
+	BibTeXEntryMap["standard"] = "techreport"
 	BibTeXEntryMap["thesis"] = "mastersthesis"
+	BibTeXEntryMap["inreference"] = "misc"
 
 	BibTeXFieldMap = TStringMap{}
 	// (*) The ones below should all be moved to a config file.
