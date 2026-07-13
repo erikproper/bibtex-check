@@ -1623,23 +1623,12 @@ func (l *TBibTeXLibrary) CheckGarbledContributors(entry *TBibTeXEntry) {
 func (l *TBibTeXLibrary) CheckEntries() {
 	total := countBibEntries()
 	ticker := l.NewProgressTicker(ProgressCheckingConsistencyOfEntries, total)
-	stepN := Reporting.StepSize()
-	questionCounter := 0
 
 	forEachBibEntryKey(func(key string) bool {
 		ticker.Step()
 		l.ResetQuestionFlag()
 		l.CheckEntry(l.buildEntry(key))
-		if stepN > 0 && l.QuestionWasAsked() {
-			questionCounter++
-			if questionCounter >= stepN {
-				if l.AskContinueOrQuit() {
-					return false
-				}
-				questionCounter = 0
-			}
-		}
-		return true
+		return !Reporting.StepCheck()
 	})
 
 	ticker.Done()
@@ -1751,9 +1740,6 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 
 	validAnswers := TStringSetNew()
 	validAnswers.Add("w", "d", "k", "s")
-	stepN := Reporting.StepSize()
-	questionCounter := 0
-
 	forEachBibEntryKey(func(key string) bool {
 		if l.EntryFieldValueity(key, EntryTypeField) != "proceedings" {
 			return true
@@ -1809,14 +1795,7 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 			l.DeleteEntry(key)
 		}
 
-		questionCounter++
-		if stepN > 0 && questionCounter >= stepN {
-			if l.AskContinueOrQuit() {
-				return false
-			}
-			questionCounter = 0
-		}
-		return true
+		return !Reporting.StepCheckEvery()
 	})
 }
 

@@ -55,7 +55,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.65"
+const AppVersion = "27.67"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -949,8 +949,6 @@ func doTriageAuthorMappings() {
 		return true
 	}
 
-	stepN := int(cmdStep)
-	questionCounter := 0
 outer:
 	for _, p := range pairs {
 		winner := Library.EntryFieldValueity(p.key, p.field)
@@ -1050,14 +1048,8 @@ outer:
 			}
 		}
 
-		if stepN > 0 && Library.QuestionWasAsked() {
-			questionCounter++
-			if questionCounter >= stepN {
-				if Library.AskContinueOrQuit() {
-					break outer
-				}
-				questionCounter = 0
-			}
+		if Reporting.StepCheck() {
+			break outer
 		}
 	}
 }
@@ -1100,8 +1092,6 @@ func doTriageContributorAliases() {
 	options := TStringSetNew()
 	options.Add("g", "k", "q")
 	generalised := 0
-	stepN := int(cmdStep)
-	questionCounter := 0
 	suffix := func(n int) string {
 		if n == 1 {
 			return "entry"
@@ -1143,14 +1133,8 @@ outer:
 		case "q":
 			break outer
 		}
-		if stepN > 0 && Library.QuestionWasAsked() {
-			questionCounter++
-			if questionCounter >= stepN {
-				if Library.AskContinueOrQuit() {
-					break outer
-				}
-				questionCounter = 0
-			}
+		if Reporting.StepCheck() {
+			break outer
 		}
 	}
 	if generalised > 0 {
@@ -1193,8 +1177,6 @@ func doDisambiguateContributors() {
 		return
 	}
 
-	stepN := int(cmdStep)
-	questionCounter := 0
 outer:
 	for _, r := range ambig {
 		candidates := Library.AmbiguousNameToContributorIDs[r.alias]
@@ -1379,14 +1361,8 @@ outer:
 				Library.Progress("Assigned %s %s pos %d → %q.", r.key, r.role, r.position, cand.Name)
 			}
 		}
-		if stepN > 0 {
-			questionCounter++
-			if questionCounter >= stepN {
-				if Library.AskContinueOrQuit() {
-					break outer
-				}
-				questionCounter = 0
-			}
+		if Reporting.StepCheckEvery() {
+			break outer
 		}
 	}
 }
@@ -1514,8 +1490,6 @@ func reportHomework() {
 // are offered candidates; entries that already have one are skipped.
 func doFixCandidates() {
 	if openLibraryToUpdate() {
-		stepN := Reporting.StepSize()
-		questionCounter := 0
 		entryCountAtStepStart := countBibEntries()
 	outer:
 		for _, keySet := range Library.TitleIndex {
@@ -1557,20 +1531,15 @@ func doFixCandidates() {
 					}
 				}
 			}
-			if stepN > 0 && Library.QuestionWasAsked() {
-				questionCounter++
-				if questionCounter >= stepN {
-					now := countBibEntries()
-					if added := now - entryCountAtStepStart; added > 0 {
-						Library.Progress("Step added %d new entr%s to the library.", added,
-							map[bool]string{true: "y", false: "ies"}[added == 1])
-					}
-					if Library.AskContinueOrQuit() {
-						break outer
-					}
-					entryCountAtStepStart = countBibEntries()
-					questionCounter = 0
+			if Reporting.StepCheckReady() {
+				if added := countBibEntries() - entryCountAtStepStart; added > 0 {
+					Library.Progress("Step added %d new entr%s to the library",
+						added, map[bool]string{true: "y", false: "ies"}[added == 1])
 				}
+				if Library.AskContinueOrQuit() {
+					break outer
+				}
+				entryCountAtStepStart = countBibEntries()
 			}
 		}
 	}
@@ -2090,8 +2059,6 @@ func doFixDuplicates() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
-		stepN := int(cmdStep)
-		questionCounter := 0
 	outer:
 		for _, keySet := range Library.TitleIndex {
 			var canonicals []string
@@ -2106,14 +2073,8 @@ func doFixDuplicates() {
 			Library.ResetQuestionFlag()
 			variations := Library.ResolveVariationSet(canonicals)
 			doVariationSetDblpLinking(variations)
-			if stepN > 0 && Library.QuestionWasAsked() {
-				questionCounter++
-				if questionCounter >= stepN {
-					if Library.AskContinueOrQuit() {
-						break outer
-					}
-					questionCounter = 0
-				}
+			if Reporting.StepCheck() {
+				break outer
 			}
 		}
 	}
@@ -2158,10 +2119,7 @@ func doUpsertDblpEntries() {
 		})
 
 		inDblpUpdate = true
-		quit := false
 		scanned := 0
-		stepN := int(cmdStep)
-		questionCounter := 0
 		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
 		processKey := func(key string) {
@@ -2178,19 +2136,11 @@ func doUpsertDblpEntries() {
 							contribPersonEntries, contribExistingKey)
 					}
 				}
-				if stepN > 0 && Library.QuestionWasAsked() {
-					questionCounter++
-					if questionCounter >= stepN {
-						if Library.AskContinueOrQuit() {
-							quit = true
-						}
-						questionCounter = 0
-					}
-				}
+				Reporting.StepCheck()
 			}
 		}
 		for _, key := range bookishKeys {
-			if quit {
+			if Library.QuitWasRequested() {
 				break
 			}
 			processKey(key)
@@ -2198,7 +2148,7 @@ func doUpsertDblpEntries() {
 		// Drain: fix any entries added during the bookish pass (children created by
 		// CheckEntry). Loop until stable — grandchildren are non-bookish so depth is
 		// bounded, but looping is safer than assuming exactly one level.
-		for !quit {
+		for !Library.QuitWasRequested() {
 			var newKeys []string
 			forEachBibEntryType(func(key, entryType string) {
 				if !seenKeys[key] {
@@ -2210,14 +2160,14 @@ func doUpsertDblpEntries() {
 				break
 			}
 			for _, key := range newKeys {
-				if quit {
+				if Library.QuitWasRequested() {
 					break
 				}
 				processKey(key)
 			}
 		}
 		for _, key := range otherKeys {
-			if quit {
+			if Library.QuitWasRequested() {
 				break
 			}
 			processKey(key)
@@ -2495,20 +2445,20 @@ func addDoiEntry(entry *TBibTeXEntry, label string) string {
 // runWatchORCID performs the online pass of the watch loop. For each watch entry
 // it collects all known ORCIDs, fetches the ORCID works list, and for any DOI
 // not already in the library it fetches BibTeX from doi.org and adds the entry.
-func runWatchORCID(w TWatchEntry, label string, stepN int, questionCounter *int, stopped *bool) {
+func runWatchORCID(w TWatchEntry, label string) {
 	orcids := watchEntryORCIDs(w)
 	if len(orcids) == 0 {
 		return
 	}
 	for _, orcid := range orcids {
-		if *stopped {
+		if Library.QuitWasRequested() {
 			return
 		}
 		works := getORCIDWorks(orcid)
 		seenDOI := map[string]bool{}
 		for _, work := range works {
 			for _, doi := range work.DOIs {
-				if *stopped {
+				if Library.QuitWasRequested() {
 					return
 				}
 				if seenDOI[doi] {
@@ -2540,15 +2490,8 @@ func runWatchORCID(w TWatchEntry, label string, stepN int, questionCounter *int,
 					}
 				}
 				addDoiEntry(entry, label)
-				if stepN > 0 && Library.QuestionWasAsked() {
-					*questionCounter++
-					if *questionCounter >= stepN {
-						if Library.AskContinueOrQuit() {
-							*stopped = true
-							return
-						}
-						*questionCounter = 0
-					}
+				if Reporting.StepCheck() {
+					return
 				}
 			}
 		}
@@ -2573,12 +2516,8 @@ func runWatch() bool {
 		WriteWatchFile(filePath, entries)
 	}
 
-	stepN := int(cmdStep)
-	questionCounter := 0
-	stopped := false
-
 	for _, w := range entries {
-		if stopped {
+		if Library.QuitWasRequested() {
 			break
 		}
 		keys := watchEntryDblpKeys(w)
@@ -2625,15 +2564,8 @@ func runWatch() bool {
 				doAllChecks(added)
 			}
 
-			if stepN > 0 && Library.QuestionWasAsked() {
-				questionCounter++
-				if questionCounter >= stepN {
-					if Library.AskContinueOrQuit() {
-						stopped = true
-						break
-					}
-					questionCounter = 0
-				}
+			if Reporting.StepCheck() {
+				break
 			}
 		}
 
@@ -2644,8 +2576,8 @@ func runWatch() bool {
 		}
 
 		// Online pass: fetch works from ORCID API and add entries not in DBLP yet.
-		if Online && !stopped {
-			runWatchORCID(w, label, stepN, &questionCounter, &stopped)
+		if Online && !Library.QuitWasRequested() {
+			runWatchORCID(w, label)
 		}
 	}
 	return true
@@ -2950,10 +2882,7 @@ func doEnrichOrcidProfilesCore() {
 	Library.Progress("%d ORCID contributor record(s) to process: %d from cache, %d need network fetch, %d re-check (%d already up to date).",
 		needsFetch, fromCache, fromNetwork, reCheckCount, len(pairs)-needsFetch)
 	newAliases := 0
-	stepN := int(cmdStep)
 	matchedOnly := cmdMatchedOrcidDataOnly
-	questionCounter := 0
-	stopped := false
 	skipped := 0
 	ticker := Library.NewProgressTicker("Fetching ORCID person records", needsFetch)
 	fetched := 0
@@ -2962,7 +2891,7 @@ func doEnrichOrcidProfilesCore() {
 	}
 
 	for _, p := range pairs {
-		if stopped {
+		if Library.QuitWasRequested() {
 			break
 		}
 		contrib, ok := Library.ContributorByID[p.id]
@@ -3200,15 +3129,7 @@ func doEnrichOrcidProfilesCore() {
 		Library.Progress("ORCID %s processed (%d/%d fetched, %d new alias(es) so far).",
 			p.orcid, fetched, needsFetch, newAliases)
 
-		if stepN > 0 && Library.QuestionWasAsked() {
-			questionCounter++
-			if questionCounter >= stepN {
-				if Library.AskContinueOrQuit() {
-					stopped = true
-				}
-				questionCounter = 0
-			}
-		}
+		Reporting.StepCheck()
 	}
 	ticker.Done()
 	if matchedOnly && skipped > 0 {

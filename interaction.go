@@ -177,6 +177,7 @@ type TInteraction struct {
 	outputWasProduced  bool
 	stepMode           bool
 	stepSize           int
+	stepCounter        int  // running count of questions answered in the current step batch
 	quitRequested      bool // set when user answers "q" to AskContinueOrQuit
 	questionsAnswered  int  // total questions answered; snapshotted before/after runHarvestEntry
 }
@@ -226,12 +227,14 @@ func (r *TInteraction) SetStepMode(on bool) {
 		r.stepSize = 0
 	}
 	r.stepMode = r.stepSize > 0
+	r.stepCounter = 0
 }
 
 // SetStepSize sets the batch size for step mode (0 = off, 1 = per-entry, N = every N entries).
 func (r *TInteraction) SetStepSize(n int) {
 	r.stepSize = n
 	r.stepMode = n > 0
+	r.stepCounter = 0
 }
 
 // StepMode reports whether step mode is currently enabled.
@@ -262,6 +265,55 @@ func (r *TInteraction) PressBatchEnterToContinue() {
 	}
 	fmt.Fprint(os.Stderr, "--- Press Enter to continue ---")
 	readStdinLine()
+}
+
+// StepCheckReady returns true when a question was asked for this entry and the
+// step batch counter has reached the configured size, then resets the counter.
+// The caller is responsible for prompting the user. Returns false when step mode
+// is off, no question was asked, or the batch is not yet full.
+func (r *TInteraction) StepCheckReady() bool {
+	if r.stepSize <= 0 || !r.questionWasAsked {
+		return false
+	}
+	r.stepCounter++
+	if r.stepCounter >= r.stepSize {
+		r.stepCounter = 0
+		return true
+	}
+	return false
+}
+
+// StepCheckReadyEvery is like StepCheckReady but fires on every call regardless
+// of whether a question was asked. Use when the loop unconditionally presents a prompt.
+func (r *TInteraction) StepCheckReadyEvery() bool {
+	if r.stepSize <= 0 {
+		return false
+	}
+	r.stepCounter++
+	if r.stepCounter >= r.stepSize {
+		r.stepCounter = 0
+		return true
+	}
+	return false
+}
+
+// StepCheck combines StepCheckReady with AskContinueOrQuit. Call at the end of
+// each entry in a loop where questions are asked conditionally.
+// Returns true when the user asked to quit.
+func (r *TInteraction) StepCheck() bool {
+	if !r.StepCheckReady() {
+		return r.quitRequested
+	}
+	return r.AskContinueOrQuit()
+}
+
+// StepCheckEvery combines StepCheckReadyEvery with AskContinueOrQuit.
+// Returns true when the user asked to quit.
+func (r *TInteraction) StepCheckEvery() bool {
+	if !r.StepCheckReadyEvery() {
+		return r.quitRequested
+	}
+	return r.AskContinueOrQuit()
 }
 
 // AskContinueOrQuit asks the user whether to continue or quit after an entry
