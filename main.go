@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.94"
+const AppVersion = "27.95"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -349,6 +349,7 @@ func openLibraryToUpdate() bool {
 	maybeMigrateContributorRolesCascade()
 	maybeMigrateDblpExportDirty()
 	fmt.Fprintf(os.Stderr, "\nOpening the library:\n")
+	Library.BeginDeferringMessages()
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
@@ -394,6 +395,7 @@ func openLibraryToUpdate() bool {
 	retireResolvedAuthorEditorLosers()
 	cleanupRedundantLosers()
 	printSessionStats()
+	Library.FlushDeferredMessages()
 	if !Online {
 		Library.Progress("Offline: actions requiring network connectivity will be skipped.")
 	}

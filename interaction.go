@@ -175,6 +175,9 @@ type TInteraction struct {
 	progressSuppressed bool // suppress Progress() output without silencing warnings/questions
 	quitRequested      bool // set when user answers "q" to any question or ticker
 	questionsAnswered  int  // total questions answered; snapshotted before/after runHarvestEntry
+	deferMessages      bool
+	deferredWarnings   []string
+	deferredErrors     []string
 }
 
 // QuitWasRequested reports whether the user asked to stop at any prompt or ticker.
@@ -193,7 +196,8 @@ func (r *TInteraction) ResetQuestionFlag() {}
 // AskForInput prints prompt and returns the trimmed line the user types.
 // Typing "q" sets quitRequested and returns "".
 func (r *TInteraction) AskForInput(prompt string) (string, error) {
-	fmt.Fprintf(os.Stderr, "INPUT:    %s (q=quit): ", prompt)
+	SpinnerInterrupt()
+	fmt.Fprintf(os.Stderr, "\nINPUT:    %s (q=quit): ", prompt)
 	line := readStdinLine()
 	if line == "q" {
 		r.quitRequested = true
@@ -222,12 +226,56 @@ func (r *TInteraction) SetInteraction(status bool) {
 	r.silenced = status
 }
 
+// printWarningLine prints a WARNING line immediately, bypassing any deferral.
+// Clears any active ticker first and inserts a blank line before the message.
+func (r *TInteraction) printWarningLine(warning string, context ...any) {
+	SpinnerInterrupt()
+	fmt.Fprintf(os.Stderr, "\nWARNING:  "+warning+"\n", context...)
+}
+
+// printErrorLine prints an ERROR line immediately, bypassing any deferral.
+func (r *TInteraction) printErrorLine(errorMessage string, context ...any) {
+	SpinnerInterrupt()
+	fmt.Fprintf(os.Stderr, "\nERROR:    "+errorMessage+"\n", context...)
+}
+
+// BeginDeferringMessages enables warning/error deferral and clears any buffered messages.
+func (r *TInteraction) BeginDeferringMessages() {
+	r.deferMessages = true
+	r.deferredWarnings = nil
+	r.deferredErrors = nil
+}
+
+// FlushDeferredMessages stops deferral and prints buffered warnings and errors
+// as indented blocks under "Warnings:" and "Errors:" section headers.
+// Empty sections are omitted.
+func (r *TInteraction) FlushDeferredMessages() {
+	r.deferMessages = false
+	if len(r.deferredWarnings) > 0 {
+		fmt.Fprintf(os.Stderr, "\nWarnings:\n")
+		for _, w := range r.deferredWarnings {
+			fmt.Fprintf(os.Stderr, "  - %s\n", w)
+		}
+	}
+	if len(r.deferredErrors) > 0 {
+		fmt.Fprintf(os.Stderr, "\nErrors:\n")
+		for _, e := range r.deferredErrors {
+			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		}
+	}
+	r.deferredWarnings = nil
+	r.deferredErrors = nil
+}
+
 // Reporting errors.
 // The error message should provide the formatting.
 func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 	if !r.silenced {
-		SpinnerInterrupt()
-		fmt.Fprintf(os.Stderr, "ERROR:    "+errorMessage+"\n", context...)
+		if r.deferMessages {
+			r.deferredErrors = append(r.deferredErrors, fmt.Sprintf(errorMessage, context...))
+		} else {
+			r.printErrorLine(errorMessage, context...)
+		}
 	}
 
 	return true
@@ -237,8 +285,11 @@ func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 // The warning message should provide the formatting.
 func (r *TInteraction) Warning(warning string, context ...any) bool {
 	if !r.silenced {
-		SpinnerInterrupt()
-		fmt.Fprintf(os.Stderr, "WARNING: "+warning+"\n", context...)
+		if r.deferMessages {
+			r.deferredWarnings = append(r.deferredWarnings, fmt.Sprintf(warning, context...))
+		} else {
+			r.printWarningLine(warning, context...)
+		}
 	}
 
 	return true
@@ -247,11 +298,10 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 // WarningQuestion presents a question and waits for one of the listed options.
 // "q" is always accepted (in addition to the named options) and triggers a
 // graceful quit: quitRequested is set and "q" is returned to the caller.
+// When warning is non-empty it is printed immediately (bypassing any deferral)
+// as inline context for the question.
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
 	r.questionsAnswered++
-	if warning != "" {
-		r.Warning(warning, context...)
-	}
 
 	optionSet := "("
 	separator := ""
@@ -264,7 +314,13 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 	}
 	optionSet += "): "
 
-	fmt.Fprint(os.Stderr, "QUESTION: "+question+" "+optionSet)
+	if warning != "" {
+		r.printWarningLine(warning, context...)
+		fmt.Fprint(os.Stderr, "QUESTION: "+question+" "+optionSet)
+	} else {
+		SpinnerInterrupt()
+		fmt.Fprint(os.Stderr, "\nQUESTION: "+question+" "+optionSet)
+	}
 
 	for {
 		option := readStdinLine()
@@ -327,7 +383,8 @@ func printStatBlock(header string, rows []statRow) {
 // by batch-mode callers. "q" sets quitRequested and returns false.
 func (r *TInteraction) ConfirmAction(prompt string) bool {
 	r.questionsAnswered++
-	fmt.Fprintf(os.Stderr, "CONFIRM:  %s (y/n/q): ", prompt)
+	SpinnerInterrupt()
+	fmt.Fprintf(os.Stderr, "\nCONFIRM:  %s (y/n/q): ", prompt)
 	for {
 		answer := readStdinLine()
 		if answer == "y" || answer == "n" {
