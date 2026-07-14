@@ -1689,6 +1689,8 @@ func (l *TBibTeXLibrary) RenormaliseNameFields() {
 // CheckDuplicateDBLPKeys detects library entries that share the same DBLP key and
 // offers to merge each duplicate set. Both entries are recorded in entry_warnings so
 // they appear in warnings; select results.
+// Ghost entries — bib_entries rows that have a dblp field but no entry_type row and
+// are not recorded as aliases in key_oldies — are cleaned up automatically here.
 func (l *TBibTeXLibrary) CheckDuplicateDBLPKeys() {
 	forEachDuplicateDBLPKey(func(dblpKey string, keys []string) {
 		keySet := TStringSetNew()
@@ -1697,10 +1699,21 @@ func (l *TBibTeXLibrary) CheckDuplicateDBLPKeys() {
 			if resolved == "" {
 				resolved = k
 			}
-			keySet.Add(resolved)
+			if resolved == k && !l.EntryExists(k) {
+				// Ghost: has a dblp row in bib_entries but no entry_type, and is
+				// not in key_oldies as an alias. The surviving entry (if any) still
+				// has the dblp key — this row is purely redundant. Remove it so it
+				// no longer triggers false duplicate warnings.
+				l.Progress("  Removing ghost dblp entry: %s (%s)", k, dblpKey)
+				deleteBibEntry(k)
+				continue
+			}
+			if l.EntryExists(resolved) {
+				keySet.Add(resolved)
+			}
 		}
 		if keySet.Size() < 2 {
-			return // already merged or aliased
+			return // already merged, aliased, or only one live entry remained
 		}
 		for key := range keySet.Elements() {
 			l.ReportEntryWarning(key, "Duplicate DBLP key %s (also on: %s).", dblpKey,

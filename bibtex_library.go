@@ -1505,7 +1505,7 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 func (l *TBibTeXLibrary) applyMappingsForKey(entry *TBibTeXEntry, key, sourceValue string, fieldIsChanged map[string]bool, writeToDb bool) bool {
 	changed := false
 	for targetField, targetValue := range l.FieldMappings[key][sourceValue] {
-		if entry.Fields[targetField] == "" && !fieldIsChanged[targetField] {
+		if entry.Fields[targetField] == "" && !fieldIsChanged[targetField] && l.EntryAllowsForField(entry.Key, targetField) {
 			if writeToDb {
 				l.setEntryField(entry, targetField, targetValue)
 			}
