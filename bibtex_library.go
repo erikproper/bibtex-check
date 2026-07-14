@@ -351,8 +351,12 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 
 	if field != PreferredAliasField && !entryFieldMappingsLoading {
 		if l.MapFieldValue(field, alias) != l.MapEntryFieldValue(entry, field, target) {
-			bibExec(`INSERT OR IGNORE INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?)`, //nolint:errcheck
-				entry, field, alias)
+			// Store both the loser (value) and the accepted winner so that
+			// loadEntryFieldMappingsFromDb can reconstruct the mapping even when
+			// bib_entries was not immediately updated after a "n" answer.
+			bibExec(`INSERT INTO losing_field_values (entry_key, field, value, winner) VALUES (?, ?, ?, ?) `+ //nolint:errcheck
+				`ON CONFLICT(entry_key, field, value) DO UPDATE SET winner = excluded.winner`,
+				entry, field, alias, target)
 		}
 	}
 }

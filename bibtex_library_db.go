@@ -2375,83 +2375,17 @@ func deleteNameMapping(alias string) {
 	}
 }
 
-// correctContributorNameInDB renames every occurrence of oldName to newName across
-// all contributor tables and bib_entries author/editor fields. Returns true on
-// success; false if any step fails (errors are logged via dbInteraction).
-func correctContributorNameInDB(oldName, newName string) bool {
-	// contributors: update canonical name if oldName is canonical for any contributor.
-	if err := bibExec(`UPDATE contributors SET name = ? WHERE name = ?`, newName, oldName); err != nil {
-		dbInteraction.Error("contributors update failed: %s", err)
-		return false
-	}
-
-	// contributor_names: insert newName for every id that had oldName (respects UNIQUE),
-	// then delete the oldName rows.
-	if err := bibExec(`INSERT OR IGNORE INTO contributor_names (id, name) SELECT id, ? FROM contributor_names WHERE name = ?`, newName, oldName); err != nil {
-		dbInteraction.Error("contributor_names insert failed: %s", err)
-		return false
-	}
-	if err := bibExec(`DELETE FROM contributor_names WHERE name = ?`, oldName); err != nil {
-		dbInteraction.Error("contributor_names delete failed: %s", err)
-		return false
-	}
-
-	// entry_contributor_names: update the form recorded per-entry.
-	if err := bibExec(`UPDATE entry_contributor_names SET name_used = ? WHERE name_used = ?`, newName, oldName); err != nil {
-		dbInteraction.Error("entry_contributor_names update failed: %s", err)
-		return false
-	}
-
-	// bib_entries: replace oldName inside author/editor field values.
-	if err := bibExec(`UPDATE bib_entries SET value = REPLACE(value, ?, ?) WHERE field IN ('author','editor') AND value LIKE '%' || ? || '%'`, oldName, newName, oldName); err != nil {
-		dbInteraction.Error("bib_entries update failed: %s", err)
-		return false
-	}
-
-	// non_double_contributor_names: rewire pairs involving oldName; the CHECK (name1 < name2)
-	// constraint requires delete + re-insert with the pair re-sorted.
-	rows, err := bibQuery(`SELECT name1, name2 FROM non_double_contributor_names WHERE name1 = ? OR name2 = ?`, oldName, oldName)
-	if err != nil {
-		dbInteraction.Error("non_double_contributor_names query failed: %s", err)
-		return false
-	}
-	var pairs [][2]string
-	for rows.Next() {
-		var n1, n2 string
-		if scanErr := rows.Scan(&n1, &n2); scanErr != nil {
-			rows.Close()
-			dbInteraction.Error("non_double_contributor_names scan failed: %s", scanErr)
-			return false
-		}
-		pairs = append(pairs, [2]string{n1, n2})
-	}
-	rows.Close()
-	for _, p := range pairs {
-		bibExec(`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, p[0], p[1]) //nolint:errcheck
-		n1, n2 := p[0], p[1]
-		if n1 == oldName {
-			n1 = newName
-		}
-		if n2 == oldName {
-			n2 = newName
-		}
-		if n1 != n2 {
-			if n1 > n2 {
-				n1, n2 = n2, n1
-			}
-			bibExec(`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, n1, n2) //nolint:errcheck
-		}
-	}
-
-	return true
-}
-
 // maybeMergeSpuriousContributors detects and merges contributors whose canonical
 // name appears as a non-canonical entry in another contributor's name list.
 // This repairs data produced by the transitivity-blind migration: chains like
 // A→B→C produced two contributors (B and C) instead of one; B's canonical
 // appears in C's name list, identifying B as spurious.
 func maybeMergeSpuriousContributors() {
+	type mergeOp struct{ fromID, fromName, intoID, intoName string }
+	seen := map[string]bool{}
+	var ops []mergeOp
+
+	// Pass 1: contributor whose canonical appears as a non-canonical of another.
 	rows, err := db.Query(`
 		SELECT c1.id, c1.name, c2.id, c2.name
 		FROM contributors c1
@@ -2463,24 +2397,46 @@ func maybeMergeSpuriousContributors() {
 		        WHERE ndc.contributor_id_a = CASE WHEN c1.id < c2.id THEN c1.id ELSE c2.id END
 		          AND ndc.contributor_id_b = CASE WHEN c1.id < c2.id THEN c2.id ELSE c1.id END
 		      )`)
-	if err != nil {
-		return
-	}
-	type mergeOp struct{ fromID, fromName, intoID, intoName string }
-	var ops []mergeOp
-	seen := map[string]bool{}
-	for rows.Next() {
-		var fromID, fromName, intoID, intoName string
-		if err := rows.Scan(&fromID, &fromName, &intoID, &intoName); err != nil {
-			continue
+	if err == nil {
+		for rows.Next() {
+			var fromID, fromName, intoID, intoName string
+			if err := rows.Scan(&fromID, &fromName, &intoID, &intoName); err != nil {
+				continue
+			}
+			if !seen[fromID] {
+				seen[fromID] = true
+				seen[intoID] = true
+				ops = append(ops, mergeOp{fromID, fromName, intoID, intoName})
+			}
 		}
-		if !seen[fromID] {
-			seen[fromID] = true
-			seen[intoID] = true // prevent intoID from also being treated as a fromID
-			ops = append(ops, mergeOp{fromID, fromName, intoID, intoName})
-		}
+		rows.Close()
 	}
-	rows.Close()
+
+	// Pass 2: two contributors that share the exact same canonical name (e.g. produced
+	// by a rename that did not detect an existing contributor with the target name).
+	rows2, err := db.Query(`
+		SELECT c1.id, c1.name, c2.id, c2.name
+		FROM contributors c1
+		JOIN contributors c2 ON c1.name = c2.name AND c1.id < c2.id
+		WHERE NOT EXISTS (
+		        SELECT 1 FROM non_double_contributors ndc
+		        WHERE ndc.contributor_id_a = c1.id AND ndc.contributor_id_b = c2.id
+		      )`)
+	if err == nil {
+		for rows2.Next() {
+			var fromID, fromName, intoID, intoName string
+			if err := rows2.Scan(&fromID, &fromName, &intoID, &intoName); err != nil {
+				continue
+			}
+			if !seen[fromID] && !seen[intoID] {
+				seen[fromID] = true
+				seen[intoID] = true
+				ops = append(ops, mergeOp{fromID, fromName, intoID, intoName})
+			}
+		}
+		rows2.Close()
+	}
+
 	if len(ops) == 0 {
 		return
 	}
@@ -3807,20 +3763,28 @@ func loadAuthorEditorFieldMappingsFromCache(l *TBibTeXLibrary) {
 }
 
 // loadEntryFieldMappingsFromDb populates l.EntryFieldSourceToTarget from the DB.
-// The winner is read from bib_entries (current accepted value); only the loser is stored
-// in losing_field_values. Rows with no matching bib_entries value are skipped.
-// After the contributor_roles migration, author/editor fields are absent from
-// bib_entries; those losers are handled by loadAuthorEditorFieldMappingsFromCache.
+// The effective winner is COALESCE(lfv.winner, bib_entries.value): the stored winner
+// column (set when the user makes a decision) takes precedence over bib_entries, which
+// may not have been updated if closeEntry was skipped. Rows where loser == winner are
+// self-maps and are excluded by the query. Author/editor fields with contributor_roles
+// are handled separately by loadAuthorEditorFieldMappingsFromCache.
 // Returns true when at least one value was remapped by MapFieldValue, so the caller
 // can arrange a write-back.
 func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	entryFieldMappingsLoading = true
 	defer func() { entryFieldMappingsLoading = false }()
 
+	// Prefer the stored winner column (written when the user makes a decision) over
+	// the bib_entries value (which may not have been updated if closeEntry was skipped).
+	// LEFT JOIN so rows with a stored winner but no bib_entries row (e.g. after a delete)
+	// are still usable. Rows where loser == effective winner are self-maps and are filtered.
 	rows, err := db.Query(`
-		SELECT lfv.entry_key, lfv.field, lfv.value AS loser, be.value AS winner
+		SELECT lfv.entry_key, lfv.field, lfv.value AS loser,
+		       COALESCE(lfv.winner, be.value) AS winner
 		FROM losing_field_values lfv
-		JOIN bib_entries be ON be.entry_key = lfv.entry_key AND be.field = lfv.field`)
+		LEFT JOIN bib_entries be ON be.entry_key = lfv.entry_key AND be.field = lfv.field
+		WHERE COALESCE(lfv.winner, be.value) IS NOT NULL
+		  AND COALESCE(lfv.winner, be.value) != lfv.value`)
 	if err != nil {
 		dbInteraction.Warning("Could not query losing_field_values: %s", err)
 		return false
@@ -3847,15 +3811,14 @@ func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 // saveEntryFieldMappingsToDb writes the losing field values to the DB without a file roundtrip.
 func saveEntryFieldMappingsToDb(l *TBibTeXLibrary) {
 	dbExecSave("Could not clear losing_field_values", `DELETE FROM losing_field_values`)
-	upsert := `INSERT INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?)
-	             ON CONFLICT(entry_key, field, value) DO NOTHING`
+	upsert := `INSERT INTO losing_field_values (entry_key, field, value, winner) VALUES (?, ?, ?, ?)`
 	for key, fieldChallenges := range l.EntryFieldSourceToTarget {
 		if l.EntryExists(key) {
 			for field, challenges := range fieldChallenges {
 				if field != PreferredAliasField {
 					for challenger, winner := range challenges {
 						if l.MapFieldValue(field, challenger) != l.MapEntryFieldValue(key, field, winner) {
-							dbExecSave("losing_field_values insert failed", upsert, key, field, challenger)
+							dbExecSave("losing_field_values insert failed", upsert, key, field, challenger, winner)
 						}
 					}
 				}
@@ -4123,6 +4086,11 @@ func ensureLosingFieldValuesTableExists() {
 		);`)
 	// Add triage_status to databases created before this column existed.
 	db.Exec(`ALTER TABLE losing_field_values ADD COLUMN triage_status TEXT`) //nolint:errcheck
+	// winner stores the accepted value at decision time so the mapping survives
+	// even when bib_entries is not immediately updated (e.g. due to transaction
+	// ordering or cache inconsistency). COALESCE(winner, bib_entries.value) in
+	// loadEntryFieldMappingsFromDb prefers this stored winner.
+	db.Exec(`ALTER TABLE losing_field_values ADD COLUMN winner TEXT`) //nolint:errcheck
 }
 
 // cleanupRedundantLosers removes losing_field_values rows whose value is identical
@@ -4130,6 +4098,9 @@ func ensureLosingFieldValuesTableExists() {
 // to a value that was previously recorded as a loser (e.g. after DBLP re-import
 // agrees with the library value).
 func cleanupRedundantLosers() {
+	// A row is redundant only when loser == bib_entries value AND no different winner
+	// is stored. Rows where winner IS NOT NULL AND winner != value record a real user
+	// decision (bib_entries was not updated yet) and must be kept.
 	res, err := db.Exec(`
 		DELETE FROM losing_field_values
 		WHERE EXISTS (
@@ -4137,7 +4108,8 @@ func cleanupRedundantLosers() {
 		    WHERE bib_entries.entry_key = losing_field_values.entry_key
 		      AND bib_entries.field     = losing_field_values.field
 		      AND bib_entries.value     = losing_field_values.value
-		)`)
+		)
+		AND (winner IS NULL OR winner = value)`)
 	if err != nil {
 		dbInteraction.Warning("cleanupRedundantLosers: %s", err)
 		return

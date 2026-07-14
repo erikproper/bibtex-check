@@ -342,7 +342,7 @@ func (r *TInteraction) ConfirmAction(prompt string) bool {
 func (r *TInteraction) Progress(progress string, context ...any) bool {
 	if !r.silenced && !r.progressSuppressed {
 		SpinnerInterrupt()
-		fmt.Fprintf(os.Stderr, "PROGRESS: "+progress+"\n", context...)
+		fmt.Fprintf(os.Stderr, progress+"\n", context...)
 	}
 	return true
 }

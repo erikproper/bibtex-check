@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.78"
+const AppVersion = "27.82"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2743,29 +2743,129 @@ func doCorrectName(args []string) {
 		return
 	}
 
-	var cntContribNames, cntEntryNames, cntBibEntries int
-	bibQueryRow(`SELECT COUNT(*) FROM contributor_names WHERE name = ?`, oldName).Scan(&cntContribNames)                                                                    //nolint:errcheck
-	bibQueryRow(`SELECT COUNT(*) FROM entry_contributor_names WHERE name_used = ?`, oldName).Scan(&cntEntryNames)                                                           //nolint:errcheck
-	bibQueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field IN ('author','editor') AND value LIKE '%' || ? || '%'`, oldName).Scan(&cntBibEntries)                         //nolint:errcheck
-
-	if cntContribNames+cntEntryNames+cntBibEntries == 0 {
-		fmt.Fprintf(os.Stderr, "Name not found anywhere: %q\n", oldName)
+	// Find all contributor IDs that have oldName as a stored name form.
+	oldRows, err := bibQuery(`SELECT DISTINCT id FROM contributor_names WHERE name = ?`, oldName)
+	if err != nil {
+		Library.Error("contributor_names query failed: %s", err)
 		return
 	}
+	var oldIDs []string
+	for oldRows.Next() {
+		var id string
+		if e := oldRows.Scan(&id); e == nil {
+			oldIDs = append(oldIDs, id)
+		}
+	}
+	oldRows.Close()
 
-	Library.Progress("Renaming contributor name:")
+	if len(oldIDs) == 0 {
+		fmt.Fprintf(os.Stderr, "Name not found in contributor_names: %q\n", oldName)
+		return
+	}
+	if len(oldIDs) > 1 {
+		fmt.Fprintf(os.Stderr, "Name %q is stored for %d contributors — resolve ambiguity manually.\n", oldName, len(oldIDs))
+		return
+	}
+	oldID := oldIDs[0]
+
+	// Find the contributor that already has newName as canonical (if any).
+	var newID string
+	bibQueryRow(`SELECT id FROM contributors WHERE name = ?`, newName).Scan(&newID) //nolint:errcheck
+
+	Library.Progress("Correcting name:")
 	Library.Progress("  bad:     %s", oldName)
 	Library.Progress("  correct: %s", newName)
-	Library.Progress("Occurrences: %d in contributor_names, %d in entry_contributor_names, %d in bib entries",
-		cntContribNames, cntEntryNames, cntBibEntries)
 
-	if !Reporting.ConfirmAction("Proceed with name correction?") {
+	needMerge := newID != "" && newID != oldID
+	if needMerge {
+		Library.Progress("New name is already the canonical of a different contributor — merging.")
+	}
+
+	fmt.Fprintln(os.Stderr, "")
+	if !Reporting.ConfirmAction("Proceed?") {
 		return
 	}
 
-	if !correctContributorNameInDB(oldName, newName) {
+	// When new name belongs to a different contributor, merge old into new first.
+	// mergeContributorInDB moves all names, roles, and entry_contributor_names from
+	// oldID to newID, then deletes oldID. After the merge, oldName is a stored form
+	// under newID — the cleanup below removes it.
+	if needMerge {
+		if !mergeContributorInDB(oldID, newID) {
+			return
+		}
+		for n, id := range Library.NameToContributorID {
+			if id == oldID {
+				Library.NameToContributorID[n] = newID
+			}
+		}
+		for orcid, id := range Library.ORCIDToContributorID {
+			if id == oldID {
+				Library.ORCIDToContributorID[orcid] = newID
+			}
+		}
+		delete(Library.ContributorByID, oldID)
+	}
+
+	// Remove the bad name form from contributor_names.
+	if err := bibExec(`DELETE FROM contributor_names WHERE name = ?`, oldName); err != nil {
+		Library.Error("contributor_names delete failed: %s", err)
 		return
 	}
+
+	// Pure rename: no pre-existing target contributor — update canonical and add new form.
+	if newID == "" {
+		if err := bibExec(`UPDATE contributors SET name = ? WHERE id = ?`, newName, oldID); err != nil {
+			Library.Error("contributors rename failed: %s", err)
+			return
+		}
+		if err := bibExec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, oldID, newName); err != nil {
+			Library.Error("contributor_names insert failed: %s", err)
+			return
+		}
+	}
+
+	// Fix entry_contributor_names.
+	if err := bibExec(`UPDATE entry_contributor_names SET name_used = ? WHERE name_used = ?`, newName, oldName); err != nil {
+		Library.Error("entry_contributor_names update failed: %s", err)
+		return
+	}
+
+	// Fix bib_entries author/editor field values.
+	if err := bibExec(`UPDATE bib_entries SET value = REPLACE(value, ?, ?) WHERE field IN ('author','editor') AND value LIKE '%' || ? || '%'`, oldName, newName, oldName); err != nil {
+		Library.Error("bib_entries update failed: %s", err)
+		return
+	}
+
+	// Fix non_double_contributor_names: rewire pairs involving oldName.
+	ndRows, err := bibQuery(`SELECT name1, name2 FROM non_double_contributor_names WHERE name1 = ? OR name2 = ?`, oldName, oldName)
+	if err == nil {
+		var pairs [][2]string
+		for ndRows.Next() {
+			var n1, n2 string
+			if e := ndRows.Scan(&n1, &n2); e == nil {
+				pairs = append(pairs, [2]string{n1, n2})
+			}
+		}
+		ndRows.Close()
+		for _, p := range pairs {
+			bibExec(`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, p[0], p[1]) //nolint:errcheck
+			n1, n2 := p[0], p[1]
+			if n1 == oldName {
+				n1 = newName
+			}
+			if n2 == oldName {
+				n2 = newName
+			}
+			if n1 != n2 {
+				if n1 > n2 {
+					n1, n2 = n2, n1
+				}
+				bibExec(`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, n1, n2) //nolint:errcheck
+			}
+		}
+	}
+
 	loadContributorsFromDb(&Library)
 	Library.CheckNameMappingConsistency()
 	Library.Progress("Name correction complete.")
