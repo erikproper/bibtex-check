@@ -2459,7 +2459,7 @@ func maybeMergeSpuriousContributors() {
 	if logFile != nil {
 		logFile.Close()
 	}
-	dbInteraction.Progress("Merged %d/%d spurious contributor duplicate(s) (see spurious_contributor_merges.log)",
+	dbInteraction.Progress("  Merged %d/%d spurious contributor duplicate(s) (see spurious_contributor_merges.log)",
 		merged, len(ops))
 }
 
@@ -4925,11 +4925,17 @@ func upsertBibEntryField(key, field, value string) {
 	}
 }
 
-// deleteBibEntryField removes a single field row from bib_entries.
+// deleteBibEntryField removes a single field from the DB.
+// For author/editor with contributorRolesActive, the data lives in contributor_roles
+// (not bib_entries), so we clear that table instead.
 // Outside a transaction it checks for an actual change before marking modified.
 func deleteBibEntryField(key, field string) {
-	if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, key, field); err != nil {
-		dbInteraction.Warning("bib_entries delete failed for %s.%s: %s", key, field, err)
+	if contributorRolesActive && (field == "author" || field == "editor") {
+		upsertContributorRolesForField(&Library, key, field, "")
+	} else {
+		if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, key, field); err != nil {
+			dbInteraction.Warning("bib_entries delete failed for %s.%s: %s", key, field, err)
+		}
 	}
 	if entryCache != nil {
 		if e, ok := entryCache[key]; ok {

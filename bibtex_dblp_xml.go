@@ -2645,18 +2645,19 @@ func doEnrichContributorData() {
 	if !openLibraryToUpdate() {
 		return
 	}
-	Library.Progress("Enriching contributor data — step 1/4: absorbing DBLP name mappings...")
+	fmt.Fprintf(os.Stderr, "\nEnriching contributor data:\n")
+	Library.Progress("  Step 1/4: absorbing DBLP name mappings...")
 	absorbDblpNamesCore()
 
-	Library.Progress("Enriching contributor data — step 2/4: scanning DBLP persons for ORCIDs...")
+	Library.Progress("  Step 2/4: scanning DBLP persons for ORCIDs...")
 	absorbDblpOrcidsCore()
 
-	Library.Progress("Enriching contributor data — step 3/4: fetching ORCID person records...")
+	Library.Progress("  Step 3/4: fetching ORCID person records...")
 	doEnrichOrcidProfilesCore()
 
-	Library.Progress("Enriching contributor data — step 4/4: merging ORCID duplicates...")
+	Library.Progress("  Step 4/4: merging ORCID duplicates...")
 	merged := mergeOrcidDuplicatesCore()
-	Library.Progress("Merged %d ORCID-duplicate contributor pair(s).", merged)
+	Library.Progress("  Merged %d ORCID-duplicate contributor pair(s).", merged)
 	if merged > 0 {
 		Library.RenormaliseNameFields()
 		Library.CheckNameMappingConsistency()

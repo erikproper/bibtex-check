@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.84"
+const AppVersion = "27.85"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -348,6 +348,7 @@ func openLibraryToUpdate() bool {
 	maybeMigrateToFKSchema()
 	maybeMigrateContributorRolesCascade()
 	maybeMigrateDblpExportDirty()
+	fmt.Fprintf(os.Stderr, "\nOpening the library:\n")
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()

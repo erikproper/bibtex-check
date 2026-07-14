@@ -14,7 +14,7 @@ package main
 
 const (
 	// Progress reports
-	ProgressInitialiseLibrary = "Initialising library"
+	ProgressInitialiseLibrary = "  Initialising library"
 	ProgressLibrarySize       = "Library size: %d"
 
 	// Names of syntactic classes as used in error messages when parsing BibTeX files
@@ -142,12 +142,12 @@ const (
 	ProgressReadingKeyHintsFile            = "Reading key hints file %s"
 	ProgressReadingFieldMappingsFile       = "Reading field mappings file %s"
 
-	ProgressEntryCacheLoaded  = "Entry access: in-memory cache (%d entries)"
-	ProgressEntryPerQuery     = "Entry access: per-entry database reads"
+	ProgressEntryCacheLoaded  = "  Entry access: in-memory cache (%d entries)"
+	ProgressEntryPerQuery     = "  Entry access: per-entry database reads"
 	ProgressEntryProgress     = "Entry %d/%d (%.0f%%)"
-	ProgressLoadingEntryCache = "Loading entry cache"
-	ProgressBuildingTitleIndex = "Building title index"
-	ProgressBuildingKeyAliases = "Building key aliases"
+	ProgressLoadingEntryCache = "  Loading entry cache"
+	ProgressBuildingTitleIndex = "  Building title index"
+	ProgressBuildingKeyAliases = "  Building key aliases"
 
 	ProgressScanningOrcids           = "Scanning DBLP for ORCIDs"
 	ProgressFixingDblpEntries        = "Fixing DBLP entries"
