@@ -343,6 +343,6 @@ func (l *TBibTeXLibrary) CheckAllURLs() {
 		checked++
 		return !Reporting.QuitWasRequested()
 	})
-	l.Progress("URL check complete: %d entries checked", checked)
+	l.Progress("  URL check complete: %d needed checking", checked)
 }
 

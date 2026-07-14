@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.88"
+const AppVersion = "27.90"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1527,6 +1527,7 @@ func doDefaultRun() {
 	if openLibraryToUpdate() {
 		clearEntryWarnings()
 		Library.ReadURLsIgnoreFile()
+		fmt.Fprintf(os.Stderr, "\nAnalysing and checking library:\n")
 		Library.CheckEntries()
 		if Library.QuitWasRequested() {
 			return

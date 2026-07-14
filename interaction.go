@@ -298,22 +298,26 @@ type statRow struct {
 	comment string
 }
 
-// printStatBlock prints header then rows with labels left-aligned to a column
-// wide enough that the longest label+colon is followed by exactly one space
-// before the value. An optional comment is appended after two spaces.
+// printStatBlock prints header then rows with labels left-aligned and values
+// right-aligned so all columns line up regardless of label/value widths.
+// An optional comment is appended after two spaces.
 func printStatBlock(header string, rows []statRow) {
-	maxLen := 0
+	maxLabelLen := 0
+	maxValLen := 0
 	for _, r := range rows {
-		if n := len(r.label) + 1; n > maxLen { // +1 for the colon
-			maxLen = n
+		if n := len(r.label) + 1; n > maxLabelLen { // +1 for the colon
+			maxLabelLen = n
+		}
+		if n := len(r.value); n > maxValLen {
+			maxValLen = n
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n%s\n", header)
 	for _, r := range rows {
 		if r.comment != "" {
-			fmt.Fprintf(os.Stderr, "  %-*s %s  %s\n", maxLen, r.label+":", r.value, r.comment)
+			fmt.Fprintf(os.Stderr, "  %-*s  %*s  %s\n", maxLabelLen, r.label+":", maxValLen, r.value, r.comment)
 		} else {
-			fmt.Fprintf(os.Stderr, "  %-*s %s\n", maxLen, r.label+":", r.value)
+			fmt.Fprintf(os.Stderr, "  %-*s  %*s\n", maxLabelLen, r.label+":", maxValLen, r.value)
 		}
 	}
 }

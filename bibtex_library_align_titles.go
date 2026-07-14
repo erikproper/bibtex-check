@@ -375,7 +375,7 @@ func (l *TBibTeXLibrary) CheckAlignTitles(autoAccept bool) {
 	total := countBibEntries()
 	found := 0
 	quit := false
-	ticker := l.NewProgressTicker("Scanning for title/volume/edition alignment candidates", total)
+	ticker := l.NewProgressTicker("  Scanning for title/volume/edition alignment candidates", total)
 	forEachBibEntryKey(func(key string) bool {
 		if quit {
 			return false
@@ -396,7 +396,9 @@ func (l *TBibTeXLibrary) CheckAlignTitles(autoAccept bool) {
 		return true
 	})
 	ticker.Done()
-	fmt.Fprintf(os.Stderr, "Found %d candidate(s)\n", found)
+	if found > 0 {
+		fmt.Fprintf(os.Stderr, "  Found %d title/volume/edition alignment candidate(s)\n", found)
+	}
 }
 
 
