@@ -1787,7 +1787,6 @@ func absorbDblpNamesCore() {
 	}
 	Library.Progress("  Linked %d DBLP person key(s), absorbed %d name alias(es), set %d ORCID(s).",
 		keysLinked, absorbed, orcidsSet)
-	Library.Progress("  Re-normalising author/editor fields...")
 	Library.RenormaliseNameFields()
 }
 
@@ -2049,6 +2048,7 @@ func applyContributorMatchesFromEntries(
 	keyToNames map[string][]string,
 	contribPersonEntries map[string]map[string]map[string]bool,
 	contribExistingKey map[string]string,
+	splitLog *os.File,
 ) int {
 	done := 0
 	for contribID, personEntries := range contribPersonEntries {
@@ -2090,7 +2090,7 @@ func applyContributorMatchesFromEntries(
 				newName:      newName,
 				newForms:     keyToNames[k],
 			}
-			if splitContributorByDblpKeys(l, sc, nil) {
+			if splitContributorByDblpKeys(l, sc, splitLog) {
 				done++
 			}
 		}

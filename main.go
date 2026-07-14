@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.91"
+const AppVersion = "27.93"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2099,6 +2099,7 @@ func doUpsertDblpEntries() {
 
 		inDblpUpdate = true
 		scanned := 0
+		fmt.Fprintf(os.Stderr, "\nDoing analysis based on DBLP data:\n")
 		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
 		processKey := func(key string) {
@@ -2155,17 +2156,27 @@ func doUpsertDblpEntries() {
 		ticker.Done()
 		bibEntriesModified = true
 		if Library.orcidAutoResolveSameCount > 0 || Library.orcidAutoResolveDiffCount > 0 {
-			Library.Progress("Auto-resolved by ORCID: %d same-person mapping(s), %d different-person disambiguation(s).",
+			Library.Progress("  Auto-resolved by ORCID: %d same-person mapping(s), %d different-person disambiguation(s).",
 				Library.orcidAutoResolveSameCount, Library.orcidAutoResolveDiffCount)
 		}
 		Library.orcidAutoResolveSameCount = 0
 		Library.orcidAutoResolveDiffCount = 0
-		Library.Progress("Doing analysis based on DBLP data:")
 		if pmOk && len(contribPersonEntries) > 0 {
+			logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/dblp_contributor_splits.log"
+			os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+			var splitLog *os.File
+			if f, err := os.Create(logPath); err == nil {
+				splitLog = f
+				fmt.Fprintf(splitLog, "DBLP contributor role cross-check splits on %s\n\n",
+					time.Now().Format("2006-01-02 15:04:05"))
+			}
 			n := applyContributorMatchesFromEntries(&Library, pm, keyToNames,
-				contribPersonEntries, contribExistingKey)
+				contribPersonEntries, contribExistingKey, splitLog)
+			if splitLog != nil {
+				splitLog.Close()
+			}
 			if n > 0 {
-				Library.Progress("  DBLP contributor role cross-check: %d assignment(s)/split(s).", n)
+				Library.Progress("  DBLP contributor role cross-check: %d assignment(s)/split(s) (see dblp_contributor_splits.log).", n)
 			}
 		}
 		absorbDblpNamesCore()
