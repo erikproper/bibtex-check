@@ -924,13 +924,13 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		}
 	}
 	printStatBlock("Harvest result: "+cfg.FileName, []statRow{
-		{"total source entries", fmt.Sprintf("%d", len(entries)), ""},
-		{"resolved (merged/added)", fmt.Sprintf("%d", resolved), ""},
-		{"ignored", fmt.Sprintf("%d", ignored), ""},
-		{"skipped (skip-content)", fmt.Sprintf("%d", skippedContent), ""},
-		{"pending (not yet seen)", fmt.Sprintf("%d", stillPending), ""},
+		{"Total source entries", fmt.Sprintf("%d", len(entries)), ""},
+		{"Resolved (merged/added)", fmt.Sprintf("%d", resolved), ""},
+		{"Ignored", fmt.Sprintf("%d", ignored), ""},
+		{"Skipped (skip-content)", fmt.Sprintf("%d", skippedContent), ""},
+		{"Pending (not yet seen)", fmt.Sprintf("%d", stillPending), ""},
 		{"PDFs harvested", fmt.Sprintf("%d", pdfsHarvested), ""},
-		{"key hints added", fmt.Sprintf("%d", hintsAdded), ""},
+		{"Key hints added", fmt.Sprintf("%d", hintsAdded), ""},
 	})
 	// Mirror local groups and weave entries into the harvest_transfer target's .sync DB.
 	if cmdHarvestTransferKeysPath != "" {
