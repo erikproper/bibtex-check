@@ -1668,7 +1668,7 @@ func (l *TBibTeXLibrary) RenormaliseNameFields() {
 	l.CheckNameMappingConsistency()
 
 	total := countBibEntries()
-	ticker := l.NewProgressTicker("Re-normalising author/editor fields", total)
+	ticker := l.NewProgressTicker("  Re-normalising author/editor fields", total)
 	forEachBibEntryKey(func(key string) bool {
 		ticker.Step()
 		entry := l.buildEntry(key)
