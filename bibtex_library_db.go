@@ -3550,7 +3550,7 @@ func repairDblpData() {
 	if err != nil {
 		dbInteraction.Warning("repairDblpData (A): %s", err)
 	} else if n, _ := res.RowsAffected(); n > 0 {
-		dbInteraction.Progress("repairDblpData: removed %d stale dblp field(s) from merged key_oldies", n)
+		dbInteraction.Progress("  Repair DBLP data: removed %d stale dblp field(s) from merged key_oldies", n)
 	}
 
 	// Category B: remove all rows for ghost entries (no entrytype, not in key_oldies).
@@ -3566,7 +3566,7 @@ func repairDblpData() {
 	if err != nil {
 		dbInteraction.Warning("repairDblpData (B): %s", err)
 	} else if n, _ := res.RowsAffected(); n > 0 {
-		dbInteraction.Progress("repairDblpData: removed %d ghost entry rows", n)
+		dbInteraction.Progress("  Repair DBLP data: removed %d ghost entry rows", n)
 	}
 
 	// Remove stale dblp_canonical rows (target no longer exists as a live entry).
@@ -3577,7 +3577,7 @@ func repairDblpData() {
 	if err != nil {
 		dbInteraction.Warning("repairDblpData (stale canonical): %s", err)
 	} else if n, _ := res.RowsAffected(); n > 0 {
-		dbInteraction.Progress("repairDblpData: removed %d stale dblp_canonical rows", n)
+		dbInteraction.Progress("  Repair DBLP data: removed %d stale dblp_canonical rows", n)
 	}
 
 	// Back-fill missing dblp_canonical rows from live entries.
@@ -3591,7 +3591,7 @@ func repairDblpData() {
 	if err != nil {
 		dbInteraction.Warning("repairDblpData (back-fill): %s", err)
 	} else if n, _ := res.RowsAffected(); n > 0 {
-		dbInteraction.Progress("repairDblpData: back-filled %d missing dblp_canonical rows", n)
+		dbInteraction.Progress("  Repair DBLP data: back-filled %d missing dblp_canonical rows", n)
 	}
 }
 

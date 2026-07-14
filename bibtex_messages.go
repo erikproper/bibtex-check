@@ -48,7 +48,7 @@ const (
 	WarningMappingForKey                   = " for "
 	WarningTargetOfOldieNotExists          = "Target %s of oldie %s does not exist."
 	ProgressCheckingConsistencyOfEntries   = "Checking consistency and completeness of the library entries"
-	ProgressCheckingConsistencyOfKeyOldies = "Checking consistency and completeness of key oldies"
+	ProgressCheckingConsistencyOfKeyOldies = "  Checking consistency and completeness of key oldies"
 
 	// Ignore an (illegal) field
 	QuestionIgnore         = "Ignore this field?"
@@ -153,8 +153,8 @@ const (
 	ProgressFixingDblpEntries        = "Fixing DBLP entries"
 	ProgressFixingDblpHierarchy      = "Resolving DBLP parent ambiguities"
 	WarningCrossrefCycle             = "Crossref cycle detected: %s"
-	ProgressCheckingFieldMappings   = "Checking field mappings"
-	ProgressCheckingNameMappings    = "Checking name mappings"
+	ProgressCheckingFieldMappings   = "  Checking field mappings"
+	ProgressCheckingNameMappings    = "  Checking name mappings"
 	WarningMissingFile              = "File %s for key %s seems not to exist."
 	WarningFileNotAssociated        = "File %s is not associated to any library entry."
 	WarningDuplicateFileContent     = "File with same content is used by multiple entries: %s."
@@ -186,10 +186,10 @@ const (
 	WarningMergeConflictingField = "Entries %s and %s have conflicting %s values (%s vs %s)"
 	QuestionMergeAnyway          = "Merge anyway?"
 
-	ProgressCheckingEntryFieldMappingWinners  = "Checking entry-field mapping winner consistency"
+	ProgressCheckingEntryFieldMappingWinners  = "  Checking entry-field mapping winner consistency"
 	WarningEntryFieldMappingWinnerMismatch    = "Entry-field mapping winner mismatch: entry=%s field=%s winner=%q actual=%q"
 	WarningEntryFieldMappingDeletedEntry      = "Entry-field mapping references deleted entry %s — field=%s challenger=%q winner=%q"
-	ProgressEntryFieldMappingWinnersResult    = "Entry-field mapping winner check: %d fixed, %d mapping(s) for deleted entries"
+	ProgressEntryFieldMappingWinnersResult    = "  Entry-field mapping winner check: %d fixed, %d mapping(s) for deleted entries"
 
 	WarningGenericFieldMappingAuthorEditor = "field_mappings: field %q not allowed as same-field mapping (winner=%q, challenger=%q) — use losing_field_values instead"
 	WarningFieldMappingCycle               = "Field mapping cycle rejected: (%s, %q) → (%s, %q) would close a cycle"
