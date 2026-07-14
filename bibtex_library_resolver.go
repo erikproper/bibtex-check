@@ -388,12 +388,11 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 	// When both ORCIDs are known, auto-resolve without prompting.
 	if winnerORCID != "" && loserORCID != "" {
 		if winnerORCID == loserORCID {
-			l.Progress("Auto-resolved (same ORCID %s): mapping %q → %q", winnerORCID, loserName, winnerName)
+			l.orcidAutoResolveSameCount++
 			l.AddNameMapping(winnerName, loserName)
 			return winnerName, false, true
 		}
-		l.Progress("Auto-resolved (different ORCIDs: %s vs %s): using loser %q for entry %s pos %d",
-			winnerORCID, loserORCID, loserName, key, namePos)
+		l.orcidAutoResolveDiffCount++
 		return loserName, false, false
 	}
 

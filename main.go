@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.82"
+const AppVersion = "27.84"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2152,11 +2152,18 @@ func doUpsertDblpEntries() {
 		inDblpUpdate = false
 		ticker.Done()
 		bibEntriesModified = true
+		if Library.orcidAutoResolveSameCount > 0 || Library.orcidAutoResolveDiffCount > 0 {
+			Library.Progress("Auto-resolved by ORCID: %d same-person mapping(s), %d different-person disambiguation(s).",
+				Library.orcidAutoResolveSameCount, Library.orcidAutoResolveDiffCount)
+		}
+		Library.orcidAutoResolveSameCount = 0
+		Library.orcidAutoResolveDiffCount = 0
+		Library.Progress("Doing analysis based on DBLP data:")
 		if pmOk && len(contribPersonEntries) > 0 {
 			n := applyContributorMatchesFromEntries(&Library, pm, keyToNames,
 				contribPersonEntries, contribExistingKey)
 			if n > 0 {
-				Library.Progress("DBLP contributor role cross-check: %d assignment(s)/split(s).", n)
+				Library.Progress("  DBLP contributor role cross-check: %d assignment(s)/split(s).", n)
 			}
 		}
 		absorbDblpNamesCore()

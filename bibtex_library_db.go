@@ -2440,12 +2440,27 @@ func maybeMergeSpuriousContributors() {
 	if len(ops) == 0 {
 		return
 	}
-	dbInteraction.Progress("Merging %d spurious contributor duplicate(s)...", len(ops))
+	logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/spurious_contributor_merges.log"
+	os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+	logFile, logErr := os.Create(logPath)
+	if logErr == nil {
+		fmt.Fprintf(logFile, "Spurious contributor merges on %s (%d candidate(s))\n\n",
+			time.Now().Format("2006-01-02 15:04:05"), len(ops))
+	}
+	merged := 0
 	for _, op := range ops {
 		if mergeContributorInDB(op.fromID, op.intoID) {
-			dbInteraction.Progress("  Merged %q into %q", op.fromName, op.intoName)
+			merged++
+			if logFile != nil {
+				fmt.Fprintf(logFile, "  Merged %q into %q\n", op.fromName, op.intoName)
+			}
 		}
 	}
+	if logFile != nil {
+		logFile.Close()
+	}
+	dbInteraction.Progress("Merged %d/%d spurious contributor duplicate(s) (see spurious_contributor_merges.log)",
+		merged, len(ops))
 }
 
 // mergeContributorInDB absorbs fromID into toID at the DB level.
@@ -3798,8 +3813,13 @@ func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 			dbInteraction.Warning("Could not scan losing_field_values row: %s", err)
 			continue
 		}
-		normWinner := l.MapFieldValue(field, winner)
-		normLoser := l.MapFieldValue(field, loser)
+		// Apply the same pipeline that ResolveFieldValue uses at runtime: NormaliseFieldValue
+		// first (which for author/editor resolves current name aliases via NameAliasToName),
+		// then MapFieldValue. Without the normalise step, a stored loser like
+		// "Zhang, Wei and ..." would stop matching after "Zhang, Wei" acquires a name alias,
+		// causing the question to recur on every subsequent run.
+		normWinner := l.MapFieldValue(field, l.NormaliseFieldValue(field, winner))
+		normLoser := l.MapFieldValue(field, l.NormaliseFieldValue(field, loser))
 		if normWinner != winner || normLoser != loser {
 			normalisationChanged = true
 		}

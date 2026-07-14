@@ -98,6 +98,8 @@ type (
 		IgnoredTitleIndexes               TStringSet // indexed forms of titles to skip in double-title detection
 		ambiguousAssignmentCount          map[string]int    // name → number of fallback assignments this run
 		ambiguousAssignmentPick           map[string]string // name → contributor ID that was picked
+		orcidAutoResolveSameCount         int               // ORCID same-person auto-resolves this run
+		orcidAutoResolveDiffCount         int               // ORCID different-person auto-resolves this run
 		ignoreIllegalFields               bool
 		PreMergeCheck                     func(source, target string) // called before proposing a merge; may associate DBLP keys
 

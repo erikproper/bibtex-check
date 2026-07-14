@@ -1499,7 +1499,7 @@ func naturalOrderToSurnameFirst(alias, surname, generation string) string {
 func absorbDblpNamesCore() {
 	pm, filesOK := loadDblpPersonMaps()
 	if filesOK {
-		Library.Progress("Loaded DBLP person maps from cache (%d persons, %d ORCIDs).",
+		Library.Progress("  Loaded DBLP person maps from cache (%d persons, %d ORCIDs).",
 			len(pm.keyToCanonical), len(pm.orcidToKey))
 	} else {
 		xmlFilename := readDblpCurrentXML()
@@ -1523,7 +1523,7 @@ func absorbDblpNamesCore() {
 			Library.Error("Cannot read DBLP XML gzip: %s", err)
 			return
 		}
-		Library.Progress("Building DBLP person maps from %s ...", xmlFilename)
+		Library.Progress("  Building DBLP person maps from %s ...", xmlFilename)
 		var buildErr error
 		pm, buildErr = dblpBuildNameMap(gz)
 		gz.Close()
@@ -1531,7 +1531,7 @@ func absorbDblpNamesCore() {
 		if buildErr != nil {
 			Library.Warning("DBLP person map build partial: %s", buildErr)
 		}
-		Library.Progress("  %d DBLP persons found.", len(pm.keyToCanonical))
+		Library.Progress("    %d DBLP persons found.", len(pm.keyToCanonical))
 	}
 
 	// Build key → names (inverted nameToKey, non-ambiguous entries only).
@@ -1759,14 +1759,35 @@ func absorbDblpNamesCore() {
 		orcidsSet++
 	}
 
-	for _, sc := range splitCandidates {
-		if splitContributorByDblpKeys(&Library, sc) {
-			keysLinked++
+	var splitLog *os.File
+	if len(splitCandidates) > 0 {
+		logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/dblp_contributor_splits.log"
+		os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+		if f, err := os.Create(logPath); err == nil {
+			splitLog = f
+			fmt.Fprintf(splitLog, "DBLP contributor splits on %s\n\n",
+				time.Now().Format("2006-01-02 15:04:05"))
 		}
 	}
-	Library.Progress("Linked %d DBLP person key(s), absorbed %d name alias(es), set %d ORCID(s).",
+	splitsMoved, splitsSkipped := 0, 0
+	for _, sc := range splitCandidates {
+		if splitContributorByDblpKeys(&Library, sc, splitLog) {
+			keysLinked++
+			splitsMoved++
+		} else {
+			splitsSkipped++
+		}
+	}
+	if splitLog != nil {
+		splitLog.Close()
+	}
+	if len(splitCandidates) > 0 {
+		Library.Progress("    %d DBLP contributor split candidate(s): %d moved, %d skipped (see dblp_contributor_splits.log).",
+			len(splitCandidates), splitsMoved, splitsSkipped)
+	}
+	Library.Progress("  Linked %d DBLP person key(s), absorbed %d name alias(es), set %d ORCID(s).",
 		keysLinked, absorbed, orcidsSet)
-	Library.Progress("Re-normalising author/editor fields...")
+	Library.Progress("  Re-normalising author/editor fields...")
 	Library.RenormaliseNameFields()
 }
 
@@ -1779,11 +1800,21 @@ type dblpSplitCandidate struct {
 	newForms     []string
 }
 
+// splitMsg writes a DBLP split detail line to the log file when provided,
+// or falls back to l.Progress for interactive call sites (log == nil).
+func splitMsg(log *os.File, l *TBibTeXLibrary, format string, args ...any) {
+	if log != nil {
+		fmt.Fprintf(log, "  DBLP split: "+format+"\n", args...)
+	} else {
+		l.Progress("  DBLP split: "+format, args...)
+	}
+}
+
 // splitContributorByDblpKeys splits a contributor that was matched by two distinct
 // DBLP person keys. Entries whose DBLP key appears in the new person's publication
 // index are moved to a freshly-created (or existing) contributor; the original
 // contributor retains its existing DBLP key and the remaining entries.
-func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
+func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate, log *os.File) bool {
 	contrib := l.ContributorByID[sc.contribID]
 	if contrib == nil {
 		return false
@@ -1795,7 +1826,7 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
 		newPubSet[k] = true
 	}
 	if len(newPubSet) == 0 {
-		l.Progress("  DBLP split: no publications indexed for %s (%q) — skipped.", sc.newKey, sc.newCanonical)
+		splitMsg(log, l, "no publications indexed for %s (%q) — skipped.", sc.newKey, sc.newCanonical)
 		return false
 	}
 
@@ -1823,7 +1854,7 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
 	rows.Close()
 
 	if len(toNew) == 0 {
-		l.Progress("  DBLP split: %q linked to %s; 0 entries match %s — skipped.",
+		splitMsg(log, l, "%q linked to %s; 0 entries match %s — skipped.",
 			contrib.Name, sc.existingKey, sc.newKey)
 		return false
 	}
@@ -1900,7 +1931,7 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate) bool {
 		}
 	}
 
-	l.Progress("  DBLP split: moved %d entry/ies from %q (%s) to new contributor %q (%s).",
+	splitMsg(log, l, "moved %d entry/ies from %q (%s) to new contributor %q (%s).",
 		len(toNew), contrib.Name, sc.existingKey, newName, sc.newKey)
 	return true
 }
@@ -2059,7 +2090,7 @@ func applyContributorMatchesFromEntries(
 				newName:      newName,
 				newForms:     keyToNames[k],
 			}
-			if splitContributorByDblpKeys(l, sc) {
+			if splitContributorByDblpKeys(l, sc, nil) {
 				done++
 			}
 		}
@@ -2238,7 +2269,7 @@ func detectMisattributedDblpEntries(l *TBibTeXLibrary, pm dblpPersonMaps, keyToN
 			newName:      newName,
 			newForms:     keyToNames[st.newKey],
 		}
-		if splitContributorByDblpKeys(l, sc) {
+		if splitContributorByDblpKeys(l, sc, nil) {
 			done++
 		}
 	}
@@ -2383,7 +2414,7 @@ func detectUnkeyedContributorSplits(l *TBibTeXLibrary, pm dblpPersonMaps, keyToN
 				newName:      newName,
 				newForms:     keyToNames[k],
 			}
-			if splitContributorByDblpKeys(l, sc) {
+			if splitContributorByDblpKeys(l, sc, nil) {
 				done++
 			}
 		}
