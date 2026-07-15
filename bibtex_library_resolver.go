@@ -378,88 +378,91 @@ func (l *TBibTeXLibrary) contributorORCID(name string) string {
 }
 
 // resolveNamePair interactively resolves a single differing name position in an
-// author/editor field. winnerName is the preferred/current form; loserName is the
-// challenger/incoming form. namePos and nameTotal give position context for display.
+// author/editor field. currentName is the library's current form; challengerName is the
+// incoming challenger form. namePos and nameTotal give position context for display.
 //
 // Returns:
-//   resultName — canonical name to use at this position (winnerName when quit or skipped)
+//   resultName — canonical name to use at this position (currentName when quit or skipped)
 //   quit       — user pressed q; caller should abort its enclosing loop
 //   mapped     — a name mapping was recorded (triage may retire the losing_field_values row;
 //                breakdown uses the new resultName)
 //
-// The "n" (non-double) case records (winnerName, loserName) in non_double_contributor_names,
+// Y/N create a global name mapping; y/n are entry-specific (no mapping).
+// The "d" (different people) case records (currentName, challengerName) in non_double_contributor_names,
 // and also in non_double_contributors when contributor IDs are available for both names.
-// It returns (winnerName, false, false): no mapping, no quit, keep the winner name.
-func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, diffIdx, diffTotal int, winnerName, loserName string) (resultName string, quit bool, mapped bool) {
-	winnerORCID := l.contributorORCID(winnerName)
-	loserORCID := l.contributorORCID(loserName)
+// It returns (currentName, false, false): no mapping, no quit, keep the current name.
+func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, diffIdx, diffTotal int, currentName, challengerName string) (resultName string, quit bool, mapped bool) {
+	currentORCID := l.contributorORCID(currentName)
+	challengerORCID := l.contributorORCID(challengerName)
 
 	// When both ORCIDs are known, auto-resolve without prompting.
-	if winnerORCID != "" && loserORCID != "" {
-		if winnerORCID == loserORCID {
+	if currentORCID != "" && challengerORCID != "" {
+		if currentORCID == challengerORCID {
 			l.orcidAutoResolveSameCount++
-			l.AddNameMapping(winnerName, loserName)
-			return winnerName, false, true
+			l.AddNameMapping(currentName, challengerName)
+			return currentName, false, true
 		}
 		l.orcidAutoResolveDiffCount++
-		return loserName, false, false
+		return challengerName, false, false
 	}
 
-	// During DBLP update the loser is the DBLP-authoritative name form.
+	// During DBLP update the challenger is the DBLP-authoritative name form.
 	// Accept it and record the canonical mapping so future runs skip the question.
 	if inDblpUpdate {
-		l.Progress("Auto-accepted DBLP name form %q for %s (mapping from %q)", loserName, key, winnerName)
-		l.AddNameMapping(loserName, winnerName)
-		return loserName, false, true
+		l.Progress("Auto-accepted DBLP name form %q for %s (mapping from %q)", challengerName, key, currentName)
+		l.AddNameMapping(challengerName, currentName)
+		return challengerName, false, true
 	}
 
-	winnerDisplay := winnerName
-	if winnerORCID != "" {
-		winnerDisplay += " [" + winnerORCID + "]"
+	currentDisplay := currentName
+	if currentORCID != "" {
+		currentDisplay += " [" + currentORCID + "]"
 	}
-	loserDisplay := loserName
-	if loserORCID != "" {
-		loserDisplay += " [" + loserORCID + "]"
+	challengerDisplay := challengerName
+	if challengerORCID != "" {
+		challengerDisplay += " [" + challengerORCID + "]"
 	}
 
-	options := TStringSetNew()
-	options.Add("w", "l", "e", "c", "n", "q")
-	answer := l.WarningQuestion(
-		"Map incoming→current (w), current→incoming (l), edit canonical (e), use incoming form (c), non-double (n), quit (q)?",
-		options,
-		"Name %d of %d (difference %d of %d) for entry %s field %s:\n  Current:  %s\n  Incoming: %s",
-		namePos, nameTotal, diffIdx, diffTotal, key, field, winnerDisplay, loserDisplay)
+	answer := l.WarningQuestionOrdered(
+		"Keep current name? (Y/N = globally, y/n = this entry only), edit canonical (e), different people (d), quit (q)?",
+		[]string{"N", "Y", "n", "y", "e", "d", "q"},
+		"Name %d of %d (difference %d of %d) for entry %s field %s:\n  Current:    %s\n  Challenger: %s",
+		namePos, nameTotal, diffIdx, diffTotal, key, field, currentDisplay, challengerDisplay)
 	switch answer {
-	case "w":
-		l.AddNameMapping(winnerName, loserName)
-		return winnerName, false, true
-	case "l":
-		l.AddNameMapping(loserName, winnerName)
-		return loserName, false, true
+	case "Y":
+		// Global: map challenger → current.
+		l.AddNameMapping(currentName, challengerName)
+		return currentName, false, true
+	case "y":
+		// Entry-only: keep current name for this entry, no mapping recorded.
+		return currentName, false, false
+	case "N":
+		// Global: map current → challenger.
+		l.AddNameMapping(challengerName, currentName)
+		return challengerName, false, true
+	case "n":
+		// Entry-only: use challenger name for this entry, no mapping recorded.
+		return challengerName, false, false
 	case "e":
 		canonical, err := l.AskForInput("Enter canonical name")
 		if err == nil && canonical != "" {
-			l.AddNameMapping(canonical, winnerName)
-			l.AddNameMapping(canonical, loserName)
+			l.AddNameMapping(canonical, currentName)
+			l.AddNameMapping(canonical, challengerName)
 			return canonical, false, true
 		}
-		return winnerName, false, false
-	case "c":
-		// Different people: accept loser name for this entry at this position
-		// without creating any name mapping between the two forms.
-		return loserName, false, false
-	case "n":
-		addNonDoubleContributorNamePair(l, winnerName, loserName)
-		if idA, okA := l.NameToContributorID[winnerName]; okA {
-			if idB, okB := l.NameToContributorID[loserName]; okB {
+		return currentName, false, false
+	case "d":
+		addNonDoubleContributorNamePair(l, currentName, challengerName)
+		if idA, okA := l.NameToContributorID[currentName]; okA {
+			if idB, okB := l.NameToContributorID[challengerName]; okB {
 				addNonDoubleContributorPair(idA, idB)
 			}
 		}
-		return winnerName, false, false
+		return currentName, false, false
 	case "q":
-		return winnerName, true, false
+		return currentName, true, false
 	}
-	return winnerName, false, false
+	return currentName, false, false
 }
 
 // resolveAuthorBreakdown interactively resolves per-name differences in an author/editor

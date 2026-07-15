@@ -337,6 +337,49 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 	}
 }
 
+// WarningQuestionOrdered is like WarningQuestion but uses the caller-supplied slice
+// to control the display order of options (useful when ASCII sort would mis-group them).
+func (r *TInteraction) WarningQuestionOrdered(question string, ordered []string, warning string, context ...any) string {
+	valid := TStringSetNew()
+	hasQ := false
+	optionSet := "("
+	separator := ""
+	for _, opt := range ordered {
+		valid.Add(opt)
+		if opt == "q" {
+			hasQ = true
+		}
+		optionSet += separator + opt
+		separator = "/"
+	}
+	if !hasQ {
+		optionSet += separator + "q"
+	}
+	optionSet += "): "
+
+	r.questionsAnswered++
+
+	if warning != "" {
+		r.printWarningLine(warning, context...)
+		fmt.Fprint(os.Stderr, "QUESTION: "+question+" "+optionSet)
+	} else {
+		SpinnerInterrupt()
+		fmt.Fprint(os.Stderr, "\nQUESTION: "+question+" "+optionSet)
+	}
+
+	for {
+		option := readStdinLine()
+		if option == "q" {
+			r.quitRequested = true
+			return "q"
+		}
+		if valid.Contains(option) {
+			return option
+		}
+		fmt.Fprint(os.Stderr, optionSet)
+	}
+}
+
 // WarningYesNoQuestion presents a yes/no question; returns true for "y".
 // "q" is also accepted and triggers a graceful quit (returns false).
 func (r *TInteraction) WarningYesNoQuestion(question, warning string, context ...any) bool {

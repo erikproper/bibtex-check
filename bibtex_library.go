@@ -868,6 +868,18 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			l.ReassignEntryFieldMappings(source, target)
 			l.transferMetadata(source, target)
 
+			// Retarget any key_hints pointing to source → target before deleting source.
+			// key_hints has no FK cascade, so dead hints would otherwise accumulate.
+			var hintsToRetarget []string
+			l.HintToKey.ForEach(func(hint, hKey string) {
+				if hKey == source {
+					hintsToRetarget = append(hintsToRetarget, hint)
+				}
+			})
+			for _, hint := range hintsToRetarget {
+				l.HintToKey.Set(hint, target)
+			}
+
 			deleteBibEntry(source)
 
 			l.CheckIfFieldsAreAllowed(targetEntry, func(key, field, value string) {

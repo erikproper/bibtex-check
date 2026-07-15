@@ -388,8 +388,8 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 			ticker := l.NewProgressTicker(fmt.Sprintf("Adding %d children of %s", len(children), DBLPKey), len(children))
 			for _, childDBLP := range children {
 				if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
-					// Only redirect if the child has no existing crossref, or its current
-					// crossref no longer exists, or it already points to a DBLP-backed entry.
+					// Child already in library via DBLP key — only redirect crossref if safe,
+					// then check for a title-duplicate that hasn't been linked yet.
 					// Do NOT redirect away from a live non-DBLP proceedings — that steals
 					// all its children and leaves it orphaned as a lone proceedings.
 					oldCrossref := l.EntryFieldValueity(childKey, "crossref")
@@ -397,6 +397,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 						l.EntryFieldValueity(oldCrossref, DBLPField) != "" {
 						l.SetEntryFieldValue(childKey, "crossref", key)
 					}
+					l.CheckNeedToMergeForEqualTitles(childKey)
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}

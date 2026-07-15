@@ -224,12 +224,18 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 
 	// Migrate any non-EP-key aliases (preferred aliases) that were mistakenly
 	// written to key_oldies — they belong in key_hints instead.
+	// Query the DB directly (not the in-memory cache) so transient DBLP aliases
+	// regenerated each run via SetTransient are excluded.
 	var toMigrate []struct{ alias, key string }
-	l.KeyOldies.ForEach(func(alias, key string) {
-		if !IsValidKey(alias) {
-			toMigrate = append(toMigrate, struct{ alias, key string }{alias, key})
+	if rows, err := db.Query(`SELECT alias, key FROM key_oldies WHERE alias NOT LIKE ?`, keyPrefix+"-%"); err == nil {
+		for rows.Next() {
+			var alias, key string
+			if rows.Scan(&alias, &key) == nil {
+				toMigrate = append(toMigrate, struct{ alias, key string }{alias, key})
+			}
 		}
-	})
+		rows.Close()
+	}
 	if len(toMigrate) > 0 {
 		for _, m := range toMigrate {
 			l.AddKeyHint(m.alias, m.key)
@@ -277,14 +283,20 @@ func (l *TBibTeXLibrary) CheckKeyHintsConsistency() {
 		l.Progress("Migrated %d canonical-key hint(s) from key_hints to key_oldies", len(toMigrate))
 	}
 
-	// Check that every hint target is a live library entry.
-	// The migration above removed EP-key hints (now covered by CheckKeyOldiesConsistency);
-	// we only need to check the remaining shorthand hints here.
+	// Remove hints whose target no longer exists (e.g. after a merge deleted the source
+	// entry before retargeting was in place). Warn once so the user knows what was cleaned.
+	var deadHints []string
 	l.HintToKey.ForEach(func(hint, key string) {
 		if !l.EntryExists(key) {
-			l.Warning(WarningTargetOfHintNotExists, key, hint)
+			deadHints = append(deadHints, hint)
 		}
 	})
+	for _, hint := range deadHints {
+		l.HintToKey.Delete(hint)
+	}
+	if len(deadHints) > 0 {
+		l.Progress("  Removed %d dead key hint(s) (target entry no longer exists)", len(deadHints))
+	}
 }
 
 // CheckDblpDuplicates finds pairs of live entries that share the same DBLP key and
