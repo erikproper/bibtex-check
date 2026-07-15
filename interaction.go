@@ -83,6 +83,7 @@ func SpinnerCommit() {
 // NewProgressTicker creates and activates a ticker with the given label and total.
 // Pass total=0 for indeterminate progress (running count without a percentage).
 // Returns nil (no-op) when interaction is silenced or progress is suppressed.
+// The label is prefixed by progressPrefix (if any).
 func (r *TInteraction) NewProgressTicker(label string, total int) *TProgressTicker {
 	if r.silenced || r.progressSuppressed {
 		return nil
@@ -92,7 +93,7 @@ func (r *TInteraction) NewProgressTicker(label string, total int) *TProgressTick
 		w = len(fmt.Sprintf("%d", total))
 	}
 	t := &TProgressTicker{
-		label:       label,
+		label:       r.progressPrefix + label,
 		total:       total,
 		totalWidth:  w,
 		interaction: r,
@@ -178,6 +179,7 @@ type TInteraction struct {
 	deferMessages      bool
 	deferredWarnings   []string
 	deferredErrors     []string
+	progressPrefix     string // extra indent prepended to all Progress() messages and ticker labels
 }
 
 // QuitWasRequested reports whether the user asked to stop at any prompt or ticker.
@@ -403,7 +405,7 @@ func (r *TInteraction) ConfirmAction(prompt string) bool {
 func (r *TInteraction) Progress(progress string, context ...any) bool {
 	if !r.silenced && !r.progressSuppressed {
 		SpinnerInterrupt()
-		fmt.Fprintf(os.Stderr, progress+"\n", context...)
+		fmt.Fprintf(os.Stderr, r.progressPrefix+progress+"\n", context...)
 	}
 	return true
 }

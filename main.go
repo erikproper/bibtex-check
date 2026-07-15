@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.95"
+const AppVersion = "27.98"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2480,6 +2480,7 @@ func runWatchORCID(w TWatchEntry, label string) {
 					continue
 				}
 				Library.ResetQuestionFlag()
+				SpinnerInterrupt()
 				fmt.Fprintf(os.Stderr, "\nWatching %s (ORCID %s) — adding missing publication:\n", label, orcid)
 				fmt.Fprintf(os.Stderr, "  DOI: %s\n", doi)
 				for _, f := range []string{"title", "booktitle", "journal", "year", "author", "editor"} {
@@ -2499,6 +2500,9 @@ func runWatchORCID(w TWatchEntry, label string) {
 // runWatch processes the watch file, adding any missing publications.
 // Assumes the library is already open. Returns false (silently) if the watch
 // file is absent or contains no valid entries.
+// Per-entry "all publications present" lines are written to watching.log; only
+// additions and warnings appear on screen. A summary "Watched N, added M entries."
+// is printed after the loop via Library.Progress (inheriting any progressPrefix).
 func runWatch() bool {
 	Library.ReadKeyNonDoublesFile()
 
@@ -2514,10 +2518,23 @@ func runWatch() bool {
 		WriteWatchFile(filePath, entries)
 	}
 
+	logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/watching.log"
+	os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+	var watchLog *os.File
+	if f, err := os.Create(logPath); err == nil {
+		watchLog = f
+		fmt.Fprintf(watchLog, "Watch run on %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
+		defer watchLog.Close()
+	}
+
+	ticker := Library.NewProgressTicker("Watching", len(entries))
+	totalAdded := 0
+
 	for _, w := range entries {
 		if Library.QuitWasRequested() {
 			break
 		}
+		ticker.Step()
 		keys := watchEntryDblpKeys(w)
 
 		label := w.Tag
@@ -2542,6 +2559,7 @@ func runWatch() bool {
 			newCount++
 
 			Library.ResetQuestionFlag()
+			SpinnerInterrupt()
 			fmt.Fprintf(os.Stderr, "\nWatching %s — adding missing publication:\n", label)
 			fmt.Fprintf(os.Stderr, "  DBLP key: %s\n", key)
 			if entry := dblpEntryFromFile(key); entry != nil {
@@ -2560,6 +2578,7 @@ func runWatch() bool {
 			if added := Library.MaybeAddDBLPEntry(key); added != "" {
 				Library.MarkDblpKeyMissing(added, key)
 				doAllChecks(added)
+				totalAdded++
 			}
 
 			if Reporting.QuitWasRequested() {
@@ -2567,10 +2586,13 @@ func runWatch() bool {
 			}
 		}
 
-		if newCount == 0 {
-			Library.Progress("Watching %s: all publications present (%d total)", label, len(keys))
-		} else {
-			Library.Progress("Watching %s: %d missing publication(s) checked", label, newCount)
+		// Per-entry status goes to the log file, not the screen.
+		if watchLog != nil {
+			if newCount == 0 {
+				fmt.Fprintf(watchLog, "Watching %s: all publications present (%d total)\n", label, len(keys))
+			} else {
+				fmt.Fprintf(watchLog, "Watching %s: %d missing publication(s) checked\n", label, newCount)
+			}
 		}
 
 		// Online pass: fetch works from ORCID API and add entries not in DBLP yet.
@@ -2578,7 +2600,20 @@ func runWatch() bool {
 			runWatchORCID(w, label)
 		}
 	}
+	ticker.Done()
+	Library.Progress("Watched %d, added %d entries.", len(entries), totalAdded)
 	return true
+}
+
+// runWatchAndScript runs the watch and script phases as sub-steps under a
+// "Running scripts:" section header with one extra level of indentation.
+// Used by commands that embed both phases (e.g. -dblp_update).
+func runWatchAndScript() {
+	fmt.Fprintf(os.Stderr, "\nRunning scripts:\n")
+	Library.progressPrefix = "  "
+	runWatch()
+	runScript()
+	Library.progressPrefix = ""
 }
 
 // doWatch is the -watch entry point.
@@ -3866,8 +3901,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	case cmdUpdateDblp:
 		doUpsertDblpEntries()
 		if dbWriteSessionActive {
-			runWatch()
-			runScript()
+			runWatchAndScript()
 		}
 
 	case cmdFixCandidates:

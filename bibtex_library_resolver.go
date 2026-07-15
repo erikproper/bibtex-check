@@ -172,6 +172,15 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		return current
 	}
 
+	// If the user has already deliberately diverged from this source for this field
+	// (Edited=true in lineage), honour that decision without re-asking.  DBLP's data
+	// for this field has not changed from our perspective; showing the same challenge
+	// again adds no new information.  The idSeqEqual check above already handles the
+	// case where DBLP later corrects its data to match ours.
+	if !subsetMergeActive && currentRec.Edited && currentRec.Source == challengeSource && challengeSource != "" {
+		return current
+	}
+
 	// Equal or higher priority challenger: compare semantic content.
 	if !forceInteractive && TeXStringIndexer(current) == TeXStringIndexer(challenge) {
 		// For title/booktitle in library-to-library merges (no external source), brace structure

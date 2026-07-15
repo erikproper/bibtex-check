@@ -2646,22 +2646,31 @@ func doEnrichContributorData() {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "\nEnriching contributor data:\n")
+
 	Library.Progress("  Step 1/4: absorbing DBLP name mappings...")
+	Library.progressPrefix = "  " // "  " + existing "  " prefix = "    "
 	absorbDblpNamesCore()
+	Library.progressPrefix = ""
 
 	Library.Progress("  Step 2/4: scanning DBLP persons for ORCIDs...")
+	Library.progressPrefix = "    " // no hardcoded spaces in absorbDblpOrcidsCore messages
 	absorbDblpOrcidsCore()
+	Library.progressPrefix = ""
 
 	Library.Progress("  Step 3/4: fetching ORCID person records...")
+	Library.progressPrefix = "    " // no hardcoded spaces in doEnrichOrcidProfilesCore messages
 	doEnrichOrcidProfilesCore()
+	Library.progressPrefix = ""
 
 	Library.Progress("  Step 4/4: merging ORCID duplicates...")
+	Library.progressPrefix = "  " // "  " + existing "  " prefix = "    "
 	merged := mergeOrcidDuplicatesCore()
 	Library.Progress("  Merged %d ORCID-duplicate contributor pair(s).", merged)
 	if merged > 0 {
 		Library.RenormaliseNameFields()
 		Library.CheckNameMappingConsistency()
 	}
+	Library.progressPrefix = ""
 }
 
 // cleanupDblpXmlFiles removes all but the two most recent dblp-*.xml.gz files
