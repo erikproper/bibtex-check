@@ -5283,14 +5283,13 @@ func addDblpKeyHintTransient(l *TBibTeXLibrary, dblpHint, key string) {
 // buildKeyAliasesFromDb rebuilds the in-memory key alias and hint maps from fields
 // stored in bib_entries (preferredalias) and dblp_canonical (dblp identity).
 // Must be called on the fast path where no parse takes place.
-// preferredalias entries are persistent (written to key_oldies); DBLP entries are
+// preferredalias entries go only to key_hints (not key_oldies); DBLP entries are
 // transient (regenerated each run from dblp_canonical, never written to the DB).
 func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 	dbInteraction.Progress(ProgressBuildingKeyAliases)
 	if entryCache != nil {
 		for key, e := range entryCache {
 			if alias := e.Fields[PreferredAliasField]; alias != "" {
-				l.AddKeyAlias(alias, key)
 				l.AddKeyHint(alias, key)
 			}
 			if dblp := e.Fields[DBLPField]; dblp != "" {
@@ -5315,7 +5314,6 @@ func buildKeyAliasesFromDb(l *TBibTeXLibrary) {
 			dbInteraction.Warning("Could not scan preferred alias row: %s", err)
 			continue
 		}
-		l.AddKeyAlias(value, key)
 		l.AddKeyHint(value, key)
 	}
 
