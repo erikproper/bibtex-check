@@ -871,7 +871,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		}
 		return "off"
 	}
-	Library.Progress("Sync harvest: %s", cfg.FileName)
+	Library.Progress("\nSync harvest: %s", cfg.FileName)
 	Library.Progress("  trust_hints=%-3s  collect_keys=%-3s  fix=%-3s",
 		on(cmdTrustHints), on(cmdCollectKeys), on(cmdFix))
 	Library.Progress("  Source: %s", sourcePath)

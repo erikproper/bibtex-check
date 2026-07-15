@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.98"
+const AppVersion = "27.99"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2744,6 +2744,7 @@ func doApplyScript() {
 		return
 	}
 	if openLibraryToUpdate() {
+		fmt.Fprintf(os.Stderr, "\n")
 		runScript()
 	}
 }

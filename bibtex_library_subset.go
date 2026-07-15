@@ -472,7 +472,7 @@ func runSubsetPhase1(cfg TBibGetConfig, baseDir string) (bool, *TSyncState) {
 		}
 		return "off"
 	}
-	Library.Progress("Sync subset: %s", cfg.FileName)
+	Library.Progress("\nSync subset: %s", cfg.FileName)
 	Library.Progress("  trusted_subset=%-3s  pdf_files=%-8q  fix=%-3s", on(cfg.TrustedSubset), cfg.PDFFiles, on(cmdFix))
 
 	syncState := openSyncState(keysBasePath)
@@ -694,7 +694,7 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 				if err := bibExec(`INSERT INTO bib_groups (group_name, entry_key) VALUES (?, ?) ON CONFLICT DO NOTHING;`, dbGroup, canon); err != nil {
 					Library.Warning("Group sync insert failed (%s → %q): %s", canon, dbGroup, err)
 				} else {
-					Library.Progress("Group sync: +%s → %q (local: %q)", canon, dbGroup, localGroup)
+					Library.Progress("  Group sync: +%s → %q (local: %q)", canon, dbGroup, localGroup)
 				}
 			case !bibHas && dbHas && snapHas:
 				// Bib removed → remove from DB.
@@ -702,7 +702,7 @@ func applyGroupSync(cfg TBibGetConfig, bibEntries []TBibTeXEntry, outputToCanoni
 				if err := bibExec(`DELETE FROM bib_groups WHERE group_name=? AND entry_key=?`, dbGroup, canon); err != nil {
 					Library.Warning("Group sync delete failed (%s → %q): %s", canon, dbGroup, err)
 				} else {
-					Library.Progress("Group sync: -%s → %q (local: %q)", canon, dbGroup, localGroup)
+					Library.Progress("  Group sync: -%s → %q (local: %q)", canon, dbGroup, localGroup)
 				}
 			case !bibHas && dbHas && !snapHas:
 				// DB added independently → add local name to sync state so phase 2 writes it to bib.

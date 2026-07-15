@@ -1136,7 +1136,7 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 		if modeLabel == "" {
 			modeLabel = "pull"
 		}
-		dbInteraction.Progress("Sync %s: %s", modeLabel, cfg.FileName)
+		dbInteraction.Progress("\nSync %s: %s", modeLabel, cfg.FileName)
 		dbInteraction.Progress("  doi=%-3s  isbn=%-3s  url=%-3s  dblp=%-3s  key_mapping=%-3s",
 			on(cfg.IncludeDOI), on(cfg.IncludeISBN), on(cfg.IncludeURL), on(cfg.IncludeDblp), on(cfg.KeyMapping))
 		dbInteraction.Progress("  biber=%-3s  shorten=%-3s  urldate_as_note=%-3s  hyphenations=%-3s  fix=%-3s  format=%s",
@@ -1779,7 +1779,7 @@ func writeFullSync(cfg TBibGetConfig, baseDir string) {
 	newContent := buildSyncBibContent(cfg.FileName, entryTypes)
 	mdatePath := outPath + ".mdate"
 
-	dbInteraction.Progress("Sync full: %s → %s (%d entries)", cfg.FileName, outPath, len(entryTypes))
+	dbInteraction.Progress("\nSync full: %s → %s (%d entries)", cfg.FileName, outPath, len(entryTypes))
 	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 		fmt.Fprintln(os.Stderr, "Cannot create output directory:", err)
 		os.Exit(1)
