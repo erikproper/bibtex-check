@@ -2503,6 +2503,16 @@ func mergeContributorInDB(fromID, toID string) bool {
 			fromOrcid, toID)
 	}
 
+	// Carry over ORCID enrichment records. contributor_orcid_seen has no FK
+	// constraint, so fromID rows are not removed by the CASCADE delete below.
+	// INSERT OR IGNORE keeps toID's own record when the same ORCID was already
+	// enriched there; then delete the now-orphaned fromID rows.
+	bibExec(`INSERT OR IGNORE INTO contributor_orcid_seen `+ //nolint:errcheck
+		`(contributor_id, orcid, canonical, credit_name, declared_name, other_names) `+
+		`SELECT ?, orcid, canonical, credit_name, declared_name, other_names `+
+		`FROM contributor_orcid_seen WHERE contributor_id = ?`, toID, fromID)
+	bibExec(`DELETE FROM contributor_orcid_seen WHERE contributor_id = ?`, fromID) //nolint:errcheck
+
 	// Remove non_double_contributors rows referencing fromID (required before delete).
 	bibExec(`DELETE FROM non_double_contributors WHERE contributor_id_a = ? OR contributor_id_b = ?`, //nolint:errcheck
 		fromID, fromID)
