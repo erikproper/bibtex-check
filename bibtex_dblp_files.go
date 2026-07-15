@@ -723,7 +723,9 @@ func deleteStaleDblpEntries(original, updated TDblpManifest) {
 			removeKeyFromAllIndexes(dblpKey, readDblpJSONEntry(dblpKey))
 			os.Remove(entryDir + "/data.json")
 			os.Remove(entryDir) // succeeds only when empty
-			ticker.Step()
+			if ticker.Step() {
+				break
+			}
 		}
 		if len(updatedEntries) == 0 {
 			os.Remove(entriesDir + parentDir)

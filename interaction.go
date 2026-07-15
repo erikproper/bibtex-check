@@ -119,7 +119,8 @@ func (r *TInteraction) NewProgressTicker(label string, total int) *TProgressTick
 	return t
 }
 
-// render redraws the progress line in place via \r.
+// render redraws the progress line in place via \r\033[K (clears to EOL before
+// writing, so any character the user typed on the same line is erased).
 // Determined mode:   label:  N/Total (XX%)
 // Indeterminate:     label: N
 // Indeterminate/idle: label: ...
@@ -129,21 +130,22 @@ func (t *TProgressTicker) render() {
 	}
 	if t.total > 0 {
 		pct := float64(t.current) * 100.0 / float64(t.total)
-		fmt.Fprintf(os.Stderr, "\r%s:  %*d/%d (%.0f%%)",
+		fmt.Fprintf(os.Stderr, "\r\033[K%s:  %*d/%d (%.0f%%)",
 			t.label, t.totalWidth, t.current, t.total, pct)
 	} else if t.current > 0 {
-		fmt.Fprintf(os.Stderr, "\r%s: %d", t.label, t.current)
+		fmt.Fprintf(os.Stderr, "\r\033[K%s: %d", t.label, t.current)
 	} else {
-		fmt.Fprintf(os.Stderr, "\r%s: ...", t.label)
+		fmt.Fprintf(os.Stderr, "\r\033[K%s: ...", t.label)
 	}
 	t.rendered = true
 }
 
 // Step increments the count by one, redraws the line, and non-blockingly checks
 // whether the user typed 'q' to request a quit.
-func (t *TProgressTicker) Step() {
+// Returns true when a graceful quit has been requested (caller should break its loop).
+func (t *TProgressTicker) Step() bool {
 	if t == nil {
-		return
+		return false
 	}
 	t.current++
 	select {
@@ -154,25 +156,54 @@ func (t *TProgressTicker) Step() {
 	default:
 	}
 	t.render()
+	return t.interaction != nil && t.interaction.quitRequested
 }
 
-// SetCount sets the count to n (without incrementing) and redraws.
-// Use when the count comes from an external source such as an atomic counter.
-func (t *TProgressTicker) SetCount(n int) {
+// SetCount sets the count to n (without incrementing), polls for a 'q' quit
+// request, redraws the line, and returns true when a graceful quit has been
+// requested (caller should break its loop).
+func (t *TProgressTicker) SetCount(n int) bool {
 	if t == nil {
-		return
+		return false
 	}
 	t.current = n
-	t.render()
-}
-
-// Tick redraws without incrementing. Use in time-based polling loops where no
-// per-iteration count is available (e.g. waiting for an async background task).
-func (t *TProgressTicker) Tick() {
-	if t == nil {
-		return
+	select {
+	case line, ok := <-stdinCh:
+		if ok && strings.TrimSpace(line) == "q" && t.interaction != nil {
+			t.interaction.quitRequested = true
+		}
+	default:
 	}
 	t.render()
+	return t.interaction != nil && t.interaction.quitRequested
+}
+
+// Tick redraws without incrementing, polls for a 'q' quit request, and returns
+// true when a graceful quit has been requested.
+// Use in time-based polling loops where no per-iteration count is available.
+func (t *TProgressTicker) Tick() bool {
+	if t == nil {
+		return false
+	}
+	select {
+	case line, ok := <-stdinCh:
+		if ok && strings.TrimSpace(line) == "q" && t.interaction != nil {
+			t.interaction.quitRequested = true
+		}
+	default:
+	}
+	t.render()
+	return t.interaction != nil && t.interaction.quitRequested
+}
+
+// WasAborted reports whether a graceful quit has been requested on the ticker's
+// associated interaction. Use when Step()/SetCount() is called inside a
+// conditional and cannot return a bool directly to the loop header.
+func (t *TProgressTicker) WasAborted() bool {
+	if t == nil {
+		return false
+	}
+	return t.interaction != nil && t.interaction.quitRequested
 }
 
 // Done prints "label: done", advances to a new line, and deactivates the ticker.
@@ -225,8 +256,10 @@ func (r *TInteraction) AskForInput(prompt string) (string, error) {
 	line := readStdinLine()
 	if line == "q" {
 		r.quitRequested = true
+		fmt.Fprintln(os.Stderr)
 		return "", nil
 	}
+	fmt.Fprintln(os.Stderr)
 	return line, nil
 }
 
@@ -369,9 +402,11 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 		option := readStdinLine()
 		if option == "q" {
 			r.quitRequested = true
+			fmt.Fprintln(os.Stderr)
 			return "q"
 		}
 		if options.Contains(option) {
+			fmt.Fprintln(os.Stderr)
 			return option
 		}
 		fmt.Fprint(os.Stderr, optionSet)
@@ -417,9 +452,11 @@ func (r *TInteraction) WarningQuestionOrdered(question string, ordered []string,
 		option := readStdinLine()
 		if option == "q" {
 			r.quitRequested = true
+			fmt.Fprintln(os.Stderr)
 			return "q"
 		}
 		if valid.Contains(option) {
+			fmt.Fprintln(os.Stderr)
 			return option
 		}
 		fmt.Fprint(os.Stderr, optionSet)
@@ -488,10 +525,12 @@ func (r *TInteraction) ConfirmAction(prompt string) bool {
 	for {
 		answer := readStdinLine()
 		if answer == "y" || answer == "n" {
+			fmt.Fprintln(os.Stderr)
 			return answer == "y"
 		}
 		if answer == "q" {
 			r.quitRequested = true
+			fmt.Fprintln(os.Stderr)
 			return false
 		}
 		fmt.Fprint(os.Stderr, "(y/n/q): ")

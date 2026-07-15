@@ -1667,6 +1667,9 @@ func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
 	w := bufio.NewWriter(&buf)
 
 	for entry, entryType := range entryTypes {
+		if ticker.WasAborted() {
+			break
+		}
 		if !BibTeXBookish.Contains(entryType) {
 			w.WriteString(Library.EntryString(entry, ""))
 			w.WriteString("\n")
@@ -1674,6 +1677,9 @@ func buildSyncBibContent(label string, entryTypes map[string]string) []byte {
 		}
 	}
 	for entry, entryType := range entryTypes {
+		if ticker.WasAborted() {
+			break
+		}
 		if BibTeXBookish.Contains(entryType) {
 			w.WriteString(Library.EntryString(entry, ""))
 			w.WriteString("\n")

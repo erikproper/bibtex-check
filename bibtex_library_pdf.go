@@ -596,7 +596,9 @@ func (l *TBibTeXLibrary) CheckPDFHealth() {
 	ticker := l.NewProgressTicker(fmt.Sprintf(ProgressCheckingPDFHealth, filesDir), total)
 
 	for _, fileName := range pdfFiles {
-		ticker.Step()
+		if ticker.Step() {
+			break
+		}
 		key := strings.TrimSuffix(fileName, ".pdf")
 		fullPath := filesDir + fileName
 

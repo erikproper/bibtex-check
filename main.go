@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.122"
+const AppVersion = "27.123"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2136,7 +2136,9 @@ func doUpsertDblpEntries() {
 		beginBibTransaction()
 		processKey := func(key string) {
 			scanned++
-			ticker.SetCount(scanned)
+			if ticker.SetCount(scanned) {
+				return
+			}
 			if dblpVal := Library.EntryFieldValueity(key, DBLPField); dblpVal != "" {
 				Library.ResetQuestionFlag()
 				doC1Checks(key)
@@ -2562,10 +2564,9 @@ func runWatch() bool {
 	totalAdded := 0
 
 	for _, w := range entries {
-		if Library.QuitWasRequested() {
+		if ticker.Step() {
 			break
 		}
-		ticker.Step()
 		keys := watchEntryDblpKeys(w)
 
 		label := w.Tag
@@ -3114,7 +3115,9 @@ func doEnrichOrcidProfilesCore() {
 
 		// Slow path: canonical changed or never seen — use cache then network.
 		fetched++
-		ticker.SetCount(fetched)
+		if ticker.SetCount(fetched) {
+			break
+		}
 		person := getORCIDPerson(p.orcid)
 		if person == nil {
 			// Profile unavailable (private or not found): record as seen so the
@@ -4193,6 +4196,7 @@ case cmdAlignBooktitleCountries:
 	} else {
 		finaliseWorkingDatabase()
 	}
+	stderrPrintf("\n")
 }
 
 // gracefulQuit runs the normal post-check and DB finalisation sequence, then

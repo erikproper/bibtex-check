@@ -315,7 +315,9 @@ func (l *TBibTeXLibrary) CheckAlignBooktitleCountries() {
 	total := countBibEntries()
 	ticker := l.NewProgressTicker("Scanning for booktitle country normalisation candidates", total)
 	forEachBibEntryKey(func(key string) bool {
-		ticker.Step()
+		if ticker.Step() {
+			return false
+		}
 		if l.HasMetadata(key, MetaPropAlignCountryWaived) {
 			return true
 		}
@@ -380,7 +382,9 @@ func (l *TBibTeXLibrary) CheckAlignTitles(autoAccept bool) {
 		if quit {
 			return false
 		}
-		ticker.Step()
+		if ticker.Step() {
+			return false
+		}
 		hits := append(detectTitleVolumes(l, key), detectTitleEditions(l, key)...)
 		for _, h := range hits {
 			if l.HasMetadata(key, waiverPropForKind(h.kind)) {

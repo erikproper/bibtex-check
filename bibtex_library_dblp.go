@@ -401,7 +401,9 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}
-				ticker.Step()
+				if ticker.Step() {
+					break
+				}
 			}
 			ticker.Done()
 		}

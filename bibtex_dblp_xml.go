@@ -2452,7 +2452,9 @@ func absorbDblpOrcidsCore() {
 			continue
 		}
 		checked++
-		ticker.SetCount(checked)
+		if ticker.SetCount(checked) {
+			break
+		}
 
 		// For contributors without a DblpKey: try ORCID-based lookup first (direct,
 		// authoritative), then fall back to name-based lookup.

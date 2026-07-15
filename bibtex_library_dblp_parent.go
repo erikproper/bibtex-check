@@ -325,7 +325,9 @@ func (l *TBibTeXLibrary) FixDblpHierarchy() {
 	dirCache := map[string][]string{}
 	jsonCache := map[string]*TDblpJSONEntry{}
 	for _, info := range entries {
-		ticker.Step()
+		if ticker.Step() {
+			break
+		}
 		if l.DblpParent.Contains(info.dblpKey) {
 			continue
 		}

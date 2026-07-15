@@ -121,13 +121,18 @@ func (l *TBibTeXLibrary) CheckFieldMappings() {
 	ticker := l.NewProgressTicker(ProgressCheckingFieldMappings, total)
 
 	for field, valueMapping := range l.GenericFieldSourceToTarget {
-		ticker.Step()
+		if ticker.Step() {
+			break
+		}
 		l.checkValueMapping(valueMapping, l.GenericFieldTargetToSource[field], ".")
 	}
 
+outer:
 	for key, fieldValueMapping := range l.EntryFieldSourceToTarget {
 		for field, valueMapping := range fieldValueMapping {
-			ticker.Step()
+			if ticker.Step() {
+				break outer
+			}
 			l.checkValueMapping(valueMapping, l.EntryFieldTargetToSource[key][field], WarningMappingForKey+key+".")
 		}
 	}
@@ -1506,7 +1511,9 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}
-				ticker.Step()
+				if ticker.Step() {
+					break
+				}
 			}
 			ticker.Done()
 		}
@@ -1667,7 +1674,9 @@ func (l *TBibTeXLibrary) CheckEntries() {
 	ticker := l.NewProgressTicker(ProgressCheckingConsistencyOfEntries, total)
 
 	forEachBibEntryKey(func(key string) bool {
-		ticker.Step()
+		if ticker.Step() {
+			return false
+		}
 		l.ResetQuestionFlag()
 		l.CheckEntry(l.buildEntry(key))
 		return !Reporting.QuitWasRequested()
@@ -1688,7 +1697,9 @@ func (l *TBibTeXLibrary) RenormaliseNameFields() {
 	total := countBibEntries()
 	ticker := l.NewProgressTicker("  Re-normalising author/editor fields", total)
 	forEachBibEntryKey(func(key string) bool {
-		ticker.Step()
+		if ticker.Step() {
+			return false
+		}
 		entry := l.buildEntry(key)
 		for _, field := range []string{"author", "editor"} {
 			current := entry.FieldValue(field)
