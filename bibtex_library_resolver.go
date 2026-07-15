@@ -425,9 +425,9 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 	options := TStringSetNew()
 	options.Add("w", "l", "e", "c", "n", "q")
 	answer := l.WarningQuestion(
-		"Map to winner-canonical (w), loser-canonical (l), edit canonical (e), change to loser (c), non-double (n), quit (q)?",
+		"Map incoming→current (w), current→incoming (l), edit canonical (e), use incoming form (c), non-double (n), quit (q)?",
 		options,
-		"Name %d of %d (difference %d of %d) for entry %s field %s:\n  Winner: %s\n  Loser:  %s",
+		"Name %d of %d (difference %d of %d) for entry %s field %s:\n  Current:  %s\n  Incoming: %s",
 		namePos, nameTotal, diffIdx, diffTotal, key, field, winnerDisplay, loserDisplay)
 	switch answer {
 	case "w":

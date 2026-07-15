@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.106"
+const AppVersion = "27.107"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -842,7 +842,7 @@ func retireResolvedAuthorEditorLosers() {
 		}
 	}
 	if retired > 0 {
-		Library.Progress("Retired %d resolved author/editor loser(s) via name mappings", retired)
+		Library.Progress("Retired %d resolved author/editor pair(s) via name mappings", retired)
 	}
 }
 
@@ -961,7 +961,7 @@ outer:
 			continue
 		}
 		if isBraceWrapped(p.loser) {
-			Library.Progress("Auto-retired brace-wrap loser for %s %s", p.key, p.field)
+			Library.Progress("Auto-retired brace-wrap superseded value for %s %s", p.key, p.field)
 			retireLoser(p.key, p.field, p.loser)
 			continue
 		}
@@ -986,7 +986,7 @@ outer:
 					markKept(p.key, p.field, p.loser)
 					continue
 				}
-				Library.Progress("Entry: %s / field: %s\n  Winner: %s\n  Loser:  %s", p.key, p.field, winner, p.loser)
+				Library.Progress("Entry: %s / field: %s\n  Current:    %s\n  Superseded: %s", p.key, p.field, winner, p.loser)
 				resultName, quit, mapped := Library.resolveNamePair(p.key, p.field, pos+1, len(wNames), 1, 1, wNames[pos], lNames[pos])
 				if quit {
 					break outer

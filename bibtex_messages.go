@@ -201,7 +201,7 @@ const (
 	StatContributors                       = "Contributors"
 	StatNameSpellings                      = "Name spellings"
 	StatFieldMappings                      = "Field mappings"
-	StatLosingValues                       = "Losing values"
+	StatLosingValues                       = "Superseded values"
 	StatDblpCoverage                       = "DBLP coverage"
 	StatDblpCrossrefOverrides              = "DBLP crossref overrides"
 	StatDblpWaivedChildren                 = "DBLP waived children"
