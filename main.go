@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.103"
+const AppVersion = "27.106"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -326,7 +326,7 @@ func printSessionStats() {
 		{StatNameSpellings, fmt.Sprintf("%d", nameStrings), ""},
 		{StatFieldMappings, fmt.Sprintf("%d", fieldMaps), ""},
 		{StatLosingValues, fmt.Sprintf("%d", losingValues), ""},
-		{StatDblpCoverage, fmt.Sprintf("%d/%d (%.0f%%)", dblpKeys, total, pct), ""},
+		{StatDblpCoverage, fmt.Sprintf("%.0f%%", pct), ""},
 		{StatDblpCrossrefOverrides, fmt.Sprintf("%d", Library.DblpParent.Len()), ""},
 		{StatDblpWaivedChildren, fmt.Sprintf("%d", Library.DblpWaived.Len()), ""},
 		{StatKeyOldies, fmt.Sprintf("%d", Library.KeyOldies.Len()), ""},
@@ -404,6 +404,7 @@ func openLibraryToUpdate() bool {
 }
 
 func openLibraryToReport() bool {
+	fmt.Fprintf(os.Stderr, "\nOpening the library:\n")
 	initialiseLibrary()
 	maybeMigrateDblpExportDirty()
 	Library.progressSuppressed = true // read-only session: suppress routine progress noise
@@ -1530,29 +1531,43 @@ func doDefaultRun() {
 		clearEntryWarnings()
 		Library.ReadURLsIgnoreFile()
 		fmt.Fprintf(os.Stderr, "\nAnalysing and checking library:\n")
+
+		Library.BeginDeferringMessages()
 		Library.CheckEntries()
+		Library.FlushDeferredMessages()
 		if Library.QuitWasRequested() {
 			return
 		}
+
 		Library.ReadKeyNonDoublesFile()
+
+		Library.BeginDeferringMessages()
 		Library.FixDblpHierarchy()
+		Library.FlushDeferredMessages()
 		if Library.QuitWasRequested() {
 			return
 		}
+
+		Library.BeginDeferringMessages()
 		Library.CheckAlignTitles(false)
+		Library.FlushDeferredMessages()
 		if Library.QuitWasRequested() {
 			return
 		}
+
+		Library.BeginDeferringMessages()
 		Library.CheckDuplicateDBLPKeys()
-		if Library.QuitWasRequested() {
-			return
-		}
 		Library.CheckLoneProceedings()
+		Library.FlushDeferredMessages()
 		if Library.QuitWasRequested() {
 			return
 		}
+
 		Library.ScanOrphanPDFs()
+
+		Library.BeginDeferringMessages()
 		Library.CheckAllURLs()
+		Library.FlushDeferredMessages()
 	}
 }
 
