@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.107"
+const AppVersion = "27.109"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -292,12 +292,24 @@ func countDblpKeyedEntries() int {
 // session and captures the current counts for the session-change report at end.
 func printSessionStats() {
 	total := countBibEntries()
-	var contributors, nameStrings, fieldMaps, losingValues int
-	bibQueryRow(`SELECT COUNT(*) FROM contributors`).Scan(&contributors)
-	bibQueryRow(`SELECT COUNT(DISTINCT name_used) FROM entry_contributor_names`).Scan(&nameStrings)
-	bibQueryRow(`SELECT COUNT(*) FROM field_mappings`).Scan(&fieldMaps)
-	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values`).Scan(&losingValues)
 	dblpKeys := countDblpKeyedEntries()
+
+	var contributors, contributorForms, nameStrings, entryContribAliases int
+	bibQueryRow(`SELECT COUNT(*) FROM contributors`).Scan(&contributors)
+	bibQueryRow(`SELECT COUNT(*) FROM contributor_names`).Scan(&contributorForms)
+	bibQueryRow(`SELECT COUNT(DISTINCT name_used) FROM entry_contributor_names`).Scan(&nameStrings)
+	bibQueryRow(`SELECT COUNT(*) FROM entry_contributor_names ecn
+	             JOIN contributors c ON c.id = ecn.contributor_id
+	             WHERE ecn.name_used != c.name`).Scan(&entryContribAliases)
+
+	var sameFieldMaps, crossFieldMaps int
+	bibQueryRow(`SELECT COUNT(*) FROM field_mappings WHERE source_field = target_field`).Scan(&sameFieldMaps)
+	bibQueryRow(`SELECT COUNT(*) FROM field_mappings WHERE source_field != target_field`).Scan(&crossFieldMaps)
+	fieldMaps := sameFieldMaps + crossFieldMaps
+
+	var losingValues, losingPending int
+	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values`).Scan(&losingValues)
+	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE triage_status IS NULL`).Scan(&losingPending)
 
 	sessionStartEntryCount = total
 	sessionStartDblpKeyCount = dblpKeys
@@ -323,10 +335,15 @@ func printSessionStats() {
 		{StatEntries, fmt.Sprintf("%d", total), ""},
 		{StatPDFFiles, fmt.Sprintf("%d", len(Library.PDFFiles)), ""},
 		{StatContributors, fmt.Sprintf("%d", contributors), ""},
+		{StatContributorForms, fmt.Sprintf("%d", contributorForms), ""},
 		{StatNameSpellings, fmt.Sprintf("%d", nameStrings), ""},
-		{StatFieldMappings, fmt.Sprintf("%d", fieldMaps), ""},
+		{StatEntryContributorAliases, fmt.Sprintf("%d", entryContribAliases), ""},
+		{StatFieldMappingsSameField, fmt.Sprintf("%d", sameFieldMaps), ""},
+		{StatFieldMappingsCrossField, fmt.Sprintf("%d", crossFieldMaps), ""},
 		{StatLosingValues, fmt.Sprintf("%d", losingValues), ""},
+		{StatLosingValuesPending, fmt.Sprintf("%d", losingPending), ""},
 		{StatDblpCoverage, fmt.Sprintf("%.0f%%", pct), ""},
+		{StatDblpLinks, fmt.Sprintf("%d", dblpKeys), ""},
 		{StatDblpCrossrefOverrides, fmt.Sprintf("%d", Library.DblpParent.Len()), ""},
 		{StatDblpWaivedChildren, fmt.Sprintf("%d", Library.DblpWaived.Len()), ""},
 		{StatKeyOldies, fmt.Sprintf("%d", Library.KeyOldies.Len()), ""},

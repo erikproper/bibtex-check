@@ -394,7 +394,7 @@ func rewriteKeysFile(fileName string, pairs []TBibGetPair, keyMapping bool) {
 
 // TSelectStatement is one parsed statement from a .select file.
 type TSelectStatement struct {
-	Kind   string   // "group", "groups", "name", "orcid", "contributor", "has_pdf", "only_these", "watched"
+	Kind   string   // "group", "groups", "name", "orcid", "contributor", "has_pdf", "only_these", "watched", "dblp_waived"
 	Values []string // one or more quoted values (empty for bare-keyword operators)
 }
 
@@ -423,7 +423,7 @@ func readSelectFile(fileName string) ([]TSelectStatement, bool) {
 		if idx < 0 {
 			// Bare-keyword operators (no quoted values).
 			switch line {
-			case "has_pdf", "only_these", "watched", "warnings":
+			case "has_pdf", "only_these", "watched", "warnings", "dblp_waived":
 				stmts = append(stmts, TSelectStatement{line, nil})
 			default:
 				badLines = append(badLines, line)
@@ -558,6 +558,14 @@ func expandSelectStmts(stmts []TSelectStatement, alreadyIncluded map[string]bool
 					}
 				}
 			}
+		case "dblp_waived":
+			Library.DblpWaived.ForEach(func(key string, _ bool) {
+				if resolved := Library.MapEntryKey(key); resolved != "" {
+					add(resolved)
+				} else {
+					add(key)
+				}
+			})
 		}
 	}
 	return extra
