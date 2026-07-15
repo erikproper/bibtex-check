@@ -2621,6 +2621,7 @@ func doWatch() {
 	if !openLibraryToUpdate() {
 		return
 	}
+	fmt.Fprintf(os.Stderr, "\n")
 	if !runWatch() {
 		filePath := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix + "/watch"
 		Library.Progress("No watch entries found in %s", filePath)
