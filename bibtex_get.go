@@ -1902,11 +1902,8 @@ func doSync(filter string) {
 		Library.Progress("Fix mode: active (full per-entry checks applied to each touched entry)")
 	}
 
-	// Scan for orphaned PDFs and auto-associate missing local-url fields before
-	// generating any bib output, so the results are reflected in this run's output.
-	if needsWrite {
-		Library.ScanOrphanPDFs()
-	}
+	// Note: ScanOrphanPDFs is intentionally not called here — it is only run
+	// during a full bib.check (doDefaultRun), not during sync.
 
 	// Phase 1: merge all bib-side changes into the DB before writing any output.
 	// Skipped entirely when -pull is active — DB is left untouched.

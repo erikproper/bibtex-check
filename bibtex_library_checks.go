@@ -241,7 +241,8 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 	}
 }
 
-// CheckKeyHintsConsistency moves misplaced canonical-key hints to key_oldies.
+// CheckKeyHintsConsistency moves misplaced canonical-key hints to key_oldies,
+// and warns about hints whose target no longer exists in the library.
 // When both the hint and its target match the canonical key pattern (EP-...), the
 // row belongs in key_oldies (old alias → canonical), not key_hints (shorthand → canonical).
 // This can happen after restoring key hints from a backup that mixed the two tables.
@@ -252,14 +253,22 @@ func (l *TBibTeXLibrary) CheckKeyHintsConsistency() {
 			toMigrate = append(toMigrate, struct{ hint, key string }{hint, key})
 		}
 	})
-	if len(toMigrate) == 0 {
-		return
+	if len(toMigrate) > 0 {
+		for _, m := range toMigrate {
+			l.AddKeyAlias(m.hint, m.key)
+			l.HintToKey.Delete(m.hint)
+		}
+		l.Progress("Migrated %d canonical-key hint(s) from key_hints to key_oldies", len(toMigrate))
 	}
-	for _, m := range toMigrate {
-		l.AddKeyAlias(m.hint, m.key)
-		l.HintToKey.Delete(m.hint)
-	}
-	l.Progress("Migrated %d canonical-key hint(s) from key_hints to key_oldies", len(toMigrate))
+
+	// Check that every hint target is a live library entry.
+	// The migration above removed EP-key hints (now covered by CheckKeyOldiesConsistency);
+	// we only need to check the remaining shorthand hints here.
+	l.HintToKey.ForEach(func(hint, key string) {
+		if !l.EntryExists(key) {
+			l.Warning(WarningTargetOfHintNotExists, key, hint)
+		}
+	})
 }
 
 // CheckDblpDuplicates finds pairs of live entries that share the same DBLP key and

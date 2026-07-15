@@ -349,6 +349,17 @@ func (l *TBibTeXLibrary) ScanOrphanPDFs() {
 	if err != nil {
 		return
 	}
+	l.Progress("  Checking for orphaned PDFs")
+
+	logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/orphaned_pdfs.log"
+	os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+	var orphanLog *os.File
+	if f, err2 := os.Create(logPath); err2 == nil {
+		orphanLog = f
+		fmt.Fprintf(orphanLog, "Orphaned PDF scan on %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
+		defer orphanLog.Close()
+	}
+
 	trashName := l.BaseName + ".trash"
 	moved := 0
 	renamed := 0
@@ -378,15 +389,17 @@ func (l *TBibTeXLibrary) ScanOrphanPDFs() {
 				if err := os.Rename(fullPath, canonicalPath); err != nil {
 					l.Warning("Could not rename %s → %s.pdf: %s", e.Name(), canonical, err)
 				} else {
-					l.Progress("Renamed PDF for merged entry: %s → %s.pdf", e.Name(), canonical)
+					l.Progress("  Renamed PDF for merged entry: %s → %s.pdf", e.Name(), canonical)
 					renamed++
 				}
 			}
 			continue
 		}
 
-		// No entry, no alias — genuine orphan.
-		l.Warning("Orphaned PDF (no library entry): %s — moving to %s", e.Name(), trashName)
+		// No entry, no alias — genuine orphan. Log to file rather than interrupting output.
+		if orphanLog != nil {
+			fmt.Fprintf(orphanLog, "Orphaned PDF (no library entry): %s — moving to %s\n", e.Name(), trashName)
+		}
 		if !l.moveToLibraryTrash(fullPath) {
 			l.Warning("Could not move %s to %s", e.Name(), trashName)
 		} else {
@@ -394,7 +407,7 @@ func (l *TBibTeXLibrary) ScanOrphanPDFs() {
 		}
 	}
 	if moved > 0 {
-		l.Progress("Orphaned PDFs moved to trash: %d", moved)
+		l.Progress("  Orphaned PDFs moved to trash: %d (see orphaned_pdfs.log)", moved)
 	}
 	if renamed > 0 || moved > 0 {
 		l.LoadPDFFiles() // refresh after renames/moves
