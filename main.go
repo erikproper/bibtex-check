@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.109"
+const AppVersion = "27.110"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2727,6 +2727,7 @@ func doMergeEntries(args []string) {
 			return
 		}
 		target := resolvedKeys[len(resolvedKeys)-1]
+		fmt.Fprintf(os.Stderr, "\nMerge:\n")
 		for i, alias := range resolvedKeys[:len(resolvedKeys)-1] {
 			if alias == target {
 				// Both keys resolve to the same canonical. Check for a ghost bib_entries
@@ -2735,10 +2736,10 @@ func doMergeEntries(args []string) {
 				// canonical first — don't just delete, in case the ghost has un-merged data.
 				rawKey := rawKeys[i]
 				if rawKey != target && bibEntryExists(rawKey) {
-					Library.Progress("Ghost entry %s found (alias for %s) — merging fields before cleanup", rawKey, target)
+					Library.Progress("  Ghost entry %s found (alias for %s) — merging fields before cleanup", rawKey, target)
 					Library.MergeEntries(rawKey, target)
 				} else {
-					fmt.Fprintf(os.Stderr, "%s is already an alias for %s — nothing to merge.\n", rawKey, target)
+					fmt.Fprintf(os.Stderr, "  %s is already an alias for %s — nothing to merge.\n", rawKey, target)
 				}
 				continue
 			}

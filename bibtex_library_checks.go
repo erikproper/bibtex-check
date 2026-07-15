@@ -235,7 +235,7 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 			l.AddKeyHint(m.alias, m.key)
 			l.KeyOldies.Delete(m.alias)
 		}
-		l.Progress("Migrated %d preferred-alias oldie(s) from key_oldies to key_hints", len(toMigrate))
+		l.Progress("  Migrated %d preferred-alias oldie(s) from key_oldies to key_hints", len(toMigrate))
 	}
 
 	var ghosts []struct{ oldie, key string }
