@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.101"
+const AppVersion = "27.103"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2211,6 +2211,7 @@ func doUpsertDblpFor(args []string) {
 func doUpsertDblpEntryFromDblpKeys(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
+		fmt.Fprintf(os.Stderr, "\n")
 		for _, dblpKey := range args {
 			dblpKey = normalizeDblpKey(dblpKey)
 			if existing := Library.LookupDBLPKey(dblpKey); existing != "" {

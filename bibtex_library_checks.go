@@ -222,6 +222,22 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 	l.Progress(ProgressCheckingConsistencyOfKeyOldies)
 
+	// Migrate any non-EP-key aliases (preferred aliases) that were mistakenly
+	// written to key_oldies — they belong in key_hints instead.
+	var toMigrate []struct{ alias, key string }
+	l.KeyOldies.ForEach(func(alias, key string) {
+		if !IsValidKey(alias) {
+			toMigrate = append(toMigrate, struct{ alias, key string }{alias, key})
+		}
+	})
+	if len(toMigrate) > 0 {
+		for _, m := range toMigrate {
+			l.AddKeyHint(m.alias, m.key)
+			l.KeyOldies.Delete(m.alias)
+		}
+		l.Progress("Migrated %d preferred-alias oldie(s) from key_oldies to key_hints", len(toMigrate))
+	}
+
 	var ghosts []struct{ oldie, key string }
 	l.KeyOldies.ForEach(func(oldie, key string) {
 		if !l.EntryExists(key) {
@@ -589,10 +605,10 @@ func (l *TBibTeXLibrary) derivePreferredAlias(entry *TBibTeXEntry) string {
 }
 
 // setPreferredAlias sets alias as the preferred alias for entry, registering it
-// in both KeyToKey and HintToKey.
+// in HintToKey. Preferred aliases are shorthand names and belong in key_hints,
+// not key_oldies (which is for old EP canonical keys only).
 func (l *TBibTeXLibrary) setPreferredAlias(entry *TBibTeXEntry, alias string) {
 	l.setEntryField(entry, PreferredAliasField, alias)
-	l.AddKeyAlias(alias, entry.Key)
 	l.AddKeyHint(alias, entry.Key)
 }
 

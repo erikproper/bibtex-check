@@ -28,7 +28,6 @@ func processDBLPValue(l *TBibTeXLibrary, key, value string) (string, string) {
 }
 
 func processPreferredAliasValue(l *TBibTeXLibrary, key, value string) (string, string) {
-	l.AddKeyAlias(value, key)
 	l.AddKeyHint(value, key)
 
 	return PreferredAliasField, value
