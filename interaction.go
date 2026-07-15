@@ -18,7 +18,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/mattn/go-isatty"
 )
+
+// isTTY is true when stderr is connected to an interactive terminal.
+// Non-TTY sessions (pipes, CI, scripts) get data-only output: all stderr is
+// silenced and interactive prompts fail fast so nothing blocks on stdin.
+var isTTY = isatty.IsTerminal(os.Stderr.Fd())
 
 // stdinCh is the single source of stdin lines for all interactive prompts.
 // One pump goroutine reads os.Stdin here; every consumer (WarningQuestion,
@@ -27,6 +34,10 @@ import (
 var stdinCh = make(chan string, 1)
 
 func init() {
+	if !isTTY {
+		close(stdinCh) // non-TTY: no stdin reads; fail-fast on all prompts
+		return
+	}
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
@@ -64,6 +75,9 @@ var activeTicker *TProgressTicker
 // message can print cleanly on its own line. The ticker is not stopped; the next
 // Step/Tick call redraws it.
 func SpinnerInterrupt() {
+	if !isTTY {
+		return
+	}
 	if activeTicker != nil {
 		fmt.Fprint(os.Stderr, "\r\033[K")
 		activeTicker.rendered = false
@@ -74,6 +88,9 @@ func SpinnerInterrupt() {
 // with a newline. Use immediately before a multi-line interactive dialog so the
 // user can see the progress count above the dialog.
 func SpinnerCommit() {
+	if !isTTY {
+		return
+	}
 	if activeTicker != nil && activeTicker.rendered {
 		fmt.Fprint(os.Stderr, "\n")
 		activeTicker.rendered = false
@@ -82,10 +99,10 @@ func SpinnerCommit() {
 
 // NewProgressTicker creates and activates a ticker with the given label and total.
 // Pass total=0 for indeterminate progress (running count without a percentage).
-// Returns nil (no-op) when interaction is silenced or progress is suppressed.
+// Returns nil (no-op) when not on a TTY, or when interaction is silenced or progress is suppressed.
 // The label is prefixed by progressPrefix (if any).
 func (r *TInteraction) NewProgressTicker(label string, total int) *TProgressTicker {
-	if r.silenced || r.progressSuppressed {
+	if !isTTY || r.silenced || r.progressSuppressed {
 		return nil
 	}
 	w := 0
@@ -197,7 +214,12 @@ func (r *TInteraction) ResetQuestionFlag() {}
 
 // AskForInput prints prompt and returns the trimmed line the user types.
 // Typing "q" sets quitRequested and returns "".
+// In non-TTY sessions, sets quitRequested and returns "" immediately.
 func (r *TInteraction) AskForInput(prompt string) (string, error) {
+	if !isTTY {
+		r.quitRequested = true
+		return "", nil
+	}
 	SpinnerInterrupt()
 	fmt.Fprintf(os.Stderr, "\nINPUT:    %s (q=quit): ", prompt)
 	line := readStdinLine()
@@ -231,18 +253,27 @@ func (r *TInteraction) SetInteraction(status bool) {
 // printWarningLine prints a WARNING line immediately, bypassing any deferral.
 // Clears any active ticker first and inserts a blank line before the message.
 func (r *TInteraction) printWarningLine(warning string, context ...any) {
+	if !isTTY {
+		return
+	}
 	SpinnerInterrupt()
 	fmt.Fprintf(os.Stderr, "\nWARNING:  "+warning+"\n", context...)
 }
 
 // printErrorLine prints an ERROR line immediately, bypassing any deferral.
 func (r *TInteraction) printErrorLine(errorMessage string, context ...any) {
+	if !isTTY {
+		return
+	}
 	SpinnerInterrupt()
 	fmt.Fprintf(os.Stderr, "\nERROR:    "+errorMessage+"\n", context...)
 }
 
 // BeginDeferringMessages enables warning/error deferral and clears any buffered messages.
 func (r *TInteraction) BeginDeferringMessages() {
+	if !isTTY {
+		return
+	}
 	r.deferMessages = true
 	r.deferredWarnings = nil
 	r.deferredErrors = nil
@@ -253,6 +284,11 @@ func (r *TInteraction) BeginDeferringMessages() {
 // Empty sections are omitted.
 func (r *TInteraction) FlushDeferredMessages() {
 	r.deferMessages = false
+	if !isTTY {
+		r.deferredWarnings = nil
+		r.deferredErrors = nil
+		return
+	}
 	if len(r.deferredWarnings) > 0 {
 		fmt.Fprintf(os.Stderr, "\nWarnings:\n")
 		for _, w := range r.deferredWarnings {
@@ -272,7 +308,7 @@ func (r *TInteraction) FlushDeferredMessages() {
 // Reporting errors.
 // The error message should provide the formatting.
 func (r *TInteraction) Error(errorMessage string, context ...any) bool {
-	if !r.silenced {
+	if isTTY && !r.silenced {
 		if r.deferMessages {
 			r.deferredErrors = append(r.deferredErrors, fmt.Sprintf(errorMessage, context...))
 		} else {
@@ -286,7 +322,7 @@ func (r *TInteraction) Error(errorMessage string, context ...any) bool {
 // Reporting warnings.
 // The warning message should provide the formatting.
 func (r *TInteraction) Warning(warning string, context ...any) bool {
-	if !r.silenced {
+	if isTTY && !r.silenced {
 		if r.deferMessages {
 			r.deferredWarnings = append(r.deferredWarnings, fmt.Sprintf(warning, context...))
 		} else {
@@ -302,7 +338,12 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 // graceful quit: quitRequested is set and "q" is returned to the caller.
 // When warning is non-empty it is printed immediately (bypassing any deferral)
 // as inline context for the question.
+// In non-TTY sessions, sets quitRequested and returns "q" immediately.
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
+	if !isTTY {
+		r.quitRequested = true
+		return "q"
+	}
 	r.questionsAnswered++
 
 	optionSet := "("
@@ -339,7 +380,12 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 
 // WarningQuestionOrdered is like WarningQuestion but uses the caller-supplied slice
 // to control the display order of options (useful when ASCII sort would mis-group them).
+// In non-TTY sessions, sets quitRequested and returns "q" immediately.
 func (r *TInteraction) WarningQuestionOrdered(question string, ordered []string, warning string, context ...any) string {
+	if !isTTY {
+		r.quitRequested = true
+		return "q"
+	}
 	valid := TStringSetNew()
 	hasQ := false
 	optionSet := "("
@@ -402,7 +448,11 @@ type statRow struct {
 // printStatBlock prints header then rows with labels left-aligned and values
 // right-aligned so all columns line up regardless of label/value widths.
 // An optional comment is appended after two spaces.
+// No-op in non-TTY sessions.
 func printStatBlock(header string, rows []statRow) {
+	if !isTTY {
+		return
+	}
 	maxLabelLen := 0
 	maxValLen := 0
 	for _, r := range rows {
@@ -426,7 +476,12 @@ func printStatBlock(header string, rows []statRow) {
 // ConfirmAction always prompts the user for y/n/q confirmation, even when the
 // interaction is silenced. Use for safety gates that must not be skipped
 // by batch-mode callers. "q" sets quitRequested and returns false.
+// In non-TTY sessions, sets quitRequested and returns false immediately.
 func (r *TInteraction) ConfirmAction(prompt string) bool {
+	if !isTTY {
+		r.quitRequested = true
+		return false
+	}
 	r.questionsAnswered++
 	SpinnerInterrupt()
 	fmt.Fprintf(os.Stderr, "\nCONFIRM:  %s (y/n/q): ", prompt)
@@ -446,7 +501,7 @@ func (r *TInteraction) ConfirmAction(prompt string) bool {
 // Reporting progres.
 // The progress message should provide the formatting.
 func (r *TInteraction) Progress(progress string, context ...any) bool {
-	if !r.silenced && !r.progressSuppressed {
+	if isTTY && !r.silenced && !r.progressSuppressed {
 		SpinnerInterrupt()
 		fmt.Fprintf(os.Stderr, r.progressPrefix+progress+"\n", context...)
 	}

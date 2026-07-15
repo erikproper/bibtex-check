@@ -810,7 +810,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 					return target
 				}
 			}
-			l.Progress("Merging %s to %s", source, target)
+			l.Progress("  Merging %s to %s", source, target)
 
 			sourceEntry := loadEntryFromDb(source)
 			targetEntry := loadEntryFromDb(target)

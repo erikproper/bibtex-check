@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.119"
+const AppVersion = "27.122"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -54,6 +54,14 @@ var (
 	cmdPull                    bool // -pull: with -sync, skip up-sync (phase 1); only write bib output from DB
 	cmdMatchedOrcidDataOnly    bool // -matched_orcid_data_only: skip ORCID challenges in step 3
 )
+
+// stderrPrintf writes to stderr only when running in a TTY session.
+// Use for section headers and status lines that are noise in piped/scripted runs.
+func stderrPrintf(format string, args ...any) {
+	if isTTY {
+		fmt.Fprintf(os.Stderr, format, args...)
+	}
+}
 
 func reportCacheMode() {
 	if entryCache != nil {
@@ -365,7 +373,7 @@ func openLibraryToUpdate() bool {
 	maybeMigrateToFKSchema()
 	maybeMigrateContributorRolesCascade()
 	maybeMigrateDblpExportDirty()
-	fmt.Fprintf(os.Stderr, "\nOpening the library:\n")
+	stderrPrintf("\nOpening the library:\n")
 	Library.BeginDeferringMessages()
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()
@@ -414,17 +422,17 @@ func openLibraryToUpdate() bool {
 	printSessionStats()
 	Library.FlushDeferredMessages()
 	if !Online {
-		Library.Progress("Offline: actions requiring network connectivity will be skipped.")
+		Library.Progress("  Offline: actions requiring network connectivity will be skipped.")
 	}
 	preCloseHook = reportHomework
 	return true
 }
 
 func openLibraryToReport() bool {
-	fmt.Fprintf(os.Stderr, "\nOpening the library:\n")
-	initialiseLibrary()
+	// Read-only session: suppress all routine progress; show only warnings and questions.
+	Reporting.progressSuppressed = true
+	initialiseLibrary() // propagates progressSuppressed via Library.Initialise(Reporting, ...)
 	maybeMigrateDblpExportDirty()
-	Library.progressSuppressed = true // read-only session: suppress routine progress noise
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
 
@@ -441,7 +449,6 @@ func openLibraryToReport() bool {
 	}
 
 	Library.LoadPDFFiles()
-	Library.ReportLibrarySize()
 	return true
 }
 
@@ -1486,7 +1493,7 @@ func reportHomework() {
 		hwRows = append(hwRows, statRow{StatContributorsWithOrcidNotYetEnriched, fmt.Sprintf("%d", newOrcidContributors), hwComment(newOrcidContributors, "enrich_contributor_data")})
 	}
 	printStatBlock("Homework:", hwRows)
-	fmt.Fprintf(os.Stderr, "\n")
+	stderrPrintf("\n")
 }
 
 // doFixCandidates interactively links library entries that have no DBLP key yet
@@ -1547,7 +1554,7 @@ func doDefaultRun() {
 	if openLibraryToUpdate() {
 		clearEntryWarnings()
 		Library.ReadURLsIgnoreFile()
-		fmt.Fprintf(os.Stderr, "\nAnalysing and checking library:\n")
+		stderrPrintf("\nAnalysing and checking library:\n")
 
 		Library.BeginDeferringMessages()
 		Library.CheckEntries()
@@ -1604,7 +1611,6 @@ func doGetPdfs() {
 }
 
 func doFindEntries(args []string) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		field := strings.ToLower(args[0])
 		value := ""
@@ -1637,14 +1643,12 @@ func doAddToGroup(args []string) {
 }
 
 func doRenderAsBibTeX(args []string) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		fmt.Print(Library.renderAsBibTeX(resolveInputKey(cleanKey(args[0]))))
 	}
 }
 
 func doRenderGroup(args []string, useAliases bool) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		group := args[0]
 		pubsFolder := args[1]
@@ -1714,7 +1718,6 @@ func doRenderGroup(args []string, useAliases bool) {
 }
 
 func doListGroupAliases(args []string) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		for _, m := range findBibEntriesByGroup(args[0]) {
 			key := Library.MapEntryKey(m.Key)
@@ -1731,21 +1734,18 @@ func doListGroupAliases(args []string) {
 }
 
 func doRenderAsTex(args []string) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		fmt.Println(Library.renderAsTeX(resolveInputKey(cleanKey(args[0]))))
 	}
 }
 
 func doRenderAsHTML(args []string) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		fmt.Println(Library.renderAsHTML(resolveInputKey(cleanKey(args[0]))))
 	}
 }
 
 func doRenderAsText(args []string) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		fmt.Println(Library.renderAsText(resolveInputKey(cleanKey(args[0]))))
 	}
@@ -1853,7 +1853,6 @@ func resolveInputKey(raw string) string {
 }
 
 func doEntryKey(args []string) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		fmt.Println(resolveInputKey(cleanKey(args[0])))
 	}
@@ -2029,7 +2028,6 @@ func doRestoreKeyHints(csvPath string) {
 }
 
 func doShowEntry(args []string) {
-	Reporting.SetInteractionOff()
 	if openLibraryToReport() {
 		fmt.Println(Library.EntryString(resolveInputKey(cleanKey(args[0])), ""))
 	}
@@ -2133,7 +2131,7 @@ func doUpsertDblpEntries() {
 
 		inDblpUpdate = true
 		scanned := 0
-		fmt.Fprintf(os.Stderr, "\nDoing analysis based on DBLP data:\n")
+		stderrPrintf("\nDoing analysis based on DBLP data:\n")
 		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
 		processKey := func(key string) {
@@ -2243,7 +2241,7 @@ func doUpsertDblpFor(args []string) {
 func doUpsertDblpEntryFromDblpKeys(args []string) {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
-		fmt.Fprintf(os.Stderr, "\n")
+		stderrPrintf("\n")
 		for _, dblpKey := range args {
 			dblpKey = normalizeDblpKey(dblpKey)
 			if existing := Library.LookupDBLPKey(dblpKey); existing != "" {
@@ -2514,11 +2512,11 @@ func runWatchORCID(w TWatchEntry, label string) {
 				}
 				Library.ResetQuestionFlag()
 				SpinnerInterrupt()
-				fmt.Fprintf(os.Stderr, "\nWatching %s (ORCID %s) — adding missing publication:\n", label, orcid)
-				fmt.Fprintf(os.Stderr, "  DOI: %s\n", doi)
+				stderrPrintf("\nWatching %s (ORCID %s) — adding missing publication:\n", label, orcid)
+				stderrPrintf("  DOI: %s\n", doi)
 				for _, f := range []string{"title", "booktitle", "journal", "year", "author", "editor"} {
 					if v := entry.Fields[f]; v != "" {
-						fmt.Fprintf(os.Stderr, "  %-9s: %s\n", f, v)
+						stderrPrintf("  %-9s: %s\n", f, v)
 					}
 				}
 				addDoiEntry(entry, label)
@@ -2593,19 +2591,19 @@ func runWatch() bool {
 
 			Library.ResetQuestionFlag()
 			SpinnerInterrupt()
-			fmt.Fprintf(os.Stderr, "\nWatching %s — adding missing publication:\n", label)
-			fmt.Fprintf(os.Stderr, "  DBLP key: %s\n", key)
+			stderrPrintf("\nWatching %s — adding missing publication:\n", label)
+			stderrPrintf("  DBLP key: %s\n", key)
 			if entry := dblpEntryFromFile(key); entry != nil {
 				if t := entry.EntryType(); t != "" {
-					fmt.Fprintf(os.Stderr, "  type    : %s\n", t)
+					stderrPrintf("  type    : %s\n", t)
 				}
 				for _, f := range []string{"title", "booktitle", "journal", "year", "author", "editor"} {
 					if v := entry.Fields[f]; v != "" {
-						fmt.Fprintf(os.Stderr, "  %-9s: %s\n", f, v)
+						stderrPrintf("  %-9s: %s\n", f, v)
 					}
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "  (not in local file store)\n")
+				stderrPrintf("  (not in local file store)\n")
 			}
 
 			if added := Library.MaybeAddDBLPEntry(key); added != "" {
@@ -2642,7 +2640,7 @@ func runWatch() bool {
 // "Running scripts:" section header with one extra level of indentation.
 // Used by commands that embed both phases (e.g. -dblp_update).
 func runWatchAndScript() {
-	fmt.Fprintf(os.Stderr, "\nRunning scripts:\n")
+	stderrPrintf("\nRunning scripts:\n")
 	Library.progressPrefix = "  "
 	runWatch()
 	runScript()
@@ -2654,7 +2652,7 @@ func doWatch() {
 	if !openLibraryToUpdate() {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\n")
+	stderrPrintf("\n")
 	if !runWatch() {
 		filePath := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix + "/watch"
 		Library.Progress("No watch entries found in %s", filePath)
@@ -2677,7 +2675,7 @@ func doAddKeyMapping(args []string) {
 	if openLibraryToUpdate() {
 		target := Library.MapEntryKey(cleanKey(args[len(args)-1]))
 		for _, alias := range args[:len(args)-1] {
-			fmt.Println("Mapping", cleanKey(alias), "to", target)
+			Library.Progress("  Mapping %s → %s", cleanKey(alias), target)
 			Library.AddKeyAlias(cleanKey(alias), target)
 		}
 		doAllChecks(target)
@@ -2727,7 +2725,7 @@ func doMergeEntries(args []string) {
 			return
 		}
 		target := resolvedKeys[len(resolvedKeys)-1]
-		fmt.Fprintf(os.Stderr, "\nMerge:\n")
+		stderrPrintf("\nMerge:\n")
 		for i, alias := range resolvedKeys[:len(resolvedKeys)-1] {
 			if alias == target {
 				// Both keys resolve to the same canonical. Check for a ghost bib_entries
@@ -2778,7 +2776,7 @@ func doApplyScript() {
 		return
 	}
 	if openLibraryToUpdate() {
-		fmt.Fprintf(os.Stderr, "\n")
+		stderrPrintf("\n")
 		runScript()
 	}
 }
@@ -3417,17 +3415,16 @@ func doUpgradeWatchActions() {
 			if !known {
 				// Check for ambiguity.
 				if ids, ambig := Library.AmbiguousNameToContributorIDs[e.Value]; ambig {
-					fmt.Printf("\nAmbiguous name %q — which contributor?\n", e.Value)
+					Library.Warning("Ambiguous name %q — which contributor?", e.Value)
 					for i, cid := range ids {
 						name := cid
 						if contrib, ok := Library.ContributorByID[cid]; ok {
 							name = contrib.Name
 						}
-						fmt.Printf("  %d) %s (%s)\n", i+1, name, cid)
+						Library.Progress("  %d) %s (%s)", i+1, name, cid)
 					}
-					fmt.Printf("  0) keep as name entry\n> ")
-					var choice string
-					fmt.Scanln(&choice)
+					Library.Progress("  0) keep as name entry")
+					choice, _ := Library.AskForInput("Enter number (0=keep as name entry)")
 					n := 0
 					fmt.Sscan(choice, &n)
 					if n >= 1 && n <= len(ids) {
@@ -3541,7 +3538,7 @@ func doAssignOrcid(args []string) {
 }
 
 func main() {
-	fmt.Fprintf(os.Stderr, "%s %s\n", filepath.Base(os.Args[0]), AppVersion)
+	stderrPrintf("%s %s\n", filepath.Base(os.Args[0]), AppVersion)
 
 	baseFlag := flag.String("base", "", "path/basename of the library (required)")
 	flag.BoolVar(&forceWrite, "force_write", false, "force write even if unchanged")

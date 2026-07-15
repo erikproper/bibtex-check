@@ -222,28 +222,6 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 	l.Progress(ProgressCheckingConsistencyOfKeyOldies)
 
-	// Migrate any non-EP-key aliases (preferred aliases) that were mistakenly
-	// written to key_oldies — they belong in key_hints instead.
-	// Query the DB directly (not the in-memory cache) so transient DBLP aliases
-	// regenerated each run via SetTransient are excluded.
-	var toMigrate []struct{ alias, key string }
-	if rows, err := db.Query(`SELECT alias, key FROM key_oldies WHERE alias NOT LIKE ?`, keyPrefix+"-%"); err == nil {
-		for rows.Next() {
-			var alias, key string
-			if rows.Scan(&alias, &key) == nil {
-				toMigrate = append(toMigrate, struct{ alias, key string }{alias, key})
-			}
-		}
-		rows.Close()
-	}
-	if len(toMigrate) > 0 {
-		for _, m := range toMigrate {
-			l.AddKeyHint(m.alias, m.key)
-			l.KeyOldies.Delete(m.alias)
-		}
-		l.Progress("  Migrated %d preferred-alias oldie(s) from key_oldies to key_hints", len(toMigrate))
-	}
-
 	var ghosts []struct{ oldie, key string }
 	l.KeyOldies.ForEach(func(oldie, key string) {
 		if !l.EntryExists(key) {
@@ -340,12 +318,15 @@ func (l *TBibTeXLibrary) CheckDblpDuplicates() {
 	}
 }
 
-// CheckDblpWaivedConsistency removes stale keys from DblpWaived: any key that is
-// now an alias (MapEntryKey(k) != k) or no longer exists as a library entry.
+// CheckDblpWaivedConsistency removes stale keys from DblpWaived: any key that
+// is now an alias, no longer exists, or has since acquired a DBLP key (waiver
+// no longer needed).
 func (l *TBibTeXLibrary) CheckDblpWaivedConsistency() {
 	var stale []string
 	l.DblpWaived.ForEach(func(key string, _ bool) {
 		if l.MapEntryKey(key) != key || !l.EntryExists(key) {
+			stale = append(stale, key)
+		} else if l.EntryFieldValueity(key, DBLPField) != "" {
 			stale = append(stale, key)
 		}
 	})
