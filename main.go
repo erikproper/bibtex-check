@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.124"
+const AppVersion = "27.126"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -316,8 +316,8 @@ func printSessionStats() {
 	fieldMaps := sameFieldMaps + crossFieldMaps
 
 	var losingValues, losingPending int
-	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values`).Scan(&losingValues)
-	bibQueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE triage_status IS NULL`).Scan(&losingPending)
+	bibQueryRow(`SELECT COUNT(*) FROM superseded_field_values`).Scan(&losingValues)
+	bibQueryRow(`SELECT COUNT(*) FROM superseded_field_values WHERE triage_status IS NULL`).Scan(&losingPending)
 
 	sessionStartEntryCount = total
 	sessionStartDblpKeyCount = dblpKeys
@@ -417,8 +417,8 @@ func openLibraryToUpdate() bool {
 		Library.CheckEntryFieldMappingWinners()
 	}
 	normalizeAuthorEditorEntryFields()
-	retireResolvedAuthorEditorLosers()
-	cleanupRedundantLosers()
+	retireResolvedAuthorEditorSuperseded()
+	cleanupRedundantSuperseded()
 	printSessionStats()
 	Library.FlushDeferredMessages()
 	if !Online {
@@ -754,7 +754,7 @@ func cleanKeys(args []string) []string {
 
 // normalizeAuthorEditorEntryFields applies current name mappings to all stored author/editor
 // field values in bib_entries. Any entry whose stored value contains at least one mapped alias
-// is updated in-place; the old value is recorded as a loser in losing_field_values.
+// is updated in-place; the old value is recorded as superseded in superseded_field_values.
 // Called at startup so that name mappings added between runs are immediately propagated.
 func normalizeAuthorEditorEntryFields() {
 	if len(Library.NameAliasToName) == 0 {
@@ -790,7 +790,7 @@ func normalizeAuthorEditorEntryFields() {
 			continue
 		}
 		newValue := strings.Join(parts, " and ")
-		db.Exec(`INSERT INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, r.key, r.field, r.value) //nolint:errcheck
+		db.Exec(`INSERT INTO superseded_field_values (entry_key, field, value) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, r.key, r.field, r.value) //nolint:errcheck
 		Library.SetEntryFieldValue(r.key, r.field, newValue)
 		updated++
 	}
@@ -799,20 +799,20 @@ func normalizeAuthorEditorEntryFields() {
 	}
 }
 
-// retireResolvedAuthorEditorLosers deletes losing_field_values rows for author/editor
-// fields where the loser value is equal to the current entry winner after applying
+// retireResolvedAuthorEditorSuperseded deletes superseded_field_values rows for author/editor
+// fields where the superseded value is equal to the current entry winner after applying
 // name mappings. Called at startup so that name mappings added outside of triage
 // automatically cascade to clean up resolved pairs.
-func retireResolvedAuthorEditorLosers() {
-	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor')`)
+func retireResolvedAuthorEditorSuperseded() {
+	rows, err := db.Query(`SELECT entry_key, field, value FROM superseded_field_values WHERE field IN ('author', 'editor')`)
 	if err != nil {
 		return
 	}
-	type loserRow struct{ key, field, loser string }
-	var pairs []loserRow
+	type supersededRow struct{ key, field, superseded string }
+	var pairs []supersededRow
 	for rows.Next() {
-		var r loserRow
-		if rows.Scan(&r.key, &r.field, &r.loser) == nil {
+		var r supersededRow
+		if rows.Scan(&r.key, &r.field, &r.superseded) == nil {
 			pairs = append(pairs, r)
 		}
 	}
@@ -860,8 +860,8 @@ func retireResolvedAuthorEditorLosers() {
 		if winner == "" {
 			continue
 		}
-		if sliceEqual(normList(splitAndFilter(winner)), normList(splitAndFilter(p.loser))) {
-			db.Exec(`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.loser) //nolint:errcheck
+		if sliceEqual(normList(splitAndFilter(winner)), normList(splitAndFilter(p.superseded))) {
+			db.Exec(`DELETE FROM superseded_field_values WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.superseded) //nolint:errcheck
 			retired++
 		}
 	}
@@ -872,7 +872,7 @@ func retireResolvedAuthorEditorLosers() {
 
 // --- Command functions ---
 
-// doTriageAuthorMappings interactively reviews all author/editor pairs in losing_field_values.
+// doTriageAuthorMappings interactively reviews all author/editor pairs in superseded_field_values.
 // Each pair is classified and resolved: brace-wrap (auto-fixed), name-equal-after-mapping
 // (auto-retired), single-name variant (name-mapping offered), missing-authors (prompt),
 // multi-name variant (kept), or unclassifiable (flagged).
@@ -884,33 +884,33 @@ func doTriageAuthorMappings() {
 	maybeMigrateSkippedToNonDoubleContributorNames(&Library)
 	loadNonDoubleContributorNamesFromDb(&Library)
 
-	rows, err := bibQuery(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
+	rows, err := bibQuery(`SELECT entry_key, field, value FROM superseded_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
 	if err != nil {
 		// Index corruption (e.g. from old multi-connection SQLite access) makes
 		// ORDER BY fail with SQLITE_CORRUPT. Rebuild the index and retry once.
-		bibExec(`REINDEX losing_field_values`) //nolint:errcheck
-		rows, err = bibQuery(`SELECT entry_key, field, value FROM losing_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
+		bibExec(`REINDEX superseded_field_values`) //nolint:errcheck
+		rows, err = bibQuery(`SELECT entry_key, field, value FROM superseded_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL ORDER BY entry_key, field`)
 	}
 	if err != nil {
-		Library.Warning("Could not query losing_field_values: %s", err)
+		Library.Warning("Could not query superseded_field_values: %s", err)
 		return
 	}
-	type triagePair struct{ key, field, loser string }
+	type triagePair struct{ key, field, superseded string }
 	var pairs []triagePair
 	for rows.Next() {
 		var p triagePair
-		if scanErr := rows.Scan(&p.key, &p.field, &p.loser); scanErr == nil {
+		if scanErr := rows.Scan(&p.key, &p.field, &p.superseded); scanErr == nil {
 			pairs = append(pairs, p)
 		}
 	}
 	rows.Close()
 
-	retireLoser := func(key, field, loser string) {
-		bibExec(`DELETE FROM losing_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
+	retireSuperseded := func(key, field, superseded string) {
+		bibExec(`DELETE FROM superseded_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, superseded) //nolint:errcheck
 	}
 
-	markKept := func(key, field, loser string) {
-		bibExec(`UPDATE losing_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, loser) //nolint:errcheck
+	markKept := func(key, field, superseded string) {
+		bibExec(`UPDATE superseded_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, superseded) //nolint:errcheck
 	}
 
 	splitOnAnd := func(value string) []string {
@@ -962,7 +962,7 @@ outer:
 	for _, p := range pairs {
 		winner := Library.EntryFieldValueity(p.key, p.field)
 		if winner == "" {
-			retireLoser(p.key, p.field, p.loser)
+			retireSuperseded(p.key, p.field, p.superseded)
 			continue
 		}
 
@@ -970,9 +970,9 @@ outer:
 
 		// Re-check: a name mapping added during this run may have already equated them.
 		wNames := splitOnAnd(winner)
-		lNames := splitOnAnd(p.loser)
+		lNames := splitOnAnd(p.superseded)
 		if sliceEqual(normList(wNames), normList(lNames)) {
-			retireLoser(p.key, p.field, p.loser)
+			retireSuperseded(p.key, p.field, p.superseded)
 			continue
 		}
 
@@ -981,12 +981,12 @@ outer:
 			fixed := winner[1 : len(winner)-1]
 			Library.SetEntryFieldValue(p.key, p.field, fixed)
 			Library.Progress("Auto-fixed brace-wrap for %s %s", p.key, p.field)
-			retireLoser(p.key, p.field, p.loser)
+			retireSuperseded(p.key, p.field, p.superseded)
 			continue
 		}
-		if isBraceWrapped(p.loser) {
+		if isBraceWrapped(p.superseded) {
 			Library.Progress("Auto-retired brace-wrap superseded value for %s %s", p.key, p.field)
-			retireLoser(p.key, p.field, p.loser)
+			retireSuperseded(p.key, p.field, p.superseded)
 			continue
 		}
 
@@ -1001,22 +1001,22 @@ outer:
 				}
 			}
 			if len(diffPos) == 0 {
-				retireLoser(p.key, p.field, p.loser)
+				retireSuperseded(p.key, p.field, p.superseded)
 				continue
 			}
 			if len(diffPos) == 1 {
 				pos := diffPos[0]
 				if isNonDoubleContributorNamePair(&Library, wNames[pos], lNames[pos]) {
-					markKept(p.key, p.field, p.loser)
+					markKept(p.key, p.field, p.superseded)
 					continue
 				}
-				Library.Progress("Entry: %s / field: %s\n  Current:    %s\n  Superseded: %s", p.key, p.field, winner, p.loser)
+				Library.Progress("Entry: %s / field: %s\n  Current:    %s\n  Superseded: %s", p.key, p.field, winner, p.superseded)
 				resultName, quit, mapped := Library.resolveNamePair(p.key, p.field, pos+1, len(wNames), 1, 1, wNames[pos], lNames[pos])
 				if quit {
 					break outer
 				}
 				if mapped {
-					retireLoser(p.key, p.field, p.loser)
+					retireSuperseded(p.key, p.field, p.superseded)
 				} else {
 					addNonDoubleContributorNamePair(&Library, wNames[pos], lNames[pos])
 					if contributorRolesActive {
@@ -1026,12 +1026,12 @@ outer:
 							}
 						}
 					}
-					markKept(p.key, p.field, p.loser)
+					markKept(p.key, p.field, p.superseded)
 				}
 				_ = resultName
 			} else {
 				Library.Progress("Multi-name variant (%d diffs) kept: %s %s", len(diffPos), p.key, p.field)
-				markKept(p.key, p.field, p.loser)
+				markKept(p.key, p.field, p.superseded)
 			}
 		} else {
 			wSet := make(map[string]bool, len(normW))
@@ -1051,9 +1051,9 @@ outer:
 				return true
 			}
 			if isSubset(lSet, wSet) || isSubset(wSet, lSet) {
-				markKept(p.key, p.field, p.loser)
+				markKept(p.key, p.field, p.superseded)
 			} else {
-				markKept(p.key, p.field, p.loser)
+				markKept(p.key, p.field, p.superseded)
 			}
 		}
 
@@ -1536,7 +1536,7 @@ func doFixCandidates() {
 				if found {
 					doAllChecks(key)
 					// Re-resolve: doAllChecks may have merged key into another entry,
-					// making key a loser whose DB row is gone. Use the surviving canonical.
+					// making key a superseded alias whose DB row is gone. Use the surviving canonical.
 					key = Library.MapEntryKey(key)
 					if d := Library.EntryFieldValueity(key, DBLPField); d != "" {
 						exclusions.Add(normalizeDblpKey(d))
@@ -2496,7 +2496,7 @@ func runWatchORCID(w TWatchEntry, label string) {
 					continue
 				}
 				seenDOI[doi] = true
-				if entryExistsWithDOI(doi) || doiHasLoserRecord(doi) || doiHasAlias(doi) {
+				if entryExistsWithDOI(doi) || doiHasSupersededRecord(doi) || doiHasAlias(doi) {
 					continue
 				}
 				bibtex := fetchDoiBibTeX(doi)
@@ -2509,7 +2509,7 @@ func runWatchORCID(w TWatchEntry, label string) {
 				}
 				// The canonical DOI in the fetched BibTeX may differ from the ORCID-reported
 				// DOI (doi aliasing / CrossRef redirects). Check both to avoid re-adding.
-				if resolvedDOI := entry.Fields["doi"]; resolvedDOI != "" && resolvedDOI != doi && (entryExistsWithDOI(resolvedDOI) || doiHasLoserRecord(resolvedDOI) || doiHasAlias(resolvedDOI)) {
+				if resolvedDOI := entry.Fields["doi"]; resolvedDOI != "" && resolvedDOI != doi && (entryExistsWithDOI(resolvedDOI) || doiHasSupersededRecord(resolvedDOI) || doiHasAlias(resolvedDOI)) {
 					continue
 				}
 				Library.ResetQuestionFlag()
@@ -3564,7 +3564,7 @@ func main() {
 		cmdFixEntries         bool
 		cmdFixDuplicates        bool // -fix_duplicates: fix entries in unresolved title groups
 		cmdFixCandidates        bool // -fix_candidates: link unmatched entries to DBLP
-		cmdTriageAuthorMappings    bool // -triage_author_mappings: triage author/editor losing_field_values
+		cmdTriageAuthorMappings    bool // -triage_author_mappings: triage author/editor superseded_field_values
 		cmdTriageContributorAliases bool // -triage_contributor_aliases: generalise or keep entry-specific contributor aliases
 		cmdDisambiguateContributors bool // -disambiguate_contributors: resolve ambiguous contributor-name assignments
 		cmdUpgradeWatchActions      bool // -upgrade_watch_actions: rewrite watch file to contributor format
@@ -3632,7 +3632,7 @@ func main() {
 	flag.BoolVar(&cmdFixEntries, "fix_entry", false, "alias for -fix_entries")
 	flag.BoolVar(&cmdFixDuplicates, "fix_duplicates", false, "interactively resolve title-duplicate pairs in the library")
 	flag.BoolVar(&cmdFixDuplicates, "fix_all_entries", false, "alias for -fix_duplicates")
-	flag.BoolVar(&cmdTriageAuthorMappings, "triage_author_mappings", false, "triage author/editor entries in losing_field_values")
+	flag.BoolVar(&cmdTriageAuthorMappings, "triage_author_mappings", false, "triage author/editor entries in superseded_field_values")
 	flag.BoolVar(&cmdTriageContributorAliases, "triage_contributor_aliases", false, "generalise or keep entry-specific contributor aliases")
 	flag.BoolVar(&cmdDisambiguateContributors, "disambiguate_contributors", false, "resolve ambiguous contributor-name assignments in entry_contributor_names")
 	flag.BoolVar(&cmdUpgradeWatchActions, "upgrade_watch_actions", false, "rewrite watch file replacing name/orcid entries with contributor EP_XXXX")

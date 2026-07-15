@@ -189,7 +189,7 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 				}
 				// A challenger that now normalises to the actual value is
 				// redundant: the name_mapping makes it equivalent to the
-				// winner, so the losing_field_values entry can be deleted.
+				// winner, so the superseded_field_values entry can be deleted.
 				if l.NormaliseFieldValue(field, challenger) == actual {
 					redundants = append(redundants, redundant{entry, field, challenger})
 				}
@@ -206,7 +206,7 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 		tx, err := db.Begin()
 		if err == nil {
 			for _, r := range redundants {
-				tx.Exec(`DELETE FROM losing_field_values WHERE entry_key = ? AND field = ? AND value = ?`,
+				tx.Exec(`DELETE FROM superseded_field_values WHERE entry_key = ? AND field = ? AND value = ?`,
 					r.entry, r.field, r.challenger)
 				delete(l.EntryFieldSourceToTarget[r.entry][r.field], r.challenger)
 			}

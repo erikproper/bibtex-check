@@ -213,7 +213,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	// per-name breakdown: the comparison model already identified which positions
 	// differ, so presenting the full-string y/n/b question is redundant.
 	if contributorRolesActive && (field == "author" || field == "editor") {
-		// If the challenge is a recorded loser for this entry+field, honour the prior
+		// If the challenge is a recorded superseded value for this entry+field, honour the prior
 		// decision without re-asking. The strict EntryFieldAliasHasTarget check above
 		// can miss this when the stored winner drifted due to name normalisation across
 		// runs; checking the map key alone is sufficient.
@@ -283,7 +283,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if singleAuthor {
 			l.AddNameMapping(currentAuthorNames[0], challengeAuthorNames[0])
 		}
-		// Record challenge→current in losing_field_values. For PreferredAliasField, do NOT
+		// Record challenge→current in superseded_field_values. For PreferredAliasField, do NOT
 		// call AddKeyAlias(challenge, key): challenge may already be an alias of another entry
 		// and adding it here would produce a spurious "Ambiguous key oldie" warning.
 		l.UpdateEntryFieldAlias(key, field, challenge, current)
@@ -384,7 +384,7 @@ func (l *TBibTeXLibrary) contributorORCID(name string) string {
 // Returns:
 //   resultName — canonical name to use at this position (currentName when quit or skipped)
 //   quit       — user pressed q; caller should abort its enclosing loop
-//   mapped     — a name mapping was recorded (triage may retire the losing_field_values row;
+//   mapped     — a name mapping was recorded (triage may retire the superseded_field_values row;
 //                breakdown uses the new resultName)
 //
 // Y/N create a global name mapping; y/n are entry-specific (no mapping).

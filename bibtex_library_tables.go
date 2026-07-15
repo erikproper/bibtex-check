@@ -85,8 +85,8 @@ func init() {
 				loadFieldMappingsFromDb(l)
 				cascadeRenormaliseAllFields(l)
 			}},
-		{"losing_field_values", LosingFieldValuesFilePath,
-			ExportLosingFieldValues, func() { importLosingFieldValuesFromCSV(true) },
+		{"superseded_field_values", SupersededFieldValuesFilePath,
+			ExportSupersededFieldValues, func() { importSupersededFieldValuesFromCSV(true) },
 			func(l *TBibTeXLibrary) { cascadeRenormaliseAllFields(l) }},
 		{"entry_doi_aliases", EntryDoiAliasesFilePath,
 			ExportEntryDoiAliases, func() { importEntryDoiAliasesFromCSV(true) }, nil},

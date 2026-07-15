@@ -379,29 +379,29 @@ func importFieldMappingsFromCSV(replace bool) {
 	}
 }
 
-// ── losing_field_values ──────────────────────────────────────────────────────
+// ── superseded_field_values ──────────────────────────────────────────────────────
 // CSV format: entry_key;field;value
 
-func ExportLosingFieldValues() {
+func ExportSupersededFieldValues() {
 	ensureTablesDir()
-	path := tablesFilePath(LosingFieldValuesFilePath)
-	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values ORDER BY entry_key, field, value`)
+	path := tablesFilePath(SupersededFieldValuesFilePath)
+	rows, err := db.Query(`SELECT entry_key, field, value FROM superseded_field_values ORDER BY entry_key, field, value`)
 	if err != nil {
-		dbInteraction.Warning("Could not query losing_field_values: %s", err)
+		dbInteraction.Warning("Could not query superseded_field_values: %s", err)
 		return
 	}
 	defer rows.Close()
 	writeCSVExport(path, rows, 3)
 }
 
-func importLosingFieldValuesFromCSV(replace bool) {
-	path := tablesFilePath(LosingFieldValuesFilePath)
-	upsert := `INSERT INTO losing_field_values (entry_key, field, value) VALUES (?, ?, ?)
+func importSupersededFieldValuesFromCSV(replace bool) {
+	path := tablesFilePath(SupersededFieldValuesFilePath)
+	upsert := `INSERT INTO superseded_field_values (entry_key, field, value) VALUES (?, ?, ?)
 	             ON CONFLICT(entry_key, field, value) DO NOTHING`
 	validate := func(f []string) bool { return len(f) >= 3 && f[0] != "" && f[1] != "" }
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM losing_field_values`) }
+		clearFn = func() { db.Exec(`DELETE FROM superseded_field_values`) }
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		tx.Exec(upsert, f[0], f[1], f[2])
@@ -882,7 +882,7 @@ func ImportAllCSVExchangeFiles() bool {
 		{"key_oldies", tablesFilePath(KeyOldiesFilePath), importKeyOldiesFromCSV},
 		{"non_double_entries", tablesFilePath(KeyNonDoublesFilePath), importKeyNonDoublesFromCSV},
 		{"field_mappings", tablesFilePath(FieldMappingsFilePath), importFieldMappingsFromCSV},
-		{"losing_field_values", tablesFilePath(LosingFieldValuesFilePath), importLosingFieldValuesFromCSV},
+		{"superseded_field_values", tablesFilePath(SupersededFieldValuesFilePath), importSupersededFieldValuesFromCSV},
 		{"dblp_parent", tablesFilePath(DblpParentFilePath), importDblpParentFromCSV},
 		{"dblp_waived", tablesFilePath(DblpWaivedFilePath), importDblpWaivedFromCSV},
 		{"entry_flags", tablesFilePath(EntryFlagsFilePath), importEntryFlagsFromCSV},

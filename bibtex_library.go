@@ -353,10 +353,10 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 
 	if field != PreferredAliasField && !entryFieldMappingsLoading {
 		if l.MapFieldValue(field, alias) != l.MapEntryFieldValue(entry, field, target) {
-			// Store both the loser (value) and the accepted winner so that
+			// Store both the superseded value and the accepted winner so that
 			// loadEntryFieldMappingsFromDb can reconstruct the mapping even when
 			// bib_entries was not immediately updated after a "n" answer.
-			bibExec(`INSERT INTO losing_field_values (entry_key, field, value, winner) VALUES (?, ?, ?, ?) `+ //nolint:errcheck
+			bibExec(`INSERT INTO superseded_field_values (entry_key, field, value, winner) VALUES (?, ?, ?, ?) `+ //nolint:errcheck
 				`ON CONFLICT(entry_key, field, value) DO UPDATE SET winner = excluded.winner`,
 				entry, field, alias, target)
 		}
@@ -488,7 +488,7 @@ func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target strin
 						}
 					}
 				}
-				bibExec(`DELETE FROM losing_field_values WHERE entry_key = ? AND field = ? AND value = ?`, //nolint:errcheck
+				bibExec(`DELETE FROM superseded_field_values WHERE entry_key = ? AND field = ? AND value = ?`, //nolint:errcheck
 					entry, field, otherAlias)
 			}
 		}
@@ -826,7 +826,7 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 				var merged string
 				if targetVal == "" && sourceVal != "" {
 					// Explicit merge: adopt source value for fields the target lacks.
-					// MaybeResolveFieldValue would hit stale loser-records (made in earlier
+					// MaybeResolveFieldValue would hit stale superseded-value records (made in earlier
 					// contexts, e.g. DBLP challenges or prior interactive resolution) and
 					// silently drop the value. In an explicit bib.merge the user has decided
 					// these entries represent the same work, so missing fields are filled.
@@ -1678,7 +1678,7 @@ var latexVisibleFields = []string{
 // latexNormFieldValue returns the fully-normalised value of field for the given
 // DB entry key. Applying both NormaliseFieldValue and MapFieldValue gives the
 // same representation used during merge challenges, so comparisons stay consistent
-// even as new losers are recorded during the same resolution pass (lazy normalisation).
+// even as new superseded values are recorded during the same resolution pass (lazy normalisation).
 func (l *TBibTeXLibrary) latexNormFieldValue(key, field string) string {
 	return l.MapFieldValue(field, l.NormaliseFieldValue(field, l.EntryFieldValueity(key, field)))
 }

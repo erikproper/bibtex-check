@@ -55,7 +55,7 @@ const (
 	ContributorNamesFilePath      = tablesFolderSuffix + "/contributor_names.csv"
 	ContributorIDOldiesFilePath   = tablesFolderSuffix + "/contributor_id_oldies.csv"
 	ContributorORCIDSeenFilePath  = tablesFolderSuffix + "/contributor_orcid_seen.csv"
-	LosingFieldValuesFilePath     = tablesFolderSuffix + "/losing_field_values.csv"
+	SupersededFieldValuesFilePath     = tablesFolderSuffix + "/superseded_field_values.csv"
 	EntryDoiAliasesFilePath       = tablesFolderSuffix + "/entry_doi_aliases.csv"
 	FieldMappingsFilePath         = tablesFolderSuffix + "/field_mappings.csv"
 	StateNamesFilePath            = tablesFolderSuffix + "/state_names.csv"

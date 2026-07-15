@@ -192,7 +192,7 @@ const (
 	WarningEntryFieldMappingDeletedEntry      = "Entry-field mapping references deleted entry %s — field=%s challenger=%q winner=%q"
 	ProgressEntryFieldMappingWinnersResult    = "  Entry-field mapping winner check: %d fixed, %d mapping(s) for deleted entries"
 
-	WarningGenericFieldMappingAuthorEditor = "field_mappings: field %q not allowed as same-field mapping (winner=%q, challenger=%q) — use losing_field_values instead"
+	WarningGenericFieldMappingAuthorEditor = "field_mappings: field %q not allowed as same-field mapping (winner=%q, challenger=%q) — use superseded_field_values instead"
 	WarningFieldMappingCycle               = "Field mapping cycle rejected: (%s, %q) → (%s, %q) would close a cycle"
 
 	// Stat row labels — used in Library statistics, Session changes, and Homework blocks.

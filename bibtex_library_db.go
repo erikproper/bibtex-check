@@ -356,7 +356,7 @@ func maybeMigrateTableConstraints() {
 
 var fkSchemaMigrated bool
 
-// maybeMigrateToFKSchema recreates bib_groups, losing_field_values, entry_warnings,
+// maybeMigrateToFKSchema recreates bib_groups, superseded_field_values, entry_warnings,
 // and entry_metadata with FOREIGN KEY ... ON DELETE CASCADE referencing bib_entry_keys.
 // Cleans orphan rows from each source table before copying so no violations are
 // introduced when FK is re-enabled. Guarded so it runs at most once per process.
@@ -382,7 +382,7 @@ func maybeMigrateToFKSchema() {
 			"entry_key",
 		},
 		{
-			"losing_field_values",
+			"superseded_field_values",
 			`entry_key TEXT NOT NULL, field TEXT NOT NULL, value TEXT NOT NULL,
 			 PRIMARY KEY (entry_key, field, value),
 			 FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
@@ -580,7 +580,7 @@ func connectToDatabase() {
 	ensureURLsIgnoreTableExists()
 	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
-	ensureLosingFieldValuesTableExists()
+	ensureSupersededFieldValuesTableExists()
 	ensureEntryDoiAliasesTableExists()
 	ensureEntryWarningsTableExists()
 	ensureDeletedEntriesTableExists()
@@ -797,7 +797,7 @@ func reopenDb(path string) {
 	ensureURLsIgnoreTableExists()
 	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
-	ensureLosingFieldValuesTableExists()
+	ensureSupersededFieldValuesTableExists()
 	ensureEntryDoiAliasesTableExists()
 	ensureConfigTableExists()
 	ensureShortenMappingsTableExists()
@@ -1420,7 +1420,7 @@ func repairOrphanRows() {
 		}
 	}
 	repair("bib_groups", "entry_key")
-	repair("losing_field_values", "entry_key")
+	repair("superseded_field_values", "entry_key")
 	repair("entry_warnings", "key")
 	repair("entry_metadata", "entry_key")
 	repair("contributor_roles", "entry_key")
@@ -1631,12 +1631,14 @@ func ensureTableDatesTableExists() {
 }
 
 // maybeMigrateFilterTableNames renames all legacy filter_* table names to their
-// canonical non-prefixed form. This covers:
+// canonical non-prefixed form, and migrates the superseded_field_values rename. This covers:
 //   - The v23.3 intermediate rename filter_losing_field_values → losing_field_values
 //   - All original filter_* tables that should never have had the prefix.
+//   - The v27.126 terminology rename losing_field_values → superseded_field_values
 func maybeMigrateFilterTableNames() {
 	renames := [][2]string{
 		{"filter_losing_field_values", "losing_field_values"},
+		{"losing_field_values", "superseded_field_values"},
 		{"filter_generic_field_mappings", "generic_field_mappings"},
 		{"filter_cross_field_mappings", "cross_field_mappings"},
 		{"filter_state_names", "state_names"},
@@ -2181,16 +2183,16 @@ func entryExistsWithDOI(doi string) bool {
 	return count > 0
 }
 
-// doiHasLoserRecord reports whether the given DOI appears in losing_field_values
+// doiHasSupersededRecord reports whether the given DOI appears in superseded_field_values
 // for any entry's doi field. This catches the case where a DOI stub was merged
 // into a library entry but the DOI was not transferred to the surviving entry
-// (possible for merges performed before v27.14); the persisted loser record is
+// (possible for merges performed before v27.14); the persisted superseded record is
 // sufficient evidence that the DOI is already known to the system, so the watch
 // need not create another stub.
-func doiHasLoserRecord(doi string) bool {
+func doiHasSupersededRecord(doi string) bool {
 	doi = normalizeDOI(doi)
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM losing_field_values WHERE field = 'doi' AND lower(value) = ?`, doi).Scan(&count) //nolint:errcheck
+	db.QueryRow(`SELECT COUNT(*) FROM superseded_field_values WHERE field = 'doi' AND lower(value) = ?`, doi).Scan(&count) //nolint:errcheck
 	return count > 0
 }
 
@@ -3378,19 +3380,19 @@ func isNonDoubleContributorNamePair(l *TBibTeXLibrary, name1, name2 string) bool
 }
 
 // maybeMigrateSkippedToNonDoubleContributorNames seeds non_double_contributor_names
-// from losing_field_values rows that were skipped during triage. For each skipped
+// from superseded_field_values rows that were skipped during triage. For each skipped
 // author/editor pair, the single differing name position is extracted and recorded.
 // Migrated rows are updated to triage_status='kept'.
 func maybeMigrateSkippedToNonDoubleContributorNames(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT entry_key, field, value FROM losing_field_values WHERE triage_status='skipped' AND field IN ('author','editor')`)
+	rows, err := db.Query(`SELECT entry_key, field, value FROM superseded_field_values WHERE triage_status='skipped' AND field IN ('author','editor')`)
 	if err != nil {
 		return
 	}
-	type skippedPair struct{ key, field, loser string }
+	type skippedPair struct{ key, field, superseded string }
 	var pairs []skippedPair
 	for rows.Next() {
 		var p skippedPair
-		if rows.Scan(&p.key, &p.field, &p.loser) == nil {
+		if rows.Scan(&p.key, &p.field, &p.superseded) == nil {
 			pairs = append(pairs, p)
 		}
 	}
@@ -3418,7 +3420,7 @@ func maybeMigrateSkippedToNonDoubleContributorNames(l *TBibTeXLibrary) {
 			continue
 		}
 		wNames := splitOnAnd(winner)
-		lNames := splitOnAnd(p.loser)
+		lNames := splitOnAnd(p.superseded)
 		if len(wNames) != len(lNames) {
 			continue
 		}
@@ -3433,7 +3435,7 @@ func maybeMigrateSkippedToNonDoubleContributorNames(l *TBibTeXLibrary) {
 		}
 		pos := diffPos[0]
 		addNonDoubleContributorNamePair(l, wNames[pos], lNames[pos])
-		db.Exec(`UPDATE losing_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.loser) //nolint:errcheck
+		db.Exec(`UPDATE superseded_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.superseded) //nolint:errcheck
 		migrated++
 	}
 	if migrated > 0 {
@@ -3535,7 +3537,7 @@ func maybeMigrateDblpCanonical() {
 //
 //  1. Category-A ghosts — entries that are already in key_oldies (properly merged
 //     away) but still carry a stale dblp field in bib_entries. Only the dblp row
-//     is removed; other oldie-related rows (key_hints, losing_field_values, …) stay.
+//     is removed; other oldie-related rows (key_hints, superseded_field_values, …) stay.
 //
 //  2. Category-B ghosts — entries with a dblp field but no entrytype and not yet in
 //     key_oldies (failed creates). All their rows are removed via CASCADE on
@@ -3564,7 +3566,7 @@ func repairDblpData() {
 	}
 
 	// Category B: remove all rows for ghost entries (no entrytype, not in key_oldies).
-	// CASCADE on bib_entry_keys propagates to bib_entries, losing_field_values, etc.
+	// CASCADE on bib_entry_keys propagates to bib_entries, superseded_field_values, etc.
 	db.Exec(`PRAGMA foreign_keys = ON`) //nolint:errcheck
 	res, err = db.Exec(`
 		DELETE FROM bib_entry_keys
@@ -3737,7 +3739,7 @@ func ensureCrossFieldMappingsTableExists() {
 
 
 // loadAuthorEditorFieldMappingsFromCache loads author/editor entry-field alias
-// mappings from losing_field_values using the in-memory entry cache to find the
+// mappings from superseded_field_values using the in-memory entry cache to find the
 // winner. Must be called after initEntryCache() and only when contributorRolesActive.
 // After the contributor_roles migration, author/editor fields are no longer in
 // bib_entries, so loadEntryFieldMappingsFromDb's JOIN misses them; this is the
@@ -3750,16 +3752,16 @@ func loadAuthorEditorFieldMappingsFromCache(l *TBibTeXLibrary) {
 	defer func() { entryFieldMappingsLoading = false }()
 
 	rows, err := db.Query(`
-		SELECT entry_key, field, value FROM losing_field_values
+		SELECT entry_key, field, value FROM superseded_field_values
 		WHERE field IN ('author', 'editor')`)
 	if err != nil {
-		dbInteraction.Warning("Could not query losing_field_values for author/editor: %s", err)
+		dbInteraction.Warning("Could not query superseded_field_values for author/editor: %s", err)
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var key, field, loser string
-		if err := rows.Scan(&key, &field, &loser); err != nil {
+		var key, field, superseded string
+		if err := rows.Scan(&key, &field, &superseded); err != nil {
 			continue
 		}
 		e, ok := entryCache[key]
@@ -3771,18 +3773,18 @@ func loadAuthorEditorFieldMappingsFromCache(l *TBibTeXLibrary) {
 			continue
 		}
 		normWinner := l.MapFieldValue(field, l.NormaliseFieldValue(field, winner))
-		// Apply NormaliseFieldValue to the stored loser so that name-mapping changes
-		// made after the loser was first recorded don't produce a stale key that no
+		// Apply NormaliseFieldValue to the stored superseded value so that name-mapping
+		// changes made after it was first recorded don't produce a stale key that no
 		// longer matches the incoming DBLP challenge (which is also normalised).
-		normLoser := l.MapFieldValue(field, l.NormaliseFieldValue(field, loser))
-		// If the loser is already registered with a stale winner (e.g. from a
+		normSuperseded := l.MapFieldValue(field, l.NormaliseFieldValue(field, superseded))
+		// If the superseded value is already registered with a stale winner (e.g. from a
 		// loadEntryFieldMappingsFromDb pass that ran before migration deleted the
 		// bib_entries author row), cascade the update from the old winner to the
 		// new one so that all aliases pointing to the old winner get fixed too.
-		if existingWinner, alreadyMapped := l.EntryFieldSourceToTarget[key][field][normLoser]; alreadyMapped && existingWinner != normWinner {
+		if existingWinner, alreadyMapped := l.EntryFieldSourceToTarget[key][field][normSuperseded]; alreadyMapped && existingWinner != normWinner {
 			l.UpdateEntryFieldAlias(key, field, existingWinner, normWinner)
 		} else {
-			l.AddEntryFieldAlias(key, field, normLoser, normWinner, true)
+			l.AddEntryFieldAlias(key, field, normSuperseded, normWinner, true)
 		}
 	}
 }
@@ -3790,8 +3792,8 @@ func loadAuthorEditorFieldMappingsFromCache(l *TBibTeXLibrary) {
 // loadEntryFieldMappingsFromDb populates l.EntryFieldSourceToTarget from the DB.
 // The effective winner is COALESCE(lfv.winner, bib_entries.value): the stored winner
 // column (set when the user makes a decision) takes precedence over bib_entries, which
-// may not have been updated if closeEntry was skipped. Rows where loser == winner are
-// self-maps and are excluded by the query. Author/editor fields with contributor_roles
+// may not have been updated if closeEntry was skipped. Rows where superseded == winner
+// are self-maps and are excluded by the query. Author/editor fields with contributor_roles
 // are handled separately by loadAuthorEditorFieldMappingsFromCache.
 // Returns true when at least one value was remapped by MapFieldValue, so the caller
 // can arrange a write-back.
@@ -3802,60 +3804,60 @@ func loadEntryFieldMappingsFromDb(l *TBibTeXLibrary) bool {
 	// Prefer the stored winner column (written when the user makes a decision) over
 	// the bib_entries value (which may not have been updated if closeEntry was skipped).
 	// LEFT JOIN so rows with a stored winner but no bib_entries row (e.g. after a delete)
-	// are still usable. Rows where loser == effective winner are self-maps and are filtered.
+	// are still usable. Rows where superseded == effective winner are self-maps and are filtered.
 	rows, err := db.Query(`
-		SELECT lfv.entry_key, lfv.field, lfv.value AS loser,
+		SELECT lfv.entry_key, lfv.field, lfv.value AS superseded,
 		       COALESCE(lfv.winner, be.value) AS winner
-		FROM losing_field_values lfv
+		FROM superseded_field_values lfv
 		LEFT JOIN bib_entries be ON be.entry_key = lfv.entry_key AND be.field = lfv.field
 		WHERE COALESCE(lfv.winner, be.value) IS NOT NULL
 		  AND COALESCE(lfv.winner, be.value) != lfv.value`)
 	if err != nil {
-		dbInteraction.Warning("Could not query losing_field_values: %s", err)
+		dbInteraction.Warning("Could not query superseded_field_values: %s", err)
 		return false
 	}
 	defer rows.Close()
 
 	normalisationChanged := false
 	for rows.Next() {
-		var key, field, loser, winner string
-		if err := rows.Scan(&key, &field, &loser, &winner); err != nil {
-			dbInteraction.Warning("Could not scan losing_field_values row: %s", err)
+		var key, field, superseded, winner string
+		if err := rows.Scan(&key, &field, &superseded, &winner); err != nil {
+			dbInteraction.Warning("Could not scan superseded_field_values row: %s", err)
 			continue
 		}
 		// Apply the same pipeline that ResolveFieldValue uses at runtime: NormaliseFieldValue
 		// first (which for author/editor resolves current name aliases via NameAliasToName),
-		// then MapFieldValue. Without the normalise step, a stored loser like
+		// then MapFieldValue. Without the normalise step, a stored superseded value like
 		// "Zhang, Wei and ..." would stop matching after "Zhang, Wei" acquires a name alias,
 		// causing the question to recur on every subsequent run.
 		normWinner := l.MapFieldValue(field, l.NormaliseFieldValue(field, winner))
-		normLoser := l.MapFieldValue(field, l.NormaliseFieldValue(field, loser))
-		if normWinner != winner || normLoser != loser {
+		normSuperseded := l.MapFieldValue(field, l.NormaliseFieldValue(field, superseded))
+		if normWinner != winner || normSuperseded != superseded {
 			normalisationChanged = true
 		}
-		l.AddEntryFieldAlias(key, field, normLoser, normWinner, true)
+		l.AddEntryFieldAlias(key, field, normSuperseded, normWinner, true)
 	}
 	return normalisationChanged
 }
 
 // saveEntryFieldMappingsToDb writes the losing field values to the DB without a file roundtrip.
 func saveEntryFieldMappingsToDb(l *TBibTeXLibrary) {
-	dbExecSave("Could not clear losing_field_values", `DELETE FROM losing_field_values`)
-	upsert := `INSERT INTO losing_field_values (entry_key, field, value, winner) VALUES (?, ?, ?, ?)`
+	dbExecSave("Could not clear superseded_field_values", `DELETE FROM superseded_field_values`)
+	upsert := `INSERT INTO superseded_field_values (entry_key, field, value, winner) VALUES (?, ?, ?, ?)`
 	for key, fieldChallenges := range l.EntryFieldSourceToTarget {
 		if l.EntryExists(key) {
 			for field, challenges := range fieldChallenges {
 				if field != PreferredAliasField {
 					for challenger, winner := range challenges {
 						if l.MapFieldValue(field, challenger) != l.MapEntryFieldValue(key, field, winner) {
-							dbExecSave("losing_field_values insert failed", upsert, key, field, challenger, winner)
+							dbExecSave("superseded_field_values insert failed", upsert, key, field, challenger, winner)
 						}
 					}
 				}
 			}
 		}
 	}
-	setTableDate("losing_field_values", time.Now().UnixMicro())
+	setTableDate("superseded_field_values", time.Now().UnixMicro())
 }
 
 // --- generic_field_mappings table (legacy; kept for existing DBs, no longer primary load path) ---
@@ -4102,11 +4104,11 @@ func saveEntryMetadataToDb(l *TBibTeXLibrary) {
 	setTableDate("entry_metadata", time.Now().UnixMicro())
 }
 
-// --- losing_field_values table ---
+// --- superseded_field_values table (formerly losing_field_values) ---
 
-func ensureLosingFieldValuesTableExists() {
+func ensureSupersededFieldValuesTableExists() {
 	tryCreateTableIfNeeded(`
-		CREATE TABLE IF NOT EXISTS losing_field_values (
+		CREATE TABLE IF NOT EXISTS superseded_field_values (
 		  entry_key     TEXT NOT NULL,
 		  field         TEXT NOT NULL,
 		  value         TEXT NOT NULL,
@@ -4115,37 +4117,37 @@ func ensureLosingFieldValuesTableExists() {
 		  FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE
 		);`)
 	// Add triage_status to databases created before this column existed.
-	db.Exec(`ALTER TABLE losing_field_values ADD COLUMN triage_status TEXT`) //nolint:errcheck
+	db.Exec(`ALTER TABLE superseded_field_values ADD COLUMN triage_status TEXT`) //nolint:errcheck
 	// winner stores the accepted value at decision time so the mapping survives
 	// even when bib_entries is not immediately updated (e.g. due to transaction
 	// ordering or cache inconsistency). COALESCE(winner, bib_entries.value) in
 	// loadEntryFieldMappingsFromDb prefers this stored winner.
-	db.Exec(`ALTER TABLE losing_field_values ADD COLUMN winner TEXT`) //nolint:errcheck
+	db.Exec(`ALTER TABLE superseded_field_values ADD COLUMN winner TEXT`) //nolint:errcheck
 }
 
-// cleanupRedundantLosers removes losing_field_values rows whose value is identical
+// cleanupRedundantSuperseded removes superseded_field_values rows whose value is identical
 // to the current winner in bib_entries. These arise when a field is later set back
-// to a value that was previously recorded as a loser (e.g. after DBLP re-import
+// to a value that was previously recorded as superseded (e.g. after DBLP re-import
 // agrees with the library value).
-func cleanupRedundantLosers() {
-	// A row is redundant only when loser == bib_entries value AND no different winner
-	// is stored. Rows where winner IS NOT NULL AND winner != value record a real user
-	// decision (bib_entries was not updated yet) and must be kept.
+func cleanupRedundantSuperseded() {
+	// A row is redundant only when superseded value == bib_entries value AND no different
+	// winner is stored. Rows where winner IS NOT NULL AND winner != value record a real
+	// user decision (bib_entries was not updated yet) and must be kept.
 	res, err := db.Exec(`
-		DELETE FROM losing_field_values
+		DELETE FROM superseded_field_values
 		WHERE EXISTS (
 		    SELECT 1 FROM bib_entries
-		    WHERE bib_entries.entry_key = losing_field_values.entry_key
-		      AND bib_entries.field     = losing_field_values.field
-		      AND bib_entries.value     = losing_field_values.value
+		    WHERE bib_entries.entry_key = superseded_field_values.entry_key
+		      AND bib_entries.field     = superseded_field_values.field
+		      AND bib_entries.value     = superseded_field_values.value
 		)
 		AND (winner IS NULL OR winner = value)`)
 	if err != nil {
-		dbInteraction.Warning("cleanupRedundantLosers: %s", err)
+		dbInteraction.Warning("cleanupRedundantSuperseded: %s", err)
 		return
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		dbInteraction.Progress("Removed %d redundant loser(s) (value matches current winner)", n)
+		dbInteraction.Progress("Removed %d redundant superseded value(s) (value matches current winner)", n)
 	}
 }
 
@@ -4705,21 +4707,21 @@ func repairDirtyMappingTables() (entryFieldMappingsRepaired bool) {
 		}
 	}
 
-	// losing_field_values: "entry_key;field;loser_value"
-	if repair("losing_field_values", base+LosingFieldValuesFilePath) {
+	// superseded_field_values: "entry_key;field;superseded_value"
+	if repair("superseded_field_values", base+SupersededFieldValuesFilePath) {
 		rows, err := db.Query(
-			`SELECT entry_key, field, value FROM losing_field_values`)
+			`SELECT entry_key, field, value FROM superseded_field_values`)
 		if err == nil {
 			var lines []string
 			for rows.Next() {
-				var ek, field, loser string
-				if rows.Scan(&ek, &field, &loser) == nil {
-					lines = append(lines, csvLine(ek, field, loser))
+				var ek, field, superseded string
+				if rows.Scan(&ek, &field, &superseded) == nil {
+					lines = append(lines, csvLine(ek, field, superseded))
 				}
 			}
 			rows.Close()
-			if writeRepairCSV(base+LosingFieldValuesFilePath, lines) {
-				finishRepair("losing_field_values")
+			if writeRepairCSV(base+SupersededFieldValuesFilePath, lines) {
+				finishRepair("superseded_field_values")
 				entryFieldMappingsRepaired = true
 			}
 		}
@@ -4985,7 +4987,7 @@ func isDeletedEntry(key string) bool {
 
 // deleteBibEntry removes all rows for a given entry key from bib_entries and the
 // bib_entry_keys anchor. ON DELETE CASCADE propagates the anchor deletion to
-// bib_groups, losing_field_values, entry_warnings, and entry_metadata.
+// bib_groups, superseded_field_values, entry_warnings, and entry_metadata.
 func deleteBibEntry(key string) {
 	if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ?`, key); err != nil {
 		dbInteraction.Warning("bib_entries delete failed for %s: %s", key, err)
