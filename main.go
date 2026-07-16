@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.128"
+const AppVersion = "27.130"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -341,6 +341,7 @@ func printSessionStats() {
 	}
 	printStatBlock("Library statistics:", []statRow{
 		{StatEntries, fmt.Sprintf("%d", total), ""},
+		{StatGroups, fmt.Sprintf("%d", len(Library.GroupEntries)), ""},
 		{StatPDFFiles, fmt.Sprintf("%d", len(Library.PDFFiles)), ""},
 		{StatContributors, fmt.Sprintf("%d", contributors), ""},
 		{StatContributorForms, fmt.Sprintf("%d", contributorForms), ""},
@@ -1435,6 +1436,22 @@ func countDblpCandidates() int {
 //     duplicate pair (title-equal, not in non_doubles, no divergent DBLP/DOI evidence)
 //   - number of entries without a dblp field that have at least one unresolved DBLP
 //     title-index candidate (not already in non_doubles)
+func doHomework() {
+	doEnrichContributorData()
+	if Library.QuitWasRequested() {
+		return
+	}
+	doTriageAuthorMappings()
+	if Library.QuitWasRequested() {
+		return
+	}
+	doFixCandidates()
+	if Library.QuitWasRequested() {
+		return
+	}
+	doFixDuplicates()
+}
+
 func reportHomework() {
 	// Session-change summary: compare current state to what was captured at session open.
 	currentEntries := countBibEntries()
@@ -1485,13 +1502,18 @@ func reportHomework() {
 		}
 		return ""
 	}
-	hwRows := []statRow{
-		{StatTitleGroupsWithUnresolvedDuplicates, fmt.Sprintf("%d", unresolvedGroups), hwComment(unresolvedGroups, "fix_duplicates")},
-		{StatEntriesWithUnresolvedDblpCandidates, fmt.Sprintf("%d", dblpCandidates), hwComment(dblpCandidates, "fix_candidates")},
-	}
+	var triagePending int
+	bibQueryRow(`SELECT COUNT(*) FROM superseded_field_values WHERE triage_status IS NULL`).Scan(&triagePending)
+
+	var hwRows []statRow
 	if seenTableExists > 0 {
 		hwRows = append(hwRows, statRow{StatContributorsWithOrcidNotYetEnriched, fmt.Sprintf("%d", newOrcidContributors), hwComment(newOrcidContributors, "enrich_contributor_data")})
 	}
+	hwRows = append(hwRows,
+		statRow{StatLosingValuesPending, fmt.Sprintf("%d", triagePending), hwComment(triagePending, "triage_author_mappings")},
+		statRow{StatEntriesWithUnresolvedDblpCandidates, fmt.Sprintf("%d", dblpCandidates), hwComment(dblpCandidates, "fix_candidates")},
+		statRow{StatTitleGroupsWithUnresolvedDuplicates, fmt.Sprintf("%d", unresolvedGroups), hwComment(unresolvedGroups, "fix_duplicates")},
+	)
 	printStatBlock("Homework:", hwRows)
 	stderrPrintf("\n")
 }
@@ -1638,6 +1660,28 @@ func doAddToGroup(args []string) {
 			return
 		}
 		Library.GroupEntries.AddValueToStringSetMap(group, key)
+		bibEntriesModified = true
+	}
+}
+
+func doCreateGroup(args []string) {
+	if openLibraryToUpdate() {
+		groupName := args[0]
+		// Register group in memory even if no entries are supplied.
+		Library.GroupEntries.AddValueToStringSetMap(groupName, "")
+		Library.GroupEntries.DeleteValueFromStringSetMap(groupName, "")
+		for _, rawKey := range args[1:] {
+			key := Library.MapEntryKey(cleanKey(rawKey))
+			if key == "" {
+				fmt.Fprintf(os.Stderr, "Unknown key: %s\n", rawKey)
+				continue
+			}
+			if err := addBibGroupEntry(groupName, key); err != nil {
+				fmt.Fprintf(os.Stderr, "Could not add %s to group %s: %s\n", key, groupName, err)
+				continue
+			}
+			Library.GroupEntries.AddValueToStringSetMap(groupName, key)
+		}
 		bibEntriesModified = true
 	}
 }
@@ -3575,10 +3619,12 @@ func main() {
 		cmdUpgradeWatchActions      bool // -upgrade_watch_actions: rewrite watch file to contributor format
 		cmdAssignOrcid              bool // -assign_orcid: assign an ORCID to a contributor
 		cmdEnrichContributorData    bool // -enrich_contributor_data: run full contributor enrichment pipeline
+		cmdHomework                 bool // -homework: run all pending homework in priority order
 		cmdMergeContributors     bool // -merge_contributors: merge two contributors into one
 		cmdAddDblpEntry   bool
 		cmdAddDblpEntries bool
 		cmdWatch             bool
+		cmdAddGroup              bool // -add_group: create a new BibDesk static group (with optional initial entries)
 		cmdAddKeyMapping         bool
 		cmdMergeEntries       bool
 		cmdAddNameMapping     bool
@@ -3643,6 +3689,7 @@ func main() {
 	flag.BoolVar(&cmdUpgradeWatchActions, "upgrade_watch_actions", false, "rewrite watch file replacing name/orcid entries with contributor EP_XXXX")
 	flag.BoolVar(&cmdAssignOrcid, "assign_orcid", false, "assign an ORCID to a contributor: -assign_orcid <name-or-EP-id> <orcid>")
 	flag.BoolVar(&cmdEnrichContributorData, "enrich_contributor_data", false, "run full contributor enrichment pipeline: absorb DBLP names+ORCIDs, enrich from ORCID profiles, merge ORCID duplicates")
+	flag.BoolVar(&cmdHomework, "homework", false, "run all pending homework in priority order: enrich contributors, triage superseded values, fix DBLP candidates, fix duplicates")
 	flag.BoolVar(&cmdMatchedOrcidDataOnly, "matched_orcid_data_only", false, "with -enrich_contributor_data: skip ORCID challenges in step 3, leaving them as homework")
 	flag.BoolVar(&cmdMergeContributors, "merge_contributors", false, "merge second contributor into first: -merge_contributors <into> <from>")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
@@ -3652,6 +3699,7 @@ func main() {
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entry", false, "upsert DBLP data for one or more given entries (library or DBLP keys)")
 	flag.BoolVar(&cmdAddDblpEntry, "add_dblp_entries", false, "alias for -add_dblp_entry")
 	flag.BoolVar(&cmdWatch, "watch", false, "check watched persons/ORCIDs for missing publications")
+	flag.BoolVar(&cmdAddGroup, "add_group", false, "create a new BibDesk static group: -add_group <group_name> [key...]")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mapping", false, "add key alias(es) to a canonical key: -add_key_mapping <alias>... <canonical>")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mappings", false, "alias for -add_key_mapping")
 	flag.BoolVar(&cmdMergeEntries, "merge_entries", false, "merge entries into target: -merge_entries <key>... <target>")
@@ -3926,6 +3974,9 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	case cmdUpdateOrcidCache:
 		doUpdateOrcidCache()
 
+	case cmdHomework:
+		doHomework()
+
 	case cmdEnrichContributorData:
 		doEnrichContributorData()
 
@@ -3978,6 +4029,13 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 case cmdWatch:
 		requireNoDblpImport()
 		doWatch()
+
+	case cmdAddGroup:
+		if len(args) < 1 {
+			fmt.Fprintln(os.Stderr, "Usage: -add_group <group_name> [key...]")
+			os.Exit(1)
+		}
+		doCreateGroup(args)
 
 	case cmdAddKeyMapping:
 		if len(args) < 2 {

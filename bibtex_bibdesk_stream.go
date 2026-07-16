@@ -61,8 +61,17 @@ func (b *TBibTeXStream) BibDeskStaticGroupDefinition(comment string) bool {
 		if len(propertyKeys) == 3 {
 			groupName := strings.TrimSpace(propertyKeys[0])
 			entries := propertyKeys[1]
+			// Register the group name even when it has no entries, so empty groups
+			// survive the bib-file round-trip without needing a DB row.
+			if keyToIdx == nil {
+				b.library.GroupEntries.AddValueToStringSetMap(groupName, "")
+				b.library.GroupEntries.DeleteValueFromStringSetMap(groupName, "")
+			}
 			for _, key := range strings.Split(XMLCleanGroupList(entries), ",") {
 				key = strings.TrimSpace(key)
+				if key == "" {
+					continue
+				}
 				if keyToIdx != nil {
 					// Harvest-capture mode: write group onto the entry only.
 					// Do NOT update GroupEntries here — syncGroupMembershipsFromBib

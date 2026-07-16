@@ -252,7 +252,7 @@ func (r *TInteraction) AskForInput(prompt string) (string, error) {
 		return "", nil
 	}
 	SpinnerInterrupt()
-	fmt.Fprintf(os.Stderr, "\nINPUT:    %s (q=quit): ", prompt)
+	fmt.Fprintf(os.Stderr, "\nQUESTION: %s (q=quit): ", prompt)
 	line := readStdinLine()
 	if line == "q" {
 		r.quitRequested = true

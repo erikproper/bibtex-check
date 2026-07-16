@@ -196,6 +196,7 @@ const (
 	WarningFieldMappingCycle               = "Field mapping cycle rejected: (%s, %q) → (%s, %q) would close a cycle"
 
 	// Stat row labels — used in Library statistics, Session changes, and Homework blocks.
+	StatGroups                             = "Groups"
 	StatEntries                            = "Entries"
 	StatPDFFiles                           = "PDF files"
 	StatContributors                       = "Contributors"
