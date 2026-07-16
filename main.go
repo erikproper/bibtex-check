@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.130"
+const AppVersion = "27.132"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -365,6 +365,9 @@ func printSessionStats() {
 }
 
 func openLibraryToUpdate() bool {
+	if dbWriteSessionActive {
+		return true
+	}
 	if !prepareWorkingDatabase() {
 		return false
 	}
@@ -1503,7 +1506,7 @@ func reportHomework() {
 		return ""
 	}
 	var triagePending int
-	bibQueryRow(`SELECT COUNT(*) FROM superseded_field_values WHERE triage_status IS NULL`).Scan(&triagePending)
+	bibQueryRow(`SELECT COUNT(*) FROM superseded_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&triagePending)
 
 	var hwRows []statRow
 	if seenTableExists > 0 {

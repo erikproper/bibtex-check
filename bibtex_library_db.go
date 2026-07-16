@@ -1089,6 +1089,11 @@ func prepareWorkingDatabase() bool {
 		dbWriteSessionActive = true
 		return true
 	}
+	// Already in an active write session (e.g. a chained doHomework() step).
+	// The working DB is live — do not re-copy from home or re-run crash detection.
+	if dbWriteSessionActive {
+		return true
+	}
 	home := dbHomePath()
 	working := dbPath()
 
