@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.140"
+const AppVersion = "28.2"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -375,12 +375,7 @@ func openLibraryToUpdate() bool {
 	if !prepareWorkingDatabase() {
 		return false
 	}
-	maybeMigrateTableConstraints()
-	maybeMigrateStripLocalURL()
 	preCheckRepair()
-	maybeMigrateToFKSchema()
-	maybeMigrateContributorRolesCascade()
-	maybeMigrateDblpExportDirty()
 	stderrPrintf("\nOpening the library:\n")
 	Library.BeginDeferringMessages()
 	initialiseLibrary()
@@ -440,7 +435,6 @@ func openLibraryToReport() bool {
 	// Read-only session: suppress all routine progress; show only warnings and questions.
 	Reporting.progressSuppressed = true
 	initialiseLibrary() // propagates progressSuppressed via Library.Initialise(Reporting, ...)
-	maybeMigrateDblpExportDirty()
 	Library.ReadKeyOldiesFile()
 	loadMappingFiles()
 
@@ -941,11 +935,15 @@ func doTriageAuthorMappings() {
 	rows.Close()
 
 	retireSuperseded := func(key, field, superseded string) {
-		bibExec(`DELETE FROM superseded_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, superseded) //nolint:errcheck
+		if err := bibExec(`DELETE FROM superseded_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, superseded); err != nil {
+			dbWriteFailed = true
+		}
 	}
 
 	markKept := func(key, field, superseded string) {
-		bibExec(`UPDATE superseded_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, superseded) //nolint:errcheck
+		if err := bibExec(`UPDATE superseded_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, superseded); err != nil {
+			dbWriteFailed = true
+		}
 	}
 
 	splitOnAnd := func(value string) []string {
@@ -3024,7 +3022,9 @@ func doCorrectName(args []string) {
 		}
 		ndRows.Close()
 		for _, p := range pairs {
-			bibExec(`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, p[0], p[1]) //nolint:errcheck
+			if err := bibExec(`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, p[0], p[1]); err != nil {
+				dbWriteFailed = true
+			}
 			n1, n2 := p[0], p[1]
 			if n1 == oldName {
 				n1 = newName
@@ -3036,7 +3036,9 @@ func doCorrectName(args []string) {
 				if n1 > n2 {
 					n1, n2 = n2, n1
 				}
-				bibExec(`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, n1, n2) //nolint:errcheck
+				if err := bibExec(`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, n1, n2); err != nil {
+					dbWriteFailed = true
+				}
 			}
 		}
 	}
@@ -3916,12 +3918,8 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 		os.Exit(0)
 	}
 
-	maybeMigrateDbFile()
 	maybeMigrateDblpFolder()
 	maybeMigrateDblpNameFiles()
-	maybeMigrateTablesFolder()
-	maybeMigrateScriptFile()
-	maybeMigrateToHomePath()
 	connectToDatabase()
 
 	if !cmdSync && !cmdFindEntries && !cmdEntryKey && !cmdEntryKeyAlias && !cmdShowEntry {
@@ -4245,7 +4243,6 @@ case cmdAlignBooktitleCountries:
 	case cmdImportAllCSV:
 		// Does not require ValidBibDb: mapping tables are imported independently of bib entries.
 		if prepareWorkingDatabase() {
-			maybeMigrateTableConstraints()
 			if ImportAllCSVExchangeFiles() {
 				dbInteraction.Progress("All CSV exchange files imported successfully.")
 			}

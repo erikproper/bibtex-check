@@ -22,7 +22,6 @@ import (
 	"bufio"
 	"bytes"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -183,332 +182,6 @@ func dbPath() string {
 	return folder + bibTeXBaseName + cacheFileExtension
 }
 
-// maybeMigrateDbFile renames any legacy database file to the current extension
-// (.cache → .sqlite3). Migrates both the working path and, when isolation is
-// active, the home path. Called at startup before connectToDatabase.
-func maybeMigrateDbFile() {
-	migrateDbFilePath(dbPath())
-	if dbIsolationActive() {
-		migrateDbFilePath(dbHomePath())
-	}
-}
-
-func migrateDbFilePath(newPath string) {
-	if info, err := os.Stat(newPath); err == nil {
-		if info.Size() > 0 {
-			return // valid file already at new extension
-		}
-		os.Remove(newPath) // remove stale zero-byte file before renaming
-	}
-	oldPath := strings.TrimSuffix(newPath, cacheFileExtension) + ".cache"
-	if _, err := os.Stat(oldPath); err == nil {
-		if err := os.Rename(oldPath, newPath); err == nil {
-			dbInteraction.Progress("Migrated database: %s.cache → %s.sqlite3", bibTeXBaseName, bibTeXBaseName)
-		}
-	}
-}
-
-// maybeMigrateTablesFolder handles the two-step folder-name migration:
-//   v13.1: .tables/ → .exchange/   (old direction, now reverted)
-//   v23.0: .exchange/ → .tables/   (canonical name restored)
-// It also renames internal files that changed name in v23.0.
-func maybeMigrateTablesFolder() {
-	newDir := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix // .tables
-	oldDir := bibTeXFolder + bibTeXBaseName + ".exchange"
-
-	// v23.0: rename .exchange → .tables
-	if _, err := os.Stat(newDir); err != nil {
-		if _, err2 := os.Stat(oldDir); err2 == nil {
-			if err3 := os.Rename(oldDir, newDir); err3 != nil {
-				dbInteraction.Warning("Could not migrate .exchange folder: %s", err3)
-				return
-			}
-			dbInteraction.Progress("Migrated %s.exchange → %s.tables", bibTeXBaseName, bibTeXBaseName)
-		}
-	}
-
-	// Convert entry_metadata.json → entry_metadata.csv (v23.0 format change).
-	maybeConvertEntryMetadataToCSV()
-}
-
-// maybeRenameInTablesDir renames oldFile to newFile inside the tables folder if
-// oldFile exists and newFile does not.
-func maybeRenameInTablesDir(oldFile, newFile string) {
-	dir := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix
-	oldPath := dir + "/" + oldFile
-	newPath := dir + "/" + newFile
-	if _, err := os.Stat(newPath); err == nil {
-		return // already renamed
-	}
-	if _, err := os.Stat(oldPath); err != nil {
-		return // old file absent
-	}
-	if err := os.Rename(oldPath, newPath); err != nil {
-		dbInteraction.Warning("Could not rename %s → %s: %s", oldFile, newFile, err)
-	}
-}
-
-// maybeConvertEntryMetadataToCSV migrates the JSON entry_metadata export to
-// CSV format (entry_key;property;value).
-func maybeConvertEntryMetadataToCSV() {
-	dir := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix
-	jsonPath := dir + "/entry_metadata.json"
-	csvPath := dir + "/entry_metadata.csv"
-	if _, err := os.Stat(csvPath); err == nil {
-		return // already converted
-	}
-	data, err := os.ReadFile(jsonPath)
-	if err != nil {
-		return // no JSON file
-	}
-	var m map[string]map[string]string
-	if err := json.Unmarshal(data, &m); err != nil {
-		return
-	}
-	f, err := os.Create(csvPath)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	for entryKey, props := range m {
-		for prop, val := range props {
-			f.WriteString(csvLine(entryKey, prop, val) + "\n")
-		}
-	}
-	os.Remove(jsonPath)
-}
-
-// maybeMigrateScriptFile moves the legacy <base>.script file to
-// <base>.scripts/entry_actions on first run after upgrading.
-func maybeMigrateScriptFile() {
-	newPath := bibTeXFolder + bibTeXBaseName + ScriptFilePath
-	if _, err := os.Stat(newPath); err == nil {
-		return
-	}
-	oldPath := bibTeXFolder + bibTeXBaseName + ".script"
-	if _, err := os.Stat(oldPath); err != nil {
-		return
-	}
-	scriptsDir := bibTeXFolder + bibTeXBaseName + scriptsFolderSuffix
-	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
-		dbInteraction.Warning("Could not create scripts directory: %s", err)
-		return
-	}
-	if err := os.Rename(oldPath, newPath); err != nil {
-		dbInteraction.Warning("Could not migrate .script file: %s", err)
-		return
-	}
-	dbInteraction.Progress("Migrated %s.script → %s.scripts/entry_actions", bibTeXBaseName, bibTeXBaseName)
-}
-
-var tableConstraintsMigrated bool
-
-// maybeMigrateTableConstraints detects mapping tables that were created without
-// their required UNIQUE / PRIMARY KEY constraint (due to CREATE TABLE IF NOT EXISTS
-// leaving an older schema in place) and recreates them with deduplication.
-// Must be called after prepareWorkingDatabase() so the correct DB file is open.
-// Guarded by tableConstraintsMigrated so it runs at most once per process.
-func maybeMigrateTableConstraints() {
-	if tableConstraintsMigrated {
-		return
-	}
-	tableConstraintsMigrated = true
-	type tableSpec struct {
-		table   string
-		pk      string // PRIMARY KEY column name
-		cols    string // column definitions for the recreated table
-		selCols string // explicit column list for INSERT ... SELECT
-	}
-	tables := []tableSpec{
-		{"key_hints",     "hint",  "hint TEXT PRIMARY KEY, key TEXT NOT NULL",   "hint, key"},
-		{"key_oldies",    "alias", "alias TEXT PRIMARY KEY, key TEXT NOT NULL",  "alias, key"},
-	}
-
-	for _, t := range tables {
-		var createSQL string
-		db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, t.table).Scan(&createSQL)
-		if strings.Contains(strings.ToUpper(createSQL), "PRIMARY KEY") {
-			continue // constraint already present
-		}
-		dbInteraction.Progress("Migrating %s: adding PRIMARY KEY on %s and deduplicating", t.table, t.pk)
-		tmp := t.table + "_migration_tmp"
-		stmts := []string{
-			`DROP TABLE IF EXISTS ` + tmp,
-			`CREATE TABLE ` + tmp + ` (` + t.cols + `)`,
-			fmt.Sprintf(`INSERT OR IGNORE INTO %s (%s) SELECT %s FROM %s`, tmp, t.selCols, t.selCols, t.table),
-			`DROP TABLE ` + t.table,
-			`ALTER TABLE ` + tmp + ` RENAME TO ` + t.table,
-		}
-		ok := true
-		for _, stmt := range stmts {
-			if _, err := db.Exec(stmt); err != nil {
-				dbInteraction.Warning("Migration of %s failed at %q: %s", t.table, stmt, err)
-				ok = false
-				break
-			}
-		}
-		if ok {
-			dbInteraction.Progress("Migrated %s: PRIMARY KEY added, duplicates removed", t.table)
-		}
-	}
-
-}
-
-var fkSchemaMigrated bool
-
-// maybeMigrateToFKSchema recreates bib_groups, superseded_field_values, entry_warnings,
-// and entry_metadata with FOREIGN KEY ... ON DELETE CASCADE referencing bib_entry_keys.
-// Cleans orphan rows from each source table before copying so no violations are
-// introduced when FK is re-enabled. Guarded so it runs at most once per process.
-func maybeMigrateToFKSchema() {
-	if fkSchemaMigrated {
-		return
-	}
-	fkSchemaMigrated = true
-
-	type tableSpec struct {
-		table   string
-		cols    string
-		selCols string
-		fkCol   string
-	}
-	tables := []tableSpec{
-		{
-			"bib_groups",
-			`group_name TEXT NOT NULL, entry_key TEXT NOT NULL,
-			 PRIMARY KEY (group_name, entry_key),
-			 FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
-			"group_name, entry_key",
-			"entry_key",
-		},
-		{
-			"superseded_field_values",
-			`entry_key TEXT NOT NULL, field TEXT NOT NULL, value TEXT NOT NULL,
-			 PRIMARY KEY (entry_key, field, value),
-			 FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
-			"entry_key, field, value",
-			"entry_key",
-		},
-		{
-			"entry_warnings",
-			`key TEXT NOT NULL, warning TEXT NOT NULL DEFAULT '',
-			 UNIQUE(key, warning),
-			 FOREIGN KEY (key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
-			"key, warning",
-			"key",
-		},
-		{
-			"entry_metadata",
-			`entry_key TEXT NOT NULL, property TEXT NOT NULL, value TEXT NOT NULL,
-			 PRIMARY KEY (entry_key, property),
-			 FOREIGN KEY (entry_key) REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE`,
-			"entry_key, property, value",
-			"entry_key",
-		},
-	}
-
-	needsMigration := false
-	for _, t := range tables {
-		var createSQL string
-		db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, t.table).Scan(&createSQL)
-		if !strings.Contains(strings.ToUpper(createSQL), "REFERENCES") {
-			needsMigration = true
-			break
-		}
-	}
-	if !needsMigration {
-		return
-	}
-
-	dbInteraction.Progress("Migrating schema: adding FK constraints to dependent tables")
-	db.Exec(`PRAGMA foreign_keys = OFF`)
-	for _, t := range tables {
-		var createSQL string
-		db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, t.table).Scan(&createSQL)
-		if strings.Contains(strings.ToUpper(createSQL), "REFERENCES") {
-			continue
-		}
-		db.Exec(fmt.Sprintf(
-			`DELETE FROM %s WHERE %s NOT IN (SELECT entry_key FROM bib_entry_keys)`,
-			t.table, t.fkCol))
-		tmp := t.table + "_fk_migration_tmp"
-		stmts := []string{
-			`DROP TABLE IF EXISTS ` + tmp,
-			`CREATE TABLE ` + tmp + ` (` + t.cols + `)`,
-			fmt.Sprintf(`INSERT OR IGNORE INTO %s (%s) SELECT %s FROM %s`, tmp, t.selCols, t.selCols, t.table),
-			`DROP TABLE ` + t.table,
-			`ALTER TABLE ` + tmp + ` RENAME TO ` + t.table,
-		}
-		ok := true
-		for _, stmt := range stmts {
-			if _, err := db.Exec(stmt); err != nil {
-				dbInteraction.Warning("FK migration of %s failed: %s", t.table, err)
-				ok = false
-				break
-			}
-		}
-		if ok {
-			dbInteraction.Progress("Added FK ON DELETE CASCADE to %s", t.table)
-		}
-	}
-	db.Exec(`PRAGMA foreign_keys = ON`)
-}
-
-var contributorRolesCascadeMigrated bool
-
-// maybeMigrateContributorRolesCascade adds ON DELETE CASCADE to the entry_key FK
-// on contributor_roles. Without it, deleting an entry leaves orphan rows in
-// contributor_roles (and via its own cascade, in entry_contributor_names), requiring
-// preCheckRepair to sweep them up on every run. entry_contributor_names references
-// contributor_roles by name and needs no change — it re-attaches automatically after
-// the rename.
-func maybeMigrateContributorRolesCascade() {
-	if contributorRolesCascadeMigrated {
-		return
-	}
-	contributorRolesCascadeMigrated = true
-
-	var createSQL string
-	db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='contributor_roles'`).Scan(&createSQL)
-	if strings.Contains(strings.ToUpper(createSQL), "ON DELETE CASCADE") {
-		return
-	}
-
-	dbInteraction.Progress("Migrating schema: adding ON DELETE CASCADE to contributor_roles.entry_key")
-	db.Exec(`PRAGMA foreign_keys = OFF`)
-
-	// Remove orphans before recreating so the new FK constraints are not violated.
-	db.Exec(`DELETE FROM contributor_roles WHERE entry_key NOT IN (SELECT entry_key FROM bib_entry_keys)`)
-
-	const tmp = "contributor_roles_cascade_tmp"
-	stmts := []string{
-		`DROP TABLE IF EXISTS ` + tmp,
-		`CREATE TABLE ` + tmp + ` (
-		   entry_key      TEXT    NOT NULL REFERENCES bib_entry_keys(entry_key) ON DELETE CASCADE,
-		   role           TEXT    NOT NULL,
-		   position       INTEGER NOT NULL,
-		   contributor_id TEXT    NOT NULL REFERENCES contributors(id),
-		   PRIMARY KEY (entry_key, role, position)
-		 )`,
-		`INSERT OR IGNORE INTO ` + tmp + ` (entry_key, role, position, contributor_id)
-		   SELECT entry_key, role, position, contributor_id FROM contributor_roles`,
-		`DROP TABLE contributor_roles`,
-		`ALTER TABLE ` + tmp + ` RENAME TO contributor_roles`,
-	}
-	ok := true
-	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
-			dbInteraction.Warning("contributor_roles CASCADE migration failed: %s", err)
-			ok = false
-			break
-		}
-	}
-	if ok {
-		dbInteraction.Progress("Added ON DELETE CASCADE to contributor_roles.entry_key")
-	}
-	db.Exec(`PRAGMA foreign_keys = ON`)
-}
-
 // configureDatabasePragmas sets WAL journal mode and a busy timeout on the
 // current db connection. WAL allows a writer to proceed concurrently with open
 // read cursors (eliminating SQLITE_BUSY when setTableDirty is called from
@@ -546,18 +219,11 @@ func connectToDatabase() {
 	}
 
 	ensureTableDatesTableExists()
-	maybeMigrateFilterTableNames()
 	maybeConsolidateEntryFlags()
 	ensureContributorsTableExists()
 	ensureContributorNamesTableExists()
 	ensureContributorRolesTableExists()
 	ensureEntryContributorNamesTableExists()
-	maybeMigrateContributorsAddGarbled()
-	maybeMigrateContributorsAddDblpKey()
-	maybeMigrateEntryContributorNamesSchema()
-	maybeMigrateEntryContributorNamesAddOrcidUsed()
-	maybeMigrateEntryContributorNamesRenameAlias()
-	maybeMigrateEntryContributorNamesAddDblpKeyUsed()
 	ensureNonDoubleContributorsTableExists()
 	ensureContributorIDOldiesTableExists()
 	ensureContributorORCIDsTableExists()
@@ -574,7 +240,6 @@ func connectToDatabase() {
 	ensureCrossFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
 	ensureFieldMappingsTableExists()
-	maybeMigrateToFieldMappings()
 	db.Exec(`DELETE FROM generic_field_mappings`) //nolint:errcheck
 	db.Exec(`DELETE FROM cross_field_mappings`)   //nolint:errcheck
 	ensureURLsIgnoreTableExists()
@@ -768,17 +433,10 @@ func reopenDb(path string) {
 	}
 	configureDatabasePragmas()
 	ensureTableDatesTableExists()
-	maybeMigrateFilterTableNames()
 	ensureContributorsTableExists()
 	ensureContributorNamesTableExists()
 	ensureContributorRolesTableExists()
 	ensureEntryContributorNamesTableExists()
-	maybeMigrateContributorsAddGarbled()
-	maybeMigrateContributorsAddDblpKey()
-	maybeMigrateEntryContributorNamesSchema()
-	maybeMigrateEntryContributorNamesAddOrcidUsed()
-	maybeMigrateEntryContributorNamesRenameAlias()
-	maybeMigrateEntryContributorNamesAddDblpKeyUsed()
 	ensureNonDoubleContributorsTableExists()
 	ensureContributorIDOldiesTableExists()
 	ensureContributorORCIDsTableExists()
@@ -1060,27 +718,6 @@ func dbIsolationActive() bool {
 // maybeMigrateToHomePath establishes the home database copy on the first run after
 // write-session isolation is introduced. If the home path is absent or empty but the
 // working path holds a real database, the working copy becomes the initial home copy.
-func maybeMigrateToHomePath() {
-	if !dbIsolationActive() {
-		return
-	}
-	home := dbHomePath()
-	if info, err := os.Stat(home); err == nil && info.Size() > 0 {
-		return
-	}
-	working := dbPath()
-	wInfo, err := os.Stat(working)
-	if err != nil || wInfo.Size() == 0 {
-		return
-	}
-	if err := copyFileAtomic(working, home); err != nil {
-		dbInteraction.Warning("Could not establish home database: %s", err)
-		return
-	}
-	os.Chtimes(home, wInfo.ModTime(), wInfo.ModTime())
-	dbInteraction.Progress("Established home database: %s", home)
-}
-
 // prepareWorkingDatabase ensures the working database is a current copy of the home
 // database before a write session begins. Detects a stale working copy left by a
 // crash and offers the user a chance to restore. Returns false on setup failure.
@@ -1638,28 +1275,6 @@ func ensureTableDatesTableExists() {
 // maybeMigrateFilterTableNames renames all legacy filter_* table names to their
 // canonical non-prefixed form. All original filter_* tables that should never have
 // had the prefix.
-func maybeMigrateFilterTableNames() {
-	renames := [][2]string{
-		{"filter_generic_field_mappings", "generic_field_mappings"},
-		{"filter_cross_field_mappings", "cross_field_mappings"},
-		{"filter_state_names", "state_names"},
-		{"filter_state_countries", "state_countries"},
-		{"filter_country_names", "country_names"},
-		{"filter_booktitle_country_names", "booktitle_country_names"},
-	}
-	for _, pair := range renames {
-		old, new := pair[0], pair[1]
-		var n int
-		db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, old).Scan(&n)
-		if n == 0 {
-			continue
-		}
-		db.Exec(`ALTER TABLE ` + old + ` RENAME TO ` + new)
-		db.Exec(`UPDATE table_modification_times SET table_name = ? WHERE table_name = ?`, new, old)
-		dbInteraction.Progress("Migrated table %s → %s", old, new)
-	}
-}
-
 func setTableDate(tableName string, date int64) {
 	err := bibExec(`
 		INSERT INTO table_modification_times (table_name, modification_time)
@@ -1845,66 +1460,6 @@ func ensureEntryContributorNamesTableExists() {
 
 // maybeMigrateEntryContributorNamesAddOrcidUsed adds the orcid_used column to
 // entry_contributor_names when it is absent (databases created before this migration).
-func maybeMigrateEntryContributorNamesAddOrcidUsed() {
-	var hasCol int
-	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entry_contributor_names') WHERE name='orcid_used'`).Scan(&hasCol) //nolint:errcheck
-	if hasCol > 0 {
-		return
-	}
-	db.Exec(`ALTER TABLE entry_contributor_names ADD COLUMN orcid_used TEXT`) //nolint:errcheck
-}
-
-// maybeMigrateEntryContributorNamesRenameAlias renames the legacy `alias` column to
-// `name_used` to better reflect its meaning: the exact name form used on the publication.
-func maybeMigrateEntryContributorNamesRenameAlias() {
-	var hasAlias int
-	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entry_contributor_names') WHERE name='alias'`).Scan(&hasAlias) //nolint:errcheck
-	if hasAlias == 0 {
-		return // already renamed
-	}
-	db.Exec(`ALTER TABLE entry_contributor_names RENAME COLUMN alias TO name_used`) //nolint:errcheck
-}
-
-// maybeMigrateEntryContributorNamesSchema drops and recreates entry_contributor_names
-// when the old schema (no position column) is still in place.
-// Safe to run whenever — the table is empty until disambiguation data is written.
-func maybeMigrateContributorsAddGarbled() {
-	var hasGarbled int
-	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('contributors') WHERE name='garbled'`).Scan(&hasGarbled) //nolint:errcheck
-	if hasGarbled > 0 {
-		return
-	}
-	db.Exec(`ALTER TABLE contributors ADD COLUMN garbled INTEGER NOT NULL DEFAULT 0`) //nolint:errcheck
-}
-
-func maybeMigrateContributorsAddDblpKey() {
-	var has int
-	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('contributors') WHERE name='dblp_key'`).Scan(&has) //nolint:errcheck
-	if has > 0 {
-		return
-	}
-	db.Exec(`ALTER TABLE contributors ADD COLUMN dblp_key TEXT`) //nolint:errcheck
-}
-
-func maybeMigrateEntryContributorNamesAddDblpKeyUsed() {
-	var has int
-	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entry_contributor_names') WHERE name='dblp_key_used'`).Scan(&has) //nolint:errcheck
-	if has > 0 {
-		return
-	}
-	db.Exec(`ALTER TABLE entry_contributor_names ADD COLUMN dblp_key_used TEXT`) //nolint:errcheck
-}
-
-func maybeMigrateEntryContributorNamesSchema() {
-	var hasPosition int
-	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('entry_contributor_names') WHERE name='position'`).Scan(&hasPosition) //nolint:errcheck
-	if hasPosition > 0 {
-		return
-	}
-	db.Exec(`DROP TABLE IF EXISTS entry_contributor_names`) //nolint:errcheck
-	ensureEntryContributorNamesTableExists()
-}
-
 func ensureNonDoubleContributorsTableExists() {
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS non_double_contributors (
@@ -3219,18 +2774,6 @@ func newKeyOldiesTable() *TKeyAliasTable {
 
 // --- non_double_entries table ---
 
-func maybeMigrateKeyNonDoublesToNonDoubleEntries() {
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='key_non_doubles'`).Scan(&count); err != nil || count == 0 {
-		// Copy modification timestamp forward if only the TMT row survives.
-		db.Exec(`UPDATE table_modification_times SET table_name = 'non_double_entries' WHERE table_name = 'key_non_doubles'`) //nolint:errcheck
-		return
-	}
-	db.Exec(`INSERT OR IGNORE INTO non_double_entries SELECT key1, key2 FROM key_non_doubles`)                                //nolint:errcheck
-	db.Exec(`UPDATE table_modification_times SET table_name = 'non_double_entries' WHERE table_name = 'key_non_doubles'`)    //nolint:errcheck
-	db.Exec(`DROP TABLE key_non_doubles`)                                                                                     //nolint:errcheck
-}
-
 func ensureKeyNonDoublesTableExists() {
 	tryCreateTableIfNeeded(`
 		CREATE TABLE IF NOT EXISTS non_double_entries (
@@ -3238,7 +2781,6 @@ func ensureKeyNonDoublesTableExists() {
 		  key2 TEXT NOT NULL,
 		  PRIMARY KEY (key1, key2)
 		);`)
-	maybeMigrateKeyNonDoublesToNonDoubleEntries()
 }
 
 // loadKeyNonDoublesFromDb populates l.NonDoubleEntries from the DB.
@@ -3886,38 +3428,6 @@ func ensureFieldMappingsTableExists() {
 		);`)
 }
 
-// maybeMigrateDblpExportDirty marks dblp_waived and dblp_parent as dirty once.
-// Before v27.40 their TCachedTable constructors lacked onModify hooks, so writes
-// never updated table_modification_times. The export staleness check would skip
-// re-exporting even when the DB had more rows than the CSV. Marking dirty forces
-// the next -export to re-sync both files.
-func maybeMigrateDblpExportDirty() {
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM table_modification_times WHERE table_name = 'dblp_export_resynced_v1'`).Scan(&count)
-	if count > 0 {
-		return
-	}
-	setTableDirty("dblp_waived")
-	setTableDirty("dblp_parent")
-	db.Exec(`INSERT OR IGNORE INTO table_modification_times (table_name, modification_time) VALUES ('dblp_export_resynced_v1', ?)`, //nolint:errcheck
-		time.Now().UnixMicro())
-}
-
-// maybeMigrateToFieldMappings populates field_mappings from the two legacy tables on first use.
-// Generic mappings (field, challenger→winner) become (field, challenger, field, winner).
-// Cross-field mappings copy directly. Safe to re-run: INSERT OR IGNORE skips duplicates.
-func maybeMigrateToFieldMappings() {
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM field_mappings`).Scan(&count)
-	if count > 0 {
-		return
-	}
-	db.Exec(`INSERT OR IGNORE INTO field_mappings (source_field, source_value, target_field, target_value)
-	         SELECT field, challenger, field, winner FROM generic_field_mappings`)
-	db.Exec(`INSERT OR IGNORE INTO field_mappings (source_field, source_value, target_field, target_value)
-	         SELECT source_field, source_value, target_field, target_value FROM cross_field_mappings`)
-}
-
 // loadFieldMappingsFromDb populates both l.GenericFieldSourceToTarget and l.FieldMappings
 // from the unified field_mappings table. Rows with source_field == target_field are generic;
 // others are cross-field. Returns true when normalisation changed any stored value.
@@ -4150,22 +3660,6 @@ func cleanupRedundantSuperseded() {
 	if n, _ := res.RowsAffected(); n > 0 {
 		dbInteraction.Progress("Removed %d redundant superseded value(s) (value matches current winner)", n)
 	}
-}
-
-// maybeMigrateStripLocalURL deletes all local-url rows from bib_entries on the first
-// run after the PDFFiles migration. PDF presence is now derived from the filesystem
-// (Library.PDFFiles) so these rows are stale and would never be read again.
-func maybeMigrateStripLocalURL() {
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = 'local-url'`).Scan(&count)
-	if count == 0 {
-		return
-	}
-	if _, err := db.Exec(`DELETE FROM bib_entries WHERE field = 'local-url'`); err != nil {
-		dbInteraction.Warning("Could not strip local-url rows from bib_entries: %s", err)
-		return
-	}
-	dbInteraction.Progress("Migrated: stripped %d local-url rows from bib_entries (PDF presence now tracked via filesystem)", count)
 }
 
 // --- entry_warnings table ---
@@ -4890,7 +4384,10 @@ func upsertBibEntryField(key, field, value string) {
 		// Use bibExec (not db.Exec) so the INSERT runs inside activeTx when a
 		// bib transaction is active — a bare db.Exec competes for a second write
 		// slot and gets SQLITE_BUSY_SNAPSHOT (517) in WAL mode.
-		bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, key) //nolint:errcheck
+		if err2 := bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, key); err2 != nil {
+			dbWriteFailed = true
+			return
+		}
 		err = bibExec(
 			`INSERT INTO bib_entries (entry_key, field, value) VALUES (?, ?, ?)
 			   ON CONFLICT(entry_key, field) DO UPDATE SET value = excluded.value;`,

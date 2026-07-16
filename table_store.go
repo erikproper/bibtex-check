@@ -261,7 +261,9 @@ func (t *TKeyAliasTable) Load() {
 
 		if !bibEntryExists(canonical) {
 			// Target gone — delete from DB immediately.
-			bibExec(t.deleteSQL, p.alias) //nolint:errcheck
+			if err := bibExec(t.deleteSQL, p.alias); err != nil {
+				dbWriteFailed = true
+			}
 			continue
 		}
 		if p.alias == canonical {
