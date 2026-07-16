@@ -159,16 +159,18 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 	type redundant struct {
 		entry, field, challenger string
 	}
+	type deletedEntry struct {
+		entry, field, challenger, winner string
+	}
 	var fixes []mismatch
 	var redundants []redundant
-	deletedMappings := 0
+	var deleteds []deletedEntry
 
 	for entry, fieldMap := range l.EntryFieldSourceToTarget {
 		if !l.EntryExists(entry) {
 			for field, challengerMap := range fieldMap {
 				for challenger, winner := range challengerMap {
-					l.Warning(WarningEntryFieldMappingDeletedEntry, entry, field, challenger, winner)
-					deletedMappings++
+					deleteds = append(deleteds, deletedEntry{entry, field, challenger, winner})
 				}
 			}
 			continue
@@ -198,7 +200,6 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 	}
 
 	for _, m := range fixes {
-		l.Warning(WarningEntryFieldMappingWinnerMismatch, m.entry, m.field, m.winner, m.actual)
 		l.UpdateEntryFieldAlias(m.entry, m.field, m.winner, m.actual)
 	}
 
@@ -214,7 +215,25 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 		}
 	}
 
-	l.Progress(ProgressEntryFieldMappingWinnersResult, len(fixes), deletedMappings)
+	if len(fixes) > 0 || len(deleteds) > 0 {
+		logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/entry_field_mapping_winners.log"
+		os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+		if f, err := os.Create(logPath); err == nil {
+			defer f.Close()
+			for _, m := range fixes {
+				fmt.Fprintf(f, WarningEntryFieldMappingWinnerMismatch+"\n", m.entry, m.field, m.winner, m.actual)
+			}
+			for _, d := range deleteds {
+				fmt.Fprintf(f, WarningEntryFieldMappingDeletedEntry+"\n", d.entry, d.field, d.challenger, d.winner)
+			}
+		}
+	}
+
+	if len(fixes) > 0 || len(deleteds) > 0 {
+		l.Progress("  Entry-field mapping winner check: %d fixed, %d for deleted entries (see entry_field_mapping_winners.log)", len(fixes), len(deleteds))
+	} else {
+		l.Progress(ProgressEntryFieldMappingWinnersResult)
+	}
 }
 
 /*

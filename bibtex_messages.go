@@ -190,7 +190,7 @@ const (
 	ProgressCheckingEntryFieldMappingWinners  = "  Checking entry-field mapping winner consistency"
 	WarningEntryFieldMappingWinnerMismatch    = "Entry-field mapping winner mismatch: entry=%s field=%s winner=%q actual=%q"
 	WarningEntryFieldMappingDeletedEntry      = "Entry-field mapping references deleted entry %s — field=%s challenger=%q winner=%q"
-	ProgressEntryFieldMappingWinnersResult    = "  Entry-field mapping winner check: %d fixed, %d mapping(s) for deleted entries"
+	ProgressEntryFieldMappingWinnersResult    = "  Entry-field mapping winner check: OK"
 
 	WarningGenericFieldMappingAuthorEditor = "field_mappings: field %q not allowed as same-field mapping (winner=%q, challenger=%q) — use superseded_field_values instead"
 	WarningFieldMappingCycle               = "Field mapping cycle rejected: (%s, %q) → (%s, %q) would close a cycle"
