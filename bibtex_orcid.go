@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -28,39 +27,9 @@ import (
 )
 
 const (
-	orcidAPIBase        = "https://pub.orcid.org/v3.0"
-	onlineProbeHost     = "8.8.8.8:53"                                      // Google public DNS — TCP reachability pre-check
-	onlineProbeHTTP     = "http://connectivitycheck.gstatic.com/generate_204" // returns 204 on real internet; captive portals return 200/302
-	dialTimeout         = 3 * time.Second
-	httpTimeout         = 10 * time.Second
+	orcidAPIBase = "https://pub.orcid.org/v3.0"
+	httpTimeout  = 10 * time.Second
 )
-
-// Online is set once at startup: true when general internet connectivity is available.
-var Online bool
-
-func init() {
-	conn, err := net.DialTimeout("tcp", onlineProbeHost, dialTimeout)
-	if err != nil {
-		Online = false
-		return
-	}
-	conn.Close()
-	// TCP dial can succeed behind captive portals (intercept and complete handshake).
-	// A real HTTP probe distinguishes "WiFi with no internet" from actual connectivity.
-	client := &http.Client{
-		Timeout: dialTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse // don't follow captive-portal redirects
-		},
-	}
-	resp, err := client.Get(onlineProbeHTTP)
-	if err != nil {
-		Online = false
-		return
-	}
-	resp.Body.Close()
-	Online = resp.StatusCode == http.StatusNoContent
-}
 
 // orcidPersonResult holds name information extracted from an ORCID /person response.
 type orcidPersonResult struct {
@@ -312,8 +281,7 @@ func orcidCacheAge(orcid string) time.Time {
 func doUpdateOrcidCache() {
 	// Re-probe connectivity now, not just at startup, since the network may have
 	// changed state since the binary was launched.
-	_, connErr := net.DialTimeout("tcp", onlineProbeHost, dialTimeout)
-	if connErr != nil {
+	if !probeConnectivity() {
 		fmt.Fprintf(os.Stderr, "No network connectivity — cannot refresh ORCID cache.\n")
 		return
 	}
