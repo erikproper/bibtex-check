@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.138"
+const AppVersion = "27.139"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2833,8 +2833,8 @@ func doMergeEntries(args []string) {
 
 func doSetPreferredAlias(args []string) {
 	if openLibraryToUpdate() {
-		key := Library.MapEntryKey(cleanKey(args[0]))
-		alias := args[1]
+		alias := args[0]
+		key := Library.MapEntryKey(cleanKey(args[1]))
 		entry := Library.buildEntry(key)
 		if !entry.Exists() {
 			fmt.Fprintf(os.Stderr, "Entry %s does not exist\n", key)
@@ -2889,19 +2889,19 @@ func doAddNameMapping(args []string) {
 	if !openLibraryToUpdate() {
 		return
 	}
-	canonical, alias := args[0], args[1]
+	alias, canonical := args[0], args[1]
 	if strings.HasPrefix(args[0], "EP-") {
 		if _, name, ok := resolveContributorArg(args[0]); !ok {
 			return
 		} else {
-			canonical = name
+			alias = name
 		}
 	}
 	if strings.HasPrefix(args[1], "EP-") {
 		if _, name, ok := resolveContributorArg(args[1]); !ok {
 			return
 		} else {
-			alias = name
+			canonical = name
 		}
 	}
 	Library.AddNameMapping(canonical, alias)
@@ -3050,8 +3050,8 @@ func doMergeContributors(args []string) {
 	if !openLibraryToUpdate() {
 		return
 	}
-	toID, toName, ok1 := resolveContributorArg(args[0])
-	fromID, fromName, ok2 := resolveContributorArg(args[1])
+	fromID, fromName, ok1 := resolveContributorArg(args[0])
+	toID, toName, ok2 := resolveContributorArg(args[1])
 	if !ok1 || !ok2 {
 		return
 	}
@@ -3725,7 +3725,7 @@ func main() {
 	flag.BoolVar(&cmdEnrichContributorData, "enrich_contributor_data", false, "run full contributor enrichment pipeline: absorb DBLP names+ORCIDs, enrich from ORCID profiles, merge ORCID duplicates")
 	flag.BoolVar(&cmdHomework, "homework", false, "run all pending homework in priority order: enrich contributors, triage superseded values, fix DBLP candidates, fix duplicates")
 	flag.BoolVar(&cmdMatchedOrcidDataOnly, "matched_orcid_data_only", false, "with -enrich_contributor_data: skip ORCID challenges in step 3, leaving them as homework")
-	flag.BoolVar(&cmdMergeContributors, "merge_contributors", false, "merge second contributor into first: -merge_contributors <into> <from>")
+	flag.BoolVar(&cmdMergeContributors, "merge_contributors", false, "merge contributor into another: -merge_contributors <from> <into>")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
 	flag.BoolVar(&cmdFixCandidates, "fix_candidates", false, "interactively link library entries without a DBLP key to DBLP records")
 	flag.BoolVar(&cmdFixCandidates, "extend_dblp_coverage", false, "alias for -fix_candidates")
@@ -3737,10 +3737,10 @@ func main() {
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mapping", false, "add key alias(es) to a canonical key: -add_key_mapping <alias>... <canonical>")
 	flag.BoolVar(&cmdAddKeyMapping, "add_key_mappings", false, "alias for -add_key_mapping")
 	flag.BoolVar(&cmdMergeEntries, "merge_entries", false, "merge entries into target: -merge_entries <key>... <target>")
-	flag.BoolVar(&cmdAddNameMapping, "add_name_mapping", false, "add a name alias mapping: -add_name_mapping <canonical> <alias>")
+	flag.BoolVar(&cmdAddNameMapping, "add_name_mapping", false, "add a name alias mapping: -add_name_mapping <alias> <canonical>")
 	flag.BoolVar(&cmdCorrectName, "correct_name", false, "correct a name spelling everywhere: -correct_name <bad_name> <correct_name>")
-	flag.BoolVar(&cmdAddDoiAlias, "add_doi_alias", false, "record a DOI as an alias for an entry: -add_doi_alias <entry_key> <doi>")
-	flag.BoolVar(&cmdSetPreferredAlias, "set_preferred_alias", false, "set preferred alias for a key: -set_preferred_alias <key> <alias>")
+	flag.BoolVar(&cmdAddDoiAlias, "add_doi_alias", false, "record a DOI as an alias for an entry: -add_doi_alias <doi> <entry_key>")
+	flag.BoolVar(&cmdSetPreferredAlias, "set_preferred_alias", false, "set preferred alias for a key: -set_preferred_alias <alias> <key>")
 	flag.BoolVar(&cmdNewKey, "new_key", false, "print a fresh canonical key and exit")
 	flag.BoolVar(&cmdDeleteEntry, "delete_entry", false, "delete one or more library entries: -delete_entry <key>...")
 	flag.BoolVar(&cmdMap, "map", false, "also record alias→key in the project map file (with -entry_key_alias)")
@@ -4101,13 +4101,13 @@ case cmdWatch:
 
 	case cmdAddDoiAlias:
 		if len(args) != 2 {
-			fmt.Fprintln(os.Stderr, "Usage: -add_doi_alias <entry_key> <doi>")
+			fmt.Fprintln(os.Stderr, "Usage: -add_doi_alias <doi> <entry_key>")
 			os.Exit(1)
 		}
 		if !openLibraryToUpdate() {
 			os.Exit(1)
 		}
-		addEntryDoiAlias(args[0], args[1])
+		addEntryDoiAlias(args[1], args[0])
 
 	case cmdDeleteEntry:
 		if len(args) == 0 {
