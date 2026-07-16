@@ -605,7 +605,11 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 			fmt.Fprintf(os.Stderr, "[%d]\n", i+1)
 			fmt.Fprint(os.Stderr, l.entryDisplayString(k))
 		}
-		if pick := l.askHarvestLibraryChoice(len(titleMatches)); pick > 0 {
+		pick := l.askHarvestLibraryChoice(len(titleMatches))
+		if l.QuitWasRequested() {
+			return "", true
+		}
+		if pick > 0 {
 			finalKey := mergeAndCheck(addHarvestEntry(l, e), titleMatches[pick-1])
 			maybeCollectKeyHint(l, e.Key, finalKey)
 			l.maybeHarvestPDF(e, finalKey)
@@ -625,7 +629,11 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 			if matched := l.MapEntryKey(canon); l.EntryExists(matched) {
 				fmt.Fprintf(os.Stderr, "DBLP key match in library:\n")
 				fmt.Fprint(os.Stderr, l.entryDisplayString(matched))
-				if pick := l.askHarvestLibraryChoice(1); pick > 0 {
+				pick := l.askHarvestLibraryChoice(1)
+				if l.QuitWasRequested() {
+					return "", true
+				}
+				if pick > 0 {
 					finalKey := mergeAndCheck(addHarvestEntry(l, e), matched)
 					maybeCollectKeyHint(l, e.Key, finalKey)
 					l.maybeHarvestPDF(e, finalKey)
@@ -641,7 +649,11 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 
 	// Step 3: DBLP title match (only when source has no dblp field yet).
 	if e.Fields[DBLPField] == "" {
-		if chosen := l.harvestFindDblpCandidates(e); chosen != "" {
+		chosen := l.harvestFindDblpCandidates(e)
+		if l.QuitWasRequested() {
+			return "", true
+		}
+		if chosen != "" {
 			newKey := addHarvestEntry(l, e)
 			l.AssociateDblpKey(newKey, chosen)
 			finalKey := l.MapEntryKey(newKey)

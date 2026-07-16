@@ -2606,7 +2606,7 @@ func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
 		dbInteraction.Warning("Could not write orphaned_contributors.log: %s", err)
 	}
 
-	l.Progress("Cleaning up %d orphaned contributor(s) with no roles (see orphaned_contributors.log) ...", len(orphanIDs))
+	l.Progress("  Cleaning up %d orphaned contributor(s) with no roles (see orphaned_contributors.log) ...", len(orphanIDs))
 	// Fix stale entry_contributor_names rows that reference orphaned contributors
 	// before the DELETE: contributor_id has no ON DELETE CASCADE, so the bulk
 	// delete fails with an FK constraint if any such rows remain.
@@ -2690,7 +2690,7 @@ func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
 			l.AmbiguousNameToContributorIDs[name] = kept
 		}
 	}
-	l.Progress("Cleaned up %d orphaned contributor(s) with no roles.", len(orphanIDs))
+	l.Progress("  Cleaned up %d orphaned contributor(s) with no roles.", len(orphanIDs))
 }
 
 // derivableNameForms returns the complete set of name forms derivable from

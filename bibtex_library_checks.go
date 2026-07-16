@@ -1408,28 +1408,44 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 	return ""
 }
 
-func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) {
+func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) bool {
 	// Why not do l.MapEntryKey(key) always as part of l.EntryFieldValueity ???
 	title := l.EntryFieldValueity(l.MapEntryKey(key), TitleField)
-	if title != "" {
-		if l.IgnoredTitleIndexes.Contains(TeXStringIndexer(title)) {
-			return
+	if title == "" {
+		return false
+	}
+	if l.IgnoredTitleIndexes.Contains(TeXStringIndexer(title)) {
+		return false
+	}
+	// Should be via a function!
+	Keys := l.TitleIndex[TeXStringIndexer(title)]
+	if Keys.Size() <= 1 {
+		return false
+	}
+	sortedKeys := Keys.ElementsSorted()
+	// Count canonical keys before merging so we can detect whether any merge was accepted.
+	countBefore := 0
+	for _, k := range sortedKeys {
+		if k == l.MapEntryKey(k) {
+			countBefore++
 		}
-		// Should be via a function!
-		Keys := l.TitleIndex[TeXStringIndexer(title)]
-		if Keys.Size() > 1 {
-			sortedKeys := Keys.ElementsSorted()
-			for _, a := range sortedKeys {
-				if a == l.MapEntryKey(a) {
-					for _, b := range sortedKeys {
-						if b == l.MapEntryKey(b) {
-							l.MaybeMergeEntries(l.MapEntryKey(a), l.MapEntryKey(b))
-						}
-					}
+	}
+	for _, a := range sortedKeys {
+		if a == l.MapEntryKey(a) {
+			for _, b := range sortedKeys {
+				if b == l.MapEntryKey(b) {
+					l.MaybeMergeEntries(l.MapEntryKey(a), l.MapEntryKey(b))
 				}
 			}
 		}
 	}
+	countAfter := 0
+	for _, k := range sortedKeys {
+		if k == l.MapEntryKey(k) {
+			countAfter++
+		}
+	}
+	return countAfter < countBefore
 }
 
 func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {

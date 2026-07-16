@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.133"
+const AppVersion = "27.137"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -460,9 +460,10 @@ func openLibraryToReport() bool {
 	return true
 }
 
-func doC1Checks(key string) {
-	Library.CheckNeedToMergeForEqualTitles(key)
+func doC1Checks(key string) bool {
+	merged := Library.CheckNeedToMergeForEqualTitles(key)
 	Library.CheckNeedToSplitBookishEntry(key)
+	return merged
 }
 
 // doC2Checks runs DBLP sync for key and returns true if it modified the entry.
@@ -692,8 +693,34 @@ func doVariationSetDblpLinking(variations []string) {
 }
 
 func doAllChecks(key string) {
-	doC1Checks(key)
-	maybeFindDBLPCandidates(key)
+	merged := doC1Checks(key)
+	key = Library.MapEntryKey(key)
+	if merged {
+		// A merge group was resolved. Handle ALL surviving canonical entries in the
+		// title bucket — there may be multiple distinct survivors (different publications
+		// with the same title). Each one without a DBLP key gets a DBLP search and,
+		// when that finds nothing, a manual-entry prompt.
+		title := Library.EntryFieldValueity(key, TitleField)
+		if title != "" {
+			titleBucket := Library.TitleIndex[TeXStringIndexer(title)]
+			for _, s := range (&titleBucket).ElementsSorted() {
+				s = Library.MapEntryKey(s)
+				if !Library.EntryExists(s) {
+					continue
+				}
+				if Library.EntryFieldValueity(s, DBLPField) != "" {
+					continue
+				}
+				if !maybeFindDBLPCandidates(s) {
+					if dblpKey, err := Reporting.AskForInput("No DBLP match found after merge — enter DBLP key or Enter to skip"); err == nil && dblpKey != "" {
+						Library.AssociateDblpKey(s, dblpKey)
+					}
+				}
+			}
+		}
+	} else {
+		maybeFindDBLPCandidates(key)
+	}
 	doC2Checks(key)
 	doC3Checks(key)
 }
