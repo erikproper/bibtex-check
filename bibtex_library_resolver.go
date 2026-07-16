@@ -266,7 +266,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	} else {
 		options.Add("Y", "y", "n", "N")
 	}
-	warning := "For entry %s and field %s:\n- Challenger: %s\n- Current   : %s\nneeds to be resolved"
+	warning := "For entry %s and field %s:\n- Current   : %s\n- Challenger: %s\nneeds to be resolved"
 	question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
 	question += "Current entry:\n" + l.EntryString(key, "", "  ")
 	if canBreakDown {
@@ -276,7 +276,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	} else {
 		question += "Keep the value as is?"
 	}
-	answer := l.WarningQuestion(question, options, warning, key, field, challenge, current)
+	answer := l.WarningQuestion(question, options, warning, key, field, current, challenge)
 
 	switch answer {
 	case "y":
@@ -426,7 +426,7 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 	answer := l.WarningQuestionOrdered(
 		"Keep current name? (Y/N = globally, y/n = this entry only), edit canonical (e), different people (d), quit (q)?",
 		[]string{"N", "Y", "n", "y", "e", "d", "q"},
-		"Name %d of %d (difference %d of %d) for entry %s field %s:\n  Current:    %s\n  Challenger: %s",
+		"Name %d of %d (difference %d of %d) for entry %s field %s:\n- Current:    %s\n- Challenger: %s",
 		namePos, nameTotal, diffIdx, diffTotal, key, field, currentDisplay, challengerDisplay)
 	switch answer {
 	case "Y":

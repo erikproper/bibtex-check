@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.132"
+const AppVersion = "27.133"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -75,14 +75,18 @@ func initialiseLibrary() {
 	Library = TBibTeXLibrary{}
 	Library.Initialise(Reporting, bibTeXFolder, bibTeXBaseName)
 	Library.PreMergeCheck = func(source, target string) {
-		// Only search the surviving key (target). source is about to be merged
-		// into target — searching it separately is redundant and, when the
-		// library has several duplicate entries for the same work, was causing
-		// the user to be asked for the same DBLP match repeatedly (once per
-		// duplicate key) before they converged into one entry.
 		if Library.EntryFieldValueity(target, DBLPField) != "" {
 			return
 		}
+		// If source already has a DBLP key (e.g. just assigned during fix_candidates),
+		// auto-associate that same key to target. AssociateDblpKey detects the collision
+		// and merges target into source automatically — no need to re-ask the user.
+		if sourceDblp := Library.EntryFieldValueity(source, DBLPField); sourceDblp != "" {
+			Library.AssociateDblpKey(target, sourceDblp)
+			return
+		}
+		// Source has no DBLP key: ask the user to find one for target, so both
+		// entries have DBLP confirmation before the merge is proposed.
 		maybeFindDBLPCandidates(target)
 	}
 
