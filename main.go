@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "27.126"
+const AppVersion = "27.128"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2131,6 +2131,7 @@ func doUpsertDblpEntries() {
 
 		inDblpUpdate = true
 		scanned := 0
+		dblpUpdated := 0
 		stderrPrintf("\nDoing analysis based on DBLP data:\n")
 		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
@@ -2142,7 +2143,9 @@ func doUpsertDblpEntries() {
 			if dblpVal := Library.EntryFieldValueity(key, DBLPField); dblpVal != "" {
 				Library.ResetQuestionFlag()
 				doC1Checks(key)
-				Library.MaybeFixDBLPEntry(key)
+				if Library.MaybeFixDBLPEntry(key) {
+					dblpUpdated++
+				}
 				doC3Checks(key)
 				if pmOk {
 					if normKey := normalizeDblpKey(dblpVal); normKey != "" {
@@ -2189,6 +2192,7 @@ func doUpsertDblpEntries() {
 		inDblpUpdate = false
 		ticker.Done()
 		bibEntriesModified = true
+		Library.Progress("  DBLP data applied: %d/%d entries.", dblpUpdated, scanned)
 		if Library.orcidAutoResolveSameCount > 0 || Library.orcidAutoResolveDiffCount > 0 {
 			Library.Progress("  Auto-resolved by ORCID: %d same-person mapping(s), %d different-person disambiguation(s).",
 				Library.orcidAutoResolveSameCount, Library.orcidAutoResolveDiffCount)
@@ -2213,6 +2217,7 @@ func doUpsertDblpEntries() {
 				Library.Progress("  DBLP contributor role cross-check: %d assignment(s)/split(s) (see dblp_contributor_splits.log).", n)
 			}
 		}
+		Library.Progress("  Absorbing DBLP name data...")
 		absorbDblpNamesCore()
 		Library.FlushAmbiguousAssignments()
 	}

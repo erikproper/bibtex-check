@@ -1631,14 +1631,10 @@ func ensureTableDatesTableExists() {
 }
 
 // maybeMigrateFilterTableNames renames all legacy filter_* table names to their
-// canonical non-prefixed form, and migrates the superseded_field_values rename. This covers:
-//   - The v23.3 intermediate rename filter_losing_field_values → losing_field_values
-//   - All original filter_* tables that should never have had the prefix.
-//   - The v27.126 terminology rename losing_field_values → superseded_field_values
+// canonical non-prefixed form. All original filter_* tables that should never have
+// had the prefix.
 func maybeMigrateFilterTableNames() {
 	renames := [][2]string{
-		{"filter_losing_field_values", "losing_field_values"},
-		{"losing_field_values", "superseded_field_values"},
 		{"filter_generic_field_mappings", "generic_field_mappings"},
 		{"filter_cross_field_mappings", "cross_field_mappings"},
 		{"filter_state_names", "state_names"},

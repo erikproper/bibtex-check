@@ -547,14 +547,16 @@ func (l *TBibTeXLibrary) CheckDblpKeyMissingWarnings() {
 	}
 }
 
-func (l *TBibTeXLibrary) MaybeFixDBLPEntry(key string) {
+func (l *TBibTeXLibrary) MaybeFixDBLPEntry(key string) bool {
 	if DBLPKey := l.EntryFieldValueity(key, DBLPField); DBLPKey != "" {
 		if !l.MaybeMergeDBLPEntry(DBLPKey, key, false) {
 			l.MarkDblpKeyMissing(key, DBLPKey)
 		} else {
 			l.DeleteMetadata(key, MetaPropDblpKeyMissing)
+			return true
 		}
 	}
+	return false
 }
 
 func (l *TBibTeXLibrary) MaybeAddDBLPChildEntry(DBLPKey, crossref string) string {
