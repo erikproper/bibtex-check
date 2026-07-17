@@ -1022,7 +1022,7 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 	target := l.MapEntryKey(targetRAW)
 
 	if l.EntryExists(source) && l.EntryExists(target) {
-		if source != target && !l.NonDoubleEntries[source].Set().Contains(target) {
+		if source != target && !l.NonDoubleEntries[source].Set().Contains(target) && !l.EvidenceForBeingDifferentEntries(source, target) {
 			if l.PreMergeCheck != nil {
 				l.PreMergeCheck(source, target)
 				source = l.MapEntryKey(source)

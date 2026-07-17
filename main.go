@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.3.4"
+const AppVersion = "28.11"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -372,11 +372,11 @@ func openLibraryToUpdate() bool {
 	if dbWriteSessionActive {
 		return true
 	}
+	stderrPrintf("\nOpening the library:\n")
 	if !prepareWorkingDatabase() {
 		return false
 	}
 	preCheckRepair()
-	stderrPrintf("\nOpening the library:\n")
 	Library.BeginDeferringMessages()
 	initialiseLibrary()
 	Library.ReadKeyOldiesFile()

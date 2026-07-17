@@ -131,8 +131,9 @@ const (
 	ProgressParsingBibFile          = "Parsing bib file"
 	ProgressBackingUpDatabase       = "Backing up database before re-parse"
 	ProgressCreatingLibraryBackup   = "Creating library backup %s"
-	ProgressCopyingToWorkingDatabase = "Copying database to working location"
-	ProgressSavingDatabaseToHome    = "Saving database to home location"
+	ProgressCopyingToWorkingDatabase  = "  Copying database to working location"
+	ProgressReusingWorkingDatabase   = "  Reusing faithful working copy"
+	ProgressSavingDatabaseToHome     = "Saving database to home location"
 
 	WarningWorkingDbNewer = "Working database is newer than home (possible crash from previous run)"
 
