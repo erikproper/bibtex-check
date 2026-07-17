@@ -1669,7 +1669,7 @@ func (l *TBibTeXLibrary) AddNonDoubleEntries(a, b string) {
 		upsert := `INSERT INTO non_double_entries (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING`
 		for k1 := range s.Elements() {
 			for k2 := range s.Elements() {
-				if k1 != k2 {
+				if k1 < k2 {
 					if err := bibExec(upsert, k1, k2); err != nil {
 						dbInteraction.Warning("non_double_entries upsert failed: %s", err)
 						dbWriteFailed = true

@@ -2820,8 +2820,11 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 		}
 		if r1 != p.k1 || r2 != p.k2 {
 			db.Exec(deleteSQL, p.k1, p.k2) //nolint:errcheck
-			db.Exec(upsertSQL, r1, r2)     //nolint:errcheck
-			db.Exec(upsertSQL, r2, r1)     //nolint:errcheck
+			if r1 < r2 {
+				db.Exec(upsertSQL, r1, r2) //nolint:errcheck
+			} else {
+				db.Exec(upsertSQL, r2, r1) //nolint:errcheck
+			}
 		}
 		l.AddNonDoubleEntries(r1, r2)
 	}
@@ -2849,7 +2852,7 @@ func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
 		}
 		keyIgnored := hasIgnoredTitle(key)
 		for nonDouble := range set.Elements() {
-			if nonDouble == key || !isValidNonDoubleKey(nonDouble) {
+			if key >= nonDouble || !isValidNonDoubleKey(nonDouble) {
 				continue
 			}
 			if keyIgnored && hasIgnoredTitle(nonDouble) {
