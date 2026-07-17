@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.25"
+const AppVersion = "28.28"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -697,8 +697,13 @@ func doAllChecks(key string) {
 		title := Library.EntryFieldValueity(key, TitleField)
 		if title != "" {
 			titleBucket := Library.TitleIndex[TeXStringIndexer(title)]
+			seen := map[string]bool{}
 			for _, s := range (&titleBucket).ElementsSorted() {
 				s = Library.MapEntryKey(s)
+				if seen[s] {
+					continue
+				}
+				seen[s] = true
 				if !Library.EntryExists(s) {
 					continue
 				}
@@ -706,6 +711,7 @@ func doAllChecks(key string) {
 					continue
 				}
 				if !maybeFindDBLPCandidates(s) {
+					fmt.Fprintf(os.Stderr, "%s\n", Library.EntryString(s, "", "  "))
 					if dblpKey, err := Reporting.AskForInput(fmt.Sprintf("No DBLP match found after merge for %s — enter DBLP key or Enter to skip", s)); err == nil && dblpKey != "" {
 						Library.AssociateDblpKey(s, dblpKey)
 					}
