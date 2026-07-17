@@ -798,16 +798,31 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 		target := l.MapEntryKey(targetRAW)
 
 		if source != target && l.EntryExists(source) {
+			var issues []string
 			for _, field := range []string{DBLPField, "doi"} {
 				sv := l.EntryFieldValueity(source, field)
 				tv := l.EntryFieldValueity(target, field)
 				if EvidencedUnequal(sv, tv) && !(field == "doi" && strings.EqualFold(sv, tv)) {
-					l.Warning(WarningMergeConflictingField, source, target, field, sv, tv)
+					issues = append(issues, fmt.Sprintf(WarningMergeConflictingField, source, target, field, sv, tv))
 				}
 			}
-			if l.EvidenceForBeingDifferentEntries(source, target) {
-				if !l.WarningYesNoQuestion(QuestionMergeAnyway, "Entries appear to be different publications") {
-					return target
+			isDifferent := l.EvidenceForBeingDifferentEntries(source, target)
+			if isDifferent {
+				issues = append(issues, "Entries appear to be different publications")
+			}
+			if len(issues) > 0 {
+				block := issues[0]
+				for _, iss := range issues[1:] {
+					block += "\nWARNING:  " + iss
+				}
+				block += "\nEntry " + source + ":\n" + l.entryDisplayString(source)
+				block += "Entry " + target + ":\n" + l.entryDisplayString(target)
+				if isDifferent {
+					if !l.WarningYesNoQuestion(QuestionMergeAnyway, "%s", block) {
+						return target
+					}
+				} else {
+					l.Warning("%s", block)
 				}
 			}
 			l.Progress("  Merging %s to %s", source, target)
