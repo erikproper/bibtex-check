@@ -119,8 +119,6 @@ func (l *TBibTeXLibrary) AllEntriesWithProp(prop string) map[string]string {
 	return result
 }
 
-// ReadMetadataFile loads entry metadata and lineage data from the DB.
-// On the first run after migration, moves lineage rows from entry_metadata to
 func (l *TBibTeXLibrary) ReadMetadataFile() {
 	loadEntryMetadataFromDb(l)
 	loadEntryLineageFromDb(l)
