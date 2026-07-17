@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.12"
+const AppVersion = "28.13"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -706,7 +706,7 @@ func doAllChecks(key string) {
 					continue
 				}
 				if !maybeFindDBLPCandidates(s) {
-					if dblpKey, err := Reporting.AskForInput("No DBLP match found after merge — enter DBLP key or Enter to skip"); err == nil && dblpKey != "" {
+					if dblpKey, err := Reporting.AskForInput(fmt.Sprintf("No DBLP match found after merge for %s — enter DBLP key or Enter to skip", s)); err == nil && dblpKey != "" {
 						Library.AssociateDblpKey(s, dblpKey)
 					}
 				}
