@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.13"
+const AppVersion = "28.16"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -934,6 +934,11 @@ func doTriageAuthorMappings() {
 	}
 	rows.Close()
 
+	if len(pairs) == 0 {
+		return
+	}
+	stderrPrintf("\n")
+
 	retireSuperseded := func(key, field, superseded string) {
 		if err := bibExec(`DELETE FROM superseded_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, superseded); err != nil {
 			dbWriteFailed = true
@@ -1043,7 +1048,7 @@ outer:
 					markKept(p.key, p.field, p.superseded)
 					continue
 				}
-				Library.Progress("Entry: %s / field: %s\n  Current:    %s\n  Superseded: %s", p.key, p.field, winner, p.superseded)
+				Library.Progress("\nEntry: %s / field: %s\n  Current:    %s\n  Superseded: %s", p.key, p.field, winner, p.superseded)
 				resultName, quit, mapped := Library.resolveNamePair(p.key, p.field, pos+1, len(wNames), 1, 1, wNames[pos], lNames[pos])
 				if quit {
 					break outer

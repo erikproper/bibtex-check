@@ -420,3 +420,14 @@ func (t *TKeyAliasTable) ForEach(fn func(alias, canonical string)) {
 		fn(alias, canonical)
 	}
 }
+
+// ForEachPersistent iterates only over aliases that were loaded from the DB or
+// written via Set. Transient aliases (added via SetTransient, e.g. DBLP-derived
+// lookups) are excluded because they are not tracked in the inverse map.
+func (t *TKeyAliasTable) ForEachPersistent(fn func(alias, canonical string)) {
+	for canonical, aliases := range t.inverse {
+		for _, alias := range aliases {
+			fn(alias, canonical)
+		}
+	}
+}

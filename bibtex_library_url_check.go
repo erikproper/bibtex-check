@@ -16,7 +16,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	stdlib_html "html"
 	"io"
@@ -297,11 +296,9 @@ func (l *TBibTeXLibrary) CheckTitleFromURL(entry *TBibTeXEntry) {
 
 	l.Warning("Entry %s has no title; fetched from URL: %s", entry.Key, fetchedTitle)
 
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprint(os.Stderr, "QUESTION: Accept title (y), skip (n), or type alternative: ")
 	for {
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
+		input := readStdinLine()
 		switch input {
 		case "y":
 			entry.Fields["title"] = fetchedTitle

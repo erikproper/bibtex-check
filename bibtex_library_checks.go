@@ -247,7 +247,7 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 	l.Progress(ProgressCheckingConsistencyOfKeyOldies)
 
 	var ghosts []struct{ oldie, key string }
-	l.KeyOldies.ForEach(func(oldie, key string) {
+	l.KeyOldies.ForEachPersistent(func(oldie, key string) {
 		if !l.EntryExists(key) {
 			l.Warning(WarningTargetOfOldieNotExists, key, oldie)
 		}

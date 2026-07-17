@@ -15,7 +15,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"regexp"
@@ -245,11 +244,9 @@ func (l *TBibTeXLibrary) handleAlignHit(key string, h titleAlignHit, autoAccept 
 	fmt.Printf("Proposed: %s\n", h.proposed)
 	fmt.Println()
 
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprint(os.Stderr, "QUESTION: Action (a=accept, m=modify, s=skip, w=waive, q=quit): ")
 	for {
-		option, _ := reader.ReadString('\n')
-		option = strings.TrimSpace(option)
+		option := readStdinLine()
 		switch option {
 		case "a":
 			l.applyAlignHit(key, h, h.proposed)
@@ -344,11 +341,9 @@ func (l *TBibTeXLibrary) CheckAlignBooktitleCountries() {
 	fmt.Fprintf(os.Stderr, "Found %d candidate(s)\n", len(allHits))
 
 	// Phase 2: action.
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprint(os.Stderr, "QUESTION: Proceed? (a=accept all, i=interactive, q=quit): ")
 	for {
-		option, _ := reader.ReadString('\n')
-		option = strings.TrimSpace(option)
+		option := readStdinLine()
 		switch option {
 		case "a":
 			for _, kh := range allHits {
