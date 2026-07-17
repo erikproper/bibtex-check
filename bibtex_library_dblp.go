@@ -436,8 +436,12 @@ func (l *TBibTeXLibrary) AssociateDblpKey(key, dblpKey string) {
 		l.MergeEntries(existing, key)
 		if l.MapEntryKey(existing) == existing {
 			// Merge was declined: existing still holds dblpKey exclusively.
-			// Record key and dblpKey as non-doubles so this candidate is not
-			// offered again on the next run.
+			// Record key+existing as non-doubles so the MaybeMergeEntries/PreMergeCheck
+			// auto-path is suppressed on future runs (line 1025 in bibtex_library.go
+			// checks NonDoubleEntries[existing].Contains(key)).
+			// Also record key+DBLP-key-entity so the candidate is not re-offered
+			// via maybeFindDBLPCandidates.
+			l.AddNonDoubleEntries(key, existing)
 			l.AddNonDoubleEntries(key, KeyForDBLP(dblpKey))
 			return
 		}
