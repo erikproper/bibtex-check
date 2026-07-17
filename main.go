@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.3.1"
+const AppVersion = "28.3.2"
 
 // Run-state flags consumed by the write tail in main.
 var (

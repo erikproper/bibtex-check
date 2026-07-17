@@ -426,12 +426,21 @@ func (l *TBibTeXLibrary) MarkDblpKeyMissing(key, DBLPKey string) {
 
 // AssociateDblpKey links dblpKey to an existing library entry key.
 // When the DBLP key is already mapped to a different library entry, that entry
-// is merged into key first. Then the entry is refreshed from the local file
-// store (or dblp.org when not yet stored locally), and MarkDblpKeyMissing is
-// called in case the file store does not have it yet.
+// is merged into key first. If the user declines the merge, the association is
+// aborted and the pair is recorded as non-doubles so the candidate is not offered
+// again. Then the entry is refreshed from the local file store (or dblp.org when
+// not yet stored locally), and MarkDblpKeyMissing is called in case the file
+// store does not have it yet.
 func (l *TBibTeXLibrary) AssociateDblpKey(key, dblpKey string) {
 	if existing := l.LookupDBLPKey(dblpKey); existing != "" && existing != key {
 		l.MergeEntries(existing, key)
+		if l.MapEntryKey(existing) == existing {
+			// Merge was declined: existing still holds dblpKey exclusively.
+			// Record key and dblpKey as non-doubles so this candidate is not
+			// offered again on the next run.
+			l.AddNonDoubleEntries(key, KeyForDBLP(dblpKey))
+			return
+		}
 	}
 	l.KeyOldies.SetTransient(KeyForDBLP(dblpKey), key)
 	l.HintToKey.SetTransient(KeyForDBLP(dblpKey), key)
