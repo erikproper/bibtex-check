@@ -76,10 +76,27 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		if challenge == "" {
 			return current
 		}
+		// If the two crossrefs are in a parent-child relationship they are
+		// definitely different entries — merging them is wrong. The crossref
+		// should always point to the parent, so accept the one that is not
+		// a child of the other.
+		if l.EntryFieldValueity(current, "crossref") == challenge {
+			// current is a child of challenge → the library had a wrong (too deep) crossref.
+			return challenge
+		}
+		if l.EntryFieldValueity(challenge, "crossref") == current {
+			// challenge is a child of current → keep current (the true parent).
+			return current
+		}
+		// Evidenced-different entries (different DOIs, DBLP keys, etc.) should
+		// not be merged; keep the library value.
+		if l.EvidenceForBeingDifferentEntries(current, challenge) {
+			return current
+		}
 		sourceEntry := l.EntryString(current, "", "  ")
 		targetEntry := l.EntryString(challenge, "", "  ")
 		if l.WarningYesNoQuestion("Shall I merge the crossreferenced entries as well?",
-			"Different crossrefs (%s, %s) for entries (%s, %s) that you want to merge.\nFirst entry:\n%s\nSecond entry:\n%s",
+			"Different crossrefs (%s, %s) for entries (%s, %s) that you want to merge.\nFirst crossref:\n%s\nSecond crossref:\n%s",
 			current, challenge, key, challengeKey, sourceEntry, targetEntry) {
 			return l.MergeEntries(challenge, current)
 		}
