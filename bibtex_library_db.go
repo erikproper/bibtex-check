@@ -2712,74 +2712,7 @@ func loadSourceFieldSignaturesFromDb(l *TBibTeXLibrary) {
 	}
 }
 
-// maybeMigrateLineageFromMetadata runs once per DB on upgrade. It moves lineage
-// rows stored in entry_metadata (keys "lineage:<field>:source" / ":edited") into
-// the dedicated entry_lineage table, and populates source_field_signatures with the
-// current bib_entries value for rows where edited=0 (library value equals what the
-// source delivered). Rows with edited=1 get no signature — the empty-signature path
-// in the suppression model preserves the prior suppress-always behaviour for them.
-func maybeMigrateLineageFromMetadata(l *TBibTeXLibrary) {
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM entry_metadata WHERE property LIKE 'lineage:%:source'`).Scan(&count) //nolint:errcheck
-	if count == 0 {
-		return
-	}
 
-	rows, err := db.Query(`SELECT entry_key, property, value FROM entry_metadata WHERE property LIKE 'lineage:%:source'`)
-	if err != nil {
-		dbInteraction.Warning("maybeMigrateLineageFromMetadata: %s", err)
-		return
-	}
-
-	type migRow struct{ key, field, source string }
-	var toMigrate []migRow
-	for rows.Next() {
-		var key, prop, source string
-		rows.Scan(&key, &prop, &source) //nolint:errcheck
-		field := prop[len("lineage:") : len(prop)-len(":source")]
-		toMigrate = append(toMigrate, migRow{key, field, source})
-	}
-	rows.Close()
-
-	migrated := 0
-	for _, r := range toMigrate {
-		editedStr := l.GetMetadata(r.key, lineageEditedKey(r.field))
-		edited := 0
-		if editedStr == "true" {
-			edited = 1
-		}
-		if err := bibExec(
-			`INSERT INTO entry_lineage (entry_key, field, source, edited) VALUES (?, ?, ?, ?)
-			 ON CONFLICT(entry_key, field) DO NOTHING`,
-			r.key, r.field, r.source, edited); err != nil {
-			dbInteraction.Warning("maybeMigrateLineageFromMetadata insert lineage: %s", err)
-			continue
-		}
-		if edited == 0 && r.source != "" {
-			var currentVal string
-			db.QueryRow(`SELECT value FROM bib_entries WHERE entry_key = ? AND field = ?`, r.key, r.field).Scan(&currentVal) //nolint:errcheck
-			if currentVal != "" {
-				bibExec( //nolint:errcheck
-					`INSERT INTO source_field_signatures (entry_key, field, source, signature) VALUES (?, ?, ?, ?)
-					 ON CONFLICT(entry_key, field, source) DO NOTHING`,
-					r.key, r.field, r.source, currentVal)
-			}
-		}
-		db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property IN (?, ?)`, //nolint:errcheck
-			r.key, lineageSourceKey(r.field), lineageEditedKey(r.field))
-		if m, ok := l.Metadata[r.key]; ok {
-			delete(m, lineageSourceKey(r.field))
-			delete(m, lineageEditedKey(r.field))
-			if len(m) == 0 {
-				delete(l.Metadata, r.key)
-			}
-		}
-		migrated++
-	}
-	if migrated > 0 {
-		dbInteraction.Progress("  Migrated %d lineage record(s) from entry_metadata to entry_lineage", migrated)
-	}
-}
 
 // --- superseded_field_values table (formerly losing_field_values) ---
 

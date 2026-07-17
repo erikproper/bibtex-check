@@ -38,12 +38,6 @@ const (
 	MetaPropWaivedDoublePdf   = "waived_double_pdf" // MD5 of shared PDF content — waives duplicate-PDF warning
 )
 
-// lineageSourceKey returns the metadata property key for a lineage source record.
-func lineageSourceKey(field string) string { return "lineage:" + field + ":source" }
-
-// lineageEditedKey returns the metadata property key for a lineage edited flag.
-func lineageEditedKey(field string) string { return "lineage:" + field + ":edited" }
-
 // GetMetadata returns the value of property prop for entry key, or "" if absent.
 func (l *TBibTeXLibrary) GetMetadata(key, prop string) string {
 	if m, ok := l.Metadata[key]; ok {
@@ -127,10 +121,8 @@ func (l *TBibTeXLibrary) AllEntriesWithProp(prop string) map[string]string {
 
 // ReadMetadataFile loads entry metadata and lineage data from the DB.
 // On the first run after migration, moves lineage rows from entry_metadata to
-// entry_lineage and populates initial source signatures for accepted (edited=false) rows.
 func (l *TBibTeXLibrary) ReadMetadataFile() {
 	loadEntryMetadataFromDb(l)
-	maybeMigrateLineageFromMetadata(l)
 	loadEntryLineageFromDb(l)
 	loadSourceFieldSignaturesFromDb(l)
 }
