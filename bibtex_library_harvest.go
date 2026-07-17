@@ -374,10 +374,10 @@ func addToHarvestGroup(l *TBibTeXLibrary, finalKey string) {
 	}
 }
 
-// maybeCollectKeyHint adds sourceKey → finalKey to the hints DB when -collect_keys
-// is active and the mapping is unambiguous (not already pointing elsewhere).
+// maybeCollectKeyHint adds sourceKey → finalKey to the hints DB when the
+// mapping is unambiguous (not already pointing elsewhere).
 func maybeCollectKeyHint(l *TBibTeXLibrary, sourceKey, finalKey string) {
-	if !cmdCollectKeys || sourceKey == "" || finalKey == "" {
+	if sourceKey == "" || finalKey == "" {
 		return
 	}
 	if existing := l.HintToKey.GetValue(sourceKey); existing != "" && l.MapEntryKey(existing) != finalKey {
