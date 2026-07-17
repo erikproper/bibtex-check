@@ -30,6 +30,15 @@ type TLineageRecord struct {
 	Edited bool   // true when current value diverges from source's latest provision
 }
 
+// TSourceFieldData captures a pre-computed snapshot of one source's field delivery.
+// Changed[field] is true when the source is delivering a different value than its
+// last recorded signature, meaning the source has evolved since the prior run.
+// Values holds the normalised field values as delivered; Changed is keyed by field name.
+type TSourceFieldData struct {
+	Values  map[string]string
+	Changed map[string]bool
+}
+
 // lineagePriority maps source names to numeric priority values.
 // Higher value = higher authority. No two entries share the same value.
 // The zero value "" (unknown/manual) has the lowest priority.
@@ -84,32 +93,80 @@ func lineagePriorityOf(source string) int {
 // getLineage returns the lineage record for (key, field), or the zero value
 // {Source: "", Edited: false} when no record exists.
 func (l *TBibTeXLibrary) getLineage(key, field string) TLineageRecord {
-	return TLineageRecord{
-		Source: l.GetMetadata(key, lineageSourceKey(field)),
-		Edited: l.GetMetadata(key, lineageEditedKey(field)) == "true",
+	if fm, ok := l.LineageMap[key]; ok {
+		if rec, ok := fm[field]; ok {
+			return rec
+		}
 	}
+	return TLineageRecord{}
 }
 
 // setLineage updates the lineage record for (key, field). The zero value
-// (source="", edited=false) is deleted rather than stored to keep metadata sparse.
+// (source="", edited=false) is deleted rather than stored to keep the table sparse.
 func (l *TBibTeXLibrary) setLineage(key, field, source string, edited bool) {
-	if source == "" && !edited {
-		l.DeleteMetadata(key, lineageSourceKey(field))
-		l.DeleteMetadata(key, lineageEditedKey(field))
-		return
-	}
 	current := l.getLineage(key, field)
 	if current.Source == source && current.Edited == edited {
 		return
 	}
-	if source != "" {
-		l.SetMetadata(key, lineageSourceKey(field), source)
-	} else {
-		l.DeleteMetadata(key, lineageSourceKey(field))
+	if source == "" && !edited {
+		if fm, ok := l.LineageMap[key]; ok {
+			delete(fm, field)
+			if len(fm) == 0 {
+				delete(l.LineageMap, key)
+			}
+		}
+		db.Exec(`DELETE FROM entry_lineage WHERE entry_key = ? AND field = ?`, key, field) //nolint:errcheck
+		return
 	}
-	editedStr := "false"
+	if _, ok := l.LineageMap[key]; !ok {
+		l.LineageMap[key] = map[string]TLineageRecord{}
+	}
+	l.LineageMap[key][field] = TLineageRecord{Source: source, Edited: edited}
+	editedInt := 0
 	if edited {
-		editedStr = "true"
+		editedInt = 1
 	}
-	l.SetMetadata(key, lineageEditedKey(field), editedStr)
+	bibExec( //nolint:errcheck
+		`INSERT INTO entry_lineage (entry_key, field, source, edited) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(entry_key, field) DO UPDATE SET source = excluded.source, edited = excluded.edited`,
+		key, field, source, editedInt)
+}
+
+// getSourceFieldSignature returns the signature stored for (key, field, source),
+// or "" when no signature has been recorded yet.
+func (l *TBibTeXLibrary) getSourceFieldSignature(key, field, source string) string {
+	if fm, ok := l.SourceSignatures[key]; ok {
+		if sm, ok := fm[field]; ok {
+			return sm[source]
+		}
+	}
+	return ""
+}
+
+// setSourceContributorSignature records what source most recently delivered for one
+// contributor position. role is "author" or "editor"; position is 1-based.
+func (l *TBibTeXLibrary) setSourceContributorSignature(key, role string, position int, source, sig string) {
+	bibExec( //nolint:errcheck
+		`INSERT INTO source_contributor_signatures (entry_key, role, position, source, signature) VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(entry_key, role, position, source) DO UPDATE SET signature = excluded.signature`,
+		key, role, position, source, sig)
+}
+
+// setSourceFieldSignature records what source most recently delivered for (key, field).
+// sig is the fully-normalized LaTeX form of the delivered value.
+func (l *TBibTeXLibrary) setSourceFieldSignature(key, field, source, sig string) {
+	if _, ok := l.SourceSignatures[key]; !ok {
+		l.SourceSignatures[key] = map[string]map[string]string{}
+	}
+	if _, ok := l.SourceSignatures[key][field]; !ok {
+		l.SourceSignatures[key][field] = map[string]string{}
+	}
+	if l.SourceSignatures[key][field][source] == sig {
+		return
+	}
+	l.SourceSignatures[key][field][source] = sig
+	bibExec( //nolint:errcheck
+		`INSERT INTO source_field_signatures (entry_key, field, source, signature) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(entry_key, field, source) DO UPDATE SET signature = excluded.signature`,
+		key, field, source, sig)
 }

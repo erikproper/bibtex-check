@@ -143,6 +143,23 @@ func (l *TBibTeXLibrary) findExistingNonDblpProceedings(dblpKey string) string {
 	return ""
 }
 
+// buildDblpSourceData pre-computes the delivery snapshot for a DBLP merge.
+// For each field in dblpEntry it reads the stored signature, marks Changed=true when
+// the source is delivering a different (non-empty-prior) value, and immediately writes
+// the new signature so the resolver's Edited-suppression block does not need to touch
+// the signature tables at all during the merge.
+func buildDblpSourceData(l *TBibTeXLibrary, key string, dblpEntry *TBibTeXEntry) TSourceFieldData {
+	values := make(map[string]string, len(dblpEntry.Fields))
+	changed := make(map[string]bool, len(dblpEntry.Fields))
+	for field, value := range dblpEntry.Fields {
+		values[field] = value
+		oldSig := l.getSourceFieldSignature(key, field, "dblp")
+		changed[field] = oldSig != "" && oldSig != value
+		l.setSourceFieldSignature(key, field, "dblp", value)
+	}
+	return TSourceFieldData{Values: values, Changed: changed}
+}
+
 // MaybeMergeDBLPEntry builds a source entry from the DBLP database (primary) or,
 // when allowURLFetch is true, a live dblp.org fetch (fallback). Merges into the
 // existing library entry for key inside a single transaction. Returns true if the
@@ -295,6 +312,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 	// know about the withdrawal.
 	locallyWithdrawn := l.EntryFieldValueity(key, "withdrawn") != ""
 
+	l.DblpSourceData = buildDblpSourceData(l, key, dblpEntry)
 	beginBibTransaction()
 	changed := l.MergeInMemoryDBLPEntry(dblpEntry, key)
 	// Apply per-author ORCID evidence from the file store. When DBLP provides an
@@ -332,6 +350,7 @@ func (l *TBibTeXLibrary) MaybeMergeDBLPEntry(DBLPKey, key string, allowURLFetch 
 		}
 	}
 	commitBibTransaction()
+	l.DblpSourceData = TSourceFieldData{}
 
 	if changed {
 		bibEntriesModified = true

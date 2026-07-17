@@ -230,20 +230,18 @@ func (l *TBibTeXLibrary) handleAlignHit(key string, h titleAlignHit, autoAccept 
 		l.applyAlignHit(key, h, h.proposed)
 		return false
 	}
-	fmt.Printf("Key:      %s\n", key)
-	fmt.Printf("Field(s): %s\n", strings.Join(h.fields, ", "))
-	fmt.Printf("Current:  %s\n", h.original)
+	l.printWarningLine("Title/booktitle alignment (%s) for %s", h.kind, key)
+	fmt.Fprintf(os.Stderr, "Field(s): %s\n", strings.Join(h.fields, ", "))
+	fmt.Fprintf(os.Stderr, "Current:  %s\n", h.original)
 	if h.kind != "country" {
 		label := strings.ToUpper(h.kind[:1]) + h.kind[1:]
 		value := h.extracted
 		if h.targetField != "" && strings.Trim(h.targetField, "{}") != h.extracted {
 			value += fmt.Sprintf(" (%s field: %s)", h.kind, h.targetField)
 		}
-		fmt.Printf("%-9s %s\n", label+":", value)
+		fmt.Fprintf(os.Stderr, "%-9s %s\n", label+":", value)
 	}
-	fmt.Printf("Proposed: %s\n", h.proposed)
-	fmt.Println()
-
+	fmt.Fprintf(os.Stderr, "Proposed: %s\n", h.proposed)
 	fmt.Fprint(os.Stderr, "QUESTION: Action (a=accept, m=modify, s=skip, w=waive, q=quit): ")
 	for {
 		option := readStdinLine()

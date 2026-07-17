@@ -190,12 +190,28 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	}
 
 	// If the user has already deliberately diverged from this source for this field
-	// (Edited=true in lineage), honour that decision without re-asking.  DBLP's data
-	// for this field has not changed from our perspective; showing the same challenge
-	// again adds no new information.  The idSeqEqual check above already handles the
-	// case where DBLP later corrects its data to match ours.
+	// (Edited=true in lineage), check whether the source has since updated its value.
+	// When DblpSourceData is set (inside a DBLP merge), the Changed flag is pre-computed
+	// and signatures are already written — no reads or writes needed here.
+	// For other sources the fallback path reads the signature directly.
 	if !subsetMergeActive && currentRec.Edited && currentRec.Source == challengeSource && challengeSource != "" {
-		return current
+		sourceEvolved := false
+		if l.DblpSourceData.Changed != nil && challengeSource == "dblp" {
+			sourceEvolved = l.DblpSourceData.Changed[field]
+		} else {
+			storedSig := l.getSourceFieldSignature(key, field, challengeSource)
+			if storedSig == "" {
+				l.setSourceFieldSignature(key, field, challengeSource, challenge)
+			} else {
+				sourceEvolved = storedSig != challenge
+			}
+		}
+		if !sourceEvolved {
+			return current
+		}
+		// Source has updated its value; clear the prior divergence decision and re-challenge.
+		l.setLineage(key, field, challengeSource, false)
+		currentRec.Edited = false
 	}
 
 	// Equal or higher priority challenger: compare semantic content.
@@ -209,6 +225,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 			// Semantically equal but textually different: keep our text, mark as intentionally diverged.
 			if challengeSource != "" {
 				l.setLineage(key, field, challengeSource, true)
+				l.setSourceFieldSignature(key, field, challengeSource, challenge)
 			}
 			return current
 		}
@@ -217,6 +234,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	// Semantically different: auto-accept known-authoritative fields, otherwise ask.
 	if challengeSource != "" && dblpAutoAcceptFields.Contains(field) {
 		l.setLineage(key, field, challengeSource, false)
+		l.setSourceFieldSignature(key, field, challengeSource, challenge)
 		return challengeRaw
 	}
 
@@ -241,13 +259,14 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 				}
 			}
 		}
-		result, quit := l.resolveAuthorBreakdown(key, field, challenge, current)
+		result, quit := l.resolveAuthorBreakdown(key, field, challengeSource, challenge, current)
 		if quit {
 			gracefulQuit()
 		}
 		if result != "" {
 			l.UpdateEntryFieldAlias(key, field, challenge, result)
 			l.setLineage(key, field, challengeSource, result != challenge)
+			l.setSourceFieldSignature(key, field, challengeSource, challenge)
 			return result
 		}
 		// result == "": name counts differ and breakdown is impossible.
@@ -293,6 +312,11 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	} else {
 		question += "Keep the value as is?"
 	}
+	// Record what the source is currently delivering before the user makes a choice.
+	// This ensures the signature is populated regardless of which branch is taken.
+	if challengeSource != "" {
+		l.setSourceFieldSignature(key, field, challengeSource, challenge)
+	}
 	answer := l.WarningQuestion(question, options, warning, key, field, current, challenge)
 
 	switch answer {
@@ -335,7 +359,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		l.setLineage(key, field, challengeSource, true)
 		return edited
 	case "b":
-		result, quit := l.resolveAuthorBreakdown(key, field, challenge, current)
+		result, quit := l.resolveAuthorBreakdown(key, field, challengeSource, challenge, current)
 		if quit {
 			gracefulQuit()
 		}
@@ -486,7 +510,7 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 // challenge using resolveNamePair for each differing position. Returns the resolved author
 // string (or "" when breakdown is impossible due to different name counts), and a quit bool
 // that is true when the user pressed q — the caller must not record any alias in that case.
-func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current string) (string, bool) {
+func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challengeSource, challenge, current string) (string, bool) {
 	challengeNames := splitBibNameField(challenge)
 	currentNames := splitBibNameField(current)
 	nCurrent := len(currentNames)
@@ -500,6 +524,15 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 		l.Warning("Cannot break down %s %s by name: challenger has %d name(s), current has %d — presenting full-field challenge.",
 			key, field, nChallenge, nCurrent)
 		return "", false
+	}
+
+	// Record what the source delivered for each contributor position, regardless of
+	// what the user ultimately chooses. This populates source_contributor_signatures
+	// for future per-position suppression.
+	if challengeSource != "" {
+		for i, name := range challengeNames {
+			l.setSourceContributorSignature(key, field, i+1, challengeSource, name)
+		}
 	}
 
 	// When expanding "others", only compare the concrete prefix (positions before "others").
@@ -537,7 +570,11 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challenge, current s
 
 	if othersExpansion {
 		tail := strings.Join(challengeNames[prefixLen:], " and ")
-		if l.WarningYesNoQuestion(
+		tailLC := strings.ToLower(strings.TrimSpace(tail))
+		// All common spellings of "et al." are BibTeX-style synonyms for "others".
+		if tailLC == "et al." || tailLC == "et al" || tailLC == "et.al." || tailLC == "etal" || tailLC == "others" {
+			resultNames = append(resultNames, "others")
+		} else if l.WarningYesNoQuestion(
 			"Replace 'others' with: "+tail,
 			"For entry %s field %s — challenger provides %d additional name(s): %s",
 			key, field, nChallenge-prefixLen, tail) {
@@ -565,6 +602,7 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challe
 		if challengeSource != "" {
 			// Known-authoritative external source filling an empty field: accept silently.
 			l.setLineage(key, field, challengeSource, false)
+			l.setSourceFieldSignature(key, field, challengeSource, challenge)
 			return challenge
 		}
 		// Library-to-library merge adding a value to an empty field: ask.
@@ -576,6 +614,7 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challe
 		challengeSource := sourceFromChallengeKey(challengeKey)
 		if challengeSource != "" && dblpKnownFields.Contains(field) {
 			l.setLineage(key, field, challengeSource, false)
+			l.setSourceFieldSignature(key, field, challengeSource, "")
 			return ""
 		}
 		// An absent field in the challenger means "unknown" — it carries no evidence

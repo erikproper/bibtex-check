@@ -81,7 +81,10 @@ type (
 		NoDBUpdating                  bool                      // If set, the parser encountered errors; do not write bib file or update the database.
 		DblpParent *TCachedTable[string, string] // child DBLP key → resolved parent DBLP key
 		DblpWaived *TCachedTable[string, bool] // library keys exempt from WarningNoDblpKeyForChild
-		Metadata              TEntryMetadata // per-entry metadata (see bibtex_library_metadata.go)
+		Metadata              TEntryMetadata                           // per-entry metadata (see bibtex_library_metadata.go)
+		LineageMap       map[string]map[string]TLineageRecord          // (entry_key, field) → lineage; see bibtex_library_lineage.go
+		SourceSignatures map[string]map[string]map[string]string       // (entry_key, field, source) → last-delivered signature
+		DblpSourceData   TSourceFieldData                              // pre-computed delivery snapshot; set around MaybeMergeDBLPEntry calls
 		EntryFlags map[string]TStringSet // canonical key → set of flag strings
 		harvestNameAliases                bool
 		harvestCapturePDFFields           bool         // when true: file/local-url pass through for harvest PDF copy
@@ -162,6 +165,8 @@ func (l *TBibTeXLibrary) Initialise(reporting TInteraction, filesRoot, baseName 
 	l.NoDBUpdating = false
 	l.newKeyHints = TStringMap{}
 	l.Metadata = TEntryMetadata{}
+	l.LineageMap = map[string]map[string]TLineageRecord{}
+	l.SourceSignatures = map[string]map[string]map[string]string{}
 	l.URLsIgnore = TStringSetNew()
 	l.IgnoredTitleIndexes = TStringSetNew()
 	l.ambiguousAssignmentCount = map[string]int{}

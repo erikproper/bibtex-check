@@ -24,7 +24,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -117,6 +116,9 @@ func connectToDatabase() {
 	ensureURLsIgnoreTableExists()
 	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
+	ensureEntryLineageTableExists()
+	ensureSourceFieldSignaturesTableExists()
+	ensureSourceContributorSignaturesTableExists()
 	ensureSupersededFieldValuesTableExists()
 	ensureEntryDoiAliasesTableExists()
 	ensureEntryWarningsTableExists()
@@ -327,6 +329,9 @@ func reopenDb(path string) {
 	ensureURLsIgnoreTableExists()
 	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
+	ensureEntryLineageTableExists()
+	ensureSourceFieldSignaturesTableExists()
+	ensureSourceContributorSignaturesTableExists()
 	ensureSupersededFieldValuesTableExists()
 	ensureEntryDoiAliasesTableExists()
 	ensureConfigTableExists()
@@ -508,9 +513,7 @@ func prepareWorkingDatabase() bool {
 		var entryCount int
 		db.QueryRow(`SELECT COUNT(*) FROM bib_entries WHERE field = ?`, EntryTypeField).Scan(&entryCount)
 		if entryCount > 0 {
-			dbInteraction.Warning(WarningWorkingDbNewer)
-			answer, _ := dbInteraction.AskForInput("Restore home from working copy? [y/N]")
-			if strings.EqualFold(answer, "y") {
+			if dbInteraction.WarningYesNoQuestion("Restore home from working copy?", WarningWorkingDbNewer) {
 				db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`) //nolint:errcheck
 				if err := copyFileAtomic(working, home); err != nil {
 					dbInteraction.Warning("Could not restore: %s", err)

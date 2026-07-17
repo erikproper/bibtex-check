@@ -98,13 +98,19 @@ func (l *TBibTeXLibrary) transferMetadata(source, target string) {
 			l.SetMetadata(target, prop, val)
 		}
 	}
-	// Wipe all remaining metadata for source (lineage rows + any untransferred props).
+	// Wipe all remaining metadata for source (any untransferred props).
 	if props, ok := l.Metadata[source]; ok {
 		for prop := range props {
 			db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, source, prop) //nolint:errcheck
 		}
 		delete(l.Metadata, source)
 	}
+	// Wipe lineage and source signatures for the merged-away entry.
+	db.Exec(`DELETE FROM entry_lineage WHERE entry_key = ?`, source)              //nolint:errcheck
+	db.Exec(`DELETE FROM source_field_signatures WHERE entry_key = ?`, source)    //nolint:errcheck
+	db.Exec(`DELETE FROM source_contributor_signatures WHERE entry_key = ?`, source) //nolint:errcheck
+	delete(l.LineageMap, source)
+	delete(l.SourceSignatures, source)
 }
 
 // AllEntriesWithProp returns a snapshot map of entry key → value for all entries
@@ -119,9 +125,14 @@ func (l *TBibTeXLibrary) AllEntriesWithProp(prop string) map[string]string {
 	return result
 }
 
-// ReadMetadataFile loads entry metadata from the DB.
+// ReadMetadataFile loads entry metadata and lineage data from the DB.
+// On the first run after migration, moves lineage rows from entry_metadata to
+// entry_lineage and populates initial source signatures for accepted (edited=false) rows.
 func (l *TBibTeXLibrary) ReadMetadataFile() {
 	loadEntryMetadataFromDb(l)
+	maybeMigrateLineageFromMetadata(l)
+	loadEntryLineageFromDb(l)
+	loadSourceFieldSignaturesFromDb(l)
 }
 
 // WriteMetadataFile writes a human-readable JSON backup of entry metadata.

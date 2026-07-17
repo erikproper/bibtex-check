@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.17"
+const AppVersion = "28.24"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -895,7 +895,7 @@ func retireResolvedAuthorEditorSuperseded() {
 		}
 	}
 	if retired > 0 {
-		Library.Progress("Retired %d resolved author/editor pair(s) via name mappings", retired)
+		Library.Progress("  Retired %d resolved author/editor pair(s) via name mappings", retired)
 	}
 }
 
