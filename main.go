@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.38"
+const AppVersion = "28.39"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1108,13 +1108,19 @@ outer:
 				// rejected/left unresolved). Silently keeping the incomplete list
 				// forever is exactly the "missing co-author" gap; ask instead.
 				Library.Progress("\nEntry: %s / field: %s\n  Current (fewer names):   %s\n  Superseded (more names): %s", p.key, p.field, winner, p.superseded)
-				if Library.WarningYesNoQuestion("Adopt the fuller author/editor list",
+				ynOptions := TStringSetNew()
+				ynOptions.Add("y", "n")
+				switch Library.WarningQuestion("Adopt the fuller author/editor list? (y/n/q)", ynOptions,
 					"Superseded %s value for %s has name(s) not present in the current value — looks like a missing co-author", p.field, p.key) {
+				case "y":
 					Library.SetEntryFieldValue(p.key, p.field, p.superseded)
 					Library.Progress("Adopted fuller author/editor list for %s %s", p.key, p.field)
 					retireSuperseded(p.key, p.field, p.superseded)
-				} else {
+				case "n":
 					markKept(p.key, p.field, p.superseded)
+				default:
+					// "q" (or anything else): no decision was made — do not mark
+					// kept, leave it genuinely pending for the next run.
 				}
 				if Reporting.QuitWasRequested() {
 					break outer
