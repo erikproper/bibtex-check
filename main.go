@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.40"
+const AppVersion = "28.41"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -321,7 +321,13 @@ func printSessionStats() {
 
 	var losingValues, losingPending int
 	bibQueryRow(`SELECT COUNT(*) FROM superseded_field_values`).Scan(&losingValues)
-	bibQueryRow(`SELECT COUNT(*) FROM superseded_field_values WHERE triage_status IS NULL`).Scan(&losingPending)
+	// triage_status is only ever set by doTriageAuthorMappings, which only ever looks
+	// at author/editor rows — a non-author/editor row is NULL forever, with no command
+	// that will ever act on it. Counting those here under "awaiting triage" reads as an
+	// actionable backlog that in fact never shrinks; scope to what -triage_author_mappings
+	// (and its auto-run at the end of -update_all_dblp_entries) can actually resolve, same
+	// as the homework line below.
+	bibQueryRow(`SELECT COUNT(*) FROM superseded_field_values WHERE field IN ('author', 'editor') AND triage_status IS NULL`).Scan(&losingPending)
 
 	sessionStartEntryCount = total
 	sessionStartDblpKeyCount = dblpKeys
