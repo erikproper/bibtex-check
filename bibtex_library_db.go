@@ -1510,11 +1510,20 @@ func resolveNameToContributorID(l *TBibTeXLibrary, name string) (string, bool) {
 	return "", false
 }
 
+// resolveNamesToIDSeq maps each name to its contributor ID. A name with no
+// resolvable contributor ID falls back to itself (rather than being dropped)
+// so idSeqEqual still sees it — silently dropping unmapped names let two
+// author lists of different length/content compare as "equal" whenever an
+// unmapped name happened to make both ID sequences the same length, which
+// suppressed a real, visible difference in the raw text (e.g. a challenger
+// with one extra not-yet-known co-author) instead of surfacing it.
 func resolveNamesToIDSeq(l *TBibTeXLibrary, names []string) []string {
-	var seq []string
-	for _, name := range names {
+	seq := make([]string, len(names))
+	for i, name := range names {
 		if id, ok := resolveNameToContributorID(l, name); ok {
-			seq = append(seq, id)
+			seq[i] = id
+		} else {
+			seq[i] = name
 		}
 	}
 	return seq
