@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.37"
+const AppVersion = "28.38"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1094,9 +1094,35 @@ outer:
 				}
 				return true
 			}
-			if isSubset(lSet, wSet) || isSubset(wSet, lSet) {
-				markKept(p.key, p.field, p.superseded)
-			} else {
+			switch {
+			case isSubset(lSet, wSet):
+				// Superseded (older/losing) value is a strict subset of the current
+				// value — current already has every name it had, plus more. Nothing
+				// to review; retire the now-fully-subsumed superseded value.
+				Library.Progress("Auto-retired subsumed author/editor variant for %s %s", p.key, p.field)
+				retireSuperseded(p.key, p.field, p.superseded)
+			case isSubset(wSet, lSet):
+				// Current value is a strict subset of the superseded one — the
+				// superseded value has co-author(s) the current value is missing
+				// (e.g. a DBLP challenge with an extra author that was previously
+				// rejected/left unresolved). Silently keeping the incomplete list
+				// forever is exactly the "missing co-author" gap; ask instead.
+				Library.Progress("\nEntry: %s / field: %s\n  Current (fewer names):   %s\n  Superseded (more names): %s", p.key, p.field, winner, p.superseded)
+				if Library.WarningYesNoQuestion("Adopt the fuller author/editor list",
+					"Superseded %s value for %s has name(s) not present in the current value — looks like a missing co-author", p.field, p.key) {
+					Library.SetEntryFieldValue(p.key, p.field, p.superseded)
+					Library.Progress("Adopted fuller author/editor list for %s %s", p.key, p.field)
+					retireSuperseded(p.key, p.field, p.superseded)
+				} else {
+					markKept(p.key, p.field, p.superseded)
+				}
+				if Reporting.QuitWasRequested() {
+					break outer
+				}
+			default:
+				// Neither is a subset of the other — a genuine mix of additions and
+				// removals, not a clean "one extra/missing name" case. No automatic
+				// resolution is safe here; keep as before.
 				markKept(p.key, p.field, p.superseded)
 			}
 		}
