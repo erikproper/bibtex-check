@@ -99,12 +99,8 @@ func (l *TBibTeXLibrary) transferMetadata(source, target string) {
 		}
 		delete(l.Metadata, source)
 	}
-	// Wipe lineage and source signatures for the merged-away entry.
-	db.Exec(`DELETE FROM entry_lineage WHERE entry_key = ?`, source)              //nolint:errcheck
-	db.Exec(`DELETE FROM source_field_signatures WHERE entry_key = ?`, source)    //nolint:errcheck
-	db.Exec(`DELETE FROM source_contributor_signatures WHERE entry_key = ?`, source) //nolint:errcheck
-	delete(l.LineageMap, source)
-	delete(l.SourceSignatures, source)
+	// Lineage and source signatures for source are wiped by the deleteBibEntry
+	// call that always follows a transferMetadata call (see deleteBibEntry).
 }
 
 // AllEntriesWithProp returns a snapshot map of entry key → value for all entries
@@ -119,6 +115,8 @@ func (l *TBibTeXLibrary) AllEntriesWithProp(prop string) map[string]string {
 	return result
 }
 
+// ReadMetadataFile loads entry metadata and lineage data from the DB.
+// On the first run after migration, moves lineage rows from entry_metadata to
 func (l *TBibTeXLibrary) ReadMetadataFile() {
 	loadEntryMetadataFromDb(l)
 	loadEntryLineageFromDb(l)

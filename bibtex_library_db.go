@@ -3469,6 +3469,16 @@ func applyDblpAuthorORCIDs(l *TBibTeXLibrary, key string, je *TDblpJSONEntry) {
 func upsertBibEntryField(key, field, value string) {
 	if contributorRolesActive && (field == "author" || field == "editor") {
 		upsertContributorRolesForField(&Library, key, field, value)
+		// Keep entryCache in sync so in-memory readers (e.g. deriveAliasBase)
+		// can see the author/editor without querying contributor_roles.
+		if entryCache != nil && value != "" {
+			e, ok := entryCache[key]
+			if !ok {
+				e = &TBibTeXEntry{Key: key, Fields: map[string]string{}}
+				entryCache[key] = e
+			}
+			e.Fields[field] = value
+		}
 		return
 	}
 	var err error
@@ -3585,11 +3595,20 @@ func isDeletedEntry(key string) bool {
 // deleteBibEntry removes all rows for a given entry key from bib_entries and the
 // bib_entry_keys anchor. ON DELETE CASCADE propagates the anchor deletion to
 // bib_groups, superseded_field_values, entry_warnings, and entry_metadata.
+// entry_lineage / source_field_signatures / source_contributor_signatures have no
+// FK to bib_entry_keys (they must survive independent of whether the entry they
+// describe currently exists, e.g. across a temporary ghost state) so they are
+// wiped explicitly here — the one place a key stops being a library entry.
 func deleteBibEntry(key string) {
 	if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ?`, key); err != nil {
 		dbInteraction.Warning("bib_entries delete failed for %s: %s", key, err)
 	}
 	db.Exec(`DELETE FROM bib_entry_keys WHERE entry_key = ?`, key)
+	db.Exec(`DELETE FROM entry_lineage WHERE entry_key = ?`, key)                //nolint:errcheck
+	db.Exec(`DELETE FROM source_field_signatures WHERE entry_key = ?`, key)      //nolint:errcheck
+	db.Exec(`DELETE FROM source_contributor_signatures WHERE entry_key = ?`, key) //nolint:errcheck
+	delete(Library.LineageMap, key)
+	delete(Library.SourceSignatures, key)
 	if entryCache != nil {
 		if _, ok := entryCache[key]; ok {
 			if activeTx == nil {

@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.28"
+const AppVersion = "28.36"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2125,6 +2125,7 @@ func doFixEntries(args []string) {
 		Library.ReadKeyNonDoublesFile()
 		Library.FixDblpHierarchy()
 		for _, key := range cleanKeys(args) {
+			Library.Progress("  Checking %s", Library.MapEntryKey(key))
 			doAllChecks(key)
 		}
 	}

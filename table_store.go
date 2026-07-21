@@ -138,6 +138,15 @@ func (c *TCachedTable[K, V]) SetTransient(key K, value V) {
 	}
 }
 
+// DeleteTransient removes a cache-only entry added via SetTransient, without
+// touching the backing store. Used to roll back a speculative in-flight
+// registration when the entry it pointed at failed to materialize.
+func (c *TCachedTable[K, V]) DeleteTransient(key K) {
+	if c.cache != nil {
+		delete(c.cache, key)
+	}
+}
+
 // DeleteWhere removes all entries satisfying match, collecting keys first to avoid
 // modifying the cache during iteration.
 func (c *TCachedTable[K, V]) DeleteWhere(match func(K, V) bool) {
@@ -366,6 +375,16 @@ func (t *TKeyAliasTable) Set(alias, canonical string) {
 func (t *TKeyAliasTable) SetTransient(alias, canonical string) {
 	if t.forward != nil {
 		t.forward[alias] = canonical
+	}
+}
+
+// DeleteTransient removes an alias that was only ever added via SetTransient
+// (forward map only — never touched the inverse map or the DB, so neither
+// needs undoing). Used to roll back a speculative in-flight registration when
+// the entry it pointed at failed to materialize.
+func (t *TKeyAliasTable) DeleteTransient(alias string) {
+	if t.forward != nil {
+		delete(t.forward, alias)
 	}
 }
 

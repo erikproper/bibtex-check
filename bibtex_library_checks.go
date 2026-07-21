@@ -1532,7 +1532,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) && entryDBLP != "" {
 		children := readDblpCrossrefChildren(entryDBLP)
 		if len(children) > 0 {
-			ticker := l.NewProgressTicker(fmt.Sprintf("Checking %d children of %s", len(children), entryDBLP), len(children))
+			ticker := l.NewProgressTicker(fmt.Sprintf("  Checking %d children of %s", len(children), entryDBLP), len(children))
 			for _, childDBLP := range children {
 				childKey := l.LookupDBLPKey(childDBLP)
 				if childKey != "" {
@@ -1754,9 +1754,11 @@ func (l *TBibTeXLibrary) RenormaliseNameFields() {
 // offers to merge each duplicate set. Both entries are recorded in entry_warnings so
 // they appear in warnings; select results.
 // Ghost entries — bib_entries rows that have a dblp field but no entry_type row and
-// are not recorded as aliases in key_oldies — are cleaned up automatically here.
+// are not recorded as aliases in key_oldies — are cleaned up automatically here,
+// but only when a live entry for the same DBLP key survives to hold its data.
 func (l *TBibTeXLibrary) CheckDuplicateDBLPKeys() {
 	forEachDuplicateDBLPKey(func(dblpKey string, keys []string) {
+		var ghosts []string
 		keySet := TStringSetNew()
 		for _, k := range keys {
 			resolved := l.MapEntryKey(k)
@@ -1764,16 +1766,34 @@ func (l *TBibTeXLibrary) CheckDuplicateDBLPKeys() {
 				resolved = k
 			}
 			if resolved == k && !l.EntryExists(k) {
-				// Ghost: has a dblp row in bib_entries but no entry_type, and is
-				// not in key_oldies as an alias. The surviving entry (if any) still
-				// has the dblp key — this row is purely redundant. Remove it so it
-				// no longer triggers false duplicate warnings.
-				l.Progress("  Removing ghost dblp entry: %s (%s)", k, dblpKey)
-				deleteBibEntry(k)
+				// Ghost candidate: has a dblp row in bib_entries but no entry_type,
+				// and is not in key_oldies as an alias. Deletion is deferred until
+				// we know whether a live entry for this DBLP key survives.
+				ghosts = append(ghosts, k)
 				continue
 			}
 			if l.EntryExists(resolved) {
 				keySet.Add(resolved)
+			}
+		}
+		if len(ghosts) > 0 {
+			if keySet.Size() > 0 {
+				// A live entry still holds this DBLP key — the ghost rows are
+				// purely redundant. Remove them so they no longer trigger false
+				// duplicate warnings.
+				for _, k := range ghosts {
+					l.Progress("  Removing ghost dblp entry: %s (%s)", k, dblpKey)
+					deleteBibEntry(k)
+				}
+			} else {
+				// No candidate for this DBLP key has content — every one of them
+				// is an incomplete stub (dblp field set, entry_type never written).
+				// Deleting all of them would silently erase the only record of this
+				// publication (its entry_lineage / source_field_signatures rows
+				// would be the sole remaining evidence it ever existed). Surface
+				// it instead so it can be repaired, e.g. via -add_dblp_entry.
+				l.Warning("DBLP key %s has %d incomplete stub entry(ies) (%s) and no live entry — not deleting; repair with -add_dblp_entry %s",
+					dblpKey, len(ghosts), strings.Join(ghosts, ", "), dblpKey)
 			}
 		}
 		if keySet.Size() < 2 {
@@ -1820,8 +1840,24 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 		}
 		added := 0
 		crossrefSet := 0
+		// Track old crossref targets we have already merged into libraryKey this
+		// call so we do not attempt to merge the same entry twice.
+		mergedInto := map[string]bool{}
 		for _, childDBLP := range children {
 			if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
+				oldCrossref := l.EntryFieldValueity(childKey, "crossref")
+				if oldCrossref != "" && oldCrossref != libraryKey && !mergedInto[oldCrossref] {
+					// If the old crossref target is a non-DBLP proceedings entry, the
+					// tool is about to orphan it by redirecting this child. Merge it
+					// into libraryKey now while we have clear evidence they're the same
+					// conference.
+					if l.EntryFieldValueity(oldCrossref, EntryTypeField) == "proceedings" &&
+						l.EntryFieldValueity(oldCrossref, DBLPField) == "" {
+						l.MergeEntries(oldCrossref, libraryKey)
+						l.Progress("  Merged displaced proceedings %s into %s", oldCrossref, libraryKey)
+						mergedInto[oldCrossref] = true
+					}
+				}
 				if l.EntryFieldValueity(childKey, "crossref") != libraryKey {
 					l.SetEntryFieldValue(childKey, "crossref", libraryKey)
 					crossrefSet++
@@ -1875,7 +1911,8 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 			}
 		}
 
-		l.Warning(WarningLoneProceedings, key)
+		fmt.Fprint(os.Stderr, "\n")
+		l.printWarningLine(WarningLoneProceedings, key)
 		fmt.Fprint(os.Stderr, l.entryDisplayString(key))
 
 		switch l.WarningQuestion(QuestionLoneProceedings, validAnswers, "") {

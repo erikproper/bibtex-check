@@ -334,6 +334,9 @@ func (r *TInteraction) FlushDeferredMessages() {
 			fmt.Fprintf(os.Stderr, "  - %s\n", e)
 		}
 	}
+	if len(r.deferredWarnings) > 0 || len(r.deferredErrors) > 0 {
+		fmt.Fprintf(os.Stderr, "\n")
+	}
 	r.deferredWarnings = nil
 	r.deferredErrors = nil
 }
@@ -508,6 +511,7 @@ func printStatBlock(header string, rows []statRow) {
 			fmt.Fprintf(os.Stderr, "  %-*s  %*s\n", maxLabelLen, r.label+":", maxValLen, r.value)
 		}
 	}
+	fmt.Fprintf(os.Stderr, "\n")
 }
 
 // ConfirmAction always prompts the user for y/n/q confirmation, even when the

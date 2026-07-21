@@ -978,7 +978,18 @@ func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string)
 		return true
 	}
 	sv, tv := l.EntryFieldValueity(source, "doi"), l.EntryFieldValueity(target, "doi")
-	return sv != "" && tv != "" && !strings.EqualFold(sv, tv)
+	if sv != "" && tv != "" && !strings.EqualFold(sv, tv) {
+		return true
+	}
+	// Different non-empty volumes on bookish entries are strong evidence of
+	// different publications (e.g. vol. 1 and vol. 2 of the same workshop series).
+	if BibTeXBookish.Contains(l.EntryType(source)) && BibTeXBookish.Contains(l.EntryType(target)) {
+		svol, tvol := l.EntryFieldValueity(source, "volume"), l.EntryFieldValueity(target, "volume")
+		if svol != "" && tvol != "" && svol != tvol {
+			return true
+		}
+	}
+	return false
 	// || l.EvidencedUnequalEntryFields(source, target, "crossref")
 }
 

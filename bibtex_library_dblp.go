@@ -367,17 +367,31 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	}
 
 	key := l.NewKey()
+
+	// Register the DBLP alias in memory BEFORE the merge, not after. A bookish
+	// entry's own crossref-child processing (below) can re-enter this function
+	// for one of ITS OWN children while that child is itself still in the
+	// middle of resolving key as its crossref parent (parent P's children list
+	// includes child C; C's own MaybeMergeDBLPEntry call resolves P, which — to
+	// finish creating P — walks P's children and re-visits C before C has
+	// registered itself). Without an early registration, LookupDBLPKey(DBLPKey)
+	// misses this in-flight key and a second, independent entry gets created for
+	// the same DBLP key — a duplicate that (per its own recursive processing
+	// racing shared in-memory/transaction state with this call) can end up with
+	// its content fields never written, silently orphaning the record. Recording
+	// the alias first closes that window: any reentrant lookup finds and reuses
+	// this key instead of minting a duplicate. SetTransient avoids a DB write —
+	// buildKeyAliasesFromDb already rebuilds these from bib_entries on every
+	// startup — so rolling it back on failure is just a map delete.
+	l.KeyOldies.SetTransient(KeyForDBLP(DBLPKey), key)
+	l.HintToKey.SetTransient(KeyForDBLP(DBLPKey), key)
+
 	if !l.MaybeMergeDBLPEntry(DBLPKey, key, true) {
+		l.KeyOldies.DeleteTransient(KeyForDBLP(DBLPKey))
+		l.HintToKey.DeleteTransient(KeyForDBLP(DBLPKey))
 		return ""
 	}
 	setTableDirty("dblp_hierarchy")
-
-	// Register the DBLP alias in memory immediately so that any subsequent
-	// LookupDBLPKey call in the same run finds this entry rather than creating
-	// another duplicate. SetTransient avoids a DB write — buildKeyAliasesFromDb
-	// already rebuilds these from bib_entries on every startup.
-	l.KeyOldies.SetTransient(KeyForDBLP(DBLPKey), key)
-	l.HintToKey.SetTransient(KeyForDBLP(DBLPKey), key)
 
 	// MaybeMergeDBLPEntry writes to the DB but does not update the in-memory
 	// TitleIndex that buildTitleIndexFromDb built at startup. Add the title now
