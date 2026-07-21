@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.39"
+const AppVersion = "28.40"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2340,6 +2340,17 @@ func doUpsertDblpEntries() {
 		Library.Progress("  Absorbing DBLP name data...")
 		absorbDblpNamesCore()
 		Library.FlushAmbiguousAssignments()
+
+		// Drain the author/editor superseded-values backlog this run just produced,
+		// rather than leaving it as a separate manual step. Still interactive where
+		// a real judgment call is needed (doTriageAuthorMappings only prompts for
+		// the cases that can't be auto-resolved) — this just removes the need to
+		// separately remember -triage_author_mappings after every DBLP update.
+		// Skipped if the user quit early: they asked to stop, so leave the backlog
+		// for the next run rather than pushing more questions at them right now.
+		if !Library.QuitWasRequested() {
+			doTriageAuthorMappings()
+		}
 	}
 }
 

@@ -322,6 +322,48 @@ func (l *TBibTeXLibrary) ProcessComment(comment string) bool {
 	return true
 }
 
+// authorEditorNamesEquivalent reports whether two " and "-joined author/editor
+// field values name the same people once "others"/"et al." tokens are dropped
+// and each name is normalised through NameAliasToName. A name-mapping decision
+// made elsewhere (e.g. the auto-accept path in resolveNamePair during a DBLP
+// update) already resolves pairs like this; without this check AddEntryFieldAlias
+// would still log them into superseded_field_values as "awaiting triage" even
+// though nothing is actually left to decide.
+func authorEditorNamesEquivalent(l *TBibTeXLibrary, a, b string) bool {
+	split := func(value string) []string {
+		var out []string
+		for _, n := range strings.Split(value, " and ") {
+			n = strings.TrimSpace(n)
+			lc := strings.ToLower(n)
+			if n != "" && lc != "others" && lc != "et.al." && lc != "et al." {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	normalise := func(names []string) []string {
+		result := make([]string, len(names))
+		for i, n := range names {
+			if canonical, ok := l.NameAliasToName[n]; ok {
+				result[i] = canonical
+			} else {
+				result[i] = n
+			}
+		}
+		return result
+	}
+	an, bn := normalise(split(a)), normalise(split(b))
+	if len(an) != len(bn) {
+		return false
+	}
+	for i := range an {
+		if an[i] != bn[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // Initial registration of a target over a alias for a given entry and its field.
 func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, check bool) {
 	if alias == "" {
@@ -357,7 +399,9 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 	l.EntryFieldTargetToSource.AddValueToStringTrippleSetMap(entry, field, target, alias)
 
 	if field != PreferredAliasField && !entryFieldMappingsLoading {
-		if l.MapFieldValue(field, alias) != l.MapEntryFieldValue(entry, field, target) {
+		alreadyResolvedByNameMapping := (field == "author" || field == "editor") &&
+			authorEditorNamesEquivalent(l, alias, target)
+		if l.MapFieldValue(field, alias) != l.MapEntryFieldValue(entry, field, target) && !alreadyResolvedByNameMapping {
 			// Store both the superseded value and the accepted winner so that
 			// loadEntryFieldMappingsFromDb can reconstruct the mapping even when
 			// bib_entries was not immediately updated after a "n" answer.
