@@ -160,7 +160,8 @@ func (l *TBibTeXLibrary) CheckURLPlausibility(entry *TBibTeXEntry) {
 			pdfDownloadAttempted.Add(key)
 			l.Progress("Downloading PDF for %s: %s", key, url)
 			if err := downloadPDF(url, filePath); err != nil {
-				l.Warning(WarningPDFDownloadFailed, key, url, err)
+				l.WarningGrouped(WarningPDFDownloadFailed, key, url, err)
+				stderrPrintf("\n")
 			} else {
 				l.Progress(ProgressPDFDownloaded, key, filePath)
 				l.SetEntryFieldValue(key, "urldate", time.Now().Format("2006-01-02"))

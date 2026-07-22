@@ -293,6 +293,18 @@ func (r *TInteraction) printWarningLine(warning string, context ...any) {
 	fmt.Fprintf(os.Stderr, "\nWARNING:  "+warning+"\n", context...)
 }
 
+// printWarningLineGrouped is printWarningLine without the leading blank line — for a
+// warning that directly follows its own related Progress line and should stay visually
+// grouped with it (e.g. "Downloading PDF for X: url" / "WARNING: Download failed..."),
+// rather than having the leading blank line wedge itself between the two.
+func (r *TInteraction) printWarningLineGrouped(warning string, context ...any) {
+	if !isTTY {
+		return
+	}
+	SpinnerInterrupt()
+	fmt.Fprintf(os.Stderr, "WARNING:  "+warning+"\n", context...)
+}
+
 // printErrorLine prints an ERROR line immediately, bypassing any deferral.
 func (r *TInteraction) printErrorLine(errorMessage string, context ...any) {
 	if !isTTY {
@@ -363,6 +375,23 @@ func (r *TInteraction) Warning(warning string, context ...any) bool {
 			r.deferredWarnings = append(r.deferredWarnings, fmt.Sprintf(warning, context...))
 		} else {
 			r.printWarningLine(warning, context...)
+		}
+	}
+
+	return true
+}
+
+// WarningGrouped behaves like Warning but omits the leading blank line, so the
+// warning stays visually grouped with a Progress line immediately preceding it
+// instead of having a blank line wedge itself in between. Callers are responsible
+// for printing their own trailing separator (e.g. stderrPrintf("\n")) once the
+// group (progress line + warning) is complete.
+func (r *TInteraction) WarningGrouped(warning string, context ...any) bool {
+	if isTTY && !r.silenced {
+		if r.deferMessages {
+			r.deferredWarnings = append(r.deferredWarnings, fmt.Sprintf(warning, context...))
+		} else {
+			r.printWarningLineGrouped(warning, context...)
 		}
 	}
 
