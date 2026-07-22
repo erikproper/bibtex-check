@@ -405,6 +405,19 @@ func (r *TInteraction) WarningGrouped(warning string, context ...any) bool {
 // as inline context for the question.
 // In non-TTY sessions, sets quitRequested and returns "q" immediately.
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
+	return r.warningQuestionCore(question, options, warning, false, context...)
+}
+
+// WarningQuestionGrouped behaves like WarningQuestion but omits the leading blank
+// line before the warning, so it stays visually grouped with whatever Progress
+// output the caller printed immediately before it (e.g. an "Entry: ... / Current:
+// ... / Superseded: ..." block) instead of having a blank line wedge itself in
+// between.
+func (r *TInteraction) WarningQuestionGrouped(question string, options TStringSet, warning string, context ...any) string {
+	return r.warningQuestionCore(question, options, warning, true, context...)
+}
+
+func (r *TInteraction) warningQuestionCore(question string, options TStringSet, warning string, grouped bool, context ...any) string {
 	if !isTTY {
 		r.quitRequested = true
 		return "q"
@@ -423,7 +436,11 @@ func (r *TInteraction) WarningQuestion(question string, options TStringSet, warn
 	optionSet += "): "
 
 	if warning != "" {
-		r.printWarningLine(warning, context...)
+		if grouped {
+			r.printWarningLineGrouped(warning, context...)
+		} else {
+			r.printWarningLine(warning, context...)
+		}
 		fmt.Fprint(os.Stderr, "QUESTION: "+question+" "+optionSet)
 	} else {
 		SpinnerInterrupt()

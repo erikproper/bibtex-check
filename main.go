@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.48"
+const AppVersion = "28.49"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1116,7 +1116,7 @@ outer:
 				Library.Progress("\nEntry: %s / field: %s\n  Current (fewer names):   %s\n  Superseded (more names): %s", p.key, p.field, winner, p.superseded)
 				ynOptions := TStringSetNew()
 				ynOptions.Add("y", "n")
-				switch Library.WarningQuestion("Adopt the fuller author/editor list? (y/n/q)", ynOptions,
+				switch Library.WarningQuestionGrouped("Adopt the fuller author/editor list?", ynOptions,
 					"Superseded %s value for %s has name(s) not present in the current value — looks like a missing co-author", p.field, p.key) {
 				case "y":
 					Library.SetEntryFieldValue(p.key, p.field, p.superseded)
