@@ -581,17 +581,28 @@ func applyMiscJournalFix(fields map[string]string) {
 // Step 1 key-match fast path never revisits an existing entry's fields, so an
 // entry harvested before this rule existed would otherwise keep its illegal
 // journal value forever, even on a re-harvest.
-func (l *TBibTeXLibrary) fixMiscJournalField(key string) {
-	if l.EntryType(key) != "misc" {
+func (l *TBibTeXLibrary) fixMiscJournalField(key string, sourceFields map[string]string) {
+	if l.EntryType(key) != "misc" || l.EntryFieldValueity(key, "howpublished") != "" {
 		return
 	}
-	journal := l.EntryFieldValueity(key, "journal")
-	if journal == "" || l.EntryFieldValueity(key, "howpublished") != "" {
+	// Prefer whatever is still sitting on the library entry's own (illegal) journal
+	// field, if any.
+	if journal := l.EntryFieldValueity(key, "journal"); journal != "" {
+		l.SetEntryFieldValue(key, "howpublished", journal)
+		l.SetEntryFieldValue(key, "journal", "")
+		l.Progress("  Rescued journal into howpublished for %s", key)
 		return
 	}
-	l.SetEntryFieldValue(key, "howpublished", journal)
-	l.SetEntryFieldValue(key, "journal", "")
-	l.Progress("  Rescued journal into howpublished for %s", key)
+	// A library entry harvested before this rule (or applyMiscJournalFix) existed
+	// had its illegal journal value silently DELETED — not rescued — by the generic
+	// disallowed-field cleanup the first time it was checked. There is nothing left
+	// in the DB to recover from at that point; the source .bib file re-harvested
+	// just now (sourceFields, already coerced by applyMiscJournalFix) is the only
+	// surviving copy of the value.
+	if howpublished := sourceFields["howpublished"]; howpublished != "" {
+		l.SetEntryFieldValue(key, "howpublished", howpublished)
+		l.Progress("  Rescued howpublished for %s from re-harvested source", key)
+	}
 }
 
 // --- Interactive loop ---
@@ -641,7 +652,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		fmt.Fprint(os.Stderr, l.entryDisplayString(keyMatch))
 		finalKey := l.MapEntryKey(keyMatch)
 		l.Progress("Already in library as %s", finalKey)
-		l.fixMiscJournalField(finalKey)
+		l.fixMiscJournalField(finalKey, e.Fields)
 		maybeCollectKeyHint(l, e.Key, finalKey)
 		l.maybeHarvestPDF(e, finalKey)
 		l.maybeHarvestGroups(e, finalKey, syncState)
@@ -810,7 +821,7 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 		skip, resolvedCanon := harvestSkipStatus(e, syncState, l)
 		if skip {
 			if resolvedCanon != "" {
-				l.fixMiscJournalField(resolvedCanon)
+				l.fixMiscJournalField(resolvedCanon, e.Fields)
 				l.maybeHarvestPDF(e, resolvedCanon)
 				l.maybeHarvestGroups(e, resolvedCanon, syncState)
 				if e.Key != "" {
