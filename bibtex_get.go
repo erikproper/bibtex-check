@@ -1974,14 +1974,6 @@ func doSync(filter string) {
 		}
 	}
 
-	// Drain any author/editor superseded-values backlog this sync just produced
-	// (e.g. from bib-side edits merged in during phase 1), same as the auto-run
-	// at the end of -update_all_dblp_entries. Only when the library was actually
-	// opened for writing — a report-only sync (openLibraryToReport, e.g. -pull)
-	// must stay read-only and not escalate into an interactive write session.
-	if needsWrite && !Library.QuitWasRequested() {
-		doTriageAuthorMappings()
-	}
 }
 
 // resolveHarvestTransferPath validates the harvest_transfer target and returns the

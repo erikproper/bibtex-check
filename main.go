@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.42"
+const AppVersion = "28.43"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2346,17 +2346,6 @@ func doUpsertDblpEntries() {
 		Library.Progress("  Absorbing DBLP name data...")
 		absorbDblpNamesCore()
 		Library.FlushAmbiguousAssignments()
-
-		// Drain the author/editor superseded-values backlog this run just produced,
-		// rather than leaving it as a separate manual step. Still interactive where
-		// a real judgment call is needed (doTriageAuthorMappings only prompts for
-		// the cases that can't be auto-resolved) — this just removes the need to
-		// separately remember -triage_author_mappings after every DBLP update.
-		// Skipped if the user quit early: they asked to stop, so leave the backlog
-		// for the next run rather than pushing more questions at them right now.
-		if !Library.QuitWasRequested() {
-			doTriageAuthorMappings()
-		}
 	}
 }
 
@@ -4332,6 +4321,18 @@ case cmdAlignBooktitleCountries:
 	}
 
 	Library.CheckDblpKeyMissingWarnings()
+
+	// Drain any author/editor superseded-values backlog this run produced, rather than
+	// leaving it as a separate manual step every command has to remember to trigger.
+	// Still interactive where a real judgment call is needed — doTriageAuthorMappings
+	// only prompts for cases it can't auto-resolve, and is a silent no-op when nothing
+	// is pending. Runs once here for every command, instead of being wired into each
+	// write path individually: only meaningful once a write session actually started
+	// (dbWriteSessionActive), and skipped if the user quit early — they asked to stop,
+	// so leave the backlog for the next run rather than pushing more questions at them.
+	if dbWriteSessionActive && !Library.QuitWasRequested() {
+		doTriageAuthorMappings()
+	}
 
 	// DB-primary (step 13.6 + 22.7): the bib file is never written during a normal run.
 	// Bib file writes happen only via -sync (full mode). All entry changes are already
