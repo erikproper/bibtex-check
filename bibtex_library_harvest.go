@@ -810,6 +810,7 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 		skip, resolvedCanon := harvestSkipStatus(e, syncState, l)
 		if skip {
 			if resolvedCanon != "" {
+				l.fixMiscJournalField(resolvedCanon)
 				l.maybeHarvestPDF(e, resolvedCanon)
 				l.maybeHarvestGroups(e, resolvedCanon, syncState)
 				if e.Key != "" {
