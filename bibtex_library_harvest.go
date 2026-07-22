@@ -554,6 +554,46 @@ func addHarvestEntry(l *TBibTeXLibrary, e TBibTeXEntry) string {
 	return key
 }
 
+// applyMiscJournalFix rescues an illegal journal value into howpublished for an
+// @misc entry, mutating fields in place. Must run before fingerprinting (see
+// runHarvestLoop), not just at write time (addHarvestEntry) — the stored/compared
+// skip-content signature has to reflect the entry as it will actually be presented
+// for merging, not its raw pre-coercion source form. Otherwise two raw source
+// variants (one with journal=X, one already howpublished=X) that coerce to the
+// identical final entry would get different fingerprints, and a source that
+// legitimately still has the old raw form would never be recognised as
+// "already handled" — re-presenting it to the user every run for no real reason.
+func applyMiscJournalFix(fields map[string]string) {
+	if fields[EntryTypeField] != "misc" {
+		return
+	}
+	journal := fields["journal"]
+	if journal == "" || fields["howpublished"] != "" {
+		return
+	}
+	fields["howpublished"] = journal
+	delete(fields, "journal")
+}
+
+// fixMiscJournalField rescues an illegal journal value into howpublished for an
+// already-existing @misc library entry — the same correction addHarvestEntry
+// applies to newly-harvested fields. Needed separately because runHarvestEntry's
+// Step 1 key-match fast path never revisits an existing entry's fields, so an
+// entry harvested before this rule existed would otherwise keep its illegal
+// journal value forever, even on a re-harvest.
+func (l *TBibTeXLibrary) fixMiscJournalField(key string) {
+	if l.EntryType(key) != "misc" {
+		return
+	}
+	journal := l.EntryFieldValueity(key, "journal")
+	if journal == "" || l.EntryFieldValueity(key, "howpublished") != "" {
+		return
+	}
+	l.SetEntryFieldValue(key, "howpublished", journal)
+	l.SetEntryFieldValue(key, "journal", "")
+	l.Progress("  Rescued journal into howpublished for %s", key)
+}
+
 // --- Interactive loop ---
 
 // runHarvestEntry processes one harvested entry through the 4-step pipeline.
@@ -601,6 +641,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		fmt.Fprint(os.Stderr, l.entryDisplayString(keyMatch))
 		finalKey := l.MapEntryKey(keyMatch)
 		l.Progress("Already in library as %s", finalKey)
+		l.fixMiscJournalField(finalKey)
 		maybeCollectKeyHint(l, e.Key, finalKey)
 		l.maybeHarvestPDF(e, finalKey)
 		l.maybeHarvestGroups(e, finalKey, syncState)
@@ -765,6 +806,7 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 		// Pre-normalise non-interactively before display and fingerprinting so the
 		// candidate entry compares cleanly against the current library content.
 		applyNoteAccessedFix(e.Fields)
+		applyMiscJournalFix(e.Fields)
 		skip, resolvedCanon := harvestSkipStatus(e, syncState, l)
 		if skip {
 			if resolvedCanon != "" {
