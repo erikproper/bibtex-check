@@ -519,6 +519,18 @@ func addHarvestEntry(l *TBibTeXLibrary, e TBibTeXEntry) string {
 			// temp key — it will be merged immediately and the canonical entry
 			// already owns these mappings.
 			l.SetEntryFieldValue(key, field, value)
+		case "journal":
+			// journal is not a legal @misc field. A harvested @misc entry with a
+			// journal value almost always means the source considered it a
+			// publication venue that just doesn't fit a stricter type — rescue it
+			// into howpublished (the closest legal @misc equivalent) instead of
+			// letting the later disallowed-field cleanup silently drop it, unless
+			// howpublished is already set (don't overwrite an explicit value).
+			if e.Fields[EntryTypeField] == "misc" && e.Fields["howpublished"] == "" {
+				l.ProcessRawEntryFieldValue(key, "howpublished", value)
+			} else {
+				l.ProcessRawEntryFieldValue(key, field, value)
+			}
 		case "date":
 			// biblatex date field: derive year if not already present.
 			if e.Fields["year"] == "" && len(value) >= 4 {
