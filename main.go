@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.52"
+const AppVersion = "28.53"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -78,16 +78,24 @@ func initialiseLibrary() {
 		if Library.EntryFieldValueity(target, DBLPField) != "" {
 			return
 		}
-		// If source already has a DBLP key (e.g. just assigned during fix_candidates),
-		// auto-associate that same key to target. AssociateDblpKey detects the collision
-		// and merges target into source automatically — no need to re-ask the user.
-		if sourceDblp := Library.EntryFieldValueity(source, DBLPField); sourceDblp != "" {
-			Library.AssociateDblpKey(target, sourceDblp)
-			return
+		// Do NOT auto-associate/auto-merge here, even when source already has a
+		// DBLP key. A shared DBLP key is a strong signal, not proof — this hook
+		// fires from any MaybeMergeEntries call, including CheckNeedToMergeForEqualTitles'
+		// loose title-hash bucket, which can and does pair up genuinely different
+		// publications (e.g. two papers whose titles differ only in case/hyphenation).
+		// AssociateDblpKey performs the full merge as a side effect and only ever
+		// declines when there's already a conflicting doi/dblp value recorded — a
+		// brand-new target never has one, so it always "succeeded", and afterward
+		// source/target resolved to the same entry, silently skipping the explicit
+		// "Merge these entries?" question below entirely. Confirmed 2026-07-23: this
+		// merged two unrelated papers (Schmidt 2006 "Model-driven engineering" /
+		// Kent 2002 "Model Driven Engineering") without ever asking. Always fall
+		// through to the explicit confirmation instead; if source has no DBLP key,
+		// still offer to find one for target first so both sides have DBLP context
+		// when that confirmation is shown.
+		if Library.EntryFieldValueity(source, DBLPField) == "" {
+			maybeFindDBLPCandidates(target)
 		}
-		// Source has no DBLP key: ask the user to find one for target, so both
-		// entries have DBLP confirmation before the merge is proposed.
-		maybeFindDBLPCandidates(target)
 	}
 
 	// If bib_entries was dirty on the previous run (crash mid-write), advance its
