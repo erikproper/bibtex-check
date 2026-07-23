@@ -1589,10 +1589,17 @@ func (l *TBibTeXLibrary) AssignField(key, field, value string) bool {
 
 // applyMappingsForKey applies all target rules in l.FieldMappings[key][sourceValue]
 // to entry, updating fieldIsChanged and returning whether any field was changed.
+// Unconditional: a cross-field mapping always asserts its target value once its
+// source condition matches, even overwriting a target field that already holds a
+// different value — these rules are a hard fact about the source value (e.g. "this
+// publisher's address is always Berlin, Germany"), not a fallback for an unknown
+// field. fieldIsChanged still guards against a field being reassigned twice within
+// the same saturation pass (see MaybeApplyFieldMappings), which is what guarantees
+// the pass terminates.
 func (l *TBibTeXLibrary) applyMappingsForKey(entry *TBibTeXEntry, key, sourceValue string, fieldIsChanged map[string]bool, writeToDb bool) bool {
 	changed := false
 	for targetField, targetValue := range l.FieldMappings[key][sourceValue] {
-		if entry.Fields[targetField] == "" && !fieldIsChanged[targetField] && l.EntryAllowsForField(entry.Key, targetField) {
+		if entry.Fields[targetField] != targetValue && !fieldIsChanged[targetField] && l.EntryAllowsForField(entry.Key, targetField) {
 			if writeToDb {
 				l.setEntryField(entry, targetField, targetValue)
 			}
@@ -1605,9 +1612,11 @@ func (l *TBibTeXLibrary) applyMappingsForKey(entry *TBibTeXEntry, key, sourceVal
 }
 
 // MaybeApplyFieldMappings applies cross-field mappings to entry until no new fields
-// are derived (saturation). Each target field is set only when currently empty, and
-// at most once per iteration, guaranteeing termination. Conflicting rules for an
-// already-assigned field are silently skipped.
+// are derived (saturation). A target field is asserted unconditionally — an existing,
+// different value is overwritten, not just filled when empty — but at most once per
+// saturation pass, which is what guarantees termination. When two different rules
+// target the same field in the same pass, whichever is encountered first (map
+// iteration order — unspecified) wins and the other is silently skipped.
 //
 // Mappings stored with a plain source_field (e.g. "author") apply to every entry
 // type. Mappings stored with an entrytype-qualified source_field (e.g.
