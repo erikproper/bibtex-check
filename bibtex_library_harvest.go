@@ -812,7 +812,18 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 // Entries already handled (resolved, ignored, or skip-content unchanged) are silently
 // skipped when syncState is non-nil. For previously resolved entries, PDF sync and
 // key-hint registration are re-run on each pass.
+//
+// Entries that are not already resolved/skipped are then processed in two passes:
+// automatic first (harvestKeyMatch finds an existing key/hint match — Step 1 of
+// runHarvestEntry, which never prompts), then interactive (everything else — title
+// match, DBLP match, or a genuinely new entry, all of which may ask a question).
+// This means a long automatic backlog is never left half-done behind an interactive
+// entry earlier in source-file order — including the degenerate case of a non-TTY
+// run, where the first interactive question quits the whole loop immediately
+// (WarningQuestion returns "q" with no TTY): without this split, everything after
+// that point in file order — automatic or not — would never even be attempted.
 func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSyncState) {
+	var pending []TBibTeXEntry
 	for _, e := range entries {
 		// Pre-normalise non-interactively before display and fingerprinting so the
 		// candidate entry compares cleanly against the current library content.
@@ -835,8 +846,31 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 			}
 			continue
 		}
-		_, quit := l.runHarvestEntry(e, syncState)
-		if quit {
+		pending = append(pending, e)
+	}
+	if len(pending) == 0 {
+		return
+	}
+
+	var interactive []TBibTeXEntry
+	autoResolved := 0
+	for _, e := range pending {
+		if l.harvestKeyMatch(e) == "" {
+			interactive = append(interactive, e)
+			continue
+		}
+		if _, quit := l.runHarvestEntry(e, syncState); quit {
+			return
+		}
+		autoResolved++
+	}
+	if autoResolved > 0 {
+		l.Progress("  Automatic pass: %d/%d entr%s resolved without interaction (%d remaining need input)",
+			autoResolved, len(pending), map[bool]string{true: "y", false: "ies"}[autoResolved == 1], len(interactive))
+	}
+
+	for _, e := range interactive {
+		if _, quit := l.runHarvestEntry(e, syncState); quit {
 			return
 		}
 	}
@@ -967,16 +1001,20 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 	entries = Library.preDeduplicateHarvestEntries(entries)
 	entries = reorderHarvestCrossrefsFirst(entries)
 
-	skipped := 0
+	skipped, autoResolvable := 0, 0
 	for _, e := range entries {
 		if skip, _ := harvestSkipStatus(e, syncState, &Library); skip {
 			skipped++
+			continue
+		}
+		if Library.harvestKeyMatch(e) != "" {
+			autoResolvable++
 		}
 	}
 	pending := len(entries) - skipped
-	Library.Progress("  Source: %d entr%s total; %d synced, %d pending",
+	Library.Progress("  Source: %d entr%s total; %d synced, %d pending (%d automatic, %d need input)",
 		len(entries), map[bool]string{true: "y", false: "ies"}[len(entries) == 1],
-		skipped, pending)
+		skipped, pending, autoResolvable, pending-autoResolvable)
 
 	pdfsBefore := len(Library.PDFFiles)
 	hintsBefore := len(Library.newKeyHints)
