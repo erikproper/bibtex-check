@@ -672,6 +672,30 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		return finalKey, false // step 1: automatic, no user interaction
 	}
 
+	// Step 1.5: DBLP key match. An exact dblp field match between source and an
+	// existing library entry is conclusive — DBLP keys are unique identifiers for
+	// a publication, unlike a title match, which can and does collide on unrelated
+	// papers (TeXStringIndexer ignores case/hyphenation on purpose; see the
+	// 2026-07-23 Schmidt/Kent incident). Runs before the title-match step so a
+	// real DBLP-key match is never intercepted by a fuzzy title-match prompt for
+	// the same pair — automatic, no user interaction, same as Step 1.
+	if dblpKey := e.Fields[DBLPField]; dblpKey != "" {
+		if canon := LookupDblpCanonical(dblpKey); canon != "" {
+			if matched := l.MapEntryKey(canon); l.EntryExists(matched) {
+				fmt.Fprintf(os.Stderr, "DBLP key match in library:\n")
+				fmt.Fprint(os.Stderr, l.entryDisplayString(matched))
+				finalKey := mergeAndCheck(addHarvestEntry(l, e), matched)
+				maybeCollectKeyHint(l, e.Key, finalKey)
+				l.maybeHarvestPDF(e, finalKey)
+				l.maybeHarvestGroups(e, finalKey, syncState)
+				addToHarvestGroup(l, finalKey)
+				transferHarvestKey(e.Key, finalKey)
+				recordStatus(finalKey)
+				return finalKey, false // exact DBLP key match: automatic, no user interaction
+			}
+		}
+	}
+
 	// Step 2: title match in library (may find multiple).
 	if titleMatches := l.harvestTitleMatches(e); len(titleMatches) > 0 {
 		fmt.Fprintf(os.Stderr, "Title match(es) in library:\n")
@@ -692,32 +716,6 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 			transferHarvestKey(e.Key, finalKey)
 			recordStatus(finalKey)
 			return finalKey, false
-		}
-	}
-
-	// Step 2.5: DBLP key match (only when source already has a dblp field).
-	// LookupDblpCanonical queries dblp_canonical directly for an exact key hit,
-	// which is more authoritative than a title search.
-	if dblpKey := e.Fields[DBLPField]; dblpKey != "" {
-		if canon := LookupDblpCanonical(dblpKey); canon != "" {
-			if matched := l.MapEntryKey(canon); l.EntryExists(matched) {
-				fmt.Fprintf(os.Stderr, "DBLP key match in library:\n")
-				fmt.Fprint(os.Stderr, l.entryDisplayString(matched))
-				pick := l.askHarvestLibraryChoice(1)
-				if l.QuitWasRequested() {
-					return "", true
-				}
-				if pick > 0 {
-					finalKey := mergeAndCheck(addHarvestEntry(l, e), matched)
-					maybeCollectKeyHint(l, e.Key, finalKey)
-					l.maybeHarvestPDF(e, finalKey)
-					l.maybeHarvestGroups(e, finalKey, syncState)
-					addToHarvestGroup(l, finalKey)
-					transferHarvestKey(e.Key, finalKey)
-					recordStatus(finalKey)
-					return finalKey, false
-				}
-			}
 		}
 	}
 
