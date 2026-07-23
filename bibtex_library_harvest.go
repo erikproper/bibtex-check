@@ -287,6 +287,19 @@ func (l *TBibTeXLibrary) harvestFindDblpCandidates(e TBibTeXEntry) string {
 	if len(candidates) > 9 {
 		candidates = candidates[:9]
 	}
+	// Repeat the source entry right above the candidate list. By this point in the
+	// pipeline (after the key-match and library-title-match steps have already
+	// scrolled past) it's easy to lose track of what's actually being matched —
+	// especially since the candidates themselves can be only loosely related (the
+	// title hash ignores case/hyphenation on purpose, to still catch near-duplicate
+	// titles) and one of them may even be a candidate already declined a step earlier.
+	fmt.Fprintf(os.Stderr, "\nMatching against source entry:\n  title : %s\n", title)
+	if author := e.Fields["author"]; author != "" {
+		fmt.Fprintf(os.Stderr, "  author: %s\n", author)
+	}
+	if year := e.Fields["year"]; year != "" {
+		fmt.Fprintf(os.Stderr, "  year  : %s\n", year)
+	}
 	fmt.Fprintf(os.Stderr, "\n")
 	for i, c := range candidates {
 		fmt.Fprintf(os.Stderr, "  [%d] %s", i+1, c)
