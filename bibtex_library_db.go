@@ -932,6 +932,26 @@ func upsertNameMapping(alias, name string) {
 
 	upsertContributorNameToDB(id, alias)
 	Library.NameToContributorID[alias] = id
+	// A prior "different person" recording for this exact pair (e.g. from skipped
+	// triage) is now contradicted by this alias — see doCorrectName's rename-rewire
+	// logic for the same principle applied to renames.
+	removeNonDoubleContributorNamePair(&Library, alias, name)
+}
+
+// removeNonDoubleContributorNamePair deletes any recorded "different person" pairing
+// between name1 and name2, both in memory and in the DB. Called when a later, more
+// authoritative decision (e.g. an explicit alias) establishes that they are in fact
+// the same contributor — leaving the stale pair would keep it flagged as different.
+func removeNonDoubleContributorNamePair(l *TBibTeXLibrary, name1, name2 string) {
+	if name1 > name2 {
+		name1, name2 = name2, name1
+	}
+	key := [2]string{name1, name2}
+	if !l.NonDoubleContributorNames[key] {
+		return
+	}
+	delete(l.NonDoubleContributorNames, key)
+	db.Exec(`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, name1, name2) //nolint:errcheck
 }
 
 // deleteNameMapping removes a non-derived name form from the contributor

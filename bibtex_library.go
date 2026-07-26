@@ -828,6 +828,35 @@ func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
 		l.NameToAliases.AddValueToStringSetMap(r.trueCanonical, r.alias)
 		upsertNameMapping(r.alias, r.trueCanonical)
 	}
+
+	// Phase 3: remove non_double_contributor_names pairs now contradicted by
+	// contributor_names — both names currently resolve to the same contributor
+	// (e.g. via a later alias, merge, or garbled-name correction). A stale
+	// "different person" record left over from an earlier skipped triage decision
+	// should not survive a later decision that says otherwise; see also
+	// upsertNameMapping's cleanup of the same principle for a single new alias.
+	var contradictions [][2]string
+	for pair := range l.NonDoubleContributorNames {
+		id1, ok1 := l.NameToContributorID[pair[0]]
+		id2, ok2 := l.NameToContributorID[pair[1]]
+		if ok1 && ok2 && id1 == id2 {
+			contradictions = append(contradictions, pair)
+		}
+	}
+	if len(contradictions) > 0 {
+		logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/non_double_contributor_name_contradictions.log"
+		os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+		if f, err := os.Create(logPath); err == nil {
+			for _, pair := range contradictions {
+				fmt.Fprintf(f, "Removed contradicted non-double pairing: %q / %q (both now resolve to the same contributor)\n", pair[0], pair[1])
+			}
+			f.Close()
+		}
+		for _, pair := range contradictions {
+			removeNonDoubleContributorNamePair(l, pair[0], pair[1])
+		}
+		l.Progress("  Removed %d contradicted non-double contributor name pairing(s) (see non_double_contributor_name_contradictions.log)", len(contradictions))
+	}
 }
 
 func (l *TBibTeXLibrary) FileReferencety(key string) string {
@@ -1154,6 +1183,14 @@ func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 		l.Warning(WarningAmbiguousKeyOldie, alias, existing, canonical)
 		return
 	}
+	// KeyOldies and HintToKey each only guard against ambiguity within themselves;
+	// without this cross-check the same alias string can be registered in both
+	// tables pointing at different targets, silently, since neither write sees the
+	// other table at all.
+	if existingHint := l.HintToKey.GetValue(alias); existingHint != "" && l.MapEntryKey(existingHint) != canonical {
+		l.Warning(WarningAmbiguousKeyOldie, alias, existingHint, canonical)
+		return
+	}
 	l.KeyOldies.Set(alias, canonical)
 }
 
@@ -1171,6 +1208,13 @@ func (l *TBibTeXLibrary) AddKeyHint(hint, key string) {
 			return
 		}
 		l.Warning(WarningAmbiguousKeyHint, hint, existing, resolvedKey)
+		return
+	}
+	// See the matching cross-check in AddKeyAlias: KeyOldies and HintToKey don't
+	// see each other's writes, so the same string can otherwise end up registered
+	// in both with different targets.
+	if existingOldie := l.KeyOldies.Get(hint); existingOldie != "" && existingOldie != resolvedKey {
+		l.Warning(WarningAmbiguousKeyHint, hint, existingOldie, resolvedKey)
 		return
 	}
 	l.HintToKey.Set(hint, resolvedKey)

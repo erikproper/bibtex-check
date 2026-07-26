@@ -301,6 +301,27 @@ func (l *TBibTeXLibrary) CheckKeyHintsConsistency() {
 	}
 }
 
+// CheckKeyOldieHintOverlap warns when the same alias string is registered in both
+// KeyOldies and HintToKey with different targets. AddKeyAlias/AddKeyHint each only
+// guard against ambiguity within their own table, so a key_oldies write (e.g.
+// demoting a superseded preferredalias) and an unrelated key_hints write for the
+// same string can each succeed independently — leaving the two tables in silent,
+// contradictory disagreement about what the string resolves to. Not auto-resolved:
+// there is no way to tell which target is actually correct.
+func (l *TBibTeXLibrary) CheckKeyOldieHintOverlap() {
+	var conflicts []struct{ alias, oldieTarget, hintTarget string }
+	l.KeyOldies.ForEachPersistent(func(oldie, oldieTarget string) {
+		if hintTarget := l.HintToKey.GetValue(oldie); hintTarget != "" {
+			if l.MapEntryKey(hintTarget) != l.MapEntryKey(oldieTarget) {
+				conflicts = append(conflicts, struct{ alias, oldieTarget, hintTarget string }{oldie, oldieTarget, hintTarget})
+			}
+		}
+	})
+	for _, c := range conflicts {
+		l.Warning("Key %q is both a key oldie (-> %s) and a key hint (-> %s) with different targets — needs manual resolution", c.alias, c.oldieTarget, c.hintTarget)
+	}
+}
+
 // CheckDblpDuplicates finds pairs of live entries that share the same DBLP key and
 // merges them. These arise when dblp_canonical writes fail (SQLITE_BUSY) and a later
 // run creates a second entry for a key already present in the library.
