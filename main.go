@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.62"
+const AppVersion = "28.63"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2972,7 +2972,9 @@ func doAddNameMapping(args []string) {
 			canonical = name
 		}
 	}
+	forceNameMapping = true
 	Library.AddNameMapping(canonical, alias)
+	forceNameMapping = false
 	Library.RenormaliseNameFields()
 }
 

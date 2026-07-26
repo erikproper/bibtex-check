@@ -856,6 +856,14 @@ func deleteContributorNameFromDB(id, name string) {
 
 // --- name_mappings table ---
 
+// forceNameMapping, when true, bypasses upsertNameMapping's automatic garbled-name
+// heuristic. Set around explicit, user-directed alias commands (e.g. -add_name_mapping)
+// where the user has already deliberately confirmed the name — organization names like
+// "OMG, Object Management Group, Inc." trip the 2-comma heuristic (built to catch
+// auto-derived "Lastname, Suffix, Firstname" garbage) despite being entirely valid.
+// Automatic/derived callers leave this false so the heuristic still protects them.
+var forceNameMapping bool
+
 // upsertNameMapping records alias as a non-derived name form for the contributor
 // whose canonical name is `name`. Suppressed during load. If no contributor
 // exists yet for `name` a new one is created on the fly.
@@ -868,7 +876,8 @@ func upsertNameMapping(alias, name string) {
 	if alias == name {
 		return
 	}
-	if isGarbledContributorName(alias) || isGarbledContributorName(name) {
+	if !forceNameMapping && (isGarbledContributorName(alias) || isGarbledContributorName(name)) {
+		dbInteraction.Warning("Skipping name mapping %q -> %q: looks like a garbled/ambiguous name (heuristic check); use -add_name_mapping to force it", alias, name)
 		return
 	}
 	id, ok := Library.NameToContributorID[name]
