@@ -1646,12 +1646,32 @@ func (l *TBibTeXLibrary) MaybeApplyFieldMappings(entry *TBibTeXEntry, writeToDb 
 	}
 }
 
+// autoIgnoreIllegalFields lists field names that are always silently dropped when
+// found illegal for an entry's type — never prompted for, regardless of
+// ignoreIllegalFields. For fields whose presence is common (harvested from sources
+// with looser conventions than BibTeX) but never carries data worth keeping, so
+// asking about them every single time is pure friction, not a real decision.
+var autoIgnoreIllegalFields TStringSet
+
+func init() {
+	autoIgnoreIllegalFields = TStringSetNew()
+	autoIgnoreIllegalFields.Add("comment")
+}
+
+// CheckIfFieldsAreAllowed checks entry's own in-memory Fields/EntryType, not a fresh
+// by-key DB lookup: entry may be open (openEntry/closeEntry deferred-write pattern) with
+// an entrytype that is set in memory but not yet persisted. Looking it up by key instead
+// (as EntryAllowsForField does) sees no entrytype for such entries, so every field reads
+// as disallowed and gets deleted before closeEntry ever writes them — this was the root
+// cause of recurring ghost DBLP entries (dblp field only, full lineage/signatures, no
+// content) surfaced 2026-07-26.
 func (l *TBibTeXLibrary) CheckIfFieldsAreAllowed(entry *TBibTeXEntry, violationHandler func(string, string, string)) {
+	allowed := BibTeXAllowedEntryFields[entry.EntryType()].Set()
 	for field, value := range entry.Fields {
 		if l.QuitWasRequested() {
 			return
 		}
-		if !l.EntryAllowsForField(entry.Key, field) {
+		if !allowed.Contains(field) {
 			violationHandler(entry.Key, field, value)
 		}
 	}
@@ -1680,7 +1700,7 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 
 	if !l.InteractionIsOff() {
 		l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
-			if l.ignoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
+			if l.ignoreIllegalFields || autoIgnoreIllegalFields.Contains(field) || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
 				l.deleteEntryField(entry, field)
 			} else if !l.QuitWasRequested() {
 				l.Warning("Stopping programme. Please fix this manually.")

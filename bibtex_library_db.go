@@ -2134,20 +2134,63 @@ func repairDblpData() {
 		dbInteraction.Progress("  Repair DBLP data: removed %d stale dblp field(s) from merged key_oldies", n)
 	}
 
-	// Category B: remove all rows for ghost entries (no entrytype, not in key_oldies).
+	// Category B: remove ghost entries (dblp field only, no entrytype, not in
+	// key_oldies) that are redundant — i.e. another live entry already holds the
+	// same DBLP key. Ghosts with no live sibling are NOT deleted: doing so would
+	// erase the only record of that publication, leaving only orphaned
+	// entry_lineage/source_field_signatures rows as posthumous evidence (the same
+	// failure mode CheckDuplicateDBLPKeys was fixed for on 2026-07-21). Those are
+	// reported instead so they can be repaired via -add_dblp_entry.
 	// CASCADE on bib_entry_keys propagates to bib_entries, superseded_field_values, etc.
 	db.Exec(`PRAGMA foreign_keys = ON`) //nolint:errcheck
-	res, err = db.Exec(`
-		DELETE FROM bib_entry_keys
-		WHERE entry_key IN (
-			SELECT DISTINCT entry_key FROM bib_entries WHERE field = ?
-			EXCEPT SELECT entry_key FROM bib_entries WHERE field = ?
-			EXCEPT SELECT alias FROM key_oldies
-		)`, DBLPField, EntryTypeField)
+	rows, err := db.Query(`
+		SELECT g.entry_key, g.value
+		FROM bib_entries g
+		WHERE g.field = ?
+		  AND g.entry_key NOT IN (SELECT entry_key FROM bib_entries WHERE field = ?)
+		  AND g.entry_key NOT IN (SELECT alias FROM key_oldies)`,
+		DBLPField, EntryTypeField)
 	if err != nil {
 		dbInteraction.Warning("repairDblpData (B): %s", err)
-	} else if n, _ := res.RowsAffected(); n > 0 {
-		dbInteraction.Progress("  Repair DBLP data: removed %d ghost entry rows", n)
+	} else {
+		var safe []string
+		type unsafeGhost struct{ key, dblpKey string }
+		var unsafe []unsafeGhost
+		for rows.Next() {
+			var key, dblpKey string
+			if err := rows.Scan(&key, &dblpKey); err != nil {
+				continue
+			}
+			var liveSiblings int
+			db.QueryRow(`
+				SELECT COUNT(*) FROM bib_entries live
+				WHERE live.field = ? AND live.value = ? AND live.entry_key != ?
+				  AND live.entry_key IN (SELECT entry_key FROM bib_entries WHERE field = ?)`,
+				DBLPField, dblpKey, key, EntryTypeField).Scan(&liveSiblings) //nolint:errcheck
+			if liveSiblings > 0 {
+				safe = append(safe, key)
+			} else {
+				unsafe = append(unsafe, unsafeGhost{key, dblpKey})
+			}
+		}
+		rows.Close()
+		if len(safe) > 0 {
+			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(safe)), ",")
+			args := make([]any, len(safe))
+			for i, k := range safe {
+				args[i] = k
+			}
+			res, err = db.Exec(`DELETE FROM bib_entry_keys WHERE entry_key IN (`+placeholders+`)`, args...)
+			if err != nil {
+				dbInteraction.Warning("repairDblpData (B): %s", err)
+			} else if n, _ := res.RowsAffected(); n > 0 {
+				dbInteraction.Progress("  Repair DBLP data: removed %d redundant ghost entry rows", n)
+			}
+		}
+		for _, g := range unsafe {
+			dbInteraction.Warning("  Ghost dblp entry %s (dblp=%s) has no live sibling — not deleting; repair with -add_dblp_entry %s",
+				g.key, g.dblpKey, g.dblpKey)
+		}
 	}
 
 	// Remove stale dblp_canonical rows (target no longer exists as a live entry).

@@ -1633,7 +1633,7 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 		if entry.Exists() && l.EntryExists(entry.Key) {
 			if !l.InteractionIsOff() {
 				l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
-					if l.ignoreIllegalFields || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
+					if l.ignoreIllegalFields || autoIgnoreIllegalFields.Contains(field) || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
 						l.deleteEntryField(entry, field)
 					} else if !l.QuitWasRequested() {
 						l.Warning("Stopping programme. Please fix this manually.")
