@@ -1002,14 +1002,13 @@ func (l *TBibTeXLibrary) CheckBookishTitles(entry *TBibTeXEntry) {
 		return
 	}
 
-	// Both non-empty and different: resolve and assign the winner to both fields.
-	winner := l.MaybeResolveFieldValue(entry.Key, entry.Key, "booktitle", title, booktitle)
-	if winner != booktitle {
-		l.setEntryField(entry, "booktitle", winner)
-	}
-	if winner != title {
-		l.setEntryField(entry, TitleField, winner)
-	}
+	// Both non-empty and different: title is authoritative for bookish entries,
+	// booktitle always follows it. Previously this resolved via MaybeResolveFieldValue,
+	// which — keyed on field "booktitle" — could pull in a stale alias decision
+	// recorded against booktitle from an earlier, unrelated resolution (e.g. a prior
+	// DBLP challenge on booktitle alone), silently reverting a freshly-corrected title
+	// back to old text with no question asked.
+	l.setEntryField(entry, "booktitle", title)
 	// if strings.Contains(l.EntryFields[key]["booktitle"], "proc.") || strings.Contains(l.EntryFields[key]["booktitle"], "Proc.") ||
 	//
 	//		strings.Contains(l.EntryFields[key]["booktitle"], "proceedings") || strings.Contains(l.EntryFields[key]["booktitle"], "Proceedings") ||

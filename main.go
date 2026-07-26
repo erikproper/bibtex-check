@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -36,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.70"
+const AppVersion = "28.71"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -3713,6 +3714,20 @@ func doAssignOrcid(args []string) {
 
 func main() {
 	stderrPrintf("%s %s\n", filepath.Base(os.Args[0]), AppVersion)
+
+	// Without this, Ctrl-C during a long run (e.g. -update_all_dblp_entries, which
+	// wraps its entire pass in one open transaction, committed only at the very end)
+	// kills the process with zero cleanup: no commit, no finaliseWorkingDatabase.
+	// Every decision made during that run — including every interactively-answered
+	// question — is silently discarded, as if it never happened. gracefulQuit()
+	// already does the right thing for a "q" answer; reuse it here for SIGINT/SIGTERM.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		stderrPrintf("\nInterrupted — committing work done so far before exiting...\n")
+		gracefulQuit()
+	}()
 
 	baseFlag := flag.String("base", "", "path/basename of the library (required)")
 	flag.BoolVar(&forceWrite, "force_write", false, "force write even if unchanged")
