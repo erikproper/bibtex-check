@@ -169,7 +169,7 @@ const (
 	WarningCannotDeriveAliasNoYear           = "Cannot derive preferred alias: no valid year found."
 	WarningCannotDeriveUniquePreferredAlias  = "Cannot derive unique preferred alias (base: %s): all title keywords already in use."
 	WarningNoTitleKeywordsForPreferredAlias  = "Cannot derive preferred alias (base: %s): no usable title keywords found."
-	ProgressGeneratedPreferredAlias = "Generated preferred alias %s for %s"
+	ProgressGeneratedPreferredAlias = "  Generated preferred alias %s for %s"
 	ProgressRemovedRedundantURL     = "Removed redundant URL for %s: %s"
 	WarningBadISBN                       = "Wrong ISBN: %q."
 	WarningISBNMismatchFromCrossrefDOI   = "Crossref to %s: DOI-derived ISBN %s conflicts with parent ISBN %s."

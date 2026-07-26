@@ -1352,7 +1352,7 @@ func (l *TBibTeXLibrary) CheckYear(entry *TBibTeXEntry) {
 
 
 var (
-	urlDateDMY     = regexp.MustCompile(`^(\d{2})[./](\d{2})[./](\d{4})$`)
+	urlDateDMY     = regexp.MustCompile(`^(\d{2})[./-](\d{2})[./-](\d{4})$`)
 	urlDateYMDSlash = regexp.MustCompile(`^(\d{4})/(\d{2})/(\d{2})$`)
 	urlDatePrefix  = regexp.MustCompile(`(?i)^(accessed|last accessed|last visited|zugegriffen|abgerufen|aufgerufen)[:\s]+`)
 )

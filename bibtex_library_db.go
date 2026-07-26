@@ -817,9 +817,15 @@ func setContributorDblpKey(l *TBibTeXLibrary, id, dblpKey string) {
 		`UPDATE contributors SET dblp_key = ? WHERE id = ?`, dblpKey, id)
 }
 
+// upsertContributorToDB records id as having the clean (non-garbled) canonical name
+// `name`. All call sites already guard against garbled names before calling this, so
+// the ON CONFLICT clause also clears garbled — otherwise a contributor once created
+// via upsertGarbledContributorToDB (or otherwise flagged garbled=1) would stay flagged
+// forever even after being given a clean canonical name, causing CheckGarbledContributors
+// to keep reporting an already-fixed name as still needing fixing.
 func upsertContributorToDB(id, name, orcid string) {
 	if err := bibExec(`INSERT INTO contributors (id, name, orcid, garbled) VALUES (?, ?, ?, 0)
-	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name,
+	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name, garbled = 0,
 	                      orcid = COALESCE(NULLIF(excluded.orcid, ''), orcid)`,
 		id, name, orcid); err != nil {
 		dbInteraction.Warning("contributors upsert failed: %s", err)
