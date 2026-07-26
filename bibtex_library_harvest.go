@@ -702,6 +702,18 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		fixEntry(finalKey)
 		return l.MapEntryKey(finalKey)
 	}
+	// declinedTitleMatches holds Step 2 candidates the user explicitly said don't
+	// match ("0"). Recording them as non-doubles once the entry gets its final key
+	// (below, via finish) means MaybeMergeEntries's later double-entry check — which
+	// runs the same title-index lookup independently — won't ask about the exact
+	// same pair again a moment later.
+	var declinedTitleMatches []string
+	finish := func(key string) (string, bool) {
+		for _, c := range declinedTitleMatches {
+			l.AddNonDoubleEntries(key, c)
+		}
+		return key, false
+	}
 
 	// Always show the source entry first.
 	fmt.Fprintf(os.Stderr, "\nSource entry:\n")
@@ -773,6 +785,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 			recordStatus(finalKey)
 			return finalKey, false
 		}
+		declinedTitleMatches = titleMatches
 	}
 
 	// Step 3: DBLP title match (only when source has no dblp field yet).
@@ -794,7 +807,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 			addToHarvestGroup(l, finalKey)
 			transferHarvestKey(e.Key, finalKey)
 			recordStatus(finalKey)
-			return finalKey, false
+			return finish(finalKey)
 		}
 	}
 
@@ -827,7 +840,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 				addToHarvestGroup(l, finalKey)
 				transferHarvestKey(e.Key, finalKey)
 				recordStatus(finalKey)
-				return finalKey, false
+				return finish(finalKey)
 			}
 		}
 		return "", false
@@ -848,7 +861,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 			addToHarvestGroup(l, finalKey)
 			transferHarvestKey(e.Key, finalKey)
 			recordStatus(finalKey)
-			return finalKey, false
+			return finish(finalKey)
 		}
 	case "i":
 		recordStatus(SyncStatusIgnored + ":" + harvestContentFingerprint(e))
@@ -868,7 +881,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		addToHarvestGroup(l, finalKey)
 		transferHarvestKey(e.Key, finalKey)
 		recordStatus(finalKey)
-		return finalKey, false
+		return finish(finalKey)
 	}
 }
 
