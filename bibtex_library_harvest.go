@@ -615,6 +615,61 @@ func (l *TBibTeXLibrary) fixMiscJournalField(key string, sourceFields map[string
 	}
 }
 
+// applyHowPublishedURLFix extracts an embedded \url{...} from howpublished into the
+// url field, mutating fields in place. Must run before fingerprinting (see
+// applyMiscJournalFix), for the same reason: the stored/compared skip-content
+// signature has to reflect the entry as it will actually be presented for merging.
+func applyHowPublishedURLFix(fields map[string]string) {
+	how := fields["howpublished"]
+	if how == "" {
+		return
+	}
+	start, end, extractedURL := findNoteURL(how)
+	if start == -1 || extractedURL == "" {
+		return
+	}
+	cleaned := stripAccessedSpan(how, start, end)
+	if aStart, aEnd, isoDate := findAccessedDate(cleaned); aStart != -1 {
+		cleaned = stripAccessedSpan(cleaned, aStart, aEnd)
+		if fields["urldate"] == "" {
+			fields["urldate"] = isoDate
+		}
+	}
+	fields["howpublished"] = cleaned
+	if fields["url"] == "" {
+		fields["url"] = extractedURL
+	}
+}
+
+// fixHowPublishedURLField rescues an embedded \url{...} in an already-existing library
+// entry's howpublished field into url — the same correction applyHowPublishedURLFix
+// applies to newly-harvested fields. Needed separately because runHarvestEntry's Step 1
+// key-match fast path never revisits an existing entry's fields, so an entry harvested
+// before this rule existed would otherwise keep the raw \url{} in howpublished forever,
+// even on a re-harvest.
+func (l *TBibTeXLibrary) fixHowPublishedURLField(key string) {
+	how := l.EntryFieldValueity(key, "howpublished")
+	if how == "" {
+		return
+	}
+	start, end, extractedURL := findNoteURL(how)
+	if start == -1 || extractedURL == "" {
+		return
+	}
+	cleaned := stripAccessedSpan(how, start, end)
+	if aStart, aEnd, isoDate := findAccessedDate(cleaned); aStart != -1 {
+		cleaned = stripAccessedSpan(cleaned, aStart, aEnd)
+		if l.EntryFieldValueity(key, "urldate") == "" {
+			l.SetEntryFieldValue(key, "urldate", isoDate)
+		}
+	}
+	l.SetEntryFieldValue(key, "howpublished", cleaned)
+	if l.EntryFieldValueity(key, "url") == "" {
+		l.SetEntryFieldValue(key, "url", extractedURL)
+		l.Progress("  Extracted URL from howpublished for %s", key)
+	}
+}
+
 // --- Interactive loop ---
 
 // runHarvestEntry processes one harvested entry through the 4-step pipeline.
@@ -663,6 +718,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		finalKey := l.MapEntryKey(keyMatch)
 		l.Progress("Already in library as %s", finalKey)
 		l.fixMiscJournalField(finalKey, e.Fields)
+		l.fixHowPublishedURLField(finalKey)
 		maybeCollectKeyHint(l, e.Key, finalKey)
 		l.maybeHarvestPDF(e, finalKey)
 		l.maybeHarvestGroups(e, finalKey, syncState)
@@ -837,10 +893,12 @@ func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSync
 		// candidate entry compares cleanly against the current library content.
 		applyNoteAccessedFix(e.Fields)
 		applyMiscJournalFix(e.Fields)
+		applyHowPublishedURLFix(e.Fields)
 		skip, resolvedCanon := harvestSkipStatus(e, syncState, l)
 		if skip {
 			if resolvedCanon != "" {
 				l.fixMiscJournalField(resolvedCanon, e.Fields)
+				l.fixHowPublishedURLField(resolvedCanon)
 				l.maybeHarvestPDF(e, resolvedCanon)
 				l.maybeHarvestGroups(e, resolvedCanon, syncState)
 				if e.Key != "" {
