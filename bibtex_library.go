@@ -103,6 +103,7 @@ type (
 		ambiguousAssignmentPick           map[string]string // name → contributor ID that was picked
 		orcidAutoResolveSameCount         int               // ORCID same-person auto-resolves this run
 		orcidAutoResolveDiffCount         int               // ORCID different-person auto-resolves this run
+		dblpNameFormAutoAccepts           []string          // detail lines for names auto-accepted from DBLP this run
 		ignoreIllegalFields               bool
 		PreMergeCheck                     func(source, target string) // called before proposing a merge; may associate DBLP keys
 
@@ -851,7 +852,10 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			for _, field := range []string{DBLPField, "doi"} {
 				sv := l.EntryFieldValueity(source, field)
 				tv := l.EntryFieldValueity(target, field)
-				if EvidencedUnequal(sv, tv) && !(field == "doi" && strings.EqualFold(sv, tv)) {
+				if EvidencedUnequal(sv, tv) {
+					if field == "doi" && strings.EqualFold(l.NormaliseFieldValue(field, sv), l.NormaliseFieldValue(field, tv)) {
+						continue
+					}
 					issues = append(issues, fmt.Sprintf(WarningMergeConflictingField, source, target, field, sv, tv))
 				}
 			}
@@ -1022,7 +1026,7 @@ func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string)
 		return true
 	}
 	sv, tv := l.EntryFieldValueity(source, "doi"), l.EntryFieldValueity(target, "doi")
-	if sv != "" && tv != "" && !strings.EqualFold(sv, tv) {
+	if sv != "" && tv != "" && !strings.EqualFold(l.NormaliseFieldValue("doi", sv), l.NormaliseFieldValue("doi", tv)) {
 		return true
 	}
 	// Different non-empty volumes on bookish entries are strong evidence of
@@ -1698,16 +1702,24 @@ func (l *TBibTeXLibrary) FinishRecordingLibraryEntry(key string) bool {
 		l.TitleIndex.AddValueToStringSetMap(TeXStringIndexer(title), key)
 	}
 
-	if !l.InteractionIsOff() {
-		l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
-			if l.ignoreIllegalFields || autoIgnoreIllegalFields.Contains(field) || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
-				l.deleteEntryField(entry, field)
-			} else if !l.QuitWasRequested() {
-				l.Warning("Stopping programme. Please fix this manually.")
-				os.Exit(0)
-			}
-		})
-	}
+	l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
+		if l.ignoreIllegalFields || autoIgnoreIllegalFields.Contains(field) {
+			l.deleteEntryField(entry, field)
+			return
+		}
+		if l.InteractionIsOff() {
+			// Not auto-ignorable and nobody to ask right now — leave it for a
+			// later interactive run rather than silently admitting it (the old
+			// behavior) or os.Exit(0)-ing mid-batch.
+			return
+		}
+		if l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
+			l.deleteEntryField(entry, field)
+		} else if !l.QuitWasRequested() {
+			l.Warning("Stopping programme. Please fix this manually.")
+			os.Exit(0)
+		}
+	})
 
 	l.MaybeApplyFieldMappings(entry, true)
 	atomic.AddInt64(&bibParseCount, 1)

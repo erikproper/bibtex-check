@@ -73,6 +73,9 @@ func NormaliseDOIValue(l *TBibTeXLibrary, rawDOI string) string {
 	trimmedDOI = strings.ReplaceAll(trimmedDOI, "\\_", "_")
 	trimmedDOI = strings.ReplaceAll(trimmedDOI, "{$", "")
 	trimmedDOI = strings.ReplaceAll(trimmedDOI, "$}", "")
+	// DBLP and others sometimes brace-wrap a bare underscore ("{_}") to protect it
+	// from LaTeX; a DOI has no such meaning for braces, so unwrap it too.
+	trimmedDOI = strings.ReplaceAll(trimmedDOI, "{_}", "_")
 
 	return trimmedDOI
 }

@@ -1631,22 +1631,30 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 
 		// CheckCrossref can lead to a merger of entries for now ...
 		if entry.Exists() && l.EntryExists(entry.Key) {
-			if !l.InteractionIsOff() {
-				l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
-					if l.ignoreIllegalFields || autoIgnoreIllegalFields.Contains(field) || l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
-						l.deleteEntryField(entry, field)
-					} else if !l.QuitWasRequested() {
-						l.Warning("Stopping programme. Please fix this manually.")
-						os.Exit(0)
-					}
-				})
-				if l.QuitWasRequested() {
-					if currentType := entry.EntryType(); currentType != originalType {
-						l.SetEntryType(entry.Key, originalType)
-						entry.Fields[EntryTypeField] = originalType
-					}
+			l.CheckIfFieldsAreAllowed(entry, func(key, field, value string) {
+				if l.ignoreIllegalFields || autoIgnoreIllegalFields.Contains(field) {
+					l.deleteEntryField(entry, field)
 					return
 				}
+				if l.InteractionIsOff() {
+					// Not auto-ignorable and nobody to ask right now — leave it for a
+					// later interactive run rather than silently admitting it (the old
+					// behavior) or os.Exit(0)-ing mid-batch.
+					return
+				}
+				if l.WarningYesNoQuestion(QuestionIgnore, WarningIllegalField, field, value, key, entry.EntryType()) {
+					l.deleteEntryField(entry, field)
+				} else if !l.QuitWasRequested() {
+					l.Warning("Stopping programme. Please fix this manually.")
+					os.Exit(0)
+				}
+			})
+			if l.QuitWasRequested() {
+				if currentType := entry.EntryType(); currentType != originalType {
+					l.SetEntryType(entry.Key, originalType)
+					entry.Fields[EntryTypeField] = originalType
+				}
+				return
 			}
 			l.NormaliseEntryFields(entry)
 			l.MaybeApplyFieldMappings(entry, true)

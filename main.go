@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.57"
+const AppVersion = "28.60"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2333,6 +2333,18 @@ func doUpsertDblpEntries() {
 		}
 		Library.orcidAutoResolveSameCount = 0
 		Library.orcidAutoResolveDiffCount = 0
+		if len(Library.dblpNameFormAutoAccepts) > 0 {
+			logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/dblp_name_form_auto_accepts.log"
+			os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck
+			if f, err := os.Create(logPath); err == nil {
+				for _, line := range Library.dblpNameFormAutoAccepts {
+					fmt.Fprintln(f, line)
+				}
+				f.Close()
+			}
+			Library.Progress("  Auto-accepted DBLP name form: %d (see dblp_name_form_auto_accepts.log)", len(Library.dblpNameFormAutoAccepts))
+			Library.dblpNameFormAutoAccepts = nil
+		}
 		if pmOk && len(contribPersonEntries) > 0 {
 			logPath := bibTeXFolder + bibTeXBaseName + tablesFolderSuffix + "/dblp_contributor_splits.log"
 			os.MkdirAll(bibTeXFolder+bibTeXBaseName+tablesFolderSuffix, 0o755) //nolint:errcheck

@@ -14,7 +14,10 @@
 
 package main
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // inDblpUpdate is set while doUpsertDblpEntries is running so that per-name
 // differences from DBLP are auto-accepted without prompting the user.
@@ -450,7 +453,8 @@ func (l *TBibTeXLibrary) resolveNamePair(key, field string, namePos, nameTotal, 
 	// During DBLP update the challenger is the DBLP-authoritative name form.
 	// Accept it and record the canonical mapping so future runs skip the question.
 	if inDblpUpdate {
-		l.Progress("Auto-accepted DBLP name form %q for %s (mapping from %q)", challengerName, key, currentName)
+		l.dblpNameFormAutoAccepts = append(l.dblpNameFormAutoAccepts,
+			fmt.Sprintf("Auto-accepted DBLP name form %q for %s (mapping from %q)", challengerName, key, currentName))
 		l.AddNameMapping(challengerName, currentName)
 		return challengerName, false, true
 	}
