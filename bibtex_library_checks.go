@@ -1705,6 +1705,46 @@ func (l *TBibTeXLibrary) CheckEntry(entry *TBibTeXEntry) {
 	}
 }
 
+// CheckGarbledContributorFlags clears contributors.garbled for any contributor whose
+// current canonical name is no longer garbled. upsertContributorToDB now clears the
+// flag whenever it assigns a clean name, but that only fires when the function is
+// called again for that contributor — a contributor flagged garbled earlier (e.g. via
+// upsertGarbledContributorToDB) and never revisited since stays flagged forever, so
+// CheckGarbledContributors keeps reporting an already-fixed name as still needing
+// fixing. Run at startup to catch any such contributors left over from before that fix.
+func (l *TBibTeXLibrary) CheckGarbledContributorFlags() {
+	if !contributorRolesActive {
+		return
+	}
+	rows, err := bibQuery(`SELECT id, name FROM contributors WHERE garbled = 1`)
+	if err != nil {
+		return
+	}
+	type fixup struct{ id, name string }
+	var fixes []fixup
+	for rows.Next() {
+		var id, name string
+		if rows.Scan(&id, &name) != nil {
+			continue
+		}
+		if !isGarbledContributorName(name) {
+			fixes = append(fixes, fixup{id, name})
+		}
+	}
+	rows.Close()
+	for _, f := range fixes {
+		if err := bibExec(`UPDATE contributors SET garbled = 0 WHERE id = ?`, f.id); err != nil {
+			continue
+		}
+		if c := l.ContributorByID[f.id]; c != nil {
+			c.Garbled = false
+		}
+	}
+	if len(fixes) > 0 {
+		l.Progress("  Cleared stale garbled flag on %d contributor(s) with a clean canonical name", len(fixes))
+	}
+}
+
 // CheckGarbledContributors warns when an entry has author or editor contributors
 // that were stored as garbled (the raw name could not be parsed as a valid BibTeX
 // person name and was brace-wrapped during migration or harvest). The warning

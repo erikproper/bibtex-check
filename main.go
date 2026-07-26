@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.69"
+const AppVersion = "28.70"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -431,6 +431,7 @@ func openLibraryToUpdate() bool {
 		Library.CheckKeyOldiesConsistency()
 		Library.CheckKeyHintsConsistency()
 		Library.CheckKeyOldieHintOverlap()
+		Library.CheckGarbledContributorFlags()
 		Library.CheckDblpWaivedConsistency()
 		Library.CheckEntryFieldMappingWinners()
 	}
