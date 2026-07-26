@@ -36,7 +36,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.61"
+const AppVersion = "28.62"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -3118,44 +3118,56 @@ func doCorrectName(args []string) {
 	Library.Progress("Name correction complete.")
 }
 
+// doMergeContributors merges one or more "from" contributors into a single "into"
+// contributor — args[len(args)-1] is the target, everything before it is a source,
+// mirroring cp's "sources... dest" argument order.
 func doMergeContributors(args []string) {
 	if !openLibraryToUpdate() {
 		return
 	}
-	fromID, fromName, ok1 := resolveContributorArg(args[0])
-	toID, toName, ok2 := resolveContributorArg(args[1])
-	if !ok1 || !ok2 {
+	into := args[len(args)-1]
+	froms := args[:len(args)-1]
+
+	toID, toName, ok := resolveContributorArg(into)
+	if !ok {
 		return
 	}
-	if toID == fromID {
-		fmt.Fprintln(os.Stderr, "Both arguments resolve to the same contributor — nothing to merge.")
-		return
-	}
-	Library.Progress("Merging %q (%s) into %q (%s)", fromName, fromID, toName, toID)
-	if !mergeContributorInDB(fromID, toID) {
-		return
-	}
-	// Update in-memory maps before RenormaliseNameFields reloads contributors.
-	for n, id := range Library.NameToContributorID {
-		if id == fromID {
-			Library.NameToContributorID[n] = toID
+
+	for _, fromArg := range froms {
+		fromID, fromName, ok := resolveContributorArg(fromArg)
+		if !ok {
+			continue
 		}
-	}
-	for orcid, id := range Library.ORCIDToContributorID {
-		if id == fromID {
-			Library.ORCIDToContributorID[orcid] = toID
+		if toID == fromID {
+			fmt.Fprintf(os.Stderr, "%q resolves to the same contributor as %q — skipping.\n", fromArg, into)
+			continue
 		}
-	}
-	if toContrib, ok := Library.ContributorByID[toID]; ok {
-		if toContrib.ORCID == "" {
-			if fromContrib, exists := Library.ContributorByID[fromID]; exists {
-				toContrib.ORCID = fromContrib.ORCID
+		Library.Progress("Merging %q (%s) into %q (%s)", fromName, fromID, toName, toID)
+		if !mergeContributorInDB(fromID, toID) {
+			continue
+		}
+		// Update in-memory maps before RenormaliseNameFields reloads contributors.
+		for n, id := range Library.NameToContributorID {
+			if id == fromID {
+				Library.NameToContributorID[n] = toID
 			}
 		}
+		for orcid, id := range Library.ORCIDToContributorID {
+			if id == fromID {
+				Library.ORCIDToContributorID[orcid] = toID
+			}
+		}
+		if toContrib, ok := Library.ContributorByID[toID]; ok {
+			if toContrib.ORCID == "" {
+				if fromContrib, exists := Library.ContributorByID[fromID]; exists {
+					toContrib.ORCID = fromContrib.ORCID
+				}
+			}
+		}
+		delete(Library.ContributorByID, fromID)
+		Library.Progress("Merged %q into %q (%s).", fromName, toName, toID)
 	}
-	delete(Library.ContributorByID, fromID)
 	Library.RenormaliseNameFields()
-	Library.Progress("Merged %q into %q (%s).", fromName, toName, toID)
 }
 
 // isValidORCID checks that s matches the ORCID format NNNN-NNNN-NNNN-NNN[0-9X].
@@ -3796,7 +3808,7 @@ func main() {
 	flag.BoolVar(&cmdEnrichContributorData, "enrich_contributor_data", false, "run full contributor enrichment pipeline: absorb DBLP names+ORCIDs, enrich from ORCID profiles, merge ORCID duplicates")
 	flag.BoolVar(&cmdHomework, "homework", false, "run all pending homework in priority order: enrich contributors, triage superseded values, fix DBLP candidates, fix duplicates")
 	flag.BoolVar(&cmdMatchedOrcidDataOnly, "matched_orcid_data_only", false, "with -enrich_contributor_data: skip ORCID challenges in step 3, leaving them as homework")
-	flag.BoolVar(&cmdMergeContributors, "merge_contributors", false, "merge contributor into another: -merge_contributors <from> <into>")
+	flag.BoolVar(&cmdMergeContributors, "merge_contributors", false, "merge one or more contributors into another: -merge_contributors <from...> <into>")
 	flag.BoolVar(&cmdAddDblpEntries, "update_all_dblp_entries", false, "update all library entries that have a DBLP key with fresh DBLP data")
 	flag.BoolVar(&cmdFixCandidates, "fix_candidates", false, "interactively link library entries without a DBLP key to DBLP records")
 	flag.BoolVar(&cmdFix, "fix", false, "apply full per-entry checks when combined with -sync or -harvest")
@@ -4081,8 +4093,8 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 		doEnrichContributorData()
 
 	case cmdMergeContributors:
-		if len(args) != 2 {
-			fmt.Fprintln(os.Stderr, "Usage: -merge_contributors <into> <from>")
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: -merge_contributors <from...> <into>")
 			os.Exit(1)
 		}
 		doMergeContributors(args)
