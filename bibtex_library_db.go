@@ -2141,8 +2141,14 @@ func repairDblpData() {
 	// entry_lineage/source_field_signatures rows as posthumous evidence (the same
 	// failure mode CheckDuplicateDBLPKeys was fixed for on 2026-07-21). Those are
 	// reported instead so they can be repaired via -add_dblp_entry.
-	// CASCADE on bib_entry_keys propagates to bib_entries, superseded_field_values, etc.
-	db.Exec(`PRAGMA foreign_keys = ON`) //nolint:errcheck
+	//
+	// bib_entries has no foreign-key link to bib_entry_keys (confirmed via schema),
+	// so a plain "DELETE FROM bib_entry_keys" — the original Category B, and this
+	// function's first fix — leaves the bib_entries ghost rows behind forever: the
+	// ghost re-triggers this exact check on every subsequent run, never actually
+	// clearing. deleteBibEntry (used by CheckDuplicateDBLPKeys for the same class of
+	// row) removes bib_entries/bib_entry_keys/entry_lineage/source_field_signatures/
+	// source_contributor_signatures together and is the only complete cleanup path.
 	rows, err := db.Query(`
 		SELECT g.entry_key, g.value
 		FROM bib_entries g
@@ -2174,18 +2180,11 @@ func repairDblpData() {
 			}
 		}
 		rows.Close()
+		for _, key := range safe {
+			deleteBibEntry(key)
+		}
 		if len(safe) > 0 {
-			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(safe)), ",")
-			args := make([]any, len(safe))
-			for i, k := range safe {
-				args[i] = k
-			}
-			res, err = db.Exec(`DELETE FROM bib_entry_keys WHERE entry_key IN (`+placeholders+`)`, args...)
-			if err != nil {
-				dbInteraction.Warning("repairDblpData (B): %s", err)
-			} else if n, _ := res.RowsAffected(); n > 0 {
-				dbInteraction.Progress("  Repair DBLP data: removed %d redundant ghost entry rows", n)
-			}
+			dbInteraction.Progress("  Repair DBLP data: removed %d redundant ghost entry(ies)", len(safe))
 		}
 		for _, g := range unsafe {
 			dbInteraction.Warning("  Ghost dblp entry %s (dblp=%s) has no live sibling — not deleting; repair with -add_dblp_entry %s",
