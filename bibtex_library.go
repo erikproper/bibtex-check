@@ -918,6 +918,15 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			regularFields := TStringSet{}
 			regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
 			for regularField := range regularFields.Elements() {
+				// For bookish entries, title and booktitle end up identical via
+				// CheckBookishTitles right after this merge (title wins, booktitle
+				// follows). Skip booktitle's own resolution ONLY when source is
+				// challenging both fields with the literal same value — see the
+				// matching comment in MergeInMemoryDBLPEntry for the full rationale.
+				if regularField == "booktitle" && BibTeXBookish.Contains(targetType) &&
+					sourceEntry.FieldValue("booktitle") == sourceEntry.FieldValue(TitleField) {
+					continue
+				}
 				sourceVal := sourceEntry.FieldValue(regularField)
 				targetVal := targetEntry.FieldValue(regularField)
 				var merged string
@@ -1016,6 +1025,19 @@ func (l *TBibTeXLibrary) MergeInMemoryDBLPEntry(sourceEntry *TBibTeXEntry, targe
 	regularFields := TStringSet{}
 	regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
 	for regularField := range regularFields.Elements() {
+		// For bookish entries, title and booktitle end up identical via
+		// CheckBookishTitles right after this merge (title wins, booktitle follows).
+		// Skip booktitle's own resolution ONLY when the source is challenging both
+		// fields with the literal same value — then resolving title alone already
+		// captures the decision, and asking again for booktitle would be the same
+		// question twice. When the source's title and booktitle challenges genuinely
+		// differ (common when harvesting raw .bib sources), each carries distinct
+		// information and both need their own resolution; CheckBookishTitles still
+		// reconciles them to a single value afterward regardless.
+		if regularField == "booktitle" && BibTeXBookish.Contains(targetType) &&
+			sourceEntry.FieldValue("booktitle") == sourceEntry.FieldValue(TitleField) {
+			continue
+		}
 		merged := l.MaybeResolveFieldValue(target, sourceEntry.Key, regularField, sourceEntry.FieldValue(regularField), targetEntry.FieldValue(regularField))
 		l.setEntryField(targetEntry, regularField, merged)
 	}
