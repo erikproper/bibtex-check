@@ -37,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.74"
+const AppVersion = "28.76"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -380,7 +380,7 @@ func printSessionStats() {
 		{StatNonDoubleContributorPairs, fmt.Sprintf("%d", ndContributors), ""},
 		{StatNonDoubleNamePairs, fmt.Sprintf("%d", ndNames), ""},
 		{StatEntryFlags, fmt.Sprintf("%d", entryFlags), ""},
-	})
+	}, false)
 }
 
 func openLibraryToUpdate() bool {
@@ -443,6 +443,8 @@ func openLibraryToUpdate() bool {
 	Library.FlushDeferredMessages()
 	if !Online {
 		Library.Progress("  Offline: actions requiring network connectivity will be skipped.")
+	} else {
+		stderrPrintf("\n")
 	}
 	preCloseHook = reportHomework
 	return true
@@ -1576,7 +1578,7 @@ func reportHomework() {
 		changeRows = append(changeRows, statRow{StatDblpKeysManuallyEntered, fmt.Sprintf("%d", sessionManualDblpAssignments), ""})
 	}
 	if len(changeRows) > 0 {
-		printStatBlock("Session changes:", changeRows)
+		printStatBlock("Session changes:", changeRows, true)
 	}
 
 	// Count contributors with an ORCID that have never been enriched (no seen record).
@@ -1606,7 +1608,7 @@ func reportHomework() {
 		statRow{StatEntriesWithUnresolvedDblpCandidates, fmt.Sprintf("%d", dblpCandidates), hwComment(dblpCandidates, "fix_candidates")},
 		statRow{StatTitleGroupsWithUnresolvedDuplicates, fmt.Sprintf("%d", unresolvedGroups), hwComment(unresolvedGroups, "fix_duplicates")},
 	)
-	printStatBlock("Homework:", hwRows)
+	printStatBlock("Homework:", hwRows, true)
 	stderrPrintf("\n")
 }
 

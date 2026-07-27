@@ -964,9 +964,6 @@ func (l *TBibTeXLibrary) entryGetString(
 			continue
 		}
 
-		if cfg.BiberMode {
-			value = applyBiberMode(field, value)
-		}
 		if cfg.Shorten {
 			value = applyShorten(shorten, field, value)
 		}
@@ -975,6 +972,14 @@ func (l *TBibTeXLibrary) entryGetString(
 		}
 
 		mapped := l.MapEntryFieldValue(canonicalKey, field, value)
+		// biber-mode conversion must be the last transformation: MapEntryFieldValue
+		// applies stored field-value preferences (e.g. a prior "June" vs "6" conflict
+		// resolved in a non-biber context, favouring the text form) that would
+		// otherwise silently convert a freshly biber-ified value like "6" straight
+		// back to "June" — defeating the whole point of biber mode.
+		if cfg.BiberMode {
+			mapped = applyBiberMode(field, mapped)
+		}
 		result += FormatBibTeXFieldAssignment("", field, mapped)
 	}
 
@@ -1059,6 +1064,20 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			// Key didn't move through the alias table — try hints (preferred aliases, source keys).
 			if hint, ok := Library.HintToKey.Get(p.canonicalKey); ok {
 				resolved = Library.MapEntryKey(hint)
+			}
+		}
+		// The canonical key itself may be stale (e.g. the entry was merged/re-keyed
+		// since this .keys file was last written), with nothing pointing forward from
+		// it in either key_oldies or key_hints. Try the local (human-readable) key as
+		// a hint instead — if that resolves to a live entry, register the stale
+		// canonical as an oldie so future lookups resolve directly, without this
+		// fallback.
+		if !bibEntryExists(resolved) && p.localKey != "" {
+			if hint, ok := Library.HintToKey.Get(p.localKey); ok {
+				if hinted := Library.MapEntryKey(hint); bibEntryExists(hinted) {
+					Library.AddKeyAlias(resolved, hinted)
+					resolved = hinted
+				}
 			}
 		}
 		pairs[i].canonicalKey = resolved

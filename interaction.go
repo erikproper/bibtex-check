@@ -535,7 +535,7 @@ type statRow struct {
 // right-aligned so all columns line up regardless of label/value widths.
 // An optional comment is appended after two spaces.
 // No-op in non-TTY sessions.
-func printStatBlock(header string, rows []statRow) {
+func printStatBlock(header string, rows []statRow, trailingBlank bool) {
 	if !isTTY {
 		return
 	}
@@ -557,7 +557,9 @@ func printStatBlock(header string, rows []statRow) {
 			fmt.Fprintf(os.Stderr, "  %-*s  %*s\n", maxLabelLen, r.label+":", maxValLen, r.value)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "\n")
+	if trailingBlank {
+		fmt.Fprintf(os.Stderr, "\n")
+	}
 }
 
 // ConfirmAction always prompts the user for y/n/q confirmation, even when the

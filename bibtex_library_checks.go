@@ -282,7 +282,7 @@ func (l *TBibTeXLibrary) CheckKeyHintsConsistency() {
 			l.AddKeyAlias(m.hint, m.key)
 			l.HintToKey.Delete(m.hint)
 		}
-		l.Progress("Migrated %d canonical-key hint(s) from key_hints to key_oldies", len(toMigrate))
+		l.Progress("  Migrated %d canonical-key hint(s) from key_hints to key_oldies", len(toMigrate))
 	}
 
 	// Remove hints whose target no longer exists (e.g. after a merge deleted the source

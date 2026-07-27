@@ -1126,7 +1126,7 @@ func runHarvestSync(cfg TBibGetConfig, baseDir string) {
 		{"Pending (not yet seen)", fmt.Sprintf("%d", stillPending), ""},
 		{"PDFs harvested", fmt.Sprintf("%d", pdfsHarvested), ""},
 		{"Key hints added", fmt.Sprintf("%d", hintsAdded), ""},
-	})
+	}, true)
 	// Mirror local groups and weave entries into the harvest_transfer target's .sync DB.
 	if cmdHarvestTransferKeysPath != "" {
 		followBase := strings.TrimSuffix(cmdHarvestTransferKeysPath, KeysFileExtension)
