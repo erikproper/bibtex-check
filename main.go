@@ -37,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.73"
+const AppVersion = "28.74"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2880,7 +2880,9 @@ func doMergeEntries(args []string) {
 			return
 		}
 		target := resolvedKeys[len(resolvedKeys)-1]
-		stderrPrintf("\nMerge:\n")
+		if len(resolvedKeys) > 1 {
+			stderrPrintf("\nMerge:\n")
+		}
 		for i, alias := range resolvedKeys[:len(resolvedKeys)-1] {
 			if alias == target {
 				// Both keys resolve to the same canonical. Check for a ghost bib_entries
