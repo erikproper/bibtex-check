@@ -271,7 +271,7 @@ func (l *TBibTeXLibrary) askHarvestLibraryChoice(n int) int {
 
 // harvestFindDblpCandidates runs the DBLP title-hash search (step 3 of the pipeline)
 // for a harvested entry that has no dblp field. Returns the chosen DBLP key or "".
-func (l *TBibTeXLibrary) harvestFindDblpCandidates(e TBibTeXEntry) string {
+func (l *TBibTeXLibrary) harvestFindDblpCandidates(e TBibTeXEntry, excludeDblpKeys TStringSet) string {
 	title := e.Fields[TitleField]
 	if title == "" {
 		return ""
@@ -284,6 +284,22 @@ func (l *TBibTeXLibrary) harvestFindDblpCandidates(e TBibTeXEntry) string {
 	if len(candidates) == 0 {
 		return ""
 	}
+	// Drop candidates whose DBLP key belongs to a library entry the user already
+	// declined as a match one step earlier (Step 2's title-match prompt) — showing
+	// the exact same publication again here would just re-ask a question already
+	// answered.
+	if excludeDblpKeys.Size() > 0 {
+		filtered := candidates[:0]
+		for _, c := range candidates {
+			if !excludeDblpKeys.Contains(c) {
+				filtered = append(filtered, c)
+			}
+		}
+		candidates = filtered
+		if len(candidates) == 0 {
+			return ""
+		}
+	}
 	if len(candidates) > 9 {
 		candidates = candidates[:9]
 	}
@@ -293,8 +309,7 @@ func (l *TBibTeXLibrary) harvestFindDblpCandidates(e TBibTeXEntry) string {
 	// steps have already scrolled past) it's easy to lose track of what's actually
 	// being matched, especially since the candidates themselves can be only loosely
 	// related (the title hash ignores case/hyphenation on purpose, to still catch
-	// near-duplicate titles) and one of them may even be a candidate already
-	// declined a step earlier.
+	// near-duplicate titles).
 	fmt.Fprintf(os.Stderr, "\nSource entry:\n")
 	printEntryFields(e.Fields[EntryTypeField], e.Key, e.Fields)
 	fmt.Fprintf(os.Stderr, "\n")
@@ -790,7 +805,13 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 
 	// Step 3: DBLP title match (only when source has no dblp field yet).
 	if e.Fields[DBLPField] == "" {
-		chosen := l.harvestFindDblpCandidates(e)
+		excludeDblpKeys := TStringSetNew()
+		for _, k := range declinedTitleMatches {
+			if dblpKey := l.EntryFieldValueity(k, DBLPField); dblpKey != "" {
+				excludeDblpKeys.Add(dblpKey)
+			}
+		}
+		chosen := l.harvestFindDblpCandidates(e, excludeDblpKeys)
 		if l.QuitWasRequested() {
 			return "", true
 		}

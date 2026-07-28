@@ -433,7 +433,17 @@ func (l *TBibTeXLibrary) renderAsHTML(key string) string {
 		}
 
 		venue := ""
-		if booktitle != "" {
+		// The volume's editor is distinct from this chapter's author byline — cite it
+		// in the venue ("In: EditorName (eds.), Booktitle, ..."), the standard
+		// convention for a chapter within an edited volume. When there is no
+		// separate author, editor was already used as the byline itself above, so
+		// including it again here would be redundant.
+		if editor != "" && author != "" {
+			venue = "In: " + formatNameList(editor) + " " + editorSuffix(editor)
+			if booktitle != "" {
+				venue += ", <em>" + booktitle + "</em>"
+			}
+		} else if booktitle != "" {
 			venue = "In: <em>" + booktitle + "</em>"
 		}
 		if volume != "" {
@@ -733,7 +743,17 @@ func (l *TBibTeXLibrary) renderAsTeX(key string) string {
 		}
 
 		venue := ""
-		if booktitle != "" {
+		// The volume's editor is distinct from this chapter's author byline — cite it
+		// in the venue ("In: EditorName (eds.), Booktitle, ..."), the standard
+		// convention for a chapter within an edited volume. When there is no
+		// separate author, editor was already used as the byline itself above, so
+		// including it again here would be redundant.
+		if editor != "" && author != "" {
+			venue = "In: " + formatNameList(editor) + " " + editorSuffix(editor)
+			if booktitle != "" {
+				venue += ", \\emph{" + booktitle + "}"
+			}
+		} else if booktitle != "" {
 			venue = "In: \\emph{" + booktitle + "}"
 		}
 		if volume != "" {
