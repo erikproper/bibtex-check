@@ -1888,43 +1888,50 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 	}
 }
 
-// saveKeyNonDoublesToDb writes the filtered non-doubles set directly to the DB without a file roundtrip.
-// Pairs where one or both keys are unimported DBLP: keys are preserved alongside
-// normal library-entry pairs.
+// saveKeyNonDoublesToDb garbage-collects non_double_entries rows that reference a
+// key no longer valid (entry deleted, or superseded by a merge so MapEntryKey now
+// resolves elsewhere). This is cleanup, not a persistence step — the table is
+// already fully write-through (AddNonDoubleEntries and cleanupIgnoredTitleNonDoubles
+// both insert/delete directly against the DB as changes happen, keeping
+// l.NonDoubleEntries and the DB in sync throughout the session).
+//
+// Queries and deletes directly against the DB — never via a blanket
+// delete-everything-then-reinsert-from-memory. A session's in-memory snapshot can
+// lag behind pairs a concurrent session just wrote (e.g. a long -update_all_dblp_entries
+// run alongside a harvest in another terminal); rebuilding the whole table from that
+// stale snapshot would silently discard the concurrent session's additions. This
+// exact bug lost ~37,000 rows on 2026-07-29 once Ctrl-C started reaching this call
+// (via gracefulQuit) instead of just killing the process.
 func saveKeyNonDoublesToDb(l *TBibTeXLibrary) {
-	var countBefore int
-	db.QueryRow(`SELECT COUNT(*) FROM non_double_entries`).Scan(&countBefore)
-
-	dbExecSave("Could not clear non_double_entries", `DELETE FROM non_double_entries;`)
-	insert := `INSERT INTO non_double_entries (key1, key2) VALUES (?, ?) ON CONFLICT DO NOTHING;`
 	isValidNonDoubleKey := func(k string) bool {
 		return k == l.MapEntryKey(k) && (l.EntryExists(k) || strings.HasPrefix(k, "DBLP:"))
 	}
-	hasIgnoredTitle := func(k string) bool {
-		t := TeXStringIndexer(l.EntryFieldValueity(l.MapEntryKey(k), TitleField))
-		return t != "" && l.IgnoredTitleIndexes.Contains(t)
+	rows, err := db.Query(`SELECT key1, key2 FROM non_double_entries`)
+	if err != nil {
+		dbInteraction.Warning("Could not query non_double_entries: %s", err)
+		return
 	}
-	for key, set := range l.NonDoubleEntries {
-		if !isValidNonDoubleKey(key) {
+	type pair struct{ k1, k2 string }
+	var toDrop []pair
+	for rows.Next() {
+		var k1, k2 string
+		if rows.Scan(&k1, &k2) != nil {
 			continue
 		}
-		keyIgnored := hasIgnoredTitle(key)
-		for nonDouble := range set.Elements() {
-			if key >= nonDouble || !isValidNonDoubleKey(nonDouble) {
-				continue
-			}
-			if keyIgnored && hasIgnoredTitle(nonDouble) {
-				continue
-			}
-			dbExecSave("non_double_entries insert failed", insert, key, nonDouble)
+		if !isValidNonDoubleKey(k1) || !isValidNonDoubleKey(k2) {
+			toDrop = append(toDrop, pair{k1, k2})
 		}
 	}
-
-	var countAfter int
-	db.QueryRow(`SELECT COUNT(*) FROM non_double_entries`).Scan(&countAfter)
-	if countAfter != countBefore {
-		setTableDate("non_double_entries", time.Now().UnixMicro())
+	rows.Close()
+	if len(toDrop) == 0 {
+		return
 	}
+	for _, p := range toDrop {
+		dbExecSave("non_double_entries delete failed", `DELETE FROM non_double_entries WHERE key1 = ? AND key2 = ?`, p.k1, p.k2)
+		l.NonDoubleEntries.DeleteValueFromStringSetMap(p.k1, p.k2)
+		l.NonDoubleEntries.DeleteValueFromStringSetMap(p.k2, p.k1)
+	}
+	setTableDate("non_double_entries", time.Now().UnixMicro())
 }
 
 // --- non_double_contributor_names table ---
