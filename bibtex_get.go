@@ -41,27 +41,28 @@ import (
 
 // TBibGetConfig mirrors the sync config JSON file.
 type TBibGetConfig struct {
-	Mode          string `json:"mode"`              // "full", "pull", or "" (default = pull)
-	FileNames     string `json:"file_names"`        // canonical: semicolon-separated list of file names
-	FileName      string `json:"file_name,omitempty"` // legacy alias for file_names (read-only); also used programmatically for single-file ops
-	KeyMapping    bool   `json:"key_mapping"`       // true (default): use aliases from .keys; false: use canonical keys
-	IncludeDOI    bool   `json:"include_doi"`
-	IncludeISBN   bool   `json:"include_isbn"`
-	IncludeDblp   bool   `json:"include_dblp"`
-	BiberMode     bool   `json:"biber_mode"`
-	Shorten       bool   `json:"shorten"`
-	ShortenFile   string `json:"shorten_file"`
-	IncludeURL    bool   `json:"include_url"`
-	UrldateAsNote bool   `json:"urldate_as_note"`
-	Hyphenations  bool   `json:"hyphenations"`   // insert \- hints from global_folder/hyphenations.csv
-	TrustHints      bool     `json:"trust_hints"`       // harvest: auto-accept key-hint matches without confirmation
-	CollectKeys     bool     `json:"collect_keys"`      // harvest: add source keys to hints DB when unambiguous
-	HarvestTransfer string   `json:"harvest_transfer"`  // harvest: base name of target bib to append resolved keys into
-	PruneResolved   bool     `json:"prune_resolved"`    // harvest: rewrite source bib keeping only pending/skip-content entries
-	TrustedSubset   bool     `json:"trusted_subset"`    // subset: apply changes/adds/deletes without confirmation
-	PDFFiles        string   `json:"pdf_files"`         // subset/full: "" | "global" | "local"
-	Format          string   `json:"format"`            // output dialect: "bibdesk" (default) | "jabref"
-	SyncGroups      []string `json:"groups"`            // group names to sync to main DB; all others stay local
+	Mode                string   `json:"mode"`                // "full", "pull", or "" (default = pull)
+	FileNames           string   `json:"file_names"`          // canonical: semicolon-separated list of file names
+	FileName            string   `json:"file_name,omitempty"` // legacy alias for file_names (read-only); also used programmatically for single-file ops
+	KeyMapping          bool     `json:"key_mapping"`         // true (default): use aliases from .keys; false: use canonical keys
+	IncludeDOI          bool     `json:"include_doi"`
+	IncludeISBN         bool     `json:"include_isbn"`
+	IncludeDblp         bool     `json:"include_dblp"`
+	IncludeResearchgate bool     `json:"include_researchgate"`
+	BiberMode           bool     `json:"biber_mode"`
+	Shorten             bool     `json:"shorten"`
+	ShortenFile         string   `json:"shorten_file"`
+	IncludeURL          bool     `json:"include_url"`
+	UrldateAsNote       bool     `json:"urldate_as_note"`
+	Hyphenations        bool     `json:"hyphenations"`     // insert \- hints from global_folder/hyphenations.csv
+	TrustHints          bool     `json:"trust_hints"`      // harvest: auto-accept key-hint matches without confirmation
+	CollectKeys         bool     `json:"collect_keys"`     // harvest: add source keys to hints DB when unambiguous
+	HarvestTransfer     string   `json:"harvest_transfer"` // harvest: base name of target bib to append resolved keys into
+	PruneResolved       bool     `json:"prune_resolved"`   // harvest: rewrite source bib keeping only pending/skip-content entries
+	TrustedSubset       bool     `json:"trusted_subset"`   // subset: apply changes/adds/deletes without confirmation
+	PDFFiles            string   `json:"pdf_files"`        // subset/full: "" | "global" | "local"
+	Format              string   `json:"format"`           // output dialect: "bibdesk" (default) | "jabref"
+	SyncGroups          []string `json:"groups"`           // group names to sync to main DB; all others stay local
 
 	// Runtime-only (not serialised): all group assignments per canonical key, pre-built
 	// from the .sync state before the write phase. When non-nil, entryGetString uses this
@@ -95,7 +96,7 @@ func migrateRawConfigFileNames(rawMap map[string]json.RawMessage) bool {
 // Migrates "file_name" → "file_names" on first use (writes back the updated file).
 // Fields absent from the JSON keep their defaults: include_doi=true,
 // include_isbn=true, include_url=true, key_mapping=true, biber_mode=false,
-// shorten=false, include_dblp=false, urldate_as_note=false.
+// shorten=false, include_dblp=false, include_researchgate=false, urldate_as_note=false.
 func readBibGetConfig() (TBibGetConfig, bool) {
 	const path = "bib.config"
 	data, err := os.ReadFile(path)
@@ -122,6 +123,7 @@ func readBibGetConfig() (TBibGetConfig, bool) {
 		{"include_isbn", json.RawMessage(`true`)},
 		{"include_url", json.RawMessage(`true`)},
 		{"include_dblp", json.RawMessage(`false`)},
+		{"include_researchgate", json.RawMessage(`false`)},
 		{"biber_mode", json.RawMessage(`false`)},
 		{"shorten", json.RawMessage(`false`)},
 		{"shorten_file", json.RawMessage(`""`)},
@@ -399,12 +401,14 @@ type TSelectStatement struct {
 }
 
 // readSelectFile parses <fileName>.select. Each statement is:
-//   group   "name";
-//   groups  "name1" "name2";
-//   name    "Canonical Author Name";
-//   orcid   "0000-0001-2345-6789";
-//   has_pdf;          (bare keyword — no values)
-//   only_these;       (bare keyword — no values)
+//
+//	group   "name";
+//	groups  "name1" "name2";
+//	name    "Canonical Author Name";
+//	orcid   "0000-0001-2345-6789";
+//	has_pdf;          (bare keyword — no values)
+//	only_these;       (bare keyword — no values)
+//
 // Blank lines and lines starting with # are ignored.
 // Returns (statements, fileExists).
 func readSelectFile(fileName string) ([]TSelectStatement, bool) {
@@ -832,7 +836,7 @@ var bibGetNonExportFields = func() TStringSet {
 	s.Add(
 		GroupsField, EntryTypeField,
 		"date-added", "date-modified",
-		"researchgate", "abstract", "ketwords", "repositum",
+		"abstract", "keywords", "repositum",
 		"owner", "creationdate", "modificationdate", JabrefFileField,
 		"bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9",
@@ -901,6 +905,9 @@ func (l *TBibTeXLibrary) entryGetString(
 				continue
 			}
 			if !cfg.IncludeDblp && field == DBLPField {
+				continue
+			}
+			if !cfg.IncludeResearchgate && field == "researchgate" {
 				continue
 			}
 		}
@@ -1014,7 +1021,6 @@ func (l *TBibTeXLibrary) entryGetString(
 	result += "}\n"
 	return result
 }
-
 
 // doGetWithConfig implements the subset bib export with a pre-read config.
 // baseDir is the directory used to resolve relative file_name paths; pass ""
@@ -1164,8 +1170,8 @@ func writePullSync(cfg TBibGetConfig, baseDir string) []TBibGetPair {
 			modeLabel = "pull"
 		}
 		dbInteraction.Progress("\nSync %s: %s", modeLabel, cfg.FileName)
-		dbInteraction.Progress("  doi=%-3s  isbn=%-3s  url=%-3s  dblp=%-3s  key_mapping=%-3s",
-			on(cfg.IncludeDOI), on(cfg.IncludeISBN), on(cfg.IncludeURL), on(cfg.IncludeDblp), on(cfg.KeyMapping))
+		dbInteraction.Progress("  doi=%-3s  isbn=%-3s  url=%-3s  dblp=%-3s  researchgate=%-3s  key_mapping=%-3s",
+			on(cfg.IncludeDOI), on(cfg.IncludeISBN), on(cfg.IncludeURL), on(cfg.IncludeDblp), on(cfg.IncludeResearchgate), on(cfg.KeyMapping))
 		dbInteraction.Progress("  biber=%-3s  shorten=%-3s  urldate_as_note=%-3s  hyphenations=%-3s  fix=%-3s  format=%s",
 			on(cfg.BiberMode), on(cfg.Shorten), on(cfg.UrldateAsNote), on(cfg.Hyphenations), on(cmdFix), cfg.Format)
 		dbInteraction.Progress("  Keys  : %d entr%s from %s", len(pairs), map[bool]string{true: "y", false: "ies"}[len(pairs) == 1], mapFilePath+KeysFileExtension)
@@ -1565,7 +1571,6 @@ func applyJSONOverlay(cfg *TBibGetConfig, data []byte, path string) bool {
 	return true
 }
 
-
 // enforceInfoPolicy silently resets information-limiting options to their permissive
 // defaults for subset and full modes. Only follow mode may restrict output fields.
 func enforceInfoPolicy(cfg TBibGetConfig) TBibGetConfig {
@@ -1574,6 +1579,7 @@ func enforceInfoPolicy(cfg TBibGetConfig) TBibGetConfig {
 		cfg.IncludeISBN = true
 		cfg.IncludeURL = true
 		cfg.IncludeDblp = true
+		cfg.IncludeResearchgate = true
 		cfg.UrldateAsNote = false
 		cfg.BiberMode = false
 		cfg.Shorten = false
@@ -1889,7 +1895,7 @@ func doSync(filter string) {
 	// access level before opening the library.
 	type fileEntry struct {
 		cfg        TBibGetConfig
-		skipPhase2 bool       // subset only: skip phase 2 (fresh export done, or up-sync aborted)
+		skipPhase2 bool        // subset only: skip phase 2 (fresh export done, or up-sync aborted)
 		syncState  *TSyncState // subset only: open sync DB passed from phase 1 to phase 2
 	}
 	var files []fileEntry

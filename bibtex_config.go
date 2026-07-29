@@ -221,7 +221,7 @@ func init() {
 
 	AddAllowedFields(
 		"month", "year", "note", "doi", "key", "author", TitleField,
-		DBLPField, "researchgate", "abstract", "ketwords",
+		DBLPField, "researchgate", "abstract", "keywords",
 		"eprinttype", "eprint", "langid",
 		"url", "urldate", "urloriginal",
 		"withdrawn")

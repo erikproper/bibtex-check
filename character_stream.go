@@ -211,6 +211,16 @@ func (c *TCharacterStream) NextCharacter() bool {
 		var mapped bool
 		c.runeString, mapped = c.runeMap[c.textRunes[c.textRunesPosition]]
 
+		// An unmapped non-ASCII rune must not fall through to the byte(rune) truncation
+		// above as currentCharacter: that silently keeps only the low 8 bits (e.g.
+		// U+2018 '‘' truncates to 0x18, a control character LaTeX/biber rejects
+		// outright). Escape it instead, the same fallback normaliseUnicodeRune uses for
+		// the same case in the post-parse normalisation pass.
+		if !mapped && c.textRunes[c.textRunesPosition] > 127 {
+			c.runeString = fmt.Sprintf(`\unicode{%d}`, c.textRunes[c.textRunesPosition])
+			mapped = true
+		}
+
 		// Now already move the textRunesPosition to the next rune
 		c.textRunesPosition++
 

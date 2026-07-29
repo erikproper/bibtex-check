@@ -25,7 +25,7 @@ var renderNonExportFields = func() TStringSet {
 	s.Add(
 		GroupsField, DBLPField, EntryTypeField,
 		LocalURLField, "date-added", "date-modified",
-		"researchgate", "abstract", "ketwords", "repositum",
+		"researchgate", "abstract", "keywords", "repositum",
 		"owner", "creationdate", "modificationdate", JabrefFileField,
 		"bdsk-url-1", "bdsk-url-2", "bdsk-url-3", "bdsk-url-4", "bdsk-url-5",
 		"bdsk-url-6", "bdsk-url-7", "bdsk-url-8", "bdsk-url-9",
