@@ -37,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.79"
+const AppVersion = "28.80"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -443,8 +443,6 @@ func openLibraryToUpdate() bool {
 	Library.FlushDeferredMessages()
 	if !Online {
 		Library.Progress("  Offline: actions requiring network connectivity will be skipped.")
-	} else {
-		stderrPrintf("\n")
 	}
 	preCloseHook = reportHomework
 	return true
