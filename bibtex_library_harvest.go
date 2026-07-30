@@ -26,6 +26,47 @@ import (
 	"strings"
 )
 
+// --- Harvest ignore keys ---
+
+// harvestIgnoreKeys holds source keys (lowercased) that must never be treated as a
+// real key during harvesting — e.g. some exporters (ResearchGate) emit the literal
+// entry type ("article") as every entry's key. Without this, such a non-unique key
+// gets registered as a key hint for the first harvested entry and then silently
+// matches every later, unrelated entry sharing the same generic key (Step 1 of
+// runHarvestEntry, which merges automatically with no user interaction).
+var harvestIgnoreKeys = TStringSetNew()
+
+// loadHarvestIgnoreKeys reads globalFolder/harvest_ignore_keys.csv: one key per
+// line, blank lines and lines starting with # ignored. Writes a seeded default
+// file when absent so the mechanism is discoverable and extensible by hand.
+func loadHarvestIgnoreKeys(path string) {
+	if !FileExists(path) {
+		writeDefaultHarvestIgnoreKeys(path)
+	}
+	processFile(path, func(line string) {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			return
+		}
+		harvestIgnoreKeys.Add(strings.ToLower(line))
+	})
+}
+
+func writeDefaultHarvestIgnoreKeys(path string) {
+	f, err := os.Create(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write harvest ignore-keys file %s: %s\n", path, err)
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, "# harvest_ignore_keys.csv — source keys to ignore during harvesting")
+	fmt.Fprintln(f, "# One key per line (case-insensitive). Lines starting with # are ignored.")
+	fmt.Fprintln(f, "# Some exporters emit a generic, non-unique key (e.g. ResearchGate uses the")
+	fmt.Fprintln(f, "# literal entry type) that must never be matched against as if it were a")
+	fmt.Fprintln(f, "# real, stable key.")
+	fmt.Fprintln(f, "article")
+}
+
 // --- Delta log types and I/O ---
 
 // harvestContentFingerprint returns an MD5 of all non-empty field=value pairs, sorted.
@@ -218,7 +259,7 @@ func reorderHarvestCrossrefsFirst(entries []TBibTeXEntry) []TBibTeXEntry {
 // MapEntryKey returns the key unchanged when not in KeyToKey, so EntryExists guards
 // against false positives from key-hint-only keys.
 func (l *TBibTeXLibrary) harvestKeyMatch(e TBibTeXEntry) string {
-	if e.Key == "" {
+	if e.Key == "" || harvestIgnoreKeys.Contains(strings.ToLower(e.Key)) {
 		return ""
 	}
 	if canon := l.MapEntryKey(e.Key); l.EntryExists(canon) {
@@ -402,7 +443,7 @@ func addToHarvestGroup(l *TBibTeXLibrary, finalKey string) {
 // maybeCollectKeyHint adds sourceKey → finalKey to the hints DB when the
 // mapping is unambiguous (not already pointing elsewhere).
 func maybeCollectKeyHint(l *TBibTeXLibrary, sourceKey, finalKey string) {
-	if sourceKey == "" || finalKey == "" {
+	if sourceKey == "" || finalKey == "" || harvestIgnoreKeys.Contains(strings.ToLower(sourceKey)) {
 		return
 	}
 	if existing := l.HintToKey.GetValue(sourceKey); existing != "" && l.MapEntryKey(existing) != finalKey {
@@ -736,14 +777,22 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 
 	// Step 1: key hint / alias match.
 	// The entry is already in the library (matched via KeyToKey alias/oldie or a
-	// previously confirmed HintToKey mapping). No re-merge or re-check needed —
-	// the library entry is already in the correct state from the first harvest.
-	// Just record the mapping and move on; no challenges should fire.
+	// previously confirmed HintToKey mapping). The key match only confirms identity,
+	// not that the two sides still agree field-for-field — the harvested source may
+	// have been independently enriched since the library entry was first created
+	// (e.g. a bib.sync-exported file that got hand-edited or re-exported elsewhere).
+	// So still run it through the normal merge machinery to pick up additions;
+	// MergeEntries/MaybeResolveFieldValue's priority-based lineage check keeps a
+	// higher-priority source's recorded value (including a deliberately empty one,
+	// e.g. DBLP confirming a field doesn't exist) from being overwritten by a
+	// lower-priority challenger. This step is usually still silent (identical
+	// content or plain field additions resolve without asking) but, unlike before,
+	// may occasionally prompt when the two sides genuinely conflict.
 	if keyMatch := l.harvestKeyMatch(e); keyMatch != "" {
 		fmt.Fprintf(os.Stderr, "Key match:\n")
 		fmt.Fprint(os.Stderr, l.entryDisplayString(keyMatch))
-		finalKey := l.MapEntryKey(keyMatch)
-		l.Progress("Already in library as %s", finalKey)
+		l.Progress("Already in library as %s", keyMatch)
+		finalKey := mergeAndCheck(addHarvestEntry(l, e), keyMatch)
 		l.fixMiscJournalField(finalKey, e.Fields)
 		l.fixHowPublishedURLField(finalKey)
 		maybeCollectKeyHint(l, e.Key, finalKey)
@@ -752,7 +801,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		addToHarvestGroup(l, finalKey)
 		transferHarvestKey(e.Key, finalKey)
 		recordStatus(finalKey)
-		return finalKey, false // step 1: automatic, no user interaction
+		return finalKey, false
 	}
 
 	// Step 1.5: DBLP key match. An exact dblp field match between source and an
@@ -912,14 +961,15 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 // key-hint registration are re-run on each pass.
 //
 // Entries that are not already resolved/skipped are then processed in two passes:
-// automatic first (harvestKeyMatch finds an existing key/hint match — Step 1 of
-// runHarvestEntry, which never prompts), then interactive (everything else — title
-// match, DBLP match, or a genuinely new entry, all of which may ask a question).
-// This means a long automatic backlog is never left half-done behind an interactive
-// entry earlier in source-file order — including the degenerate case of a non-TTY
+// key-matched first (harvestKeyMatch finds an existing key/hint match — Step 1 of
+// runHarvestEntry), then everything else (title match, DBLP match, or a genuinely
+// new entry). Step 1 still merges in any field additions/changes from the source
+// (see the comment at that step), so it is usually but no longer guaranteedly
+// prompt-free; the two-pass split is still worthwhile because it processes the
+// most-likely-silent backlog first — including the degenerate case of a non-TTY
 // run, where the first interactive question quits the whole loop immediately
 // (WarningQuestion returns "q" with no TTY): without this split, everything after
-// that point in file order — automatic or not — would never even be attempted.
+// that point in file order would never even be attempted.
 func (l *TBibTeXLibrary) runHarvestLoop(entries []TBibTeXEntry, syncState *TSyncState) {
 	var pending []TBibTeXEntry
 	for _, e := range entries {

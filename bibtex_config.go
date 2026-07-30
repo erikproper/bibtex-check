@@ -274,6 +274,9 @@ func init() {
 	// The ones below are not, and should be moved to a config file.
 	BibTeXEntryMap["softmisc"] = "misc"
 	BibTeXEntryMap["online"] = "misc"
+	BibTeXEntryMap["website"] = "misc"
+	BibTeXEntryMap["webpage"] = "misc"
+	BibTeXEntryMap["electronic"] = "misc"
 	BibTeXEntryMap["patent"] = "misc"
 	BibTeXEntryMap["unpublished"] = "misc"
 	BibTeXEntryMap["report"] = "techreport"

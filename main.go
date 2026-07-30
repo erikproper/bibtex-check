@@ -37,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.84"
+const AppVersion = "28.89"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2500,6 +2500,23 @@ func upgradeWatchEntries(entries []TWatchEntry) ([]TWatchEntry, bool) {
 			entries[i].Comment = name
 			changed = true
 		case "contributor":
+			// A watched contributor ID can be absorbed into another one by a contributor
+			// merge (mergeContributorInDB), which moves all names/ORCIDs off the old ID
+			// and records the mapping in contributor_id_oldies. Left unresolved, the old
+			// ID has no names/ORCIDs left to look up and silently goes dark — "No DBLP
+			// entries found" — even though the person is still fully present in the
+			// library under the surviving ID. Forward the watch entry itself so the
+			// person is never dropped from the watch.
+			if canonical := Library.ResolveContributorID(e.Value); canonical != e.Value {
+				comment := e.Comment
+				if contrib, ok := Library.ContributorByID[canonical]; ok && contrib.Name != "" {
+					comment = contrib.Name
+				}
+				Library.Progress("Watch: contributor %s was merged into %s — updated watch entry", e.Value, canonical)
+				entries[i] = TWatchEntry{EntryType: "contributor", Value: canonical, Comment: comment}
+				changed = true
+				continue
+			}
 			if e.Comment != "" {
 				continue
 			}
@@ -2552,13 +2569,19 @@ func watchEntryDblpKeys(w TWatchEntry) []string {
 		}
 	case "contributor":
 		// Union all ORCID-indexed DBLP entries with person-name-indexed entries for
-		// every name alias the contributor is known by.
-		for _, orcid := range contributorORCIDs(w.Value) {
+		// every name alias the contributor is known by. Resolve through any contributor
+		// merge first — mergeContributorInDB moves names/ORCIDs off an absorbed ID, so
+		// looking up the raw watch-file ID after a merge would find nothing even though
+		// the person is still fully present under the surviving ID. upgradeWatchEntries
+		// normally rewrites the watch file to the canonical ID already; this is a
+		// defensive fallback for the same run before that rewrite lands.
+		id := Library.ResolveContributorID(w.Value)
+		for _, orcid := range contributorORCIDs(id) {
 			for _, k := range readDblpORCIDEntries(orcid) {
 				add(k)
 			}
 		}
-		for _, alias := range contributorAliasesFromDB(w.Value) {
+		for _, alias := range contributorAliasesFromDB(id) {
 			for _, k := range readDblpPersonEntries(alias) {
 				add(k)
 			}
@@ -2574,7 +2597,7 @@ func watchEntryDblpKeys(w TWatchEntry) []string {
 func watchEntryORCIDs(w TWatchEntry) []string {
 	switch w.EntryType {
 	case "contributor":
-		return contributorORCIDs(w.Value)
+		return contributorORCIDs(Library.ResolveContributorID(w.Value))
 	case "orcid":
 		return []string{w.Value}
 	case "name":
@@ -3942,6 +3965,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 	loadHtmlCommandsMap(globalFolder + "html_commands_map.csv")
 	loadHtmlCharacterMap(globalFolder + "html_character_map.csv")
 	loadLatexIndexerMap(globalFolder + "latex_indexer.csv")
+	loadHarvestIgnoreKeys(globalFolder + "harvest_ignore_keys.csv")
 
 	if cmdNewKey {
 		doNewKey()

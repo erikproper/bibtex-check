@@ -3715,6 +3715,30 @@ func deleteBibEntry(key string) {
 }
 
 
+// contributorRoleFieldValue reconstructs the " and "-joined author/editor string
+// for (key, role) directly from contributor_roles, for callers (e.g. entryDisplayLines)
+// that need the authoritative value regardless of whether entryCache's copy of the
+// entry carries it. Returns "" when there are no contributor_roles rows for this pair.
+func contributorRoleFieldValue(key, role string) string {
+	rows, err := bibQuery(
+		`SELECT c.name FROM contributor_roles cr
+		 JOIN contributors c ON c.id = cr.contributor_id
+		 WHERE cr.entry_key = ? AND cr.role = ? ORDER BY cr.position`, key, role)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) != nil {
+			continue
+		}
+		names = append(names, name)
+	}
+	return strings.Join(names, " and ")
+}
+
 // loadEntryFromDb returns a TBibTeXEntry snapshot of all fields for key.
 // Returns an entry with an empty Fields map (Exists() == false) when key is absent.
 func loadEntryFromDb(key string) *TBibTeXEntry {

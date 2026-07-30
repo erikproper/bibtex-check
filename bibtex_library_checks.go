@@ -1498,7 +1498,30 @@ func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {
 				l.SetEntryType(entry.Key, mapped)
 				entry.Fields[EntryTypeField] = mapped
 			} else {
-				l.Warning(WarningUnknownEntryType, entry.Key, entryType)
+				// No known mapping either — ask for a valid replacement rather than just
+				// warning. Leaving an unrecognised type in place would otherwise reach
+				// CheckIfFieldsAreAllowed with an empty allowed-field set for that type,
+				// which used to (incorrectly) flag entrytype itself as an illegal field.
+				for {
+					if l.QuitWasRequested() {
+						l.Warning(WarningUnknownEntryType, entry.Key, entryType)
+						break
+					}
+					input, err := l.AskForInput(fmt.Sprintf(
+						"Entry %s has unknown type %q — enter a valid BibTeX entry type (empty to skip)", entry.Key, entryType))
+					input = strings.TrimSpace(input)
+					if err != nil || input == "" {
+						l.Warning(WarningUnknownEntryType, entry.Key, entryType)
+						break
+					}
+					if _, validType := BibTeXAllowedEntryFields[input]; validType {
+						l.Progress(ProgressFixedEntryType, entry.Key, entryType, input)
+						l.SetEntryType(entry.Key, input)
+						entry.Fields[EntryTypeField] = input
+						break
+					}
+					fmt.Fprintf(os.Stderr, "  %q is not a recognised entry type either. Try again.\n", input)
+				}
 			}
 		}
 	}

@@ -929,15 +929,24 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 				}
 				sourceVal := sourceEntry.FieldValue(regularField)
 				targetVal := targetEntry.FieldValue(regularField)
+				challengeSource := sourceFromChallengeKey(source)
+				currentRec := l.getLineage(target, regularField)
 				var merged string
-				if targetVal == "" && sourceVal != "" {
+				switch {
+				case targetVal == "" && sourceVal != "" && lineagePriorityOf(challengeSource) < lineagePriorityOf(currentRec.Source):
+					// A higher-priority source (e.g. DBLP) already recorded this field as
+					// authoritatively empty — that verdict prevails over a lower-priority
+					// challenger's non-empty value, the same priority rule
+					// MaybeResolveFieldValue applies for a non-empty target.
+					merged = targetVal
+				case targetVal == "" && sourceVal != "":
 					// Explicit merge: adopt source value for fields the target lacks.
 					// MaybeResolveFieldValue would hit stale superseded-value records (made in earlier
 					// contexts, e.g. DBLP challenges or prior interactive resolution) and
 					// silently drop the value. In an explicit bib.merge the user has decided
 					// these entries represent the same work, so missing fields are filled.
 					merged = l.MapEntryFieldValue(target, regularField, l.NormaliseFieldValue(regularField, sourceVal))
-				} else {
+				default:
 					merged = l.MaybeResolveFieldValue(target, source, regularField, sourceVal, targetVal)
 				}
 				l.setEntryField(targetEntry, regularField, merged)
@@ -1101,8 +1110,35 @@ func (l *TBibTeXLibrary) entryDisplayLines(key string) string {
 	if !entry.Exists() {
 		return ""
 	}
-	sorted := make([]string, 0, len(entry.Fields))
-	for f := range entry.Fields {
+	fields := entry.Fields
+	// Under contributor_roles, author/editor live in the contributor_roles table,
+	// not bib_entries — loadEntryFromDb only reconstructs them into Fields on its
+	// slow/uncached path (see the matching comment there). A cache-hit read (the
+	// common case once entryCache is loaded) can therefore return an entry whose
+	// Fields is missing author/editor even though the data exists. Reconstruct for
+	// display so a merge/duplicate confirmation prompt never silently omits the
+	// author list the user needs to judge the decision. Clone before writing so the
+	// shared cached entry object itself is never mutated by a display call.
+	if contributorRolesActive {
+		cloned := false
+		for _, role := range []string{"author", "editor"} {
+			if fields[role] == "" {
+				if v := contributorRoleFieldValue(key, role); v != "" {
+					if !cloned {
+						fresh := make(map[string]string, len(entry.Fields)+2)
+						for k, v2 := range entry.Fields {
+							fresh[k] = v2
+						}
+						fields = fresh
+						cloned = true
+					}
+					fields[role] = v
+				}
+			}
+		}
+	}
+	sorted := make([]string, 0, len(fields))
+	for f := range fields {
 		if f != EntryTypeField && f != LocalURLField {
 			sorted = append(sorted, f)
 		}
@@ -1110,7 +1146,7 @@ func (l *TBibTeXLibrary) entryDisplayLines(key string) string {
 	sort.Strings(sorted)
 	result := "  @" + entry.EntryType() + "{" + key + ",\n"
 	for _, field := range sorted {
-		if value := entry.Fields[field]; value != "" {
+		if value := fields[field]; value != "" {
 			mapped := l.MapEntryFieldValue(key, field, value)
 			result += fmt.Sprintf("    %-*s = {%s},\n", BibTeXFieldColumnWidth, field, mapped)
 		}
@@ -1740,6 +1776,17 @@ func (l *TBibTeXLibrary) CheckIfFieldsAreAllowed(entry *TBibTeXEntry, violationH
 	for field, value := range entry.Fields {
 		if l.QuitWasRequested() {
 			return
+		}
+		// entrytype itself must never be offered as "ignore this field?" — it's a
+		// structural field, not a bibliographic one, and for an entry whose type isn't
+		// a recognised key in BibTeXAllowedEntryFields (e.g. harvested "website" before
+		// a BibTeXEntryMap mapping existed for it) the allowed-set lookup above is empty,
+		// which would otherwise flag entrytype as illegal too — answering "y" there
+		// deletes the entry's only type, cascading into every other field also failing
+		// this same check on the next pass. CheckKeyValidity (called before this, in
+		// CheckEntry) is the correct place to resolve an unrecognised type.
+		if field == EntryTypeField {
+			continue
 		}
 		if !allowed.Contains(field) {
 			violationHandler(entry.Key, field, value)
