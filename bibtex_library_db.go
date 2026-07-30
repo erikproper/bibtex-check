@@ -3715,6 +3715,8 @@ func deleteBibEntry(key string) {
 }
 
 
+// loadEntryFromDb returns a TBibTeXEntry snapshot of all fields for key.
+// Returns an entry with an empty Fields map (Exists() == false) when key is absent.
 // contributorRoleFieldValue reconstructs the " and "-joined author/editor string
 // for (key, role) directly from contributor_roles, for callers (e.g. entryDisplayLines)
 // that need the authoritative value regardless of whether entryCache's copy of the
@@ -3739,8 +3741,6 @@ func contributorRoleFieldValue(key, role string) string {
 	return strings.Join(names, " and ")
 }
 
-// loadEntryFromDb returns a TBibTeXEntry snapshot of all fields for key.
-// Returns an entry with an empty Fields map (Exists() == false) when key is absent.
 func loadEntryFromDb(key string) *TBibTeXEntry {
 	if entryCache != nil {
 		if e, ok := entryCache[key]; ok {
