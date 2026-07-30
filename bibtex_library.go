@@ -921,6 +921,14 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			regularFields := TStringSet{}
 			regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
 			for regularField := range regularFields.Elements() {
+				// A "q" answer from any field's challenge must stop further questions
+				// for this entry immediately, not just be ignored while the loop keeps
+				// asking about every remaining field (reported 2026-07-30: had to Ctrl-C
+				// out of a harvest because "q" on the title challenge didn't stop the
+				// volume/month/etc. challenges that followed for the same pair).
+				if l.QuitWasRequested() {
+					break
+				}
 				// For bookish entries, title and booktitle end up identical via
 				// CheckBookishTitles right after this merge (title wins, booktitle
 				// follows). Skip booktitle's own resolution ONLY when source is
@@ -1037,6 +1045,11 @@ func (l *TBibTeXLibrary) MergeInMemoryDBLPEntry(sourceEntry *TBibTeXEntry, targe
 	regularFields := TStringSet{}
 	regularFields.Initialise().Unite(BibTeXAllowedEntryFields[targetType])
 	for regularField := range regularFields.Elements() {
+		// A "q" answer from any field's challenge must stop further questions for
+		// this entry immediately — see the matching comment in MergeEntries.
+		if l.QuitWasRequested() {
+			break
+		}
 		// For bookish entries, title and booktitle end up identical via
 		// CheckBookishTitles right after this merge (title wins, booktitle follows).
 		// Skip booktitle's own resolution ONLY when the source is challenging both
@@ -1066,6 +1079,9 @@ func (l *TBibTeXLibrary) MergeInMemoryDBLPEntry(sourceEntry *TBibTeXEntry, targe
 		crossrefEntry := loadEntryFromDb(crossref)
 		openEntry(crossrefEntry)
 		for field := range BibTeXInheritableFields.Elements() {
+			if l.QuitWasRequested() {
+				break
+			}
 			l.CheckCrossrefInheritableField(crossrefEntry, targetEntry, field)
 		}
 		crossrefChanged = closeEntry(crossrefEntry)

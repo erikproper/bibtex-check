@@ -753,6 +753,11 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 	mergeAndCheck := func(newKey, matchKey string) string {
 		l.MergeEntries(l.MapEntryKey(newKey), matchKey)
 		finalKey := l.MapEntryKey(matchKey)
+		// A "q" mid-merge must not lead into doAllChecks/fixEntry's own questions
+		// (title-duplicate merges, DBLP candidate search, etc.) — stop immediately.
+		if l.QuitWasRequested() {
+			return finalKey
+		}
 		l.Progress("  Checking %s", finalKey)
 		doAllChecks(finalKey)
 		fixEntry(finalKey)
@@ -768,7 +773,10 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		for _, c := range declinedTitleMatches {
 			l.AddNonDoubleEntries(key, c)
 		}
-		return key, false
+		// A "q" answered anywhere during this entry's resolution (e.g. inside
+		// mergeAndCheck's field-by-field merge) must propagate up so runHarvestLoop
+		// stops instead of moving on to ask about the next entry.
+		return key, l.QuitWasRequested()
 	}
 
 	// Always show the source entry first.
@@ -801,7 +809,10 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 		addToHarvestGroup(l, finalKey)
 		transferHarvestKey(e.Key, finalKey)
 		recordStatus(finalKey)
-		return finalKey, false
+		// "Automatic, no user interaction" no longer holds unconditionally — mergeAndCheck
+		// above may have prompted and been answered "q"; propagate that up so
+		// runHarvestLoop stops instead of moving on to the next entry.
+		return finalKey, l.QuitWasRequested()
 	}
 
 	// Step 1.5: DBLP key match. An exact dblp field match between source and an
@@ -823,7 +834,10 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 				addToHarvestGroup(l, finalKey)
 				transferHarvestKey(e.Key, finalKey)
 				recordStatus(finalKey)
-				return finalKey, false // exact DBLP key match: automatic, no user interaction
+				// The DBLP key match itself needs no confirmation, but mergeAndCheck
+				// above may still have prompted for a conflicting field and been
+				// answered "q" — propagate that up.
+				return finalKey, l.QuitWasRequested()
 			}
 		}
 	}
@@ -847,7 +861,7 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 			addToHarvestGroup(l, finalKey)
 			transferHarvestKey(e.Key, finalKey)
 			recordStatus(finalKey)
-			return finalKey, false
+			return finalKey, l.QuitWasRequested()
 		}
 		declinedTitleMatches = titleMatches
 	}

@@ -1268,6 +1268,9 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 				if allowedCrossrefType == CrossrefType {
 					crossrefEntry := l.buildEntry(crossrefety)
 					for field := range BibTeXInheritableFields.Elements() {
+						if l.QuitWasRequested() {
+							break
+						}
 						l.CheckCrossrefInheritableField(crossrefEntry, entry, field)
 					}
 
