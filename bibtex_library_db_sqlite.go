@@ -111,8 +111,8 @@ func connectToDatabase() {
 	ensureCrossFieldMappingsTableExists()
 	ensureGenericFieldMappingsTableExists()
 	ensureFieldMappingsTableExists()
-	db.Exec(`DELETE FROM generic_field_mappings`) //nolint:errcheck
-	db.Exec(`DELETE FROM cross_field_mappings`)   //nolint:errcheck
+	dbExecSave("connectToDatabase: clear generic_field_mappings", `DELETE FROM generic_field_mappings`)
+	dbExecSave("connectToDatabase: clear cross_field_mappings", `DELETE FROM cross_field_mappings`)
 	ensureURLsIgnoreTableExists()
 	ensureIgnoreTitlesTableExists()
 	ensureEntryMetadataTableExists()
@@ -821,15 +821,22 @@ func postCheckGate() bool {
 		return false
 	}
 
-	db.Exec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
+	// This re-sync feeds directly into the foreignKeyCheckOK() gate just below, which
+	// decides whether the run's writes are safe to persist to the home DB — a silently
+	// failed re-sync here could produce a false-clean or false-violation verdict, so
+	// these three are checked rather than best-effort.
+	dbExecSave("postCheckGate: anchor bib_entries keys",
+		`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
 	         SELECT DISTINCT entry_key FROM bib_entries`)
-	db.Exec(`DELETE FROM bib_entry_keys
+	dbExecSave("postCheckGate: prune stale bib_entry_keys",
+		`DELETE FROM bib_entry_keys
 	         WHERE entry_key NOT IN (SELECT DISTINCT entry_key FROM bib_entries)`)
 	// Also anchor any contributor_roles entry_keys that are present in bib_entries
 	// but were written before bib_entry_keys was populated (e.g. from an older migration).
-	db.Exec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
+	dbExecSave("postCheckGate: anchor contributor_roles keys",
+		`INSERT OR IGNORE INTO bib_entry_keys (entry_key)
 	         SELECT DISTINCT entry_key FROM contributor_roles
-	         WHERE entry_key IN (SELECT DISTINCT entry_key FROM bib_entries)`) //nolint:errcheck
+	         WHERE entry_key IN (SELECT DISTINCT entry_key FROM bib_entries)`)
 
 	if foreignKeyCheckOK() {
 		return true

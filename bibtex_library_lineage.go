@@ -115,7 +115,7 @@ func (l *TBibTeXLibrary) setLineage(key, field, source string, edited bool) {
 				delete(l.LineageMap, key)
 			}
 		}
-		db.Exec(`DELETE FROM entry_lineage WHERE entry_key = ? AND field = ?`, key, field) //nolint:errcheck
+		dbExecSave("setLineage: clear", `DELETE FROM entry_lineage WHERE entry_key = ? AND field = ?`, key, field)
 		return
 	}
 	if _, ok := l.LineageMap[key]; !ok {
@@ -126,7 +126,7 @@ func (l *TBibTeXLibrary) setLineage(key, field, source string, edited bool) {
 	if edited {
 		editedInt = 1
 	}
-	bibExec( //nolint:errcheck
+	dbExecSave("setLineage",
 		`INSERT INTO entry_lineage (entry_key, field, source, edited) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(entry_key, field) DO UPDATE SET source = excluded.source, edited = excluded.edited`,
 		key, field, source, editedInt)
@@ -146,7 +146,7 @@ func (l *TBibTeXLibrary) getSourceFieldSignature(key, field, source string) stri
 // setSourceContributorSignature records what source most recently delivered for one
 // contributor position. role is "author" or "editor"; position is 1-based.
 func (l *TBibTeXLibrary) setSourceContributorSignature(key, role string, position int, source, sig string) {
-	bibExec( //nolint:errcheck
+	dbExecSave("setSourceContributorSignature",
 		`INSERT INTO source_contributor_signatures (entry_key, role, position, source, signature) VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(entry_key, role, position, source) DO UPDATE SET signature = excluded.signature`,
 		key, role, position, source, sig)
@@ -165,7 +165,7 @@ func (l *TBibTeXLibrary) setSourceFieldSignature(key, field, source, sig string)
 		return
 	}
 	l.SourceSignatures[key][field][source] = sig
-	bibExec( //nolint:errcheck
+	dbExecSave("setSourceFieldSignature",
 		`INSERT INTO source_field_signatures (entry_key, field, source, signature) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(entry_key, field, source) DO UPDATE SET signature = excluded.signature`,
 		key, field, source, sig)

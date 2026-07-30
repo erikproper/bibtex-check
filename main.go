@@ -37,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.94"
+const AppVersion = "28.95"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -842,7 +842,8 @@ func normalizeAuthorEditorEntryFields() {
 			continue
 		}
 		newValue := strings.Join(parts, " and ")
-		db.Exec(`INSERT INTO superseded_field_values (entry_key, field, value) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, r.key, r.field, r.value) //nolint:errcheck
+		dbExecSave("normalizeAuthorEditorEntryFields",
+			`INSERT INTO superseded_field_values (entry_key, field, value) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, r.key, r.field, r.value)
 		Library.SetEntryFieldValue(r.key, r.field, newValue)
 		updated++
 	}
@@ -913,7 +914,8 @@ func retireResolvedAuthorEditorSuperseded() {
 			continue
 		}
 		if sliceEqual(normList(splitAndFilter(winner)), normList(splitAndFilter(p.superseded))) {
-			db.Exec(`DELETE FROM superseded_field_values WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.superseded) //nolint:errcheck
+			dbExecSave("retireResolvedAuthorEditorSuperseded",
+				`DELETE FROM superseded_field_values WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.superseded)
 			retired++
 		}
 	}
@@ -1213,7 +1215,8 @@ outer:
 			upsertContributorNameToDB(p.id, p.alias)
 			Library.NameToContributorID[p.alias] = p.id
 			Library.FindAliases(contrib.Name, p.alias)
-			db.Exec(`DELETE FROM entry_contributor_names WHERE name_used = ? AND contributor_id = ?`, p.alias, p.id) //nolint:errcheck
+			dbExecSave("doTriageContributorAliases: generalise",
+				`DELETE FROM entry_contributor_names WHERE name_used = ? AND contributor_id = ?`, p.alias, p.id)
 			generalised++
 			continue
 		}
@@ -1228,7 +1231,8 @@ outer:
 			upsertContributorNameToDB(p.id, p.alias)
 			Library.NameToContributorID[p.alias] = p.id
 			Library.FindAliases(contrib.Name, p.alias)
-			db.Exec(`DELETE FROM entry_contributor_names WHERE name_used = ? AND contributor_id = ?`, p.alias, p.id) //nolint:errcheck
+			dbExecSave("doTriageContributorAliases: generalise",
+				`DELETE FROM entry_contributor_names WHERE name_used = ? AND contributor_id = ?`, p.alias, p.id)
 			generalised++
 		case "k":
 			// no action — alias remains entry-specific
@@ -1455,9 +1459,11 @@ outer:
 			if chosenID == r.id {
 				continue
 			}
-			db.Exec(`UPDATE entry_contributor_names SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`, //nolint:errcheck
+			dbExecSave("doDisambiguateContributors: reassign entry_contributor_names",
+				`UPDATE entry_contributor_names SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`,
 				chosenID, r.key, r.role, r.position)
-			db.Exec(`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`, //nolint:errcheck
+			dbExecSave("doDisambiguateContributors: reassign contributor_roles",
+				`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`,
 				chosenID, r.key, r.role, r.position)
 			if cand := Library.ContributorByID[chosenID]; cand != nil {
 				Library.Progress("Assigned %s %s pos %d → %q.", r.key, r.role, r.position, cand.Name)

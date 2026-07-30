@@ -126,14 +126,17 @@ func importContributorsFromCSV(replace bool) {
 	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM contributors`) } //nolint:errcheck
+		clearFn = func() { dbExecSave("importContributorsFromCSV: clear", `DELETE FROM contributors`) }
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		orcid := ""
 		if len(f) >= 3 {
 			orcid = f[2]
 		}
-		tx.Exec(upsert, f[0], f[1], orcid) //nolint:errcheck
+		if _, err := tx.Exec(upsert, f[0], f[1], orcid); err != nil {
+			dbInteraction.Warning("importContributorsFromCSV: row write failed for %s: %s", f[0], err)
+			dbWriteFailed = true
+		}
 	})
 	if ok {
 		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
@@ -161,10 +164,13 @@ func importContributorNamesFromCSV(replace bool) {
 	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM contributor_names`) } //nolint:errcheck
+		clearFn = func() { dbExecSave("importContributorNamesFromCSV: clear", `DELETE FROM contributor_names`) }
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
-		tx.Exec(insert, f[0], f[1]) //nolint:errcheck
+		if _, err := tx.Exec(insert, f[0], f[1]); err != nil {
+			dbInteraction.Warning("importContributorNamesFromCSV: row write failed for %s: %s", f[0], err)
+			dbWriteFailed = true
+		}
 	})
 	if ok {
 		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
@@ -193,10 +199,13 @@ func importContributorIDOldiesFromCSV(replace bool) {
 	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM contributor_id_oldies`) } //nolint:errcheck
+		clearFn = func() { dbExecSave("importContributorIDOldiesFromCSV: clear", `DELETE FROM contributor_id_oldies`) }
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
-		tx.Exec(upsert, f[0], f[1]) //nolint:errcheck
+		if _, err := tx.Exec(upsert, f[0], f[1]); err != nil {
+			dbInteraction.Warning("importContributorIDOldiesFromCSV: row write failed for %s: %s", f[0], err)
+			dbWriteFailed = true
+		}
 	})
 	if ok {
 		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
@@ -233,10 +242,13 @@ func importContributorORCIDSeenFromCSV(replace bool) {
 	validate := func(f []string) bool { return len(f) >= 6 && f[0] != "" && f[1] != "" }
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM contributor_orcid_seen`) } //nolint:errcheck
+		clearFn = func() { dbExecSave("importContributorORCIDSeenFromCSV: clear", `DELETE FROM contributor_orcid_seen`) }
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
-		tx.Exec(upsert, f[0], f[1], f[2], f[3], f[4], f[5]) //nolint:errcheck
+		if _, err := tx.Exec(upsert, f[0], f[1], f[2], f[3], f[4], f[5]); err != nil {
+			dbInteraction.Warning("importContributorORCIDSeenFromCSV: row write failed for %s: %s", f[0], err)
+			dbWriteFailed = true
+		}
 	})
 	if ok {
 		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
@@ -432,10 +444,13 @@ func importEntryDoiAliasesFromCSV(replace bool) {
 	validate := func(f []string) bool { return len(f) >= 2 && f[0] != "" && f[1] != "" }
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM entry_doi_aliases`) } //nolint:errcheck
+		clearFn = func() { dbExecSave("importEntryDoiAliasesFromCSV: clear", `DELETE FROM entry_doi_aliases`) }
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
-		tx.Exec(upsert, f[0], f[1]) //nolint:errcheck
+		if _, err := tx.Exec(upsert, f[0], f[1]); err != nil {
+			dbInteraction.Warning("importEntryDoiAliasesFromCSV: row write failed for %s: %s", f[0], err)
+			dbWriteFailed = true
+		}
 	})
 	if ok {
 		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)
@@ -614,10 +629,13 @@ func importIgnoreTitlesFromCSV(replace bool) {
 	validate := func(f []string) bool { return len(f) >= 1 && f[0] != "" }
 	var clearFn func()
 	if replace {
-		clearFn = func() { db.Exec(`DELETE FROM ignore_titles`) } //nolint:errcheck
+		clearFn = func() { dbExecSave("importIgnoreTitlesFromCSV: clear", `DELETE FROM ignore_titles`) }
 	}
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
-		tx.Exec(insert, strings.TrimSpace(f[0])) //nolint:errcheck
+		if _, err := tx.Exec(insert, strings.TrimSpace(f[0])); err != nil {
+			dbInteraction.Warning("importIgnoreTitlesFromCSV: row write failed for %s: %s", f[0], err)
+			dbWriteFailed = true
+		}
 	})
 	if ok {
 		importReport(map[bool]string{true: "Imported", false: "Added"}[replace], path, n)

@@ -406,8 +406,9 @@ func (l *TBibTeXLibrary) AddEntryFieldAlias(entry, field, alias, target string, 
 			// Store both the superseded value and the accepted winner so that
 			// loadEntryFieldMappingsFromDb can reconstruct the mapping even when
 			// bib_entries was not immediately updated after a "n" answer.
-			bibExec(`INSERT INTO superseded_field_values (entry_key, field, value, winner) VALUES (?, ?, ?, ?) `+ //nolint:errcheck
-				`ON CONFLICT(entry_key, field, value) DO UPDATE SET winner = excluded.winner`,
+			dbExecSave("AddEntryFieldAlias",
+				`INSERT INTO superseded_field_values (entry_key, field, value, winner) VALUES (?, ?, ?, ?) `+
+					`ON CONFLICT(entry_key, field, value) DO UPDATE SET winner = excluded.winner`,
 				entry, field, alias, target)
 		}
 	}
@@ -500,7 +501,7 @@ func (l *TBibTeXLibrary) AddGenericFieldAlias(field, alias, target string, check
 	l.GenericFieldTargetToSource.AddValueToStringPairSetMap(field, target, alias)
 
 	if field != PreferredAliasField && !fieldMappingsLoading {
-		bibExec( //nolint:errcheck
+		dbExecSave("AddGenericFieldAlias",
 			`INSERT INTO field_mappings (source_field, source_value, target_field, target_value) VALUES (?, ?, ?, ?)
 			  ON CONFLICT(source_field, source_value, target_field) DO UPDATE SET target_value = excluded.target_value`,
 			field, alias, field, l.MapFieldValue(field, target))
@@ -538,7 +539,8 @@ func (l *TBibTeXLibrary) UpdateEntryFieldAlias(entry, field, alias, target strin
 						}
 					}
 				}
-				bibExec(`DELETE FROM superseded_field_values WHERE entry_key = ? AND field = ? AND value = ?`, //nolint:errcheck
+				dbExecSave("UpdateEntryFieldAlias: remove stale superseded value",
+					`DELETE FROM superseded_field_values WHERE entry_key = ? AND field = ? AND value = ?`,
 					entry, field, otherAlias)
 			}
 		}
@@ -794,7 +796,8 @@ func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
 				// FindAliases (in-memory) or by a stale contributor_names entry where
 				// another contributor incorrectly claims r.from as an alias. Remove
 				// the stale DB rows so the cycle is not recreated on the next run.
-				db.Exec(`DELETE FROM contributor_names WHERE name = ? AND id != ?`, r.from, id) //nolint:errcheck
+				dbExecSave("CheckNameMappingConsistency: remove stale alias claim",
+					`DELETE FROM contributor_names WHERE name = ? AND id != ?`, r.from, id)
 			} else {
 				deleteNameMapping(r.from)
 			}
@@ -1287,7 +1290,7 @@ func (l *TBibTeXLibrary) AddFieldMapping(sourceField, sourceValue, targetField, 
 	}
 	l.FieldMappings.SetValueForStringTripleMap(sourceField, sourceValue, targetField, targetValue)
 	if !fieldMappingsLoading {
-		bibExec( //nolint:errcheck
+		dbExecSave("AddFieldMapping",
 			`INSERT INTO field_mappings (source_field, source_value, target_field, target_value) VALUES (?, ?, ?, ?)
 			  ON CONFLICT(source_field, source_value, target_field) DO UPDATE SET target_value = excluded.target_value`,
 			sourceField, sourceValue, targetField, targetValue)
@@ -1429,7 +1432,7 @@ func (l *TBibTeXLibrary) SetEntryFlag(key, flag string) {
 	}
 	if !l.EntryFlags[canon].Set().Contains(flag) {
 		l.EntryFlags[canon].Set().Add(flag)
-		db.Exec(`INSERT OR IGNORE INTO entry_metadata (entry_key, property, value) VALUES (?, ?, 'true')`, canon, flag) //nolint:errcheck
+		dbExecSave("SetEntryFlag", `INSERT OR IGNORE INTO entry_metadata (entry_key, property, value) VALUES (?, ?, 'true')`, canon, flag)
 	}
 }
 
@@ -1518,13 +1521,15 @@ func (l *TBibTeXLibrary) DeleteEntry(key string) {
 	l.TitleIndex.DeleteValueFromStringSetMap(TeXStringIndexer(l.EntryFieldValueity(key, TitleField)), key)
 	// Move PDF to library trash before removing the DB entry.
 	if l.PDFFiles[key] {
-		l.moveToLibraryTrash(l.FilesRoot + l.FilesFolder + key + ".pdf") //nolint:errcheck
+		if !l.moveToLibraryTrash(l.FilesRoot + l.FilesFolder + key + ".pdf") {
+			dbInteraction.Warning("DeleteEntry: could not move PDF for %s to trash — left in place", key)
+		}
 		delete(l.PDFFiles, key)
 	}
 	// Clean up entry_metadata so no orphan rows accumulate after deletion.
 	if props, ok := l.Metadata[key]; ok {
 		for prop := range props {
-			db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, key, prop) //nolint:errcheck
+			dbExecSave("DeleteEntry: clear entry_metadata", `DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, key, prop)
 		}
 		delete(l.Metadata, key)
 	}

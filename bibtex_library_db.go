@@ -518,11 +518,13 @@ func upsertContributorIDOldie(absorbedID, canonicalID string) {
 		}
 		ultimate = next
 	}
-	db.Exec(`INSERT INTO contributor_id_oldies (absorbed_id, canonical_id) VALUES (?, ?) ` + //nolint:errcheck
-		`ON CONFLICT(absorbed_id) DO UPDATE SET canonical_id = excluded.canonical_id`,
+	dbExecSave("upsertContributorIDOldie: insert",
+		`INSERT INTO contributor_id_oldies (absorbed_id, canonical_id) VALUES (?, ?) `+
+			`ON CONFLICT(absorbed_id) DO UPDATE SET canonical_id = excluded.canonical_id`,
 		absorbedID, ultimate)
 	// If absorbedID's own oldies chain pointed here, redirect those too.
-	db.Exec(`UPDATE contributor_id_oldies SET canonical_id = ? WHERE canonical_id = ?`, //nolint:errcheck
+	dbExecSave("upsertContributorIDOldie: redirect chained oldies",
+		`UPDATE contributor_id_oldies SET canonical_id = ? WHERE canonical_id = ?`,
 		ultimate, absorbedID)
 }
 
@@ -598,7 +600,7 @@ func loadORCIDSeen(contributorID, orcid string) orcidSeenRecord {
 
 // upsertORCIDSeen stores (or updates) the seen signature for (contributorID, orcid).
 func upsertORCIDSeen(contributorID, orcid string, r orcidSeenRecord) {
-	db.Exec( //nolint:errcheck
+	dbExecSave("upsertORCIDSeen",
 		`INSERT INTO contributor_orcid_seen
 		   (contributor_id, orcid, canonical, credit_name, declared_name, other_names)
 		   VALUES (?, ?, ?, ?, ?, ?)
@@ -632,8 +634,9 @@ func ensureContributorORCIDsTableExists() {
 // maybeMigrateContributorORCIDs seeds contributor_orcids from the canonical orcid
 // column in contributors, for DBs opened before contributor_orcids existed.
 func maybeMigrateContributorORCIDs() {
-	db.Exec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) ` + //nolint:errcheck
-		`SELECT orcid, id, 1 FROM contributors WHERE orcid IS NOT NULL AND orcid != ''`)
+	dbExecSave("maybeMigrateContributorORCIDs",
+		`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) `+
+			`SELECT orcid, id, 1 FROM contributors WHERE orcid IS NOT NULL AND orcid != ''`)
 }
 
 // upsertContributorORCIDToDB records orcid for id in contributor_orcids.
@@ -794,7 +797,7 @@ func addEntryDoiAlias(entryKey, doi string) {
 		dbInteraction.Warning("addEntryDoiAlias: DOI %s already aliased to %s (requested %s) — skipped", doi, existing, entryKey)
 		return
 	}
-	db.Exec(`INSERT INTO entry_doi_aliases (doi, entry_key) VALUES (?, ?)`, doi, entryKey) //nolint:errcheck
+	dbExecSave("addEntryDoiAlias", `INSERT INTO entry_doi_aliases (doi, entry_key) VALUES (?, ?)`, doi, entryKey)
 }
 
 // doiHasAlias reports whether doi has been explicitly registered as an alias for
@@ -957,7 +960,8 @@ func removeNonDoubleContributorNamePair(l *TBibTeXLibrary, name1, name2 string) 
 		return
 	}
 	delete(l.NonDoubleContributorNames, key)
-	db.Exec(`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, name1, name2) //nolint:errcheck
+	dbExecSave("removeNonDoubleContributorNamePair",
+		`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, name1, name2)
 }
 
 // deleteNameMapping removes a non-derived name form from the contributor
@@ -1084,29 +1088,35 @@ func mergeContributorInDB(fromID, toID string) bool {
 	db.QueryRow(`SELECT COALESCE(orcid, '') FROM contributors WHERE id = ?`, toID).Scan(&toOrcid)    //nolint:errcheck
 
 	// Move contributor_names.
-	bibExec(`INSERT OR IGNORE INTO contributor_names (id, name) `+ //nolint:errcheck
-		`SELECT ?, name FROM contributor_names WHERE id = ?`, toID, fromID)
+	dbExecSave("merge_contributors: move contributor_names",
+		`INSERT OR IGNORE INTO contributor_names (id, name) `+
+			`SELECT ?, name FROM contributor_names WHERE id = ?`, toID, fromID)
 
 	// Re-assign contributor_roles rows from fromID to toID. The primary key is
 	// (entry_key, role, position); one position belongs to at most one contributor,
 	// so updating contributor_id in-place never causes a PK conflict.
-	bibExec(`UPDATE contributor_roles SET contributor_id = ? WHERE contributor_id = ?`, toID, fromID) //nolint:errcheck
+	dbExecSave("merge_contributors: reassign contributor_roles",
+		`UPDATE contributor_roles SET contributor_id = ? WHERE contributor_id = ?`, toID, fromID)
 
 	// Re-point entry_contributor_names rows that still reference fromID. This covers
 	// both the normal migration path and the case where contributor_roles was already
 	// updated to a different contributor (e.g. by ORCID re-assignment via
 	// applyDblpAuthorORCIDs) without a matching update to entry_contributor_names,
 	// which would otherwise leave a dangling FK that blocks the DELETE below.
-	bibExec(`UPDATE entry_contributor_names SET contributor_id = ? WHERE contributor_id = ?`, toID, fromID) //nolint:errcheck
+	dbExecSave("merge_contributors: reassign entry_contributor_names",
+		`UPDATE entry_contributor_names SET contributor_id = ? WHERE contributor_id = ?`, toID, fromID)
 
 	// Move contributor_orcids as non-canonical additional ORCIDs for toID.
-	bibExec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) `+ //nolint:errcheck
-		`SELECT orcid, ?, 0 FROM contributor_orcids WHERE contributor_id = ?`, toID, fromID)
+	dbExecSave("merge_contributors: move contributor_orcids",
+		`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) `+
+			`SELECT orcid, ?, 0 FROM contributor_orcids WHERE contributor_id = ?`, toID, fromID)
 
 	// If toID has no canonical ORCID but fromID does, promote it.
 	if toOrcid == "" && fromOrcid != "" {
-		bibExec(`UPDATE contributors SET orcid = ? WHERE id = ?`, fromOrcid, toID)                                    //nolint:errcheck
-		bibExec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`,    //nolint:errcheck
+		dbExecSave("merge_contributors: promote canonical ORCID",
+			`UPDATE contributors SET orcid = ? WHERE id = ?`, fromOrcid, toID)
+		dbExecSave("merge_contributors: seed promoted ORCID",
+			`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`,
 			fromOrcid, toID)
 	}
 
@@ -1114,14 +1124,17 @@ func mergeContributorInDB(fromID, toID string) bool {
 	// constraint, so fromID rows are not removed by the CASCADE delete below.
 	// INSERT OR IGNORE keeps toID's own record when the same ORCID was already
 	// enriched there; then delete the now-orphaned fromID rows.
-	bibExec(`INSERT OR IGNORE INTO contributor_orcid_seen `+ //nolint:errcheck
-		`(contributor_id, orcid, canonical, credit_name, declared_name, other_names) `+
-		`SELECT ?, orcid, canonical, credit_name, declared_name, other_names `+
-		`FROM contributor_orcid_seen WHERE contributor_id = ?`, toID, fromID)
-	bibExec(`DELETE FROM contributor_orcid_seen WHERE contributor_id = ?`, fromID) //nolint:errcheck
+	dbExecSave("merge_contributors: move contributor_orcid_seen",
+		`INSERT OR IGNORE INTO contributor_orcid_seen `+
+			`(contributor_id, orcid, canonical, credit_name, declared_name, other_names) `+
+			`SELECT ?, orcid, canonical, credit_name, declared_name, other_names `+
+			`FROM contributor_orcid_seen WHERE contributor_id = ?`, toID, fromID)
+	dbExecSave("merge_contributors: delete orphaned contributor_orcid_seen",
+		`DELETE FROM contributor_orcid_seen WHERE contributor_id = ?`, fromID)
 
 	// Remove non_double_contributors rows referencing fromID (required before delete).
-	bibExec(`DELETE FROM non_double_contributors WHERE contributor_id_a = ? OR contributor_id_b = ?`, //nolint:errcheck
+	dbExecSave("merge_contributors: clear non_double_contributors",
+		`DELETE FROM non_double_contributors WHERE contributor_id_a = ? OR contributor_id_b = ?`,
 		fromID, fromID)
 
 	// Delete fromID — cascades to contributor_names and contributor_orcids.
@@ -1133,7 +1146,8 @@ func mergeContributorInDB(fromID, toID string) bool {
 	// INSERT OR IGNORE was blocked by a PRIMARY KEY conflict on orcid; now that the
 	// CASCADE delete removed the fromID row from contributor_orcids, the seed works.
 	if toOrcid != "" {
-		bibExec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`, //nolint:errcheck
+		dbExecSave("merge_contributors: reseed canonical ORCID",
+			`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, 1)`,
 			toOrcid, toID)
 	}
 	upsertContributorIDOldie(fromID, toID)
@@ -1217,7 +1231,7 @@ func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
 	//
 	// Case 1: contributor_roles still has a row for this position (under a different
 	// contributor after a role reassignment) — update contributor_id to match.
-	db.Exec( //nolint:errcheck
+	dbExecSave("maybeCleanupOrphanedContributors: reassign entry_contributor_names",
 		`UPDATE entry_contributor_names
 		 SET contributor_id = (
 		     SELECT cr.contributor_id FROM contributor_roles cr
@@ -1238,7 +1252,7 @@ func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
 		 )`)
 	// Case 2: no matching contributor_roles row exists (dangling, left behind when
 	// FK enforcement was off during an earlier operation) — delete outright.
-	db.Exec( //nolint:errcheck
+	dbExecSave("maybeCleanupOrphanedContributors: delete dangling entry_contributor_names",
 		`DELETE FROM entry_contributor_names
 		 WHERE contributor_id IN (
 		     SELECT id FROM contributors
@@ -1247,7 +1261,7 @@ func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
 		 )`)
 	// Case 3: non_double_contributors has no CASCADE on its two FKs to contributors.
 	// Remove any non-double pair that references an orphaned contributor.
-	db.Exec( //nolint:errcheck
+	dbExecSave("maybeCleanupOrphanedContributors: clear non_double_contributors",
 		`DELETE FROM non_double_contributors
 		 WHERE contributor_id_a IN (
 		     SELECT id FROM contributors
@@ -1873,15 +1887,15 @@ func loadKeyNonDoublesFromDb(l *TBibTeXLibrary) {
 		r1 := l.resolveNonDoubleKey(p.k1)
 		r2 := l.resolveNonDoubleKey(p.k2)
 		if r1 == "" || r2 == "" || r1 == r2 {
-			db.Exec(deleteSQL, p.k1, p.k2) //nolint:errcheck
+			dbExecSave("loadKeyNonDoublesFromDb: clear", deleteSQL, p.k1, p.k2)
 			continue
 		}
 		if r1 != p.k1 || r2 != p.k2 {
-			db.Exec(deleteSQL, p.k1, p.k2) //nolint:errcheck
+			dbExecSave("loadKeyNonDoublesFromDb: clear stale pair", deleteSQL, p.k1, p.k2)
 			if r1 < r2 {
-				db.Exec(upsertSQL, r1, r2) //nolint:errcheck
+				dbExecSave("loadKeyNonDoublesFromDb: upsert resolved pair", upsertSQL, r1, r2)
 			} else {
-				db.Exec(upsertSQL, r2, r1) //nolint:errcheck
+				dbExecSave("loadKeyNonDoublesFromDb: upsert resolved pair", upsertSQL, r2, r1)
 			}
 		}
 		l.AddNonDoubleEntries(r1, r2)
@@ -1978,7 +1992,8 @@ func addNonDoubleContributorNamePair(l *TBibTeXLibrary, name1, name2 string) {
 		return
 	}
 	l.NonDoubleContributorNames[key] = true
-	db.Exec(`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, name1, name2) //nolint:errcheck
+	dbExecSave("addNonDoubleContributorNamePair",
+		`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, name1, name2)
 }
 
 // isNonDoubleContributorNamePair returns true if name1 and name2 are recorded as
@@ -2046,7 +2061,8 @@ func maybeMigrateSkippedToNonDoubleContributorNames(l *TBibTeXLibrary) {
 		}
 		pos := diffPos[0]
 		addNonDoubleContributorNamePair(l, wNames[pos], lNames[pos])
-		db.Exec(`UPDATE superseded_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.superseded) //nolint:errcheck
+		dbExecSave("maybeMigrateSkippedToNonDoubleContributorNames: mark kept",
+			`UPDATE superseded_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, p.key, p.field, p.superseded)
 		migrated++
 	}
 	if migrated > 0 {
@@ -2678,8 +2694,8 @@ func cleanupIgnoredTitleNonDoubles(l *TBibTeXLibrary) {
 	}
 	rows.Close()
 	for _, p := range toDrop {
-		db.Exec(`DELETE FROM non_double_entries WHERE key1 = ? AND key2 = ?`, p.k1, p.k2) //nolint:errcheck
-		db.Exec(`DELETE FROM non_double_entries WHERE key1 = ? AND key2 = ?`, p.k2, p.k1) //nolint:errcheck
+		dbExecSave("cleanupIgnoredTitleNonDoubles", `DELETE FROM non_double_entries WHERE key1 = ? AND key2 = ?`, p.k1, p.k2)
+		dbExecSave("cleanupIgnoredTitleNonDoubles", `DELETE FROM non_double_entries WHERE key1 = ? AND key2 = ?`, p.k2, p.k1)
 		l.NonDoubleEntries.DeleteValueFromStringSetMap(p.k1, p.k2)
 		l.NonDoubleEntries.DeleteValueFromStringSetMap(p.k2, p.k1)
 		l.Progress("Retired non-double pair (%s, %s): both have ignored titles", p.k1, p.k2)
@@ -2868,18 +2884,18 @@ func ensureEntryWarningsTableExists() {
 
 // clearEntryWarnings deletes all rows — called once at the start of each normal check run.
 func clearEntryWarnings() {
-	db.Exec(`DELETE FROM entry_warnings`) //nolint:errcheck
+	dbExecSave("clearEntryWarnings", `DELETE FROM entry_warnings`)
 }
 
 // deleteEntryWarning removes a specific (key, warning) row, e.g. when a warning
 // is subsequently waived and should not appear in repair.bib or warnings; selects.
 func deleteEntryWarning(key, warning string) {
-	db.Exec(`DELETE FROM entry_warnings WHERE key = ? AND warning = ?`, key, warning) //nolint:errcheck
+	dbExecSave("deleteEntryWarning", `DELETE FROM entry_warnings WHERE key = ? AND warning = ?`, key, warning)
 }
 
 // insertEntryWarning records key+warning, silently ignoring exact duplicates.
 func insertEntryWarning(key, warning string) {
-	db.Exec(`INSERT OR IGNORE INTO entry_warnings (key, warning) VALUES (?, ?)`, key, warning) //nolint:errcheck
+	dbExecSave("insertEntryWarning", `INSERT OR IGNORE INTO entry_warnings (key, warning) VALUES (?, ?)`, key, warning)
 }
 
 // entryWarningTexts returns all non-empty warning strings for key, sorted alphabetically.
@@ -3424,8 +3440,8 @@ func repairDirtyMappingTables() (entryFieldMappingsRepaired bool) {
 // value. An empty value deletes all rows for the role without inserting new
 // ones. Uses bibExec so writes participate in any active bib transaction.
 func upsertContributorRolesForField(l *TBibTeXLibrary, key, field, value string) {
-	bibExec(`DELETE FROM contributor_roles WHERE entry_key = ? AND role = ?`, key, field)       //nolint:errcheck
-	bibExec(`DELETE FROM entry_contributor_names WHERE entry_key = ? AND role = ?`, key, field) //nolint:errcheck
+	dbExecSave("upsertContributorRolesForField: clear roles", `DELETE FROM contributor_roles WHERE entry_key = ? AND role = ?`, key, field)
+	dbExecSave("upsertContributorRolesForField: clear names", `DELETE FROM entry_contributor_names WHERE entry_key = ? AND role = ?`, key, field)
 	if value == "" {
 		setTableDate("contributor_roles", time.Now().UnixMicro())
 		return
@@ -3478,10 +3494,12 @@ func upsertContributorRolesForField(l *TBibTeXLibrary, key, field, value string)
 			}
 		}
 		resolvedIDs = append(resolvedIDs, id)
-		bibExec(`INSERT OR IGNORE INTO contributor_roles (entry_key, role, position, contributor_id) VALUES (?, ?, ?, ?)`, //nolint:errcheck
+		dbExecSave("upsertContributorRolesForField: insert role",
+			`INSERT OR IGNORE INTO contributor_roles (entry_key, role, position, contributor_id) VALUES (?, ?, ?, ?)`,
 			key, field, position, id)
 		if contrib := l.ContributorByID[id]; contrib != nil && storeName != contrib.Name {
-			bibExec(`INSERT OR IGNORE INTO entry_contributor_names (entry_key, role, position, contributor_id, name_used) VALUES (?, ?, ?, ?, ?)`, //nolint:errcheck
+			dbExecSave("upsertContributorRolesForField: insert name_used",
+				`INSERT OR IGNORE INTO entry_contributor_names (entry_key, role, position, contributor_id, name_used) VALUES (?, ?, ?, ?, ?)`,
 				key, field, position, id, storeName)
 		}
 	}
@@ -3525,7 +3543,8 @@ func applyDblpAuthorORCIDs(l *TBibTeXLibrary, key string, je *TDblpJSONEntry) {
 			targetID := l.ORCIDToContributorID[p.ORCID]
 			if targetID != "" && targetID != currentID {
 				// ORCID identifies a different contributor — re-assign.
-				bibExec(`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`, //nolint:errcheck
+				dbExecSave("applyDblpAuthorORCIDs: reassign role",
+					`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`,
 					targetID, key, role, position)
 				currentID = targetID
 			}
@@ -3542,12 +3561,13 @@ func applyDblpAuthorORCIDs(l *TBibTeXLibrary, key string, je *TDblpJSONEntry) {
 			if c := l.ContributorByID[currentID]; c != nil {
 				personDblpKey = c.DblpKey
 			}
-			bibExec(`INSERT INTO entry_contributor_names (entry_key, role, position, contributor_id, name_used, orcid_used, dblp_key_used) `+ //nolint:errcheck
-				`VALUES (?, ?, ?, ?, ?, ?, ?) `+
-				`ON CONFLICT(entry_key, role, position) DO UPDATE SET `+
-				`contributor_id = excluded.contributor_id, `+
-				`orcid_used = excluded.orcid_used, `+
-				`dblp_key_used = COALESCE(excluded.dblp_key_used, dblp_key_used)`,
+			dbExecSave("applyDblpAuthorORCIDs: upsert evidence",
+				`INSERT INTO entry_contributor_names (entry_key, role, position, contributor_id, name_used, orcid_used, dblp_key_used) `+
+					`VALUES (?, ?, ?, ?, ?, ?, ?) `+
+					`ON CONFLICT(entry_key, role, position) DO UPDATE SET `+
+					`contributor_id = excluded.contributor_id, `+
+					`orcid_used = excluded.orcid_used, `+
+					`dblp_key_used = COALESCE(excluded.dblp_key_used, dblp_key_used)`,
 				key, role, position, currentID, nameLatex, p.ORCID, personDblpKey)
 		}
 	}
@@ -3675,7 +3695,7 @@ func ensureDeletedEntriesTableExists() {
 // recordDeletedKey adds key to deleted_entries so sync operations know not to
 // offer re-adding it from stale bib files.
 func recordDeletedKey(key string) {
-	db.Exec(`INSERT OR IGNORE INTO deleted_entries (key) VALUES (?)`, key) //nolint:errcheck
+	dbExecSave("recordDeletedKey", `INSERT OR IGNORE INTO deleted_entries (key) VALUES (?)`, key)
 }
 
 // isDeletedEntry reports whether key was explicitly deleted from the library.
@@ -3693,13 +3713,11 @@ func isDeletedEntry(key string) bool {
 // describe currently exists, e.g. across a temporary ghost state) so they are
 // wiped explicitly here — the one place a key stops being a library entry.
 func deleteBibEntry(key string) {
-	if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ?`, key); err != nil {
-		dbInteraction.Warning("bib_entries delete failed for %s: %s", key, err)
-	}
-	db.Exec(`DELETE FROM bib_entry_keys WHERE entry_key = ?`, key)
-	db.Exec(`DELETE FROM entry_lineage WHERE entry_key = ?`, key)                //nolint:errcheck
-	db.Exec(`DELETE FROM source_field_signatures WHERE entry_key = ?`, key)      //nolint:errcheck
-	db.Exec(`DELETE FROM source_contributor_signatures WHERE entry_key = ?`, key) //nolint:errcheck
+	dbExecSave(fmt.Sprintf("deleteBibEntry: bib_entries delete failed for %s", key), `DELETE FROM bib_entries WHERE entry_key = ?`, key)
+	dbExecSave("deleteBibEntry: bib_entry_keys", `DELETE FROM bib_entry_keys WHERE entry_key = ?`, key)
+	dbExecSave("deleteBibEntry: entry_lineage", `DELETE FROM entry_lineage WHERE entry_key = ?`, key)
+	dbExecSave("deleteBibEntry: source_field_signatures", `DELETE FROM source_field_signatures WHERE entry_key = ?`, key)
+	dbExecSave("deleteBibEntry: source_contributor_signatures", `DELETE FROM source_contributor_signatures WHERE entry_key = ?`, key)
 	delete(Library.LineageMap, key)
 	delete(Library.SourceSignatures, key)
 	if entryCache != nil {

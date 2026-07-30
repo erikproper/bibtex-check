@@ -95,7 +95,7 @@ func (l *TBibTeXLibrary) transferMetadata(source, target string) {
 	// Wipe all remaining metadata for source (any untransferred props).
 	if props, ok := l.Metadata[source]; ok {
 		for prop := range props {
-			db.Exec(`DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, source, prop) //nolint:errcheck
+			dbExecSave("transferMetadata: wipe source", `DELETE FROM entry_metadata WHERE entry_key = ? AND property = ?`, source, prop)
 		}
 		delete(l.Metadata, source)
 	}

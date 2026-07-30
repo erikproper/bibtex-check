@@ -1890,7 +1890,10 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate, log *o
 			l.Warning("splitContributorByDblpKeys: insert contributor: %s", err)
 			return false
 		}
-		tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, newID, newName) //nolint:errcheck
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, newID, newName); err != nil {
+			l.Warning("splitContributorByDblpKeys: insert contributor_names: %s", err)
+			dbWriteFailed = true
+		}
 	}
 	for _, entryKey := range toNew {
 		if _, err := tx.Exec(
@@ -1900,14 +1903,20 @@ func splitContributorByDblpKeys(l *TBibTeXLibrary, sc dblpSplitCandidate, log *o
 			l.Warning("splitContributorByDblpKeys: update roles: %s", err)
 			return false
 		}
-		tx.Exec( //nolint:errcheck
+		if _, err := tx.Exec(
 			`UPDATE entry_contributor_names SET contributor_id = ? WHERE entry_key = ? AND contributor_id = ?`,
-			newID, entryKey, sc.contribID)
+			newID, entryKey, sc.contribID); err != nil {
+			l.Warning("splitContributorByDblpKeys: update entry_contributor_names for %s: %s", entryKey, err)
+			dbWriteFailed = true
+		}
 	}
 	// Remove newName from the old contributor's names. After the split newName is a
 	// canonical contributor in its own right; leaving it as an alias of the old
 	// contributor creates NameAliasToName cycles on subsequent runs.
-	tx.Exec(`DELETE FROM contributor_names WHERE id = ? AND name = ?`, sc.contribID, newName) //nolint:errcheck
+	if _, err := tx.Exec(`DELETE FROM contributor_names WHERE id = ? AND name = ?`, sc.contribID, newName); err != nil {
+		l.Warning("splitContributorByDblpKeys: remove old alias: %s", err)
+		dbWriteFailed = true
+	}
 	if err := tx.Commit(); err != nil {
 		l.Warning("splitContributorByDblpKeys: commit: %s", err)
 		return false
