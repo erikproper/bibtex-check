@@ -37,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.89"
+const AppVersion = "28.90"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -3750,6 +3750,17 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
+		if !dbWriteSessionActive {
+			// Nothing has been written this run — either a read-only command
+			// (openLibraryToReport never calls prepareWorkingDatabase, so there is no
+			// working database to commit or finalise) or an interrupt landing before
+			// openLibraryToUpdate's setup got that far. gracefulQuit()'s commit/finalise
+			// chain assumes a write session actually started; calling it here touched
+			// possibly-uninitialised DB/Library state and crashed (nil pointer panic
+			// reported 2026-07-30 from a Ctrl-C during a bare -render_as_tex). There is
+			// nothing to lose by exiting immediately.
+			os.Exit(0)
+		}
 		stderrPrintf("\nInterrupted — committing work done so far before exiting...\n")
 		gracefulQuit()
 	}()
