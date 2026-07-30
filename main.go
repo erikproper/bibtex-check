@@ -37,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.90"
+const AppVersion = "28.91"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2329,7 +2329,22 @@ func doUpsertDblpEntries() {
 		inDblpUpdate = false
 		ticker.Done()
 		bibEntriesModified = true
-		Library.Progress("  DBLP data applied: %d/%d entries.", dblpUpdated, scanned)
+		if Library.QuitWasRequested() {
+			// Every key loop above breaks immediately on QuitWasRequested — a single "q"
+			// answer (or an auto-quit from a non-TTY session hitting its first question)
+			// silently truncates the rest of the pass, with entries after that point in
+			// iteration order never even looked at. Without this, the summary line below
+			// looks identical to a genuinely complete pass, which is exactly how a
+			// not-yet-DBLP-synced entry can go unnoticed run after run — say so explicitly.
+			remaining := total - scanned
+			if remaining < 0 {
+				remaining = 0
+			}
+			Library.Progress("  DBLP update pass stopped early: %d entries checked (%d updated), ~%d not yet checked — re-run to cover the rest.",
+				scanned, dblpUpdated, remaining)
+		} else {
+			Library.Progress("  DBLP data applied: %d/%d entries.", dblpUpdated, scanned)
+		}
 		if Library.orcidAutoResolveSameCount > 0 || Library.orcidAutoResolveDiffCount > 0 {
 			Library.Progress("  Auto-resolved by ORCID: %d same-person mapping(s), %d different-person disambiguation(s).",
 				Library.orcidAutoResolveSameCount, Library.orcidAutoResolveDiffCount)
