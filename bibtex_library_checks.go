@@ -407,7 +407,11 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 	return false
 }
 
-var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z]([a-z0-9-]*[a-z0-9])?$`)
+// At least 4 digits (not exactly 4): an organisation/group "surname" can itself
+// contain digits (e.g. "group15"), so the digit run preceding the trailing keyword
+// may be longer than a bare 4-digit year once the year is appended — see the
+// deriveAliasBase digit-preserving fallback for numbered group/org names.
+var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9]{4,}[a-z]([a-z0-9-]*[a-z0-9])?$`)
 var reYearInAlias = regexp.MustCompile(`[0-9][0-9][0-9][0-9]`)
 
 var stripNonAlphaNum = regexp.MustCompile(`[^a-z0-9]`)
