@@ -410,8 +410,8 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9][0-9][0-9][0-9][a-z]([a-z0-9-]*[a-z0-9])?$`)
 var reYearInAlias = regexp.MustCompile(`[0-9][0-9][0-9][0-9]`)
 
-var stripNonAlpha = regexp.MustCompile(`[^a-z]`)
 var stripNonAlphaNum = regexp.MustCompile(`[^a-z0-9]`)
+var allDigits = regexp.MustCompile(`^[0-9]+$`)
 
 var titleKeywordStopWords = map[string]bool{
 	"a": true, "an": true, "the": true, "of": true, "in": true, "on": true,
@@ -548,13 +548,21 @@ func (l *TBibTeXLibrary) deriveAliasBase(entry *TBibTeXEntry) string {
 			return ""
 		}
 		surnameRaw = tokens[len(tokens)-1]
+		if allDigits.MatchString(surnameRaw) {
+			// A trailing all-digit token (e.g. "Group 20" tokenised as "Group"/"20")
+			// is not a real surname — it's an organisation/group name that should
+			// have been brace-protected as "{Group 20}" so it wouldn't get split at
+			// all. Fall back to the whole name so it still yields a usable alias
+			// base ("group20") instead of failing on a bare "20".
+			surnameRaw = first
+		}
 	}
 
 	if strings.Contains(surnameRaw, `\unicode{`) {
 		l.ReportEntryWarning(entry.Key, WarningCannotDeriveAliasEmptySurname, surnameRaw)
 		return ""
 	}
-	surname := stripNonAlpha.ReplaceAllString(TeXStringIndexer(surnameRaw), "")
+	surname := stripNonAlphaNum.ReplaceAllString(TeXStringIndexer(surnameRaw), "")
 	if surname == "" {
 		l.ReportEntryWarning(entry.Key, WarningCannotDeriveAliasEmptySurname, surnameRaw)
 		return ""
@@ -1434,10 +1442,19 @@ func (l *TBibTeXLibrary) CheckNeedToSplitBookishEntry(keyRAW string) string {
 
 				// Check for an existing library entry with the same title so the
 				// split-off parent does not silently duplicate a known publication.
-				// Re-resolve after a potential merge: the surviving entry becomes
-				// the effective crossref target even if key still stores the temp key.
 				l.CheckNeedToMergeForEqualTitles(crossrefKey)
-				crossrefKey = l.MapEntryKey(crossrefKey)
+				resolvedCrossrefKey := l.MapEntryKey(crossrefKey)
+				if resolvedCrossrefKey != crossrefKey {
+					// crossrefKey lost the title-duplicate merge (it's KeyIsTemporary, so
+					// MergeEntries deletes it outright without registering a key_oldie —
+					// MapEntryKey has nothing to resolve through). key's crossref field
+					// was already written above with the now-deleted temp key; without this
+					// rewrite it is left permanently dangling — CheckCrossref would report
+					// "Crossref target does not exist" forever, since the temp key has no
+					// alias trail to ever recover through. Repoint at the survivor instead.
+					l.SetEntryFieldValue(key, "crossref", resolvedCrossrefKey)
+				}
+				crossrefKey = resolvedCrossrefKey
 
 				return crossrefKey
 			}
