@@ -76,7 +76,19 @@ func dbExecSave(msg, query string, args ...any) {
 // table) and warns once per violating row: table, rowid, the parent table it fails
 // to reference, and the failing FK's index within that table's FK list.
 func logForeignKeyCheck(context string) {
-	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	// Must run on the same handle bibExec used (activeTx during a transaction, db
+	// otherwise) — database/sql gives a plain db.Query() no visibility into an open
+	// transaction's uncommitted state, so querying the wrong handle here silently
+	// checks the pre-transaction snapshot instead of the live, in-progress one and
+	// reports "no violations" even when the failing statement's own writes (already
+	// rolled back by SQLite before returning the error) are exactly the violation.
+	var rows *sql.Rows
+	var err error
+	if activeTx != nil {
+		rows, err = activeTx.Query(`PRAGMA foreign_key_check`)
+	} else {
+		rows, err = db.Query(`PRAGMA foreign_key_check`)
+	}
 	if err != nil {
 		dbInteraction.Warning("%s: could not run foreign_key_check: %s", context, err)
 		return
@@ -3590,9 +3602,18 @@ func applyDblpAuthorORCIDs(l *TBibTeXLibrary, key string, je *TDblpJSONEntry) {
 			position := i + 1
 			nameLatex := dblpPersonNameToLaTeX(p.Name)
 
-			// What contributor is currently assigned to this position?
+			// What contributor is currently assigned to this position? Must read via
+			// the active transaction (bibQueryRow), not db.QueryRow directly — this
+			// runs inside the single large transaction wrapping "Fixing DBLP entries"
+			// (beginBibTransaction in main.go), and a plain db.QueryRow only ever sees
+			// the pre-transaction committed state, not writes already made earlier in
+			// this same transaction (e.g. a contributor merge). Reading through it
+			// returned a stale contributor_id for an already-merged-away contributor;
+			// the write below (via bibExec → activeTx) then correctly saw the live,
+			// already-mutated state and rejected it — a real, deterministic FK
+			// violation caused by this read, not by the data.
 			var currentID string
-			db.QueryRow(`SELECT contributor_id FROM contributor_roles WHERE entry_key = ? AND role = ? AND position = ?`,
+			bibQueryRow(`SELECT contributor_id FROM contributor_roles WHERE entry_key = ? AND role = ? AND position = ?`,
 				key, role, position).Scan(&currentID) //nolint:errcheck
 			if currentID == "" {
 				continue // no role record yet — nothing to annotate
