@@ -37,7 +37,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.96"
+const AppVersion = "28.97"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -1443,6 +1443,16 @@ outer:
 						for n, id := range Library.NameToContributorID {
 							if id == candID {
 								Library.NameToContributorID[n] = bestID
+							}
+						}
+						// Any ORCID still pointing at the absorbed contributor must be
+						// redirected too, or a later lookup resolves to a deleted
+						// contributor ID and the next write through it hits a FOREIGN
+						// KEY violation (see bibtex_dblp_xml.go's DBLP-key merge sites
+						// for the same fix).
+						for orcid, id := range Library.ORCIDToContributorID {
+							if id == candID {
+								Library.ORCIDToContributorID[orcid] = bestID
 							}
 						}
 						delete(Library.ContributorByID, candID)

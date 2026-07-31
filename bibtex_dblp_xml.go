@@ -1708,12 +1708,21 @@ func absorbDblpNamesCore() {
 				if mergeContributorInDB(contribID, existingID) {
 					if existing.ORCID == "" && contrib.ORCID != "" {
 						existing.ORCID = contrib.ORCID
-						Library.ORCIDToContributorID[contrib.ORCID] = existingID
 						upsertContributorORCIDToDB(existingID, contrib.ORCID, true)
 					}
 					for name, nid := range Library.NameToContributorID {
 						if nid == contribID {
 							Library.NameToContributorID[name] = existingID
+						}
+					}
+					// Any ORCID still pointing at the absorbed contributor (not just
+					// contrib.ORCID) must be redirected — otherwise a later lookup for
+					// that ORCID resolves to a contributor ID that no longer exists in
+					// the contributors table, and the next write through it (e.g.
+					// applyDblpAuthorORCIDs) hits a FOREIGN KEY violation.
+					for orcid, nid := range Library.ORCIDToContributorID {
+						if nid == contribID {
+							Library.ORCIDToContributorID[orcid] = existingID
 						}
 					}
 					delete(Library.ContributorByID, contribID)
@@ -2492,12 +2501,21 @@ func absorbDblpOrcidsCore() {
 					if mergeContributorInDB(id, existingID) {
 						if existing.ORCID == "" && contrib.ORCID != "" {
 							existing.ORCID = contrib.ORCID
-							Library.ORCIDToContributorID[contrib.ORCID] = existingID
 							upsertContributorORCIDToDB(existingID, contrib.ORCID, true)
 						}
 						for name, nid := range Library.NameToContributorID {
 							if nid == id {
 								Library.NameToContributorID[name] = existingID
+							}
+						}
+						// See the matching comment at the first DBLP-key merge site above:
+						// any ORCID still pointing at the absorbed contributor must be
+						// redirected, not just contrib.ORCID, or a later lookup resolves to
+						// a deleted contributor ID and the next write through it hits a
+						// FOREIGN KEY violation.
+						for orcid, nid := range Library.ORCIDToContributorID {
+							if nid == id {
+								Library.ORCIDToContributorID[orcid] = existingID
 							}
 						}
 						delete(Library.ContributorByID, id)
@@ -2621,6 +2639,15 @@ func mergeOrcidDuplicatesCore() int {
 				for name, id := range Library.NameToContributorID {
 					if id == other.id {
 						Library.NameToContributorID[name] = bestID
+					}
+				}
+				// Every member here shares `orcid` by construction, so ORCIDToContributorID[orcid]
+				// may currently point at other.id — redirect it, and any other ORCID that
+				// somehow still points at other.id, or a later lookup resolves to a deleted
+				// contributor ID and the next write through it hits a FOREIGN KEY violation.
+				for o, id := range Library.ORCIDToContributorID {
+					if id == other.id {
+						Library.ORCIDToContributorID[o] = bestID
 					}
 				}
 				delete(Library.ContributorByID, other.id)

@@ -59,7 +59,7 @@ var (
 // logs msg and sets dbWriteFailed so postCheckGate blocks the home-DB copy.
 func dbExecSave(msg, query string, args ...any) {
 	if err := bibExec(query, args...); err != nil {
-		dbInteraction.Warning("%s: %s", msg, err)
+		dbInteraction.Warning("%s: %s (args: %v)", msg, err, args)
 		dbWriteFailed = true
 	}
 }
@@ -466,10 +466,17 @@ func ensureEntryContributorNamesTableExists() {
 		  contributor_id TEXT    NOT NULL REFERENCES contributors(id),
 		  name_used      TEXT    NOT NULL,
 		  orcid_used     TEXT,
+		  dblp_key_used  TEXT,
 		  PRIMARY KEY (entry_key, role, position),
 		  FOREIGN KEY (entry_key, role, position)
 		      REFERENCES contributor_roles(entry_key, role, position) ON DELETE CASCADE
 		);`)
+	// dblp_key_used, used by applyDblpAuthorORCIDs, was for a long time only present on
+	// databases that had it added out-of-band — the CREATE TABLE above never had it.
+	// A genuinely fresh database (e.g. a new install, or a from-scratch test DB) would
+	// hit "no such column: dblp_key_used" on every DBLP-with-ORCID entry. Add it to
+	// databases created before this fix; no-op (duplicate column, ignored) otherwise.
+	db.Exec(`ALTER TABLE entry_contributor_names ADD COLUMN dblp_key_used TEXT`) //nolint:errcheck
 }
 
 // maybeMigrateEntryContributorNamesAddOrcidUsed adds the orcid_used column to
@@ -1289,6 +1296,23 @@ func maybeCleanupOrphanedContributors(l *TBibTeXLibrary) {
 	for name, id := range l.NameToContributorID {
 		if deleted[id] {
 			delete(l.NameToContributorID, name)
+		}
+	}
+	// ORCIDToContributorID/DblpKeyToContributorID are loaded once at library-open,
+	// before this function runs (loadMappingFiles → loadContributorORCIDsFromDB,
+	// called from openLibraryToUpdate before maybeCleanupOrphanedContributors) — so
+	// an orphan with a recorded ORCID/DBLP key leaves a stale map entry for the rest
+	// of the run if not cleared here. A later lookup (e.g. applyDblpAuthorORCIDs)
+	// then resolves to a contributor ID that no longer exists in contributors,
+	// and the next write through it hits a FOREIGN KEY violation.
+	for orcid, id := range l.ORCIDToContributorID {
+		if deleted[id] {
+			delete(l.ORCIDToContributorID, orcid)
+		}
+	}
+	for dblpKey, id := range l.DblpKeyToContributorID {
+		if deleted[id] {
+			delete(l.DblpKeyToContributorID, dblpKey)
 		}
 	}
 	for name, ids := range l.AmbiguousNameToContributorIDs {
@@ -3542,11 +3566,21 @@ func applyDblpAuthorORCIDs(l *TBibTeXLibrary, key string, je *TDblpJSONEntry) {
 
 			targetID := l.ORCIDToContributorID[p.ORCID]
 			if targetID != "" && targetID != currentID {
-				// ORCID identifies a different contributor — re-assign.
-				dbExecSave("applyDblpAuthorORCIDs: reassign role",
-					`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`,
-					targetID, key, role, position)
-				currentID = targetID
+				if _, exists := l.ContributorByID[targetID]; !exists {
+					// ORCIDToContributorID points at a contributor that no longer exists
+					// (a merge absorbed it without fully redirecting this ORCID) — using
+					// it would fail contributor_roles'/entry_contributor_names' FK on
+					// contributors(id). Fall back to the already-valid currentID instead
+					// of failing the whole write; the stale map entry is the real bug and
+					// belongs in the merge path, not here.
+					dbInteraction.Warning("applyDblpAuthorORCIDs: ORCID %s maps to unknown contributor %s (stale merge?) — keeping %s for %s", p.ORCID, targetID, currentID, key)
+				} else {
+					// ORCID identifies a different contributor — re-assign.
+					dbExecSave("applyDblpAuthorORCIDs: reassign role",
+						`UPDATE contributor_roles SET contributor_id = ? WHERE entry_key = ? AND role = ? AND position = ?`,
+						targetID, key, role, position)
+					currentID = targetID
+				}
 			}
 
 			// Upsert the evidence record with orcid_used. Alias defaults to the
