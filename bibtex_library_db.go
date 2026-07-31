@@ -56,11 +56,45 @@ var (
 )
 
 // dbExecSave executes a DB statement during the end-of-run save phase. On error it
-// logs msg and sets dbWriteFailed so postCheckGate blocks the home-DB copy.
+// logs msg and sets dbWriteFailed so postCheckGate blocks the home-DB copy. A
+// "FOREIGN KEY constraint failed" error additionally runs PRAGMA foreign_key_check
+// on the same, still-open connection — the only place the live (possibly still
+// mid-transaction, uncommitted) violating row is visible, since a failure this deep
+// in a run always blocks the write-back and a post-mortem read of the home DB only
+// ever sees the pre-run state.
 func dbExecSave(msg, query string, args ...any) {
 	if err := bibExec(query, args...); err != nil {
 		dbInteraction.Warning("%s: %s (args: %v)", msg, err, args)
 		dbWriteFailed = true
+		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+			logForeignKeyCheck(msg)
+		}
+	}
+}
+
+// logForeignKeyCheck runs PRAGMA foreign_key_check (no table argument — checks every
+// table) and warns once per violating row: table, rowid, the parent table it fails
+// to reference, and the failing FK's index within that table's FK list.
+func logForeignKeyCheck(context string) {
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		dbInteraction.Warning("%s: could not run foreign_key_check: %s", context, err)
+		return
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var table, parent string
+		var rowid, fkid any
+		if rows.Scan(&table, &rowid, &parent, &fkid) != nil {
+			continue
+		}
+		found = true
+		dbInteraction.Warning("%s: foreign_key_check: table=%s rowid=%v references missing row in parent=%s (fkid=%v)",
+			context, table, rowid, parent, fkid)
+	}
+	if !found {
+		dbInteraction.Warning("%s: foreign_key_check found no violations (constraint failure was likely transient, mid-transaction)", context)
 	}
 }
 
