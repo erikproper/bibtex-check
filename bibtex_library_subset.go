@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_subset
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_subset
  *
  * Subset sync mode (step 14.3): bidirectional sync between the main library and an
  * externally edited bib file covering a subset of entries.
@@ -297,16 +300,16 @@ func subsetFieldsToClear(cleanFields map[string]string, dbEntry *TBibTeXEntry) [
 }
 
 // applySubsetEntryType applies a type change from the subset bib directly to the DB
-// entry, bypassing MergeEntries priority logic. The lineage for EntryTypeField is
-// cleared so a subsequent DBLP sync presents the type as a normal challenge rather
-// than silently winning on priority.
+// entry, bypassing MergeEntries priority logic. Lineage is recorded as unattributed
+// (source="") so a subsequent DBLP sync presents the type as a normal challenge
+// rather than silently losing to a stale higher-priority record.
 func applySubsetEntryType(bibType, canonicalKey string, dbEntry *TBibTeXEntry) {
 	if bibType == "" || bibType == Library.EntryType(canonicalKey) {
 		return
 	}
 	Library.Progress("Entry type changed: %s → %s for %s (subset bib edit)", Library.EntryType(canonicalKey), bibType, canonicalKey)
 	Library.SetEntryFieldValue(canonicalKey, EntryTypeField, bibType)
-	Library.setLineage(canonicalKey, EntryTypeField, "", false) // clear lineage
+	Library.setLineage(canonicalKey, EntryTypeField, bibType, "", false)
 	if dbEntry != nil {
 		dbEntry.Fields[EntryTypeField] = bibType
 	}

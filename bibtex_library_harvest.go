@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_harvest
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_harvest
  *
  * Harvest mode (step 14.2): ingest entries from an external bib file as candidates
  * for the main library. Entries are processed sequentially and interactively.

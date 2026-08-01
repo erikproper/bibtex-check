@@ -1,6 +1,8 @@
 /*
  *
- * Module: bibtex_entry
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_entry
  *
  * This module defines TBibTeXEntry, a value snapshot of a single BibTeX entry.
  *

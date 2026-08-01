@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_address
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_address
  *
  * This module normalises the address field of BibTeX entries.
  * It applies state-name and country-name alias mappings, and appends a
@@ -18,6 +21,19 @@ import (
 	"strings"
 	"time"
 )
+
+// TBibTeXLibraryGeoMappings holds the state/country reference tables used to
+// normalise address fields. Unlike TBibTeXLibraryMappings (bibtex_library_maps.go),
+// these are flat, one-directional lookup tables loaded once from config, with no
+// inverse map and no redundancy to manage — so they get their own, simpler struct
+// rather than living alongside the alias/contributor maps. Embedded anonymously in
+// TBibTeXLibrary, the same way TBibTeXTeX and TInteraction are.
+type TBibTeXLibraryGeoMappings struct {
+	StateAliasToCanonical            TStringMap // Mapping from state name aliases to canonical state names.
+	StateToCountry                   TStringMap // Mapping from canonical state names to canonical country names.
+	CountryAliasToCanonical          TStringMap // Mapping from country name aliases to canonical country names.
+	BooktitleCountryAliasToCanonical TStringMap // English-only subset of country aliases for booktitle/title normalisation.
+}
 
 // Default CSV content written on first run when a file is absent.
 // Format: canonical;alias  (canonical name first, then the alias that maps to it).
@@ -751,7 +767,6 @@ func (l *TBibTeXLibrary) NormaliseBooktitleLocationNames(title string) string {
 	}
 	return strings.Join(parts, ",")
 }
-
 
 // CheckAddressMappings validates the loaded address tables:
 //   - warns when a canonical state name also appears as a country alias

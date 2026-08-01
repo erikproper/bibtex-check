@@ -1,6 +1,8 @@
 /*
  *
- * Module: interaction
+ * Module:    bibtex_check
+ * Component:
+ * - interaction
  *
  * This module is concerned with the interaction with the user.
  * For the moment, it only involves the reporting of errors and warnings.

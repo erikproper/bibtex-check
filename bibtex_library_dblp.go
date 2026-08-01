@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: DBLPLibrary
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_dblp
  *
  * DBLP-specific operations for the BibTeX library.
  *

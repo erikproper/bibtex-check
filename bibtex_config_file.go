@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: FoldersFile
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_config
+ *   - bibtex_config_file
  *
  * Loads the per-library bootstrap file (<basename>.folders), writes it when absent,
  * and migrates the legacy <basename>.config file on the first run after upgrading.

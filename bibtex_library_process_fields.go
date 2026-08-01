@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_process_fields
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_process_fields
  *
  * This module is concerned with field specific processing.
  *

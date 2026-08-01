@@ -1,6 +1,8 @@
 /*
  *
- * Module: files
+ * Module:    bibtex_check
+ * Component:
+ * - files
  *
  * This module provides basic operations to manage files.
  * It, in particular, provides functionality to backup existing files.

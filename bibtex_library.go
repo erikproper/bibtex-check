@@ -1,8 +1,16 @@
 /*
  *
- * Module: bibtex_library
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
  *
- * This module is concerned with the storage of BibTeX libraties
+ * This module is concerned with the storage of BibTeX libraties. It holds the
+ * TBibTeXLibrary type and the "core driving functions" — the business rules that
+ * decide what should happen (cycle detection, absorbing aliases, merges, harvest
+ * and entry processing, …). Access to the alias/key/contributor lookup tables
+ * themselves — including pure reads like MapEntryKey — lives one layer down, in
+ * bibtex_library_maps.go; persistence and schema live below that, in
+ * bibtex_library_db.go. See those files' headers for the exact border.
  *
  * Creator: Henderik A. Proper (erikproper@gmail.com)
  *
@@ -51,65 +59,52 @@ type (
 		GroupEntries TStringSetMap
 		TitleIndex   TStringSetMap //
 		//		BookTitleIndex                   TStringSetMap             //
-		ISBNIndex                         TStringSetMap             //
-		DOIIndex                          TStringSetMap             //
-		NonDoubleEntries                   TStringSetMap             //
-		NonDoubleContributorNames         map[[2]string]bool        //
-		HintToKey   *TCachedTable[string, string] // persistent hint→key mappings (DBLP-derived hints are transient)
-		newKeyHints TStringMap                   // counts persistent hints added in the current run (for harvest reporting)
-		KeyOldies   *TKeyAliasTable              // alias→canonical key mappings; always flat, eagerly updated
-		FieldMappings                     TStringStringStringMap    // field/value to field/value mapping
-		KeyIsTemporary                    TStringSet                // Keys that are generated for temporary reasons
-		NameAliasToName                   TStringMap                // Mapping from name aliases to the actual name.
-		NameToAliases                     TStringSetMap             // The inverted version of NameAliasToName
-		NameToContributorID               map[string]string         // unambiguous: exactly one contributor for this name form
-		AmbiguousNameToContributorIDs     map[string][]string       // globally ambiguous: 2+ contributors share this name form
-		ContributorByID                   map[string]*TContributor  // contributor ID → contributor data
-		ContributorIDOldies               map[string]string         // absorbed contributor ID → current canonical contributor ID
-		ORCIDToContributorID              map[string]string         // reverse: ORCID → contributor ID (all ORCIDs, not just canonical)
-		DblpKeyToContributorID            map[string]string         // reverse: DBLP homepages key → contributor ID
-		StateAliasToCanonical             TStringMap                // Mapping from state name aliases to canonical state names.
-		StateToCountry                    TStringMap                // Mapping from canonical state names to canonical country names.
-		CountryAliasToCanonical           TStringMap                // Mapping from country name aliases to canonical country names.
-		BooktitleCountryAliasToCanonical  TStringMap                // English-only subset of country aliases for booktitle/title normalisation.
-		illegalFields                     TStringSet                // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
-		foundDoubles                      bool                      // If set, we found double entries. In this case, we may not want to e.g. write this file.
-		EntryFieldSourceToTarget          TStringStringStringMap    // A key and field specific mapping from challenged value to winner values
-		EntryFieldTargetToSource          TStringStringStringSetMap // DO WE NEED THE INVERSES??
-		GenericFieldSourceToTarget        TStringStringMap          // A field specific mapping from challenged value to winner values
-		GenericFieldTargetToSource        TStringStringSetMap       //
-		NoDBUpdating                  bool                      // If set, the parser encountered errors; do not write bib file or update the database.
-		DblpParent *TCachedTable[string, string] // child DBLP key → resolved parent DBLP key
-		DblpWaived *TCachedTable[string, bool] // library keys exempt from WarningNoDblpKeyForChild
-		Metadata              TEntryMetadata                           // per-entry metadata (see bibtex_library_metadata.go)
-		LineageMap       map[string]map[string]TLineageRecord          // (entry_key, field) → lineage; see bibtex_library_lineage.go
-		SourceSignatures map[string]map[string]map[string]string       // (entry_key, field, source) → last-delivered signature
-		DblpSourceData   TSourceFieldData                              // pre-computed delivery snapshot; set around MaybeMergeDBLPEntry calls
-		EntryFlags map[string]TStringSet // canonical key → set of flag strings
-		harvestNameAliases                bool
-		harvestCapturePDFFields           bool         // when true: file/local-url pass through for harvest PDF copy
-		harvestSourceDir                  string       // directory of the source bib file; used for relative PDF paths
-		harvestSyncGroups                 TStringSet    // groups to sync to main DB during harvest (from config)
-		subsetLocalGroups                 TStringSetMap // local groups loaded for current subset write pass
-		jabrefGroupingBlock               string   // verbatim @Comment{jabref-meta: grouping:...} from source bib
-		jabrefMetaBlocks                  []string // other @Comment{jabref-meta: ...} blocks carried verbatim
-		bibdeskMetaBlocks                 []string // @Comment{BibDesk ...} blocks (not Static Groups) carried verbatim
-		PDFFiles                          map[string]bool // keys with a <key>.pdf in FilesFolder; populated by LoadPDFFiles
-		capturedDBLPEntry                 *TBibTeXEntry
-		capturedHarvestEntries            *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB
-		URLsIgnore                        TStringSet
-		IgnoredTitleIndexes               TStringSet // indexed forms of titles to skip in double-title detection
-		ambiguousAssignmentCount          map[string]int    // name → number of fallback assignments this run
-		ambiguousAssignmentPick           map[string]string // name → contributor ID that was picked
-		orcidAutoResolveSameCount         int               // ORCID same-person auto-resolves this run
-		orcidAutoResolveDiffCount         int               // ORCID different-person auto-resolves this run
-		dblpNameFormAutoAccepts           []string          // detail lines for names auto-accepted from DBLP this run
-		ignoreIllegalFields               bool
-		PreMergeCheck                     func(source, target string) // called before proposing a merge; may associate DBLP keys
+		ISBNIndex                  TStringSetMap                           //
+		DOIIndex                   TStringSetMap                           //
+		NonDoubleEntries           TStringSetMap                           //
+		newKeyHints                TStringMap                              // counts persistent hints added in the current run (for harvest reporting)
+		FieldMappings              TStringStringStringMap                  // field/value to field/value mapping
+		KeyIsTemporary             TStringSet                              // Keys that are generated for temporary reasons
+		illegalFields              TStringSet                              // Collect the unknown fields we encounter. We can warn about these when e.g. parsing has been finished.
+		foundDoubles               bool                                    // If set, we found double entries. In this case, we may not want to e.g. write this file.
+		EntryFieldSourceToTarget   TStringStringStringMap                  // A key and field specific mapping from challenged value to winner values
+		EntryFieldTargetToSource   TStringStringStringSetMap               // DO WE NEED THE INVERSES??
+		GenericFieldSourceToTarget TStringStringMap                        // A field specific mapping from challenged value to winner values
+		GenericFieldTargetToSource TStringStringSetMap                     //
+		NoDBUpdating               bool                                    // If set, the parser encountered errors; do not write bib file or update the database.
+		DblpParent                 *TCachedTable[string, string]           // child DBLP key → resolved parent DBLP key
+		DblpWaived                 *TCachedTable[string, bool]             // library keys exempt from WarningNoDblpKeyForChild
+		Metadata                   TEntryMetadata                          // per-entry metadata (see bibtex_library_metadata.go)
+		LineageMap                 map[string]map[string]TLineageRecord    // (entry_key, field) → lineage; see bibtex_library_lineage.go
+		SourceSignatures           map[string]map[string]map[string]string // (entry_key, field, source) → last-delivered signature
+		DblpSourceData             TSourceFieldData                        // pre-computed delivery snapshot; set around MaybeMergeDBLPEntry calls
+		EntryFlags                 map[string]TStringSet                   // canonical key → set of flag strings
+		harvestNameAliases         bool
+		harvestCapturePDFFields    bool            // when true: file/local-url pass through for harvest PDF copy
+		harvestSourceDir           string          // directory of the source bib file; used for relative PDF paths
+		harvestSyncGroups          TStringSet      // groups to sync to main DB during harvest (from config)
+		subsetLocalGroups          TStringSetMap   // local groups loaded for current subset write pass
+		jabrefGroupingBlock        string          // verbatim @Comment{jabref-meta: grouping:...} from source bib
+		jabrefMetaBlocks           []string        // other @Comment{jabref-meta: ...} blocks carried verbatim
+		bibdeskMetaBlocks          []string        // @Comment{BibDesk ...} blocks (not Static Groups) carried verbatim
+		PDFFiles                   map[string]bool // keys with a <key>.pdf in FilesFolder; populated by LoadPDFFiles
+		capturedDBLPEntry          *TBibTeXEntry
+		capturedHarvestEntries     *[]TBibTeXEntry // when non-nil, parsed entries collected here instead of DB
+		URLsIgnore                 TStringSet
+		IgnoredTitleIndexes        TStringSet        // indexed forms of titles to skip in double-title detection
+		ambiguousAssignmentCount   map[string]int    // name → number of fallback assignments this run
+		ambiguousAssignmentPick    map[string]string // name → contributor ID that was picked
+		orcidAutoResolveSameCount  int               // ORCID same-person auto-resolves this run
+		orcidAutoResolveDiffCount  int               // ORCID different-person auto-resolves this run
+		dblpNameFormAutoAccepts    []string          // detail lines for names auto-accepted from DBLP this run
+		ignoreIllegalFields        bool
+		PreMergeCheck              func(source, target string) // called before proposing a merge; may associate DBLP keys
 
 		TBibTeXTeX
-		TInteraction  // Error reporting channel
-		TBibTeXStream // BibTeX parser
+		TInteraction              // Error reporting channel
+		TBibTeXStream             // BibTeX parser
+		TBibTeXLibraryMappings    // alias/key/contributor lookup tables; see bibtex_library_maps.go
+		TBibTeXLibraryGeoMappings // state/country reference tables; see bibtex_library_address.go
 	}
 )
 
@@ -567,55 +562,6 @@ func (l *TBibTeXLibrary) ReassignEntryFieldMappings(source, target string) {
 //	}
 //}
 
-// Add a new alias (not just for Keys!!)
-// Is the check still needed???
-// General cleanup needed.
-func (l *TBibTeXLibrary) AddAlias(alias, original string, aliasMap *TStringMap, inverseMap *TStringSetMap, check bool) {
-	// Neither alias, nor target should be empty
-	if alias == "" || original == "" {
-		return
-	}
-
-	// No need to alias oneself
-	if alias == original {
-		return
-	}
-
-	// Check for ambiguity of aliases
-	if check {
-		if currentOriginal, aliasIsAlreadyAliased := (*aliasMap)[alias]; aliasIsAlreadyAliased {
-			if currentOriginal != original {
-				l.Warning(WarningAmbiguousAlias, alias, currentOriginal, original)
-
-				return
-			}
-		}
-	}
-
-	// Set the actual mapping
-	aliasMap.SetValueForStringMap(alias, original)
-
-	// Also create update the inverse mapping
-	inverseMap.AddValueToStringSetMap(original, alias)
-
-	if aliasMap == &l.NameAliasToName {
-		upsertNameMapping(alias, original)
-	}
-}
-
-// Help function
-func (l *TBibTeXLibrary) MaybeAddReorderedName(alias, name string, aliasMap *TStringMap, inverseMap *TStringSetMap) {
-	aliasSplit := strings.Split(alias, ",")
-
-	if len(aliasSplit) == 3 {
-		reorderedAlias := strings.TrimSpace(aliasSplit[2] + " " + aliasSplit[0] + strings.TrimRight(aliasSplit[1], " .") + ".")
-		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap, true)
-	} else if len(aliasSplit) == 2 {
-		reorderedAlias := strings.TrimSpace(aliasSplit[1] + " " + aliasSplit[0])
-		l.AddAlias(reorderedAlias, name, aliasMap, inverseMap, true)
-	}
-}
-
 // compressedInitialsForm returns the form of name with spaces between consecutive
 // initials removed, e.g. "Doe, J. A. B." → "Doe, J.A.B.".
 // Returns "" when no compression is possible.
@@ -655,63 +601,6 @@ func invertedNameForm(name string) string {
 	return ""
 }
 
-// maybeAddFoundAlias adds alias → canonical silently if alias is not yet mapped.
-// Returns true when a new mapping was added, false when alias already existed
-// (regardless of whether the existing mapping agrees or conflicts).
-func (l *TBibTeXLibrary) maybeAddFoundAlias(canonical, alias string) bool {
-	if alias == "" || alias == canonical {
-		return false
-	}
-	if strings.ContainsAny(alias, "()") || hasStrayBrace(alias) {
-		return false // parentheticals or brace-wrapped/stray-brace tokens are not name variants
-	}
-	if _, exists := l.NameAliasToName[alias]; exists {
-		// Already mapped in-memory; ensure contributor ID is propagated too.
-		if id, ok := l.NameToContributorID[canonical]; ok {
-			l.NameToContributorID[alias] = id
-		}
-		return false
-	}
-	// Don't alias a name that is already a canonical contributor — that would
-	// redirect its lookups to another contributor and create alias cycles.
-	if id, ok := l.NameToContributorID[alias]; ok {
-		if c, isC := l.ContributorByID[id]; isC && c.Name == alias {
-			return false
-		}
-	}
-	l.NameAliasToName[alias] = canonical
-	l.NameToAliases.AddValueToStringSetMap(canonical, alias)
-	// Derived aliases are not persisted — only in-memory.
-	if id, ok := l.NameToContributorID[canonical]; ok {
-		l.NameToContributorID[alias] = id
-	}
-	return true
-}
-
-// FindAliases derives all non-ambiguous aliases reachable from currentAlias
-// (via name inversion and compressed-initials rules) and maps them to canonical.
-// It stops silently when it hits an alias that is already mapped.
-// Returns true if any new alias was added.
-func (l *TBibTeXLibrary) FindAliases(canonical, currentAlias string) bool {
-	added := false
-
-	if inverted := invertedNameForm(currentAlias); inverted != "" {
-		if l.maybeAddFoundAlias(canonical, inverted) {
-			added = true
-			l.FindAliases(canonical, inverted)
-		}
-	}
-
-	if compressed := compressedInitialsForm(currentAlias); compressed != "" {
-		if l.maybeAddFoundAlias(canonical, compressed) {
-			added = true
-			l.FindAliases(canonical, compressed)
-		}
-	}
-
-	return added
-}
-
 // AddNameMapping makes alias an alias of canonical, absorbing the alias's
 // existing canonical group (if any) into canonical.
 // If canonical is itself an alias of another name the call is normally redirected
@@ -723,9 +612,7 @@ func (l *TBibTeXLibrary) AddNameMapping(canonical, alias string) {
 		if existingCanonical == alias {
 			// Inversion: canonical is currently an alias of alias; detach it so
 			// we can re-canonicalise canonical and absorb alias's group into it.
-			delete(l.NameAliasToName, canonical)
-			l.NameToAliases.DeleteValueFromStringSetMap(alias, canonical)
-			deleteNameMapping(canonical)
+			l.deleteNameAlias(canonical)
 			// fall through to normal processing
 		} else {
 			l.AddNameMapping(existingCanonical, alias)
@@ -736,14 +623,15 @@ func (l *TBibTeXLibrary) AddNameMapping(canonical, alias string) {
 	// If alias is currently a canonical, absorb all its aliases into canonical.
 	if aliasSet, isCanonical := l.NameToAliases[alias]; isCanonical {
 		for a := range aliasSet.Elements() {
-			l.NameAliasToName[a] = canonical
-			l.NameToAliases.AddValueToStringSetMap(canonical, a)
-			upsertNameMapping(a, canonical)
+			l.setNameAlias(a, canonical, false)
 		}
+		// setNameAlias's per-element retarget only empties alias's inverse-set
+		// bucket (DeleteValueFromStringSetMap never removes an emptied outer key);
+		// alias is no longer a canonical at all, so drop the bucket itself.
 		delete(l.NameToAliases, alias)
 	}
 
-	l.AddAlias(alias, canonical, &l.NameAliasToName, &l.NameToAliases, false)
+	l.setNameAlias(alias, canonical, false)
 	l.FindAliases(canonical, alias)
 	l.FindAliases(canonical, canonical)
 }
@@ -788,22 +676,7 @@ func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
 	}
 
 	for _, r := range removals {
-		l.NameToAliases.DeleteValueFromStringSetMap(r.to, r.from)
-		delete(l.NameAliasToName, r.from)
-		if id, ok := l.NameToContributorID[r.from]; ok {
-			if c, isC := l.ContributorByID[id]; isC && c.Name == r.from {
-				// r.from is a canonical contributor. The alias edge was created by
-				// FindAliases (in-memory) or by a stale contributor_names entry where
-				// another contributor incorrectly claims r.from as an alias. Remove
-				// the stale DB rows so the cycle is not recreated on the next run.
-				dbExecSave("CheckNameMappingConsistency: remove stale alias claim",
-					`DELETE FROM contributor_names WHERE name = ? AND id != ?`, r.from, id)
-			} else {
-				deleteNameMapping(r.from)
-			}
-		} else {
-			deleteNameMapping(r.from)
-		}
+		l.deleteNameAlias(r.from)
 	}
 
 	// Phase 2: flatten multi-hop chains (A → B → C becomes A → C).
@@ -825,11 +698,7 @@ func (l *TBibTeXLibrary) CheckNameMappingConsistency() {
 	}
 
 	for _, r := range redirects {
-		oldIntermediate := l.NameAliasToName[r.alias]
-		l.NameAliasToName[r.alias] = r.trueCanonical
-		l.NameToAliases.DeleteValueFromStringSetMap(oldIntermediate, r.alias)
-		l.NameToAliases.AddValueToStringSetMap(r.trueCanonical, r.alias)
-		upsertNameMapping(r.alias, r.trueCanonical)
+		l.setNameAlias(r.alias, r.trueCanonical, false)
 	}
 
 	// Phase 3: remove non_double_contributor_names pairs now contradicted by
@@ -980,7 +849,10 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 			for regularField := range regularFields.Elements() {
 				if l.getLineage(target, regularField).Source == "" {
 					if srcLin := l.getLineage(source, regularField); srcLin.Source != "" {
-						l.setLineage(target, regularField, srcLin.Source, srcLin.Edited)
+						// Tag with target's own current value, not srcLin.Value — the merge
+						// loop above may have resolved to a different value than the one
+						// source's lineage record was originally describing.
+						l.setLineage(target, regularField, l.EntryFieldValueity(target, regularField), srcLin.Source, srcLin.Edited)
 					}
 				}
 			}
@@ -1349,29 +1221,6 @@ func (l *TBibTeXLibrary) LibrarySize() int {
 // Reports the size of this library.
 func (l *TBibTeXLibrary) ReportLibrarySize() {
 	l.Progress(ProgressLibrarySize, l.LibrarySize())
-}
-
-// ONLY needed for migration???
-// Lookup the entry key and type for a given key/alias
-func (l *TBibTeXLibrary) MapEntryKeyWithType(key string) (string, string, bool) {
-	deAliasedKey := l.MapEntryKey(key)
-
-	if entryType := l.EntryType(deAliasedKey); entryType != "" {
-		return deAliasedKey, entryType, true
-	}
-
-	return "", "", false
-}
-
-func (l *TBibTeXLibrary) MapEntryKey(key string) string {
-	if canonical := l.KeyOldies.Get(key); canonical != "" {
-		return canonical
-	}
-	return key
-}
-
-func (l *TBibTeXLibrary) LookupDBLPKey(DBLPkey string) string {
-	return l.KeyOldies.Get(KeyForDBLP(DBLPkey))
 }
 
 // Create a string (with newlines) with a BibTeX based representation of the provided key, while using an optional prefix for each line.

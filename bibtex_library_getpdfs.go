@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_getpdfs
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_getpdfs
  *
  * Implements -get_pdfs: downloads missing PDF files for library entries that
  * have a direct-download URL (url field ending in ".pdf").

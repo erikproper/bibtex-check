@@ -1,3 +1,18 @@
+/*
+ *
+ * Module:    bibtex_check
+ * Component:
+ * - main
+ *
+ * Command-line entry point: flag parsing, top-level command dispatch, and the
+ * batch-processing driver loop over the library.
+ *
+ * Creator: Henderik A. Proper (e.proper@acm.org), Luxembourg, in collaboration with Claude.ai
+ *
+ * Version of: 30.07.2026
+ *
+ */
+
 package main
 
 import (
@@ -37,7 +52,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "28.101"
+const AppVersion = "29.17"
 
 // Run-state flags consumed by the write tail in main.
 var (

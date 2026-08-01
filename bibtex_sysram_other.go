@@ -2,9 +2,10 @@
 
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: SysRAMOther
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_sysram
+ *   - bibtex_sysram_other
  *
  * Stub systemTotalRAM() for non-macOS platforms; always returns 0 so that
  * initEntryCache unconditionally attempts to load the entry cache.

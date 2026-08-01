@@ -1,6 +1,8 @@
 /*
  *
- * Module: bibtex_characters
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_characters
  *
  * This module defines characters and character sets that are needed to parse BibTeX files.
  *

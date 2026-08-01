@@ -1,6 +1,8 @@
 /*
  *
- * Module: string_maps
+ * Module:    bibtex_check
+ * Component:
+ * - string_maps
  *
  * This module is concerned with different operators on string related maps
  *

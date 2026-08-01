@@ -1,8 +1,8 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: TableStore
+ * Module:    bibtex_check
+ * Component:
+ * - table_store
  *
  * Generic write-through cache layer. TSQLiteTable backs a table with SQLite;
  * TCachedTable wraps any backing store with an in-memory read cache so that

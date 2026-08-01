@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_script
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_script
  *
  * This module implements the parser and evaluator for .script files, which
  * specify group assignment rules for BibTeX library entries.

@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: Tables
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_exchange
  *
  * Internal per-table export and import helpers. The public interface is
  * ExportTables / ImportTables in bibtex_library_tables.go.

@@ -1,6 +1,10 @@
 /*
  *
- * Module: bibtex_library_normalise_fields_tex
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_normalise_fields
+ *     - bibtex_library_normalise_fields_tex
  *
  * This module is concerned with the normalisation of TeX based titles and names
  *
@@ -391,7 +395,7 @@ func (l *TBibTeXLibrary) maybeAddSimpleName(parts int, firstName, lastName, full
 				visited[redirected] = true
 				canonical = redirected
 			}
-			l.AddAlias(fullName, canonical, &l.NameAliasToName, &l.NameToAliases, false)
+			l.setNameAlias(fullName, canonical, false)
 			l.FindAliases(canonical, fullName)
 			l.FindAliases(canonical, canonical)
 		}

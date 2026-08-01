@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_metadata
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_metadata
  *
  * Per-entry metadata stored as entry_metadata.json.  Replaces the legacy
  * pdf_confirmed_ok.csv, dblp_key_missing.csv, and entry_lineage.csv files.

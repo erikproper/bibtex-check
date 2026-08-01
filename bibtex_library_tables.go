@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: Tables
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_tables
  *
  * Unified export / import for all user-editable tables.
  *

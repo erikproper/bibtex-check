@@ -1,8 +1,8 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: Connectivity
+ * Module:    bibtex_check
+ * Component:
+ * - connectivity
  *
  * Internet connectivity detection. Online is set once at startup by probing
  * a known host. All network-dependent code should gate on Online.

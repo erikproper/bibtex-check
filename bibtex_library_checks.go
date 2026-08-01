@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_checks
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_checks
  *
  * This module is concerned with checks of fields and entries.
  *
@@ -407,23 +410,25 @@ func (l *TBibTeXLibrary) tryGetDOIFromURL(key, field string, foundDOI *string) b
 	return false
 }
 
-// At least 4 digits (not exactly 4): an organisation/group "surname" can itself
-// contain digits (e.g. "group15"), so the digit run preceding the trailing keyword
-// may be longer than a bare 4-digit year once the year is appended — see the
-// deriveAliasBase digit-preserving fallback for numbered group/org names.
-var validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9]{4,}[a-z]([a-z0-9-]*[a-z0-9])?$`)
-var reYearInAlias = regexp.MustCompile(`[0-9][0-9][0-9][0-9]`)
+// Helpers for preferred-alias derivation (deriveAliasBase, derivePreferredAlias, titleKeywords).
+var (
+	// At least 4 digits (not exactly 4): an organisation/group "surname" can itself
+	// contain digits (e.g. "group15"), so the digit run preceding the trailing keyword
+	// may be longer than a bare 4-digit year once the year is appended — see the
+	// deriveAliasBase digit-preserving fallback for numbered group/org names.
+	validPreferredKeyAlias = regexp.MustCompile(`^[a-z]+[0-9]{4,}[a-z]([a-z0-9-]*[a-z0-9])?$`)
+	reYearInAlias          = regexp.MustCompile(`[0-9][0-9][0-9][0-9]`)
+	stripNonAlphaNum       = regexp.MustCompile(`[^a-z0-9]`)
+	allDigits              = regexp.MustCompile(`^[0-9]+$`)
 
-var stripNonAlphaNum = regexp.MustCompile(`[^a-z0-9]`)
-var allDigits = regexp.MustCompile(`^[0-9]+$`)
-
-var titleKeywordStopWords = map[string]bool{
-	"a": true, "an": true, "the": true, "of": true, "in": true, "on": true,
-	"at": true, "to": true, "for": true, "by": true, "and": true, "or": true,
-	"with": true, "from": true, "is": true, "are": true, "was": true, "were": true,
-	"proceedings": true, "workshop": true, "conference": true, "symposium": true,
-	"international": true, "annual": true,
-}
+	titleKeywordStopWords = map[string]bool{
+		"a": true, "an": true, "the": true, "of": true, "in": true, "on": true,
+		"at": true, "to": true, "for": true, "by": true, "and": true, "or": true,
+		"with": true, "from": true, "is": true, "are": true, "was": true, "were": true,
+		"proceedings": true, "workshop": true, "conference": true, "symposium": true,
+		"international": true, "annual": true,
+	}
+)
 
 // titleKeywords returns all meaningful words from a title, in order, suitable
 // for use as the keyword component of a preferred alias.
@@ -699,7 +704,6 @@ func (l *TBibTeXLibrary) CheckTitlePresence(entry *TBibTeXEntry) {
 	}
 }
 
-
 func (l *TBibTeXLibrary) CheckDOIPresence(entry *TBibTeXEntry) {
 	foundDOI := entry.FieldValue("doi")
 
@@ -850,13 +854,13 @@ var (
 	accessedPatternWordsAmerican = regexp.MustCompile(
 		accessedPrefix + `(january|february|march|april|may|june|july|august|september|october|november|december)\.?\s+(\d{1,2}),?\s+(\d{4})\s*\]?`,
 	)
-)
 
-var monthNameToNumber = map[string]string{
-	"january": "01", "february": "02", "march": "03", "april": "04",
-	"may": "05", "june": "06", "july": "07", "august": "08",
-	"september": "09", "october": "10", "november": "11", "december": "12",
-}
+	monthNameToNumber = map[string]string{
+		"january": "01", "february": "02", "march": "03", "april": "04",
+		"may": "05", "june": "06", "july": "07", "august": "08",
+		"september": "09", "october": "10", "november": "11", "december": "12",
+	}
+)
 
 // findAccessedDate tries all recognised Accessed-date patterns against s.
 // Returns (matchStart, matchEnd, isoDate) where matchStart==-1 means no match.
@@ -1278,7 +1282,7 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 					l.CheckBookishTitles(crossrefEntry)
 				} else {
 					l.ReportEntryWarning(entry.Key, "Crossref to %s (%s) does not comply to typing rules.", crossrefety, CrossrefType)
-				l.EntryInvolvedInWarning(crossrefety)
+					l.EntryInvolvedInWarning(crossrefety)
 				}
 			} else {
 				l.ReportEntryWarning(entry.Key, "Crossref target %s does not exist.", crossrefety)
@@ -1290,10 +1294,11 @@ func (l *TBibTeXLibrary) CheckCrossref(entry *TBibTeXEntry) {
 	}
 }
 
-//// How does this relate???
-//func (l *TBibTeXLibrary) CheckFileReferences(key, otherKey string) {
-//	upsertBibEntryField(key, LocalURLField, l.ResolveFileReferences(key, otherKey))
-//}
+// // How does this relate???
+//
+//	func (l *TBibTeXLibrary) CheckFileReferences(key, otherKey string) {
+//		upsertBibEntryField(key, LocalURLField, l.ResolveFileReferences(key, otherKey))
+//	}
 func (l *TBibTeXLibrary) CheckFileReference(entry *TBibTeXEntry) {
 	l.setEntryField(entry, LocalURLField, l.ResolveFileReferences(entry.Key, entry.Key))
 }
@@ -1364,11 +1369,10 @@ func (l *TBibTeXLibrary) CheckYear(entry *TBibTeXEntry) {
 	l.ReportEntryWarning(entry.Key, WarningBadYear, year)
 }
 
-
 var (
-	urlDateDMY     = regexp.MustCompile(`^(\d{2})[./-](\d{2})[./-](\d{4})$`)
+	urlDateDMY      = regexp.MustCompile(`^(\d{2})[./-](\d{2})[./-](\d{4})$`)
 	urlDateYMDSlash = regexp.MustCompile(`^(\d{4})/(\d{2})/(\d{2})$`)
-	urlDatePrefix  = regexp.MustCompile(`(?i)^(accessed|last accessed|last visited|zugegriffen|abgerufen|aufgerufen)[:\s]+`)
+	urlDatePrefix   = regexp.MustCompile(`(?i)^(accessed|last accessed|last visited|zugegriffen|abgerufen|aufgerufen)[:\s]+`)
 )
 
 // normaliseURLDate attempts to convert common non-ISO urldate formats to YYYY-MM-DD.
@@ -1932,9 +1936,10 @@ func (l *TBibTeXLibrary) CheckDuplicateDBLPKeys() {
 
 // CheckLoneProceedings finds @proceedings entries that have no children (no entry
 // has a crossref pointing to them) and are not waived. For each, it offers the user:
-//   w — waive: record FlagLoneProceedingsWaived in entry_flags, skip in future runs
-//   d — delete: remove the entry plus all hints and oldies pointing to it
-//   s/enter — skip for now
+//
+//	w — waive: record FlagLoneProceedingsWaived in entry_flags, skip in future runs
+//	d — delete: remove the entry plus all hints and oldies pointing to it
+//	s/enter — skip for now
 func (l *TBibTeXLibrary) CheckLoneProceedings() {
 	// Build the set of canonical crossref targets used by any library entry.
 	crossrefTargets := TStringSetNew()
@@ -2052,4 +2057,3 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 		return !Reporting.QuitWasRequested()
 	})
 }
-

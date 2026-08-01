@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: EntryLineage
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_lineage
  *
  * Tracks the source and edit status of library field values. Used to implement
  * the priority-based field update interaction model: when a challenger value
@@ -10,22 +11,34 @@
  * the current value came from a higher-, equal-, or lower-priority source, and
  * whether the user has deliberately diverged from what that source provides.
  *
- * Lineage records are stored in entry_metadata.json under the keys
- * "lineage:<field>:source" and "lineage:<field>:edited".
+ * Lineage is a property of the (entry_key, field, value) combination, not just
+ * (entry_key, field) — see PROJECT.md §18.2.2. A TLineageRecord carries the value
+ * it was recorded against; getLineage self-invalidates it (treats it as unknown)
+ * the moment the field's actual current value no longer matches, rather than
+ * risking a stale record from a *previous* value silently misdescribing a new
+ * one written through some other path (a direct SetEntryFieldValue, say).
+ *
+ * Lineage records are stored in the entry_lineage SQLite table.
  *
  * Creator: Henderik A. Proper (e.proper@acm.org), Luxembourg, in collaboration with Claude.ai
  *
- * Version of: 30.05.2026
+ * Version of: 30.07.2026
  *
  */
 
 package main
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // TLineageRecord tracks where a field value came from and whether the user
-// has deliberately diverged from what that source would provide.
+// has deliberately diverged from what that source would provide. Value is the
+// field value this record describes — see getLineage for how a mismatch against
+// the field's actual current value self-invalidates the record.
 type TLineageRecord struct {
+	Value  string // the field value this record was recorded against
 	Source string // "dblp", "orcid", "" (unknown / manually set)
 	Edited bool   // true when current value diverges from source's latest provision
 }
@@ -81,6 +94,15 @@ func sourceFromChallengeKey(challengeKey string) string {
 	return ""
 }
 
+// lineageSourceDisplay returns a short human-readable summary of a lineage source
+// for use in challenge prompts, e.g. "dblp, priority 100" or "no known source".
+func lineageSourceDisplay(source string) string {
+	if source == "" {
+		return "no known source"
+	}
+	return fmt.Sprintf("%s, priority %d", source, lineagePriorityOf(source))
+}
+
 // lineagePriorityOf returns the numeric priority for a source name.
 // Unrecognised sources default to 0 (same as unknown).
 func lineagePriorityOf(source string) int {
@@ -90,46 +112,50 @@ func lineagePriorityOf(source string) int {
 	return 0
 }
 
-// getLineage returns the lineage record for (key, field), or the zero value
-// {Source: "", Edited: false} when no record exists.
+// getLineage returns the lineage record for (key, field) — provenance for whatever
+// value currently occupies that field — or the zero value {Source: "", Edited: false}
+// when no record exists, *or* when the stored record's value no longer matches the
+// field's actual current value. That mismatch means the record describes a value
+// the field no longer holds (e.g. it was overwritten by something that bypassed
+// setLineage) — self-invalidating here means it's treated as genuinely unknown
+// rather than trusted as if it still described the current value.
 func (l *TBibTeXLibrary) getLineage(key, field string) TLineageRecord {
+	var rec TLineageRecord
 	if fm, ok := l.LineageMap[key]; ok {
-		if rec, ok := fm[field]; ok {
-			return rec
-		}
+		rec = fm[field]
 	}
-	return TLineageRecord{}
+	if rec.Value != l.EntryFieldValueity(key, field) {
+		return TLineageRecord{}
+	}
+	return rec
 }
 
-// setLineage updates the lineage record for (key, field). The zero value
-// (source="", edited=false) is deleted rather than stored to keep the table sparse.
-func (l *TBibTeXLibrary) setLineage(key, field, source string, edited bool) {
-	current := l.getLineage(key, field)
-	if current.Source == source && current.Edited == edited {
-		return
+// setLineage records that value is field's current content and attributes it to
+// source (edited = the user deliberately chose it over a competing offer from
+// source). Every resolution outcome should call this for the value it adopts —
+// including an unattributed one (source="", e.g. a library-to-library merge) —
+// since "we know this has no authoritative source" is itself meaningful and must
+// not be silently indistinguishable from "nothing was ever recorded".
+func (l *TBibTeXLibrary) setLineage(key, field, value, source string, edited bool) {
+	var raw TLineageRecord
+	if fm, ok := l.LineageMap[key]; ok {
+		raw = fm[field]
 	}
-	if source == "" && !edited {
-		if fm, ok := l.LineageMap[key]; ok {
-			delete(fm, field)
-			if len(fm) == 0 {
-				delete(l.LineageMap, key)
-			}
-		}
-		dbExecSave("setLineage: clear", `DELETE FROM entry_lineage WHERE entry_key = ? AND field = ?`, key, field)
+	if raw.Value == value && raw.Source == source && raw.Edited == edited {
 		return
 	}
 	if _, ok := l.LineageMap[key]; !ok {
 		l.LineageMap[key] = map[string]TLineageRecord{}
 	}
-	l.LineageMap[key][field] = TLineageRecord{Source: source, Edited: edited}
+	l.LineageMap[key][field] = TLineageRecord{Value: value, Source: source, Edited: edited}
 	editedInt := 0
 	if edited {
 		editedInt = 1
 	}
 	dbExecSave("setLineage",
-		`INSERT INTO entry_lineage (entry_key, field, source, edited) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(entry_key, field) DO UPDATE SET source = excluded.source, edited = excluded.edited`,
-		key, field, source, editedInt)
+		`INSERT INTO entry_lineage (entry_key, field, value, source, edited) VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(entry_key, field) DO UPDATE SET value = excluded.value, source = excluded.source, edited = excluded.edited`,
+		key, field, value, source, editedInt)
 }
 
 // getSourceFieldSignature returns the signature stored for (key, field, source),

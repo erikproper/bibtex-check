@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_indexing
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_indexing
  *
  * This module is adds the functionality (for TBibTeXLibrary) related to the indexing of entries based on the fields
  *

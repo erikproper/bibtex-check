@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_render
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_render
  *
  * Renders library entries as self-contained BibTeX, HTML, or plain text.
  *

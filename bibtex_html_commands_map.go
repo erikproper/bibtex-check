@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: HtmlCommandsMap
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_html
+ *   - bibtex_html_commands_map
  *
  * Loads the per-folder html_commands_map.csv and writes a default when absent.
  * The CSV format is: element_name,open_latex,close_latex

@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_resolver
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_resolver
  *
  * This module is concerned with the resolution of conflicting field values
  * Presently, this is mainly needed to deal with the legacy migration.
@@ -135,7 +138,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 			return current
 		}
 		if challengeSource == "dblp" {
-			l.setLineage(key, field, "dblp", false)
+			l.setLineage(key, field, challenge, "dblp", false)
 			return challenge
 		}
 		if strings.ToLower(current) == current {
@@ -148,6 +151,11 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	// always wins against an empty current value — before stored-mapping lookups so
 	// stale "challenge → empty" mappings cannot suppress the fix.
 	if current == "" && FieldIsRequiredForEntry(l.EntryType(key), field) {
+		// This fast path used to skip lineage entirely — the exact gap that let a
+		// library-to-library merge (source="") silently and permanently leave a
+		// filled required field looking identical to "never resolved". Record it
+		// like every other resolution outcome does.
+		l.setLineage(key, field, challenge, sourceFromChallengeKey(challengeKey), false)
 		return challenge
 	}
 
@@ -213,7 +221,9 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 			return current
 		}
 		// Source has updated its value; clear the prior divergence decision and re-challenge.
-		l.setLineage(key, field, challengeSource, false)
+		// current hasn't changed here (the re-challenge below decides the real outcome) —
+		// this just invalidates the stale "defended against source" mark.
+		l.setLineage(key, field, current, challengeSource, false)
 		currentRec.Edited = false
 	}
 
@@ -227,7 +237,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		} else {
 			// Semantically equal but textually different: keep our text, mark as intentionally diverged.
 			if challengeSource != "" {
-				l.setLineage(key, field, challengeSource, true)
+				l.setLineage(key, field, current, challengeSource, true)
 				l.setSourceFieldSignature(key, field, challengeSource, challenge)
 			}
 			return current
@@ -236,7 +246,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 
 	// Semantically different: auto-accept known-authoritative fields, otherwise ask.
 	if challengeSource != "" && dblpAutoAcceptFields.Contains(field) {
-		l.setLineage(key, field, challengeSource, false)
+		l.setLineage(key, field, challengeRaw, challengeSource, false)
 		l.setSourceFieldSignature(key, field, challengeSource, challenge)
 		return challengeRaw
 	}
@@ -268,7 +278,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		}
 		if result != "" {
 			l.UpdateEntryFieldAlias(key, field, challenge, result)
-			l.setLineage(key, field, challengeSource, result != challenge)
+			l.setLineage(key, field, result, challengeSource, result != challenge)
 			l.setSourceFieldSignature(key, field, challengeSource, challenge)
 			return result
 		}
@@ -305,7 +315,22 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	} else {
 		options.Add("Y", "y", "n", "N")
 	}
-	warning := "For entry %s and field %s:\n- Current   : %s\n- Challenger: %s\nneeds to be resolved"
+	// Show lineage+priority alongside the raw values so the user can judge the
+	// decision with the same information the priority-based auto-resolution above
+	// already had — e.g. "current already has a higher-priority source; overriding
+	// it here is a deliberate exception" vs "current has no known source; the
+	// challenger is probably safe to accept".
+	currentLineageDisplay := lineageSourceDisplay(currentRec.Source)
+	if currentRec.Edited {
+		currentLineageDisplay += ", edited"
+	}
+	challengerLineageDisplay := lineageSourceDisplay(challengeSource)
+	warning := "For entry %s and field %s:\n" +
+		"- Current   : %s\n" +
+		"    (lineage: %s)\n" +
+		"- Challenger: %s\n" +
+		"    (source: %s)\n" +
+		"needs to be resolved"
 	question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
 	question += "Current entry:\n" + l.EntryString(key, "", "  ")
 	if canBreakDown {
@@ -320,7 +345,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	if challengeSource != "" {
 		l.setSourceFieldSignature(key, field, challengeSource, challenge)
 	}
-	answer := l.WarningQuestion(question, options, warning, key, field, current, challenge)
+	answer := l.WarningQuestion(question, options, warning, key, field, current, currentLineageDisplay, challenge, challengerLineageDisplay)
 
 	switch answer {
 	case "y":
@@ -331,7 +356,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		// call AddKeyAlias(challenge, key): challenge may already be an alias of another entry
 		// and adding it here would produce a spurious "Ambiguous key oldie" warning.
 		l.UpdateEntryFieldAlias(key, field, challenge, current)
-		l.setLineage(key, field, challengeSource, true)
+		l.setLineage(key, field, current, challengeSource, true)
 		return current
 	case "n":
 		if singleAuthor {
@@ -345,7 +370,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 				l.AddKeyAlias(current, key)
 			}
 		}
-		l.setLineage(key, field, challengeSource, false)
+		l.setLineage(key, field, challenge, challengeSource, false)
 		return challenge
 	case "e":
 		edited, _ := l.AskForInput("Enter the resolved value for " + field)
@@ -359,7 +384,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		}
 		l.UpdateEntryFieldAlias(key, field, challenge, edited)
 		l.UpdateEntryFieldAlias(key, field, current, edited)
-		l.setLineage(key, field, challengeSource, true)
+		l.setLineage(key, field, edited, challengeSource, true)
 		return edited
 	case "b":
 		result, quit := l.resolveAuthorBreakdown(key, field, challengeSource, challenge, current)
@@ -368,24 +393,26 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		}
 		if result != "" {
 			l.UpdateEntryFieldAlias(key, field, challenge, result)
-			l.setLineage(key, field, challengeSource, result != challenge)
+			l.setLineage(key, field, result, challengeSource, result != challenge)
 			return result
 		}
 		// Breakdown was not possible — fall through to a plain y/n re-ask.
+		// (current, challenge order matches the primary question above — a pre-existing
+		// swap here previously showed challenge in the "Current" slot and vice versa.)
 		ynOptions := TStringSetNew()
 		ynOptions.Add("y", "n")
-		answer = l.WarningQuestion(question, ynOptions, warning, key, field, challenge, current)
+		answer = l.WarningQuestion(question, ynOptions, warning, key, field, current, currentLineageDisplay, challenge, challengerLineageDisplay)
 		if answer == "n" {
 			l.UpdateEntryFieldAlias(key, field, current, challenge)
-			l.setLineage(key, field, challengeSource, false)
+			l.setLineage(key, field, challenge, challengeSource, false)
 			return challenge
 		}
 		l.UpdateEntryFieldAlias(key, field, challenge, current)
-		l.setLineage(key, field, challengeSource, true)
+		l.setLineage(key, field, current, challengeSource, true)
 		return current
 	case "Y":
 		l.UpdateGenericFieldAlias(field, challenge, current)
-		l.setLineage(key, field, challengeSource, true)
+		l.setLineage(key, field, current, challengeSource, true)
 		return current
 	case "N":
 		l.UpdateGenericFieldAlias(field, current, challenge)
@@ -394,7 +421,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 				l.AddKeyAlias(current, key)
 			}
 		}
-		l.setLineage(key, field, challengeSource, false)
+		l.setLineage(key, field, challenge, challengeSource, false)
 		return challenge
 	}
 
@@ -591,8 +618,6 @@ func (l *TBibTeXLibrary) resolveAuthorBreakdown(key, field, challengeSource, cha
 	return strings.Join(resultNames, " and "), false
 }
 
-// TODO (code cleanup): revisit lineage tracking across all MaybeResolveFieldValue / ResolveFieldValue paths —
-// e.g. what lineage is set when a library-to-library merge fills an empty field and the user accepts.
 func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challenge, current string) string {
 	if field == "url" && l.IsRedundantURL(challenge, key) {
 		return ""
@@ -605,7 +630,7 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challe
 		challengeSource := sourceFromChallengeKey(challengeKey)
 		if challengeSource != "" {
 			// Known-authoritative external source filling an empty field: accept silently.
-			l.setLineage(key, field, challengeSource, false)
+			l.setLineage(key, field, challenge, challengeSource, false)
 			l.setSourceFieldSignature(key, field, challengeSource, challenge)
 			return challenge
 		}
@@ -617,7 +642,10 @@ func (l *TBibTeXLibrary) MaybeResolveFieldValue(key, challengeKey, field, challe
 		// A known-authoritative source asserting empty is allowed to clear the field.
 		challengeSource := sourceFromChallengeKey(challengeKey)
 		if challengeSource != "" && dblpKnownFields.Contains(field) {
-			l.setLineage(key, field, challengeSource, false)
+			// Value="" here is meaningful and load-bearing, not a no-op: it's how a
+			// source's confirmed-empty verdict is distinguished from "never resolved"
+			// (e.g. by MergeEntries' empty-target priority check).
+			l.setLineage(key, field, "", challengeSource, false)
 			l.setSourceFieldSignature(key, field, challengeSource, "")
 			return ""
 		}

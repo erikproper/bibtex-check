@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_writing
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_reading
  *
  * This module is adds the functionality (for TBibTeXLibrary) to write out BibTeX and associated files
  *

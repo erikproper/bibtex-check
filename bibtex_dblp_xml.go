@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: DBLPXMLImporter
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_dblp
+ *   - bibtex_dblp_xml
  *
  * Streaming importer from DBLP XML exports (.xml.gz) into the file-based
  * DBLP store under ~/BiBTeX.Generics/DBLP/.

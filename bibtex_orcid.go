@@ -1,8 +1,8 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: ORCIDIntegration
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_orcid
  *
  * ORCID public API integration — connectivity check and person-record fetch.
  *

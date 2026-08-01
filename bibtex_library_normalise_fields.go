@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_normalise_fields
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_normalise_fields
  *
  * This module is concerned with the Normalisation of field values.
  *

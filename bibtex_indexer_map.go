@@ -1,8 +1,8 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: IndexerMap
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_indexer_map
  *
  * Loads the per-folder latex_indexer.csv file and writes a default when absent.
  * The CSV format is: macroname;replacement

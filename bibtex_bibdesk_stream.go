@@ -1,6 +1,8 @@
 /*
  *
- *  Module: bibtex_bibdesk_stream
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_bibdesk_stream
  *
  * This module extends the TBibTeXStream type with the ability to parse BibDesk's static group definitions
  *

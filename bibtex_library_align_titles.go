@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_align_titles
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_align_titles
  *
  * This module implements detection and reporting of volume/edition information
  * embedded in title and booktitle fields that should be extracted into the
@@ -218,7 +221,7 @@ func (l *TBibTeXLibrary) applyAlignHit(key string, h titleAlignHit, newTitle str
 	}
 	if h.kind != "country" && h.targetField == "" {
 		l.SetEntryFieldValue(key, h.kind, h.extracted)
-		l.setLineage(key, h.kind, "dblp", false)
+		l.setLineage(key, h.kind, h.extracted, "dblp", false)
 	}
 	bibEntriesModified = true
 }

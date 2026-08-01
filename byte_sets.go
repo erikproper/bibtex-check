@@ -1,6 +1,8 @@
 /*
  *
- * Module: byte_sets
+ * Module:    bibtex_check
+ * Component:
+ * - byte_sets
  *
  * This module provides basic operations to manage sets of bytes / characters based on uint64 vectors.
  * The assumption is that using such vectors is faster than e.g. using maps from byte to empty structs.

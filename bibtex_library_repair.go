@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_repair
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_repair
  *
  * Garbled-name detection predicates used as guards throughout the codebase.
  *

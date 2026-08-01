@@ -1,14 +1,24 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: LibraryDB
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_db
  *
  * Relational data layer for the BibTeX library. Each logical data source
  * (name mappings, key hints, …) follows the same three-function pattern:
  *   import*FromCSV()       — import a table from a CSV (only via -import)
  *   load<X>FromDb(l)        — populate in-memory library fields from DB
  *   save<X>ToDb(l)          — write in-memory library fields back to DB
+ *
+ * This is the lowest of three layers, and the only one concerned with what is
+ * actually stored: raw SQL CRUD, schema, and table lifecycle. It does not manage
+ * consistency between a map and its inverse — that's bibtex_library_maps.go's job,
+ * which calls down into this file's functions (e.g. upsertNameMapping) to persist
+ * whatever it has already kept internally consistent. bibtex_library.go sits above
+ * both: the business rules that decide what a mapping *should* be (e.g. cycle
+ * detection, absorbing one contributor's aliases into another) call into
+ * bibtex_library_maps.go rather than touching a map or the DB directly.
  *
  * SQLite infrastructure (connection, WAL, isolation, safe-parse) is in
  * bibtex_library_db_sqlite.go.
@@ -30,29 +40,28 @@ import (
 	"sort"
 	"strings"
 	"time"
-
 )
 
 var (
-	dbInteraction               TInteraction
-	db                          *sql.DB
-	entryCache                  map[string]*TBibTeXEntry
-	entrySnapshots              map[string]map[string]string
-	bibEntriesModified          bool
-	c2TrackingActive            bool
-	c2EntryModified             bool
-	entryModTrackingActive      bool
-	entryModified               bool
-	dbWriteSessionActive        bool
-	dbWriteFailed               bool  // set when any end-of-run DB write fails; blocks finaliseWorkingDatabase
-	changesAtSessionOpen        int64 // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
-	homeDbSizeAtOpen            int64 // size of the home DB as stat'd in prepareWorkingDatabase; safeguards against overwriting home with a shrunken working copy
-	fieldMappingsLoading        bool  // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
-	entryFieldMappingsLoading   bool  // suppresses DB write-through in AddEntryFieldAlias during initial load
-	contributorsLoading         bool  // suppresses DB write-through while loading contributors table
-	contributorRolesActive      bool  // true once contributor_roles is populated; blocks author/editor writes to bib_entries
-	defaultLangID               string // langid value treated as default; entries with this value have the field removed
-	preCloseHook                func() // called inside finaliseWorkingDatabase while DB is still open; set by openLibraryToUpdate
+	dbInteraction             TInteraction
+	db                        *sql.DB
+	entryCache                map[string]*TBibTeXEntry
+	entrySnapshots            map[string]map[string]string
+	bibEntriesModified        bool
+	c2TrackingActive          bool
+	c2EntryModified           bool
+	entryModTrackingActive    bool
+	entryModified             bool
+	dbWriteSessionActive      bool
+	dbWriteFailed             bool   // set when any end-of-run DB write fails; blocks finaliseWorkingDatabase
+	changesAtSessionOpen      int64  // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
+	homeDbSizeAtOpen          int64  // size of the home DB as stat'd in prepareWorkingDatabase; safeguards against overwriting home with a shrunken working copy
+	fieldMappingsLoading      bool   // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
+	entryFieldMappingsLoading bool   // suppresses DB write-through in AddEntryFieldAlias during initial load
+	contributorsLoading       bool   // suppresses DB write-through while loading contributors table
+	contributorRolesActive    bool   // true once contributor_roles is populated; blocks author/editor writes to bib_entries
+	defaultLangID             string // langid value treated as default; entries with this value have the field removed
+	preCloseHook              func() // called inside finaliseWorkingDatabase while DB is still open; set by openLibraryToUpdate
 )
 
 // dbExecSave executes a DB statement during the end-of-run save phase. On error it
@@ -935,7 +944,7 @@ func upsertNameMapping(alias, name string) {
 	if contributorsLoading {
 		return
 	}
-	if alias == name {
+	if alias == "" || name == "" || alias == name {
 		return
 	}
 	if !forceNameMapping && (isGarbledContributorName(alias) || isGarbledContributorName(name)) {
@@ -1138,7 +1147,7 @@ func maybeMergeSpuriousContributors() {
 func mergeContributorInDB(fromID, toID string) bool {
 	var fromOrcid, toOrcid string
 	db.QueryRow(`SELECT COALESCE(orcid, '') FROM contributors WHERE id = ?`, fromID).Scan(&fromOrcid) //nolint:errcheck
-	db.QueryRow(`SELECT COALESCE(orcid, '') FROM contributors WHERE id = ?`, toID).Scan(&toOrcid)    //nolint:errcheck
+	db.QueryRow(`SELECT COALESCE(orcid, '') FROM contributors WHERE id = ?`, toID).Scan(&toOrcid)     //nolint:errcheck
 
 	// Move contributor_names.
 	dbExecSave("merge_contributors: move contributor_names",
@@ -1505,7 +1514,7 @@ func loadContributorsFromDb(l *TBibTeXLibrary) {
 
 	// Build NameAliasToName / NameToAliases from the base (non-derivable) pairs.
 	for _, p := range pairs {
-		l.AddAlias(p.alias, p.canonical, &l.NameAliasToName, &l.NameToAliases, true)
+		l.setNameAlias(p.alias, p.canonical, true)
 	}
 
 	// Derive additional in-memory aliases via FindAliases.
@@ -1716,9 +1725,15 @@ func retroactivelyBackfillDisambiguation(l *TBibTeXLibrary, name string) {
 		if err != nil {
 			continue
 		}
-		var roles []struct{ key, role string; pos int }
+		var roles []struct {
+			key, role string
+			pos       int
+		}
 		for rows.Next() {
-			var r struct{ key, role string; pos int }
+			var r struct {
+				key, role string
+				pos       int
+			}
 			if rows.Scan(&r.key, &r.role, &r.pos) == nil {
 				roles = append(roles, r)
 			}
@@ -1732,7 +1747,6 @@ func retroactivelyBackfillDisambiguation(l *TBibTeXLibrary, name string) {
 		}
 	}
 }
-
 
 // normalizeEtAlTail replaces trailing "et al." / "et.al." variants in an
 // author/editor field value with "and others" so that the list splits cleanly
@@ -2155,8 +2169,8 @@ func newDblpParentTable() *TCachedTable[string, string] {
 	t := newCachedTable(&TSQLiteTable[string, string]{
 		upsertSQL: `INSERT INTO dblp_parent (child_key, parent_key) VALUES (?, ?)
 		            ON CONFLICT(child_key) DO UPDATE SET parent_key = excluded.parent_key;`,
-		deleteSQL: `DELETE FROM dblp_parent WHERE child_key = ?`,
-		selectSQL: `SELECT child_key, parent_key FROM dblp_parent`,
+		deleteSQL:  `DELETE FROM dblp_parent WHERE child_key = ?`,
+		selectSQL:  `SELECT child_key, parent_key FROM dblp_parent`,
 		upsertArgs: func(k, v string) []any { return []any{k, v} },
 		deleteArgs: func(k string) []any { return []any{k} },
 		scanRow: func(rows *sql.Rows) (string, string, error) {
@@ -2476,7 +2490,6 @@ func ensureCrossFieldMappingsTableExists() {
 		);`)
 }
 
-
 // loadAuthorEditorFieldMappingsFromCache loads author/editor entry-field alias
 // mappings from superseded_field_values using the in-memory entry cache to find the
 // winner. Must be called after initEntryCache() and only when contributorRolesActive.
@@ -2677,7 +2690,6 @@ func ensureURLsIgnoreTableExists() {
 		);`)
 }
 
-
 func loadURLsIgnoreFromDb(l *TBibTeXLibrary) {
 	rows, err := db.Query(`SELECT url FROM urls_ignore`)
 	if err != nil {
@@ -2818,10 +2830,35 @@ func ensureEntryLineageTableExists() {
 		CREATE TABLE IF NOT EXISTS entry_lineage (
 		  entry_key  TEXT NOT NULL,
 		  field      TEXT NOT NULL,
+		  value      TEXT NOT NULL DEFAULT '',
 		  source     TEXT NOT NULL DEFAULT '',
 		  edited     INTEGER NOT NULL DEFAULT 0,
 		  PRIMARY KEY (entry_key, field)
 		);`)
+	maybeMigrateEntryLineageValue()
+}
+
+// maybeMigrateEntryLineageValue adds the value column to entry_lineage for databases
+// created before lineage became a property of the (field, value) pair rather than
+// just the field — see PROJECT.md §18.2.2. Runs unconditionally; ALTER TABLE ADD
+// COLUMN fails harmlessly with "duplicate column name" on every run after the first,
+// which doubles as the signal that backfill has already happened.
+//
+// Backfill is best-effort: each row's value is set to bib_entries' current content
+// for that (entry_key, field) — the closest available guess, since the old schema
+// never recorded which value a lineage record was actually describing. Rows that
+// guess wrong (or blank, e.g. author/editor fields under contributor_roles, which
+// aren't in bib_entries at all) simply self-invalidate on first read via getLineage's
+// value check and fall back to "unknown" rather than trusting stale data — exactly
+// the failure mode this migration exists to close off going forward.
+func maybeMigrateEntryLineageValue() {
+	if _, err := db.Exec(`ALTER TABLE entry_lineage ADD COLUMN value TEXT NOT NULL DEFAULT ''`); err != nil {
+		return
+	}
+	dbExecSave("maybeMigrateEntryLineageValue: backfill",
+		`UPDATE entry_lineage SET value = COALESCE(
+		   (SELECT b.value FROM bib_entries b WHERE b.entry_key = entry_lineage.entry_key AND b.field = entry_lineage.field),
+		   '')`)
 }
 
 func ensureSourceFieldSignaturesTableExists() {
@@ -2848,23 +2885,23 @@ func ensureSourceContributorSignaturesTableExists() {
 }
 
 func loadEntryLineageFromDb(l *TBibTeXLibrary) {
-	rows, err := db.Query(`SELECT entry_key, field, source, edited FROM entry_lineage`)
+	rows, err := db.Query(`SELECT entry_key, field, value, source, edited FROM entry_lineage`)
 	if err != nil {
 		dbInteraction.Warning("Could not query entry_lineage: %s", err)
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var key, field, source string
+		var key, field, value, source string
 		var edited int
-		if err := rows.Scan(&key, &field, &source, &edited); err != nil {
+		if err := rows.Scan(&key, &field, &value, &source, &edited); err != nil {
 			dbInteraction.Warning("Could not scan entry_lineage row: %s", err)
 			continue
 		}
 		if _, ok := l.LineageMap[key]; !ok {
 			l.LineageMap[key] = map[string]TLineageRecord{}
 		}
-		l.LineageMap[key][field] = TLineageRecord{Source: source, Edited: edited != 0}
+		l.LineageMap[key][field] = TLineageRecord{Value: value, Source: source, Edited: edited != 0}
 	}
 }
 
@@ -2890,8 +2927,6 @@ func loadSourceFieldSignaturesFromDb(l *TBibTeXLibrary) {
 		l.SourceSignatures[key][field][source] = sig
 	}
 }
-
-
 
 // --- superseded_field_values table (formerly losing_field_values) ---
 
@@ -3599,10 +3634,10 @@ func upsertContributorRolesForField(l *TBibTeXLibrary, key, field, value string)
 }
 
 // applyDblpAuthorORCIDs uses the per-author ORCID data from a TDblpJSONEntry to:
-//   1. Re-assign contributor_roles when the ORCID-identified contributor differs from
-//      the name-based assignment (ORCID takes priority as a more precise identifier).
-//   2. Record orcid_used evidence in entry_contributor_names for every author/editor
-//      whose DBLP entry carries an ORCID, regardless of whether a re-assignment occurred.
+//  1. Re-assign contributor_roles when the ORCID-identified contributor differs from
+//     the name-based assignment (ORCID takes priority as a more precise identifier).
+//  2. Record orcid_used evidence in entry_contributor_names for every author/editor
+//     whose DBLP entry carries an ORCID, regardless of whether a re-assignment occurred.
 //
 // Called immediately after MergeInMemoryDBLPEntry so the name-based assignment is
 // already in place and can be corrected here.
@@ -3847,7 +3882,6 @@ func deleteBibEntry(key string) {
 		markBibEntryModified()
 	}
 }
-
 
 // loadEntryFromDb returns a TBibTeXEntry snapshot of all fields for key.
 // Returns an entry with an empty Fields map (Exists() == false) when key is absent.

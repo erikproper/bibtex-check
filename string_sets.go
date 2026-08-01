@@ -1,6 +1,8 @@
 /*
  *
- * Module: string_sets
+ * Module:    bibtex_check
+ * Component:
+ * - string_sets
  *
  * This module provides basic operations to manage sets of strings.
  * In the future this module may become (part of) a sets & sequences package.

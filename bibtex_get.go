@@ -1,8 +1,8 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: Sync
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_get
  *
  * Implements -sync (primary) and the deprecated -get alias.
  *

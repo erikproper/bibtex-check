@@ -1,8 +1,10 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: DBLPParent
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_dblp
+ *     - bibtex_library_dblp_parent
  *
  * DBLP crossref disambiguation and dblp_parent.csv management.
  *

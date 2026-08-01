@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: SyncDB
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_sync_db
  *
  * Per-bib-file SQLite snapshot store for bidirectional sync (.sync file).
  * Records the exact state (field values, group memberships, PDF md5) of each

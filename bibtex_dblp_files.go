@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: DBLPFileStore
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_dblp
+ *   - bibtex_dblp_files
  *
  * File-based DBLP store under ~/BiBTeX.Generics/DBLP/.
  * Each entry is entries/<dblp_key>/data.json; title lookups use

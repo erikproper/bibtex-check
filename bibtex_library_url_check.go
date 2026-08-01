@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_url_check
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_url_check
  *
  * Plausibility check for url fields: verifies that the URL is reachable and
  * returns meaningful human-readable content. Only applies to entries that have

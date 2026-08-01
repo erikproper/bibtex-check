@@ -1,6 +1,8 @@
 /*
  *
- * Module: bibtex_config
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_config
  *
  * This module is concerned with general configuration parameters for handling BibTeX libraries.
  * Some of the things as presently set may be (partially) moved to a config file that is read when the application is started.

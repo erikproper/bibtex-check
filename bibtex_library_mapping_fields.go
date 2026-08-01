@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_mapping_fields
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_mapping_fields
  *
  * This module is concerned with the mapping of field values.
  *

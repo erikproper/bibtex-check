@@ -1,8 +1,8 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: UnicodeMap
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_unicode_map
  *
  * Loads the per-folder unicode_map.csv file and writes a default when absent.
  * The CSV format is: decimal_code_point,LaTeX_replacement

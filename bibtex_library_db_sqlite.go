@@ -1,8 +1,10 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: LibraryDB_SQLite
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_db
+ *     - bibtex_library_db_sqlite
  *
  * SQLite infrastructure for the BibTeX library persistence layer:
  * connection management, WAL/PRAGMA setup, write-session isolation,

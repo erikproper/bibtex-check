@@ -1,8 +1,9 @@
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: HtmlCharacterMap
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_html
+ *   - bibtex_html_character_map
  *
  * Loads the per-folder html_character_map.csv and writes a default when absent.
  * The CSV format is: entity_name,latex_replacement

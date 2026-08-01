@@ -2,9 +2,10 @@
 
 /*
  *
- * Module:    bibtex_check_dev
- * Package:   Main
- * Component: SysRAMDarwin
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_sysram
+ *   - bibtex_sysram_darwin
  *
  * Provides systemTotalRAM() for macOS using hw.physmem via the syscall package.
  *

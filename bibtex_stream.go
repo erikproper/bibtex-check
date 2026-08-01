@@ -1,6 +1,8 @@
 /*
  *
- *  Module: bibtex_stream
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_stream
  *
  * This module is defines the TBibTeXStream type as a parser of BibTeX entries
  *

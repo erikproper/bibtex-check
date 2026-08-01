@@ -1,6 +1,8 @@
 /*
  *
- * Module: bibtex_messages
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_messages
  *
  * This module contains the definition of several warnings, error, and progress reports
  *

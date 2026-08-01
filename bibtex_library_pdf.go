@@ -1,6 +1,9 @@
 /*
  *
- * Module: bibtex_library_pdf
+ * Module:    bibtex_check
+ * Component:
+ * - bibtex_library
+ *   - bibtex_library_pdf
  *
  * PDF health checking: detects invalid or content-less PDF files in the
  * library files folder and offers an interactive open/trash/confirm-OK/skip workflow.

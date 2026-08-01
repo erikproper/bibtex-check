@@ -1,6 +1,8 @@
 /*
  *
- * Module: paths
+ * Module:    bibtex_check
+ * Component:
+ * - paths
  *
  * This module provides definitions of file paths and names
  *
