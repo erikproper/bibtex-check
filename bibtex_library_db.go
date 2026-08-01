@@ -3277,6 +3277,19 @@ func closeEntry(entry *TBibTeXEntry) bool {
 		if snapshot[field] != value {
 			changed = true
 			if contributorRolesActive && (field == "author" || field == "editor") {
+				if value != "" {
+					// Same reasoning as upsertBibEntryField's matching guard: this
+					// bypasses that function entirely (see the doc comment above), so
+					// it needs its own copy of the bib_entry_keys anchor insert.
+					// Without it, a brand-new entry whose author/editor field happens
+					// to be diffed before any other field — the common case for
+					// MergeInMemoryDBLPEntry, used by -watch to add new entries — hits
+					// a FOREIGN KEY violation on every contributor_roles insert.
+					if err2 := bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, entry.Key); err2 != nil {
+						dbWriteFailed = true
+						continue
+					}
+				}
 				upsertContributorRolesForField(&Library, entry.Key, field, value)
 			} else {
 				var err error
