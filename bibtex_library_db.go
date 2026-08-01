@@ -3670,6 +3670,20 @@ func applyDblpAuthorORCIDs(l *TBibTeXLibrary, key string, je *TDblpJSONEntry) {
 // before calling this function, otherwise the comparison always finds equality.
 func upsertBibEntryField(key, field, value string) {
 	if contributorRolesActive && (field == "author" || field == "editor") {
+		if value != "" {
+			// Keep bib_entry_keys anchor in sync so contributor_roles (which has an
+			// entry_key → bib_entry_keys FK) can be written for this entry even when
+			// author/editor is the first field ever set on it — same reasoning as the
+			// non-author/editor branch below, which already does this; this branch
+			// returns before reaching it, so it needs its own copy. Without this, a
+			// brand-new entry whose author/editor field is written before any other
+			// field (e.g. entry creation during -watch) hits a FOREIGN KEY violation
+			// on every contributor_roles insert for that entry.
+			if err2 := bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, key); err2 != nil {
+				dbWriteFailed = true
+				return
+			}
+		}
 		upsertContributorRolesForField(&Library, key, field, value)
 		// Keep entryCache in sync so in-memory readers (e.g. deriveAliasBase)
 		// can see the author/editor without querying contributor_roles.
