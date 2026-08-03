@@ -50,6 +50,7 @@ var (
 	bibEntriesModified        bool
 	c2TrackingActive          bool
 	c2EntryModified           bool
+	c2ChildrenChecked         int
 	entryModTrackingActive    bool
 	entryModified             bool
 	dbWriteSessionActive      bool
@@ -3425,12 +3426,17 @@ func markBibEntryModified() {
 func startC2Tracking() {
 	c2TrackingActive = true
 	c2EntryModified = false
+	c2ChildrenChecked = 0
 }
 
-// stopC2Tracking disarms C2 tracking and returns whether any entry was modified.
-func stopC2Tracking() bool {
+// stopC2Tracking disarms C2 tracking and returns whether any entry was modified,
+// plus how many DBLP children were inspected while checking it (see CheckDBLP's
+// "Checking N children of X" loop) — that work is real but happens on keys the
+// caller's own scan loop never visits directly, so it must be reported back
+// explicitly rather than assumed to show up as separate top-level scans.
+func stopC2Tracking() (modified bool, childrenChecked int) {
 	c2TrackingActive = false
-	return c2EntryModified
+	return c2EntryModified, c2ChildrenChecked
 }
 
 // startEntryTracking arms the per-entry modification detector (across all check classes).

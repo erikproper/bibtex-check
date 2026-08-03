@@ -52,7 +52,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.24"
+const AppVersion = "29.25"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -492,8 +492,9 @@ func doC1Checks(key string) bool {
 	return merged
 }
 
-// doC2Checks runs DBLP sync for key and returns true if it modified the entry.
-func doC2Checks(key string) bool {
+// doC2Checks runs DBLP sync for key and returns whether it modified the entry,
+// plus how many DBLP children were inspected along the way (see stopC2Tracking).
+func doC2Checks(key string) (modified bool, childrenChecked int) {
 	startC2Tracking()
 	Library.CheckDBLP(key)
 	return stopC2Tracking()
@@ -2311,9 +2312,11 @@ func doUpsertDblpEntries() {
 			if dblpVal := Library.EntryFieldValueity(key, DBLPField); dblpVal != "" {
 				Library.ResetQuestionFlag()
 				doC1Checks(key)
-				if doC2Checks(key) {
+				modified, childrenChecked := doC2Checks(key)
+				if modified {
 					dblpUpdated++
 				}
+				scanned += childrenChecked
 				doC3Checks(key)
 				if pmOk {
 					if normKey := normalizeDblpKey(dblpVal); normKey != "" {

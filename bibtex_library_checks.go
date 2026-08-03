@@ -1628,6 +1628,9 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		if len(children) > 0 {
 			ticker := l.NewProgressTicker(fmt.Sprintf("  Checking %d children of %s", len(children), entryDBLP), len(children))
 			for _, childDBLP := range children {
+				if c2TrackingActive {
+					c2ChildrenChecked++
+				}
 				childKey := l.LookupDBLPKey(childDBLP)
 				if childKey != "" {
 					// Same guard as MaybeAddDBLPEntry: don't redirect away from a live

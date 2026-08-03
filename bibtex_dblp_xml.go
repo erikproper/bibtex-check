@@ -499,7 +499,7 @@ func dblpBuildCrossrefIndex(r io.Reader, progress func(n int)) error {
 			}
 		}
 
-		if dblpKey != "" && crossref != "" {
+		if dblpKey != "" && crossref != "" && crossref != dblpKey {
 			crossrefs[crossref] = append(crossrefs[crossref], dblpKey)
 		}
 
