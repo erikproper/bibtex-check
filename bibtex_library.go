@@ -1087,7 +1087,10 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 
 			if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
 				l.MergeEntries(source, target)
-			} else {
+			} else if !l.QuitWasRequested() {
+				// WarningYesNoQuestion collapses "n" and "q" into the same false —
+				// a "q" answer must not be recorded as "confirmed different entries",
+				// it means "stop asking", not a decision about these two entries.
 				l.AddNonDoubleEntries(source, target)
 			}
 		}
@@ -1112,17 +1115,22 @@ func (l *TBibTeXLibrary) MaybeMergeEntrySet(keys TStringSet) {
 }
 
 // AddKeyAlias records a persistent alias→canonical key mapping in key_oldies.
-// Always persists: an alias being registered here (explicit -add_key_mapping,
-// a demoted preferred alias, a migrated key hint, ...) is by definition an old
-// or alternate identifier that should keep redirecting to canonical across
-// runs, regardless of what format the alias string happens to be in — it is
-// not expected to match the current EP-YYYY-MM-DD-HH-MM-SS key format. Callers
-// that need transient, regenerated-every-run aliases (e.g. DBLP-derived ones,
-// rebuilt fresh from the dblp field each run) should call
+// key_oldies is reserved for former EP-YYYY-MM-DD-HH-MM-SS canonical keys — an
+// alias being registered here (explicit -add_key_mapping, MergeEntries's old
+// key, a migrated key hint, ...) is by definition a key that used to literally
+// be some entry's own identifier. A non-EP-format alias (a citation shorthand,
+// a demoted preferred alias) is redirected to AddKeyHint/key_hints instead,
+// below — that table is what "known alias, not a former canonical key" means.
+// Callers that need transient, regenerated-every-run aliases (e.g. DBLP-derived
+// ones, rebuilt fresh from the dblp field each run) should call
 // l.KeyOldies.SetTransient directly instead of going through this function.
 func (l *TBibTeXLibrary) AddKeyAlias(alias, key string) {
 	canonical := l.MapEntryKey(key)
 	if alias == canonical {
+		return
+	}
+	if !IsValidKey(alias) {
+		l.AddKeyHint(alias, canonical)
 		return
 	}
 	if existing := l.KeyOldies.Get(alias); existing != "" {

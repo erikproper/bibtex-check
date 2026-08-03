@@ -162,6 +162,21 @@ func init() {
 		{`{\v{Z}}`, "Ž"}, {`{\v Z}`, "Ž"},
 		{`{\v{n}}`, "ň"}, {`{\v n}`, "ň"},
 		{`{\v{N}}`, "Ň"}, {`{\v N}`, "Ň"},
+		// Macron (\=) — also matched bare (no enclosing braces), unlike the other
+		// accent categories above: \= is commonly written unbraced mid-word (e.g.
+		// "J\=anis"), and the bare form is a substring of the braced ones anyway
+		// (harmless either order — leftover braces are stripped unconditionally
+		// at the end of texToHTML).
+		{`{\={a}}`, "ā"}, {`{\=a}`, "ā"}, {`\=a`, "ā"},
+		{`{\={e}}`, "ē"}, {`{\=e}`, "ē"}, {`\=e`, "ē"},
+		{`{\={\i}}`, "ī"}, {`{\=\i}`, "ī"}, {`\=\i`, "ī"},
+		{`{\={o}}`, "ō"}, {`{\=o}`, "ō"}, {`\=o`, "ō"},
+		{`{\={u}}`, "ū"}, {`{\=u}`, "ū"}, {`\=u`, "ū"},
+		{`{\={A}}`, "Ā"}, {`{\=A}`, "Ā"}, {`\=A`, "Ā"},
+		{`{\={E}}`, "Ē"}, {`{\=E}`, "Ē"}, {`\=E`, "Ē"},
+		{`{\={I}}`, "Ī"}, {`{\=I}`, "Ī"}, {`\=I`, "Ī"},
+		{`{\={O}}`, "Ō"}, {`{\=O}`, "Ō"}, {`\=O`, "Ō"},
+		{`{\={U}}`, "Ū"}, {`{\=U}`, "Ū"}, {`\=U`, "Ū"},
 	}
 }
 
@@ -188,6 +203,9 @@ func texToHTML(s string) string {
 
 	// Special characters (& before accent pairs; ~ after, so {\~a} isn't mangled first)
 	s = strings.ReplaceAll(s, `\&`, "&amp;")
+	s = strings.ReplaceAll(s, `\textregistered`, "®")
+	s = strings.ReplaceAll(s, `\texttrademark`, "™")
+	s = strings.ReplaceAll(s, `\textcopyright`, "©")
 
 	// TeX emphasis commands
 	s = applyTeXCommand(s, `\emph`, "<em>", "</em>")

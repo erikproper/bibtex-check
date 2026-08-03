@@ -52,7 +52,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.17"
+const AppVersion = "29.24"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2262,7 +2262,6 @@ func doFixDuplicates() {
 func doUpsertDblpEntries() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
-		Library.FixDblpHierarchy()
 		total := countBibEntries()
 
 		// Load DBLP person maps once for contributor role cross-checking during
@@ -2301,6 +2300,7 @@ func doUpsertDblpEntries() {
 		scanned := 0
 		dblpUpdated := 0
 		stderrPrintf("\nDoing analysis based on DBLP data:\n")
+		Library.FixDblpHierarchy()
 		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
 		processKey := func(key string) {
@@ -2311,7 +2311,7 @@ func doUpsertDblpEntries() {
 			if dblpVal := Library.EntryFieldValueity(key, DBLPField); dblpVal != "" {
 				Library.ResetQuestionFlag()
 				doC1Checks(key)
-				if Library.MaybeFixDBLPEntry(key) {
+				if doC2Checks(key) {
 					dblpUpdated++
 				}
 				doC3Checks(key)

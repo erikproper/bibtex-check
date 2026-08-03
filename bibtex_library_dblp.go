@@ -594,7 +594,10 @@ func (l *TBibTeXLibrary) CheckDblpKeyMissingWarnings() {
 	}
 }
 
-func (l *TBibTeXLibrary) MaybeFixDBLPEntry(key string) bool {
+// maybeFixDBLPEntry merges DBLP field data for key. Internal — CheckDBLP's first
+// step; CheckDBLP is the public entry point (also handles crossref-hierarchy
+// linking and bookish-child discovery, which this alone does not).
+func (l *TBibTeXLibrary) maybeFixDBLPEntry(key string) bool {
 	if DBLPKey := l.EntryFieldValueity(key, DBLPField); DBLPKey != "" {
 		if !l.MaybeMergeDBLPEntry(DBLPKey, key, false) {
 			l.MarkDblpKeyMissing(key, DBLPKey)

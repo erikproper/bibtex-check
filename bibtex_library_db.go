@@ -2999,7 +2999,16 @@ func deleteEntryWarning(key, warning string) {
 }
 
 // insertEntryWarning records key+warning, silently ignoring exact duplicates.
+// entry_warnings.key has an FK on bib_entry_keys, and this can be called for a key
+// whose bib_entry_keys row was written earlier in the *same* transaction (or, per
+// the FK incidents this session, momentarily invalidated by a mid-transaction
+// crossref/merge reentrancy this call has no visibility into) — guarantee the
+// anchor row first rather than rely on it already being there.
 func insertEntryWarning(key, warning string) {
+	if err := bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, key); err != nil {
+		dbWriteFailed = true
+		return
+	}
 	dbExecSave("insertEntryWarning", `INSERT OR IGNORE INTO entry_warnings (key, warning) VALUES (?, ?)`, key, warning)
 }
 
@@ -3311,6 +3320,16 @@ func closeEntry(entry *TBibTeXEntry) bool {
 	for field, value := range entry.Fields {
 		if snapshot[field] != value {
 			changed = true
+			if field == "crossref" && value == entry.Key {
+				// See the matching guard in upsertBibEntryField — an entry must never
+				// crossref itself. Also clear it from the in-memory struct (not just
+				// skip the DB write), or entryCache — which may hold this same *entry
+				// by reference — keeps the bad value even though the DB correctly
+				// rejects it.
+				dbInteraction.Warning("Refusing to set crossref=%s on itself for entry %s", value, entry.Key)
+				delete(entry.Fields, field)
+				continue
+			}
 			if contributorRolesActive && (field == "author" || field == "editor") {
 				if value != "" {
 					// Same reasoning as upsertBibEntryField's matching guard: this
@@ -3356,6 +3375,17 @@ func closeEntry(entry *TBibTeXEntry) bool {
 				}
 			}
 		}
+	}
+
+	// closeEntry's callers (MergeInMemoryDBLPEntry et al.) track bibEntriesModified
+	// themselves from this return value, so data is saved correctly either way — but
+	// this bypasses markBibEntryModified entirely, so the *other* trackers keyed off
+	// it (c2EntryModified, driving -update_all_dblp_entries's "N updated" count;
+	// entryModified) never fire for DBLP-merge writes, undercounting them as 0
+	// regardless of how much actually changed. Fire it here once, at the one place
+	// that already knows definitively whether this entry changed.
+	if changed {
+		markBibEntryModified()
 	}
 
 	return changed
@@ -3717,6 +3747,18 @@ func applyDblpAuthorORCIDs(l *TBibTeXLibrary, key string, je *TDblpJSONEntry) {
 // Callers (setEntryField, deleteEntryField) must NOT pre-update the cache entry
 // before calling this function, otherwise the comparison always finds equality.
 func upsertBibEntryField(key, field, value string) {
+	// An entry must never crossref itself. Observed live (not present in the
+	// settled home DB, so it's introduced mid-run) on bookish parents with real,
+	// legitimate children — most likely via a reentrant DBLP-child-processing path
+	// (SetEntryFieldValue(childKey, "crossref", key) where childKey has resolved,
+	// via some merge/redirect earlier in the same transaction, to key itself) that
+	// hasn't been fully traced. Reject at the one place all such writes funnel
+	// through rather than write bad data and rely on CheckCrossref's
+	// after-the-fact self-reference cleanup to catch it on some later run.
+	if field == "crossref" && value == key {
+		dbInteraction.Warning("Refusing to set crossref=%s on itself for entry %s", value, key)
+		return
+	}
 	if contributorRolesActive && (field == "author" || field == "editor") {
 		if value != "" {
 			// Keep bib_entry_keys anchor in sync so contributor_roles (which has an

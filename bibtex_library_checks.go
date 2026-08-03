@@ -249,8 +249,18 @@ func (l *TBibTeXLibrary) CheckEntryFieldMappingWinners() {
 func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 	l.Progress(ProgressCheckingConsistencyOfKeyOldies)
 
+	// key_oldies is reserved for former EP-format canonical keys (see AddKeyAlias);
+	// a non-EP-format oldie is a citation shorthand or demoted preferred alias that
+	// belongs in key_hints instead — migrate it there. Predates the AddKeyAlias
+	// guard that now prevents new violations; this repairs any left over from
+	// before that guard existed.
+	var misplaced []struct{ oldie, key string }
 	var ghosts []struct{ oldie, key string }
 	l.KeyOldies.ForEachPersistent(func(oldie, key string) {
+		if !IsValidKey(oldie) {
+			misplaced = append(misplaced, struct{ oldie, key string }{oldie, key})
+			return
+		}
 		if !l.EntryExists(key) {
 			l.Warning(WarningTargetOfOldieNotExists, key, oldie)
 		}
@@ -258,6 +268,13 @@ func (l *TBibTeXLibrary) CheckKeyOldiesConsistency() {
 			ghosts = append(ghosts, struct{ oldie, key string }{oldie, key})
 		}
 	})
+	for _, m := range misplaced {
+		l.AddKeyHint(m.oldie, m.key)
+		l.KeyOldies.Delete(m.oldie)
+	}
+	if len(misplaced) > 0 {
+		l.Progress("  Migrated %d non-EP key oldie(s) to key_hints", len(misplaced))
+	}
 	for _, g := range ghosts {
 		// Ghost: the oldie key still has rows in bib_entries even though it is
 		// recorded as an alias for g.key. Merge its fields into the canonical first
@@ -1498,8 +1515,14 @@ func (l *TBibTeXLibrary) CheckNeedToMergeForEqualTitles(key string) bool {
 		}
 	}
 	for _, a := range sortedKeys {
+		if l.QuitWasRequested() {
+			break
+		}
 		if a == l.MapEntryKey(a) {
 			for _, b := range sortedKeys {
+				if l.QuitWasRequested() {
+					break
+				}
 				if b == l.MapEntryKey(b) {
 					l.MaybeMergeEntries(l.MapEntryKey(a), l.MapEntryKey(b))
 				}
@@ -1558,7 +1581,7 @@ func (l *TBibTeXLibrary) CheckKeyValidity(entry *TBibTeXEntry) {
 func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	key := l.MapEntryKey(keyRAW) // Needed??
 
-	l.MaybeFixDBLPEntry(key)
+	l.maybeFixDBLPEntry(key)
 
 	entryType := l.EntryType(key)
 	entryDBLP := l.EntryFieldValueity(key, DBLPField)
@@ -1627,12 +1650,35 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 		// Check that every library child of this DBLP-keyed parent also has a DBLP key.
 		if entryDBLP != "" {
 			forEachLibraryChildOf(key, func(childKey string) {
+				// forEachLibraryChildOf has no way to stop iterating from outside its
+				// callback; once "q" is answered, make every remaining child a no-op
+				// rather than asking further unrelated questions for this parent.
+				if l.QuitWasRequested() {
+					return
+				}
 				// Re-resolve: the child may have been merged during the child-import loop above.
 				childKey = l.MapEntryKey(childKey)
 				if !l.EntryExists(childKey) {
 					return
 				}
 				if l.EntryFieldValueity(childKey, DBLPField) == "" && !l.DblpWaived.Contains(childKey) {
+					// Before asking the user to key this child, check whether it's
+					// actually a title-duplicate of another entry — common when several
+					// old library entries exist for the same paper, none previously
+					// merged. Merging is strictly better than separately keying what is
+					// the same publication; if the merge lands on a survivor that
+					// already has a DBLP key (or is waived), there's nothing left to ask.
+					if l.CheckNeedToMergeForEqualTitles(childKey) {
+						childKey = l.MapEntryKey(childKey)
+						if !l.EntryExists(childKey) || l.EntryFieldValueity(childKey, DBLPField) != "" || l.DblpWaived.Contains(childKey) {
+							return
+						}
+					}
+					// A "q" during the merge check above must stop here, not fall
+					// through to asking a second, unrelated question.
+					if l.QuitWasRequested() {
+						return
+					}
 					msg := fmt.Sprintf(WarningNoDblpKeyForChild, key, entryDBLP)
 					l.ReportEntryWarning(childKey, "%s", msg)
 					l.EntryInvolvedInWarning(key)

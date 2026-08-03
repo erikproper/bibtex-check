@@ -364,10 +364,13 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		}
 		l.UpdateEntryFieldAlias(key, field, current, challenge)
 		if field == PreferredAliasField {
-			// Demote the old alias to a key oldie only when it is not already claimed
-			// by a different entry — otherwise AddKeyAlias would warn "Ambiguous key oldie".
-			if ex := l.KeyOldies.Get(current); ex == "" || l.MapEntryKey(ex) == l.MapEntryKey(key) {
-				l.AddKeyAlias(current, key)
+			// Demote the old alias to a key hint — key_oldies is reserved for former
+			// EP-format canonical keys; a preferred alias is a human-readable citation
+			// string, exactly what key_hints is for. Skip silently (rather than via
+			// AddKeyHint's own ambiguity warning) when already claimed by a different
+			// entry.
+			if ex := l.HintToKey.GetValue(current); ex == "" || l.MapEntryKey(ex) == l.MapEntryKey(key) {
+				l.AddKeyHint(current, key)
 			}
 		}
 		l.setLineage(key, field, challenge, challengeSource, false)
@@ -417,8 +420,9 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	case "N":
 		l.UpdateGenericFieldAlias(field, current, challenge)
 		if field == PreferredAliasField {
-			if ex := l.KeyOldies.Get(current); ex == "" || l.MapEntryKey(ex) == l.MapEntryKey(key) {
-				l.AddKeyAlias(current, key)
+			// See the matching comment in case "n" above.
+			if ex := l.HintToKey.GetValue(current); ex == "" || l.MapEntryKey(ex) == l.MapEntryKey(key) {
+				l.AddKeyHint(current, key)
 			}
 		}
 		l.setLineage(key, field, challenge, challengeSource, false)
