@@ -2576,7 +2576,44 @@ func doAbsorbDblpOrcids() {
 // bestOrcidCanonical picks the preferred canonical name from a group that shares
 // an ORCID.  Preference: "ss, ff" format (the standard BibTeX person-name form)
 // over natural-order names; alphabetical tiebreak within each tier.
-func bestOrcidCanonical(canonicals []string) string {
+// dblpHomepagePrimaryName returns the first-listed author name from whichever of
+// homepageKeys is a DBLP "homepages/" record with a local data.json, or "" when
+// none resolve. DBLP lists a person's current name first on their homepage
+// record and any former names (e.g. a maiden name after marriage) after it —
+// the clearest available signal for "which of several name forms is current."
+func dblpHomepagePrimaryName(homepageKeys []string) string {
+	for _, key := range homepageKeys {
+		if !strings.HasPrefix(key, "homepages/") {
+			continue
+		}
+		je := readDblpJSONEntry(key)
+		if je == nil || len(je.Authors) == 0 || je.Authors[0].Name == "" {
+			continue
+		}
+		return je.Authors[0].Name
+	}
+	return ""
+}
+
+// bestOrcidCanonical picks the canonical name among candidates that share one
+// ORCID. When one of homepageKeys resolves to a local DBLP homepage record,
+// whichever candidate matches its first-listed (i.e. current, per DBLP's own
+// convention — see dblpHomepagePrimaryName) name wins, in either name-order
+// form — this is what stops a merge from defaulting to a stale name (e.g. a
+// maiden name) just because it happens to already be in "Surname, First"
+// form. Otherwise falls back to the original heuristic: prefer
+// "Surname, First"-formatted candidates over natural-order ones (matches
+// library convention), then alphabetically first — a real tiebreaker only
+// when DBLP itself gives no better signal.
+func bestOrcidCanonical(canonicals []string, homepageKeys []string) string {
+	if primary := dblpHomepagePrimaryName(homepageKeys); primary != "" {
+		primarySSFF := simpleSurnameSwap(primary)
+		for _, c := range canonicals {
+			if c == primary || c == primarySSFF || swapBibTeXNameFormat(c) == primary {
+				return c
+			}
+		}
+	}
 	var ssff, natural []string
 	for _, c := range canonicals {
 		if strings.Contains(c, ", ") {
@@ -2599,13 +2636,13 @@ func bestOrcidCanonical(canonicals []string) string {
 // followed by in-memory alias registration. Returns the number of pairs merged.
 func mergeOrcidDuplicatesCore() int {
 	// Group contributor IDs by ORCID.
-	type idName struct{ id, name string }
+	type idName struct{ id, name, dblpKey string }
 	orcidGroups := map[string][]idName{} // orcid → []idName
 	for id, contrib := range Library.ContributorByID {
 		if contrib.ORCID == "" {
 			continue
 		}
-		orcidGroups[contrib.ORCID] = append(orcidGroups[contrib.ORCID], idName{id, contrib.Name})
+		orcidGroups[contrib.ORCID] = append(orcidGroups[contrib.ORCID], idName{id, contrib.Name, contrib.DblpKey})
 	}
 
 	merged := 0
@@ -2615,10 +2652,12 @@ func mergeOrcidDuplicatesCore() int {
 		}
 		// Pick the best canonical name; find its member record.
 		canonicals := make([]string, len(members))
+		homepageKeys := make([]string, len(members))
 		for i, m := range members {
 			canonicals[i] = m.name
+			homepageKeys[i] = m.dblpKey
 		}
-		bestName := bestOrcidCanonical(canonicals)
+		bestName := bestOrcidCanonical(canonicals, homepageKeys)
 		var bestID string
 		for _, m := range members {
 			if m.name == bestName {

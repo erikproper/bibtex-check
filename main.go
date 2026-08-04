@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.32"
+const AppVersion = "29.34"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2954,7 +2954,7 @@ func doMergeEntries(args []string) {
 		}
 		target := resolvedKeys[len(resolvedKeys)-1]
 		if len(resolvedKeys) > 1 {
-			stderrPrintf("\nMerge:\n")
+			stderrPrintf("\nMerge: %s → %s\n", strings.Join(resolvedKeys[:len(resolvedKeys)-1], ", "), target)
 		}
 		for i, alias := range resolvedKeys[:len(resolvedKeys)-1] {
 			if alias == target {
