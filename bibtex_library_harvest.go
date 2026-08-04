@@ -376,11 +376,8 @@ func (l *TBibTeXLibrary) harvestFindDblpCandidates(e TBibTeXEntry, excludeDblpKe
 	answer := l.WarningQuestion(QuestionHarvestDblpChoose, options,
 		WarningHarvestDblpCandidatesFound, e.Fields[TitleField], len(candidates))
 	if answer == "k" {
-		if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
-			if dblpEntryFromFile(dblpKey) != nil {
-				return dblpKey
-			}
-			l.Warning("DBLP key %q not found in file store", dblpKey)
+		if typed, err := Reporting.AskForInput("DBLP key"); err == nil && typed != "" {
+			return l.resolveTypedDblpKey(e.Key, typed)
 		}
 		return ""
 	}
@@ -910,11 +907,9 @@ func (l *TBibTeXLibrary) runHarvestEntry(e TBibTeXEntry, syncState *TSyncState) 
 	case "q":
 		return "", true
 	case "k":
-		dblpKey, err := Reporting.AskForInput("DBLP key")
-		if err == nil && dblpKey != "" {
-			if dblpEntryFromFile(dblpKey) == nil {
-				l.Warning("DBLP key %q not found in file store", dblpKey)
-			} else {
+		typed, err := Reporting.AskForInput("DBLP key")
+		if err == nil && typed != "" {
+			if dblpKey := l.resolveTypedDblpKey(e.Key, typed); dblpKey != "" {
 				newKey := addHarvestEntry(l, e)
 				l.AssociateDblpKey(newKey, dblpKey)
 				sessionManualDblpAssignments++

@@ -320,7 +320,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	// what DBLP itself actually says, instead of trusting either rendering blind.
 	dblpKey := l.EntryFieldValueity(key, DBLPField)
 	if dblpKey != "" {
-		options.Add("s")
+		options.Add("s", "S")
 	}
 	// Show lineage+priority alongside the raw values so the user can judge the
 	// decision with the same information the priority-based auto-resolution above
@@ -347,7 +347,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		question += " (e = edit)"
 	}
 	if dblpKey != "" {
-		question += " (s = show original DBLP entry)"
+		question += " (s = show original DBLP entry, S = look up another DBLP key)"
 	}
 	// Record what the source is currently delivering before the user makes a choice.
 	// This ensures the signature is populated regardless of which branch is taken.
@@ -359,6 +359,10 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		answer = l.WarningQuestion(question, options, warning, key, field, current, currentLineageDisplay, challenge, challengerLineageDisplay)
 		if answer == "s" {
 			l.displayDblpOriginalEntry(dblpKey)
+			continue
+		}
+		if answer == "S" {
+			l.askAndDisplayDblpEntry(key)
 			continue
 		}
 		break

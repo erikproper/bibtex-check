@@ -1705,23 +1705,28 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 						}
 					}
 					// No candidate selected: offer manual key entry, waive, skip, or show
-					// the parent's DBLP table of contents (loop back to re-ask after "s"
+					// the parent's DBLP table of contents (loop back to re-ask after "s"/"S"
 					// since displaying it doesn't itself resolve anything).
 					if !resolved {
 						childOptions := TStringSetNew()
-						childOptions.Add("k", "y", "n", "s")
+						childOptions.Add("k", "y", "n", "s", "S")
 						for {
 							answer := l.WarningQuestion(QuestionNoDblpKeyForChildAction, childOptions, "")
 							if answer == "s" {
 								l.displayDblpChildrenToC(entryDBLP, key)
 								continue
 							}
+							if answer == "S" {
+								// "Look around": the child's real DBLP entry can be a child of a
+								// *different* year's proceedings for the same conference — the
+								// fixed table of contents above only covers this one year.
+								l.askAndDisplayDblpEntry(childKey)
+								continue
+							}
 							switch answer {
 							case "k":
-								if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
-									if dblpEntryFromFile(dblpKey) == nil {
-										l.Warning("DBLP key %q not found in file store", dblpKey)
-									} else {
+								if typed, err := Reporting.AskForInput("DBLP key"); err == nil && typed != "" {
+									if dblpKey := l.resolveTypedDblpKey(childKey, typed); dblpKey != "" {
 										l.AssociateDblpKey(childKey, dblpKey)
 										sessionManualDblpAssignments++
 										deleteEntryWarning(childKey, msg)
@@ -1783,6 +1788,23 @@ func (l *TBibTeXLibrary) displayDblpOriginalEntry(dblpKey string) {
 		return
 	}
 	displayContent("Original DBLP entry for " + dblpKey + ":\n\n" + l.entryStringFromEntry(entry, "", "  "))
+}
+
+// askAndDisplayDblpEntry is the "S" companion to "s": rather than showing a
+// fixed candidate/child list, it asks the user to type any DBLP key and
+// displays that instead. For "look around" cases the fixed list can't cover —
+// e.g. a conference (BPM, ER, ...) where the entry actually needed is a child
+// of a *different* year's proceedings than the one currently being resolved.
+// displayKey is passed through to resolveTypedDblpKey for context if the typed
+// key needs typo recovery (see resolveTypedDblpKey).
+func (l *TBibTeXLibrary) askAndDisplayDblpEntry(displayKey string) {
+	typed, err := l.AskForInput("DBLP key to look up")
+	if err != nil || typed == "" {
+		return
+	}
+	if dblpKey := l.resolveTypedDblpKey(displayKey, typed); dblpKey != "" {
+		l.displayDblpOriginalEntry(dblpKey)
+	}
 }
 
 func (l *TBibTeXLibrary) NormaliseEntryFields(entry *TBibTeXEntry) {
@@ -2138,10 +2160,8 @@ func (l *TBibTeXLibrary) CheckLoneProceedings() {
 
 		switch l.WarningQuestion(QuestionLoneProceedings, validAnswers, "") {
 		case "k":
-			if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
-				if dblpEntryFromFile(dblpKey) == nil {
-					l.Warning("DBLP key %q not found in file store", dblpKey)
-				} else {
+			if typed, err := Reporting.AskForInput("DBLP key"); err == nil && typed != "" {
+				if dblpKey := l.resolveTypedDblpKey(key, typed); dblpKey != "" {
 					Library.AssociateDblpKey(key, dblpKey)
 					sessionManualDblpAssignments++
 					if newDblpKey := l.EntryFieldValueity(key, DBLPField); newDblpKey != "" {

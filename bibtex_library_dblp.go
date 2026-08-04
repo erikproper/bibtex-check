@@ -564,10 +564,7 @@ func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) st
 		WarningExtendDblpCandidatesFound, key, len(candidates))
 	if answer == "k" {
 		if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
-			if dblpEntryFromFile(dblpKey) != nil {
-				return dblpKey
-			}
-			l.Warning("DBLP key %q not found in file store", dblpKey)
+			return l.resolveTypedDblpKey(key, dblpKey)
 		}
 		return ""
 	}
@@ -576,6 +573,34 @@ func (l *TBibTeXLibrary) AskCandidateDblpKey(key string, candidates []string) st
 		return ""
 	}
 	return candidates[n-1]
+}
+
+// resolveTypedDblpKey validates a DBLP key the user typed by hand against the
+// local file store. If found verbatim, returns it unchanged. DBLP's own web UI
+// makes it easy to copy a key one character short (e.g. "onf/vldb/TuzhilinC9"
+// for "conf/vldb/TuzhilinC90"), so on a miss — only when typed contains at
+// least two "/" (fewer makes a substring search too unconstrained to be useful
+// — practically everything contains one slash) — this searches the local
+// manifest for keys containing typed as a substring and, when there are 1-4 of
+// them, offers them as a pick list via AskCandidateDblpKey (displayKey is the
+// library entry being resolved, shown for context). 0 or 5+ matches fall back
+// to the plain "not found" warning. Returns "" whenever nothing was resolved.
+func (l *TBibTeXLibrary) resolveTypedDblpKey(displayKey, typed string) string {
+	if dblpEntryFromFile(typed) != nil {
+		return typed
+	}
+	if strings.Count(typed, "/") < 2 {
+		l.Warning("DBLP key %q not found in file store", typed)
+		return ""
+	}
+	const maxCandidates = 4
+	matches := searchDblpKeysContaining(typed, maxCandidates+1)
+	if len(matches) == 0 || len(matches) > maxCandidates {
+		l.Warning("DBLP key %q not found in file store", typed)
+		return ""
+	}
+	l.Warning("DBLP key %q not found in file store — did you mean one of these?", typed)
+	return l.AskCandidateDblpKey(displayKey, matches)
 }
 
 // CheckDblpKeyMissingWarnings warns about library entries whose DBLP key has

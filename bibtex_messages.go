@@ -56,7 +56,7 @@ const (
 	// Ignore an (illegal) field
 	QuestionIgnore                  = "Ignore this field?"
 	QuestionAddToDblpWaived         = "Add to dblp_waived (suppress further warnings)?"
-	QuestionNoDblpKeyForChildAction = "Enter DBLP key, waive (suppress warnings), skip, or show DBLP table of contents? (k=dblp key, y=waive, n=skip, s=show ToC)"
+	QuestionNoDblpKeyForChildAction = "Enter DBLP key, waive (suppress warnings), skip, show DBLP table of contents, or look up another DBLP key? (k=dblp key, y=waive, n=skip, s=show ToC, S=look up)"
 
 	// Warnings when reading files
 	WarningUnknownEntryType                 = "Entry %s has an unknown entry type %s."

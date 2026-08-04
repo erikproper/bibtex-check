@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -52,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.28"
+const AppVersion = "29.31"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -3793,25 +3794,17 @@ func main() {
 	// wraps its entire pass in one open transaction, committed only at the very end)
 	// kills the process with zero cleanup: no commit, no finaliseWorkingDatabase.
 	// Every decision made during that run — including every interactively-answered
-	// question — is silently discarded, as if it never happened. gracefulQuit()
-	// already does the right thing for a "q" answer; reuse it here for SIGINT/SIGTERM.
+	// question — is silently discarded, as if it never happened. quitNow() does the
+	// same commit/finalise-then-exit sequence a "q" answer to any prompt now
+	// triggers directly (interaction.go) — SIGINT is just another way to ask for
+	// the same thing, so it shares the exact same exit path (and quitOnce guard,
+	// so a second Ctrl-C while the first is still committing is a harmless no-op).
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		if !dbWriteSessionActive {
-			// Nothing has been written this run — either a read-only command
-			// (openLibraryToReport never calls prepareWorkingDatabase, so there is no
-			// working database to commit or finalise) or an interrupt landing before
-			// openLibraryToUpdate's setup got that far. gracefulQuit()'s commit/finalise
-			// chain assumes a write session actually started; calling it here touched
-			// possibly-uninitialised DB/Library state and crashed (nil pointer panic
-			// reported 2026-07-30 from a Ctrl-C during a bare -render_as_tex). There is
-			// nothing to lose by exiting immediately.
-			os.Exit(0)
-		}
 		stderrPrintf("\nInterrupted — committing work done so far before exiting...\n")
-		gracefulQuit()
+		quitNow()
 	}()
 
 	baseFlag := flag.String("base", "", "path/basename of the library (required)")
@@ -4504,4 +4497,35 @@ func gracefulQuit() {
 		finaliseWorkingDatabase()
 	}
 	os.Exit(0)
+}
+
+// quitOnce guards quitNow so a second trigger (another Ctrl-C while the first is
+// still committing/finalising, or a racing SIGINT and typed "q") cannot re-enter
+// the commit/finalise sequence. The second (and any later) caller just blocks on
+// Do — harmlessly, since the first caller's os.Exit(0) tears down the whole
+// process, including that blocked goroutine, the moment it completes.
+var quitOnce sync.Once
+
+// quitNow is the single, unconditional exit point for "the user wants to stop
+// right now" — a "q" answer to any interactive question, or SIGINT/SIGTERM. It
+// never returns. Every prompt in the interaction layer (interaction.go) calls
+// this directly the moment "q" is read, rather than only setting quitRequested
+// and hoping every layer of every caller remembers to check it before asking
+// anything else — that per-call-site propagation repeatedly proved leaky (see
+// PROJECT.md's 2026-08 quit-propagation incidents).
+func quitNow() {
+	quitOnce.Do(func() {
+		if !dbWriteSessionActive {
+			// Nothing has been written this run — either a read-only command
+			// (openLibraryToReport never calls prepareWorkingDatabase, so there is no
+			// working database to commit or finalise) or a "q" landing before
+			// openLibraryToUpdate's setup got that far. gracefulQuit()'s commit/finalise
+			// chain assumes a write session actually started; calling it here touches
+			// possibly-uninitialised DB/Library state (the same nil pointer panic
+			// class reported 2026-07-30 from a Ctrl-C during a bare -render_as_tex).
+			// There is nothing to lose by exiting immediately.
+			os.Exit(0)
+		}
+		gracefulQuit()
+	})
 }

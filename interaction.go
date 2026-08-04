@@ -154,6 +154,8 @@ func (t *TProgressTicker) Step() bool {
 	case line, ok := <-stdinCh:
 		if ok && strings.TrimSpace(line) == "q" && t.interaction != nil {
 			t.interaction.quitRequested = true
+			stderrPrintf("\nInterrupted — committing work done so far before exiting...\n")
+			quitNow()
 		}
 	default:
 	}
@@ -173,6 +175,8 @@ func (t *TProgressTicker) SetCount(n int) bool {
 	case line, ok := <-stdinCh:
 		if ok && strings.TrimSpace(line) == "q" && t.interaction != nil {
 			t.interaction.quitRequested = true
+			stderrPrintf("\nInterrupted — committing work done so far before exiting...\n")
+			quitNow()
 		}
 	default:
 	}
@@ -191,6 +195,8 @@ func (t *TProgressTicker) Tick() bool {
 	case line, ok := <-stdinCh:
 		if ok && strings.TrimSpace(line) == "q" && t.interaction != nil {
 			t.interaction.quitRequested = true
+			stderrPrintf("\nInterrupted — committing work done so far before exiting...\n")
+			quitNow()
 		}
 	default:
 	}
@@ -246,11 +252,12 @@ func (r *TInteraction) QuestionsAnswered() int {
 func (r *TInteraction) ResetQuestionFlag() {}
 
 // AskForInput prints prompt and returns the trimmed line the user types.
-// Typing "q" sets quitRequested and returns "".
-// In non-TTY sessions, sets quitRequested and returns "" immediately.
+// Typing "q" quits immediately (see quitNow) and never returns.
+// In non-TTY sessions, quits immediately (see quitNow) and never returns.
 func (r *TInteraction) AskForInput(prompt string) (string, error) {
 	if !isTTY {
 		r.quitRequested = true
+		quitNow()
 		return "", nil
 	}
 	SpinnerInterrupt()
@@ -259,6 +266,7 @@ func (r *TInteraction) AskForInput(prompt string) (string, error) {
 	if line == "q" {
 		r.quitRequested = true
 		fmt.Fprintln(os.Stderr)
+		quitNow()
 		return "", nil
 	}
 	fmt.Fprintln(os.Stderr)
@@ -401,11 +409,11 @@ func (r *TInteraction) WarningGrouped(warning string, context ...any) bool {
 }
 
 // WarningQuestion presents a question and waits for one of the listed options.
-// "q" is always accepted (in addition to the named options) and triggers a
-// graceful quit: quitRequested is set and "q" is returned to the caller.
+// "q" is always accepted (in addition to the named options) and quits
+// immediately (see quitNow) — it never returns to the caller.
 // When warning is non-empty it is printed immediately (bypassing any deferral)
 // as inline context for the question.
-// In non-TTY sessions, sets quitRequested and returns "q" immediately.
+// In non-TTY sessions, quits immediately (see quitNow) and never returns.
 func (r *TInteraction) WarningQuestion(question string, options TStringSet, warning string, context ...any) string {
 	return r.warningQuestionCore(question, options, warning, false, context...)
 }
@@ -422,6 +430,7 @@ func (r *TInteraction) WarningQuestionGrouped(question string, options TStringSe
 func (r *TInteraction) warningQuestionCore(question string, options TStringSet, warning string, grouped bool, context ...any) string {
 	if !isTTY {
 		r.quitRequested = true
+		quitNow()
 		return "q"
 	}
 	r.questionsAnswered++
@@ -454,6 +463,7 @@ func (r *TInteraction) warningQuestionCore(question string, options TStringSet, 
 		if option == "q" {
 			r.quitRequested = true
 			fmt.Fprintln(os.Stderr)
+			quitNow()
 			return "q"
 		}
 		if options.Contains(option) {
@@ -466,10 +476,11 @@ func (r *TInteraction) warningQuestionCore(question string, options TStringSet, 
 
 // WarningQuestionOrdered is like WarningQuestion but uses the caller-supplied slice
 // to control the display order of options (useful when ASCII sort would mis-group them).
-// In non-TTY sessions, sets quitRequested and returns "q" immediately.
+// In non-TTY sessions, quits immediately (see quitNow) and never returns.
 func (r *TInteraction) WarningQuestionOrdered(question string, ordered []string, warning string, context ...any) string {
 	if !isTTY {
 		r.quitRequested = true
+		quitNow()
 		return "q"
 	}
 	valid := TStringSetNew()
@@ -504,6 +515,7 @@ func (r *TInteraction) WarningQuestionOrdered(question string, ordered []string,
 		if option == "q" {
 			r.quitRequested = true
 			fmt.Fprintln(os.Stderr)
+			quitNow()
 			return "q"
 		}
 		if valid.Contains(option) {
@@ -566,11 +578,12 @@ func printStatBlock(header string, rows []statRow, trailingBlank bool) {
 
 // ConfirmAction always prompts the user for y/n/q confirmation, even when the
 // interaction is silenced. Use for safety gates that must not be skipped
-// by batch-mode callers. "q" sets quitRequested and returns false.
-// In non-TTY sessions, sets quitRequested and returns false immediately.
+// by batch-mode callers. "q" quits immediately (see quitNow) and never returns.
+// In non-TTY sessions, quits immediately (see quitNow) and never returns.
 func (r *TInteraction) ConfirmAction(prompt string) bool {
 	if !isTTY {
 		r.quitRequested = true
+		quitNow()
 		return false
 	}
 	r.questionsAnswered++
@@ -585,6 +598,7 @@ func (r *TInteraction) ConfirmAction(prompt string) bool {
 		if answer == "q" {
 			r.quitRequested = true
 			fmt.Fprintln(os.Stderr)
+			quitNow()
 			return false
 		}
 		fmt.Fprint(os.Stderr, "(y/n/q): ")

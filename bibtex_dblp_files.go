@@ -600,6 +600,36 @@ func (m TDblpManifest) get(dblpKey string) (TDblpManifestEntry, bool) {
 
 func dblpEntriesManifestPath() string { return dblpFolder() + "entries.manifest" }
 
+// searchDblpKeysContaining scans entries.manifest for DBLP keys containing substr
+// and returns up to limit+1 matches (the extra one lets a caller distinguish
+// "exactly limit matches" from "too many to be useful" without a second pass).
+// A plain line scan over the flat manifest file, not a full loadDblpManifests
+// parse — cheap enough for an interactive typo-recovery lookup, and avoids
+// building the whole nested map just to throw it away.
+func searchDblpKeysContaining(substr string, limit int) []string {
+	data, err := os.ReadFile(dblpEntriesManifestPath())
+	if err != nil {
+		return nil
+	}
+	var matches []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		key := line
+		if i := strings.IndexByte(line, ','); i >= 0 {
+			key = line[:i]
+		}
+		if strings.Contains(key, substr) {
+			matches = append(matches, key)
+			if len(matches) > limit {
+				break
+			}
+		}
+	}
+	return matches
+}
+
 // loadDblpManifests reads the single entries.manifest file at dblpFolder().
 // Falls back to the legacy per-directory manifest.csv walk when the file is
 // absent, writing the new file immediately so subsequent loads are fast.

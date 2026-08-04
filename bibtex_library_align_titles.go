@@ -265,6 +265,10 @@ func (l *TBibTeXLibrary) handleAlignHit(key string, h titleAlignHit, autoAccept 
 			l.SetMetadata(key, waiverPropForKind(h.kind), time.Now().Format("2006-01-02"))
 			return false
 		case "q":
+			// This "q" is handled by its own raw readStdinLine loop, not
+			// WarningQuestion, so it must call quitNow() itself rather than
+			// relying on the interaction layer to do it.
+			quitNow()
 			return true
 		default:
 			fmt.Fprint(os.Stderr, "(a/m/s/w/q): ")
@@ -360,6 +364,9 @@ func (l *TBibTeXLibrary) CheckAlignBooktitleCountries() {
 			}
 			return
 		case "q":
+			// Own raw readStdinLine loop, not WarningQuestion — see the matching
+			// comment in handleAlignHit.
+			quitNow()
 			return
 		default:
 			fmt.Fprint(os.Stderr, "(a/i/q): ")
