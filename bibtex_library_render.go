@@ -415,7 +415,16 @@ func (l *TBibTeXLibrary) renderAsHTML(key string) string {
 	}
 
 	parent, _ := l.resolveParent(entry)
+	return l.renderEntryAsHTML(entry, parent)
+}
 
+// renderEntryAsHTML formats entry (with an already-resolved parent, or nil) as an
+// HTML bibliography reference. Split out from renderAsHTML so it can also render
+// entries that are not (yet) library entries — e.g. a raw DBLP file-store record
+// via dblpEntryFromFile, whose own crossref (if any) is a DBLP key rather than a
+// library key, so resolveParent cannot resolve it; the caller supplies parent
+// directly instead.
+func (l *TBibTeXLibrary) renderEntryAsHTML(entry, parent *TBibTeXEntry) string {
 	get := func(field string) string {
 		return htmlEncodeNonASCII(texToHTML(l.mergedField(entry, parent, field)))
 	}
@@ -714,6 +723,12 @@ func (l *TBibTeXLibrary) renderAsHTML(key string) string {
 // renderAsText formats the entry as a plain-text bibliography reference.
 func (l *TBibTeXLibrary) renderAsText(key string) string {
 	return texToText(l.renderAsHTML(key))
+}
+
+// renderEntryAsText is the entry+parent counterpart of renderAsText — see
+// renderEntryAsHTML.
+func (l *TBibTeXLibrary) renderEntryAsText(entry, parent *TBibTeXEntry) string {
+	return texToText(l.renderEntryAsHTML(entry, parent))
 }
 
 // renderAsTeX formats the entry as a TeX bibliography reference.

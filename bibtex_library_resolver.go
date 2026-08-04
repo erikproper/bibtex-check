@@ -315,6 +315,13 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	} else {
 		options.Add("Y", "y", "n", "N")
 	}
+	// Offer to show the original DBLP entry (via displayContent) when this entry
+	// has a DBLP key — lets the user cross-check "Current" vs "Challenger" against
+	// what DBLP itself actually says, instead of trusting either rendering blind.
+	dblpKey := l.EntryFieldValueity(key, DBLPField)
+	if dblpKey != "" {
+		options.Add("s")
+	}
 	// Show lineage+priority alongside the raw values so the user can judge the
 	// decision with the same information the priority-based auto-resolution above
 	// already had — e.g. "current already has a higher-priority source; overriding
@@ -333,19 +340,29 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 		"needs to be resolved"
 	question := "Challenging entry:\n" + l.EntryString(challengeKey, "", "  ")
 	question += "Current entry:\n" + l.EntryString(key, "", "  ")
+	question += "Keep the value as is?"
 	if canBreakDown {
-		question += "Keep the value as is? (b = break down by name)"
+		question += " (b = break down by name)"
 	} else if singleAuthor {
-		question += "Keep the value as is? (e = edit)"
-	} else {
-		question += "Keep the value as is?"
+		question += " (e = edit)"
+	}
+	if dblpKey != "" {
+		question += " (s = show original DBLP entry)"
 	}
 	// Record what the source is currently delivering before the user makes a choice.
 	// This ensures the signature is populated regardless of which branch is taken.
 	if challengeSource != "" {
 		l.setSourceFieldSignature(key, field, challengeSource, challenge)
 	}
-	answer := l.WarningQuestion(question, options, warning, key, field, current, currentLineageDisplay, challenge, challengerLineageDisplay)
+	var answer string
+	for {
+		answer = l.WarningQuestion(question, options, warning, key, field, current, currentLineageDisplay, challenge, challengerLineageDisplay)
+		if answer == "s" {
+			l.displayDblpOriginalEntry(dblpKey)
+			continue
+		}
+		break
+	}
 
 	switch answer {
 	case "y":

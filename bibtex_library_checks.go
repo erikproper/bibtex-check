@@ -1704,33 +1704,85 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 							resolved = true
 						}
 					}
-					// No candidate selected: offer manual key entry, waive, or skip.
+					// No candidate selected: offer manual key entry, waive, skip, or show
+					// the parent's DBLP table of contents (loop back to re-ask after "s"
+					// since displaying it doesn't itself resolve anything).
 					if !resolved {
 						childOptions := TStringSetNew()
-						childOptions.Add("k", "y", "n")
-						switch l.WarningQuestion(QuestionNoDblpKeyForChildAction, childOptions, "") {
-						case "k":
-							if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
-								if dblpEntryFromFile(dblpKey) == nil {
-									l.Warning("DBLP key %q not found in file store", dblpKey)
-								} else {
-									l.AssociateDblpKey(childKey, dblpKey)
-									sessionManualDblpAssignments++
-									deleteEntryWarning(childKey, msg)
-									deleteEntryWarning(key, "")
-								}
+						childOptions.Add("k", "y", "n", "s")
+						for {
+							answer := l.WarningQuestion(QuestionNoDblpKeyForChildAction, childOptions, "")
+							if answer == "s" {
+								l.displayDblpChildrenToC(entryDBLP, key)
+								continue
 							}
-						case "y":
-							l.DblpWaived.Set(childKey, true)
-							// Waived: remove from entry_warnings so it doesn't appear in repair.bib.
-							deleteEntryWarning(childKey, msg)
-							deleteEntryWarning(key, "")
+							switch answer {
+							case "k":
+								if dblpKey, err := Reporting.AskForInput("DBLP key"); err == nil && dblpKey != "" {
+									if dblpEntryFromFile(dblpKey) == nil {
+										l.Warning("DBLP key %q not found in file store", dblpKey)
+									} else {
+										l.AssociateDblpKey(childKey, dblpKey)
+										sessionManualDblpAssignments++
+										deleteEntryWarning(childKey, msg)
+										deleteEntryWarning(key, "")
+									}
+								}
+							case "y":
+								l.DblpWaived.Set(childKey, true)
+								// Waived: remove from entry_warnings so it doesn't appear in repair.bib.
+								deleteEntryWarning(childKey, msg)
+								deleteEntryWarning(key, "")
+							}
+							break
 						}
 					}
 				}
 			})
 		}
 	}
+}
+
+// displayDblpChildrenToC renders every DBLP child of entryDBLP (whether or not it
+// is already a library entry) as a text bibliography reference and sends the
+// result to displayContent, so the user can visually pick out a child's DBLP key
+// from DBLP's own local file-store data instead of relying on dblp.org, which is
+// prone to 503s under load. parentKey is the library entry the children crossref;
+// its already-known fields (e.g. booktitle) fill in for children whose own DBLP
+// record omits them.
+func (l *TBibTeXLibrary) displayDblpChildrenToC(entryDBLP, parentKey string) {
+	children := readDblpCrossrefChildren(entryDBLP)
+	if len(children) == 0 {
+		l.Progress("No DBLP children on file for %s", entryDBLP)
+		return
+	}
+	parent := l.buildEntry(parentKey)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "DBLP table of contents for %s\n%s\n\n", entryDBLP, strings.Repeat("=", len("DBLP table of contents for ")+len(entryDBLP)))
+	for _, childDBLP := range children {
+		entry := dblpEntryFromFile(childDBLP)
+		if entry == nil {
+			fmt.Fprintf(&sb, "dblp: %s\n(not found in local file store)\n\n", childDBLP)
+			continue
+		}
+		fmt.Fprintf(&sb, "dblp: %s\n%s\n\n", childDBLP, l.renderEntryAsText(entry, parent))
+	}
+	displayContent(sb.String())
+}
+
+// displayDblpOriginalEntry renders dblpKey's raw record from the local DBLP file
+// store as a BibTeX field dump (the same style as the "Current entry"/"Challenging
+// entry" blocks already shown alongside a field-conflict question) and sends it to
+// displayContent, so the user can check a disputed field against what DBLP itself
+// actually says instead of trusting either side of the conflict blind.
+func (l *TBibTeXLibrary) displayDblpOriginalEntry(dblpKey string) {
+	entry := dblpEntryFromFile(dblpKey)
+	if entry == nil {
+		l.Progress("DBLP key %s not found in local file store", dblpKey)
+		return
+	}
+	displayContent("Original DBLP entry for " + dblpKey + ":\n\n" + l.entryStringFromEntry(entry, "", "  "))
 }
 
 func (l *TBibTeXLibrary) NormaliseEntryFields(entry *TBibTeXEntry) {

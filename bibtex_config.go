@@ -38,18 +38,19 @@ var (
 const (
 	NoKey = ""
 
-	BibFileExtension     = ".bib"
-	KeysFileExtension    = ".keys"    // pull-mode key/alias map (replaces legacy .map)
-	SubsetStateExtension = ".subset"  // common-ancestor fingerprint snapshot for subset sync (to be retired)
-	SyncDbExtension      = ".sync"    // per-bib SQLite snapshot store for field-level three-way merge
+	BibFileExtension           = ".bib"
+	KeysFileExtension          = ".keys"        // pull-mode key/alias map (replaces legacy .map)
+	SubsetStateExtension       = ".subset"      // common-ancestor fingerprint snapshot for subset sync (to be retired)
+	SyncDbExtension            = ".sync"        // per-bib SQLite snapshot store for field-level three-way merge
 	LocalGroupsExtension       = ".groups"      // per-subset local group memberships (group;canonicalKey CSV)
 	LocalGroupsStructExtension = ".groupstruct" // verbatim jabref-meta grouping block from source bib
-	cacheFileExtension   = ".sqlite3"
-	FoldersFileExtension = ".folders" // bootstrap paths file (global_folder, cache_folder)
-	ConfigFileExtension  = ".config"  // reserved for sync-mode definitions (step 13.2+)
-	LockFileExtension    = ".lock"
-	tablesFolderSuffix   = ".tables"
-	scriptsFolderSuffix  = ".scripts"
+	cacheFileExtension         = ".sqlite3"
+	SettingsFileExtension      = ".settings" // bootstrap paths + display settings file (global_folder, cache_folder, display_file, display_command); formerly .folders
+	FoldersFileExtension       = ".folders"  // legacy bootstrap paths file name; migrated to .settings on first run
+	ConfigFileExtension        = ".config"   // reserved for sync-mode definitions (step 13.2+)
+	LockFileExtension          = ".lock"
+	tablesFolderSuffix         = ".tables"
+	scriptsFolderSuffix        = ".scripts"
 
 	// All exportable/importable tables live in <basename>.tables/ as CSV files,
 	// named after their DB table (or "folders" for the bootstrap settings).

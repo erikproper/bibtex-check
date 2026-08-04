@@ -1086,7 +1086,24 @@ func (l *TBibTeXLibrary) MaybeMergeEntries(sourceRAW, targetRAW string) {
 			}
 
 			if l.WarningYesNoQuestion("Merge these entries", "First entry:\n%s\nSecond entry:\n%s", sourceEntry, targetEntry) {
-				l.MergeEntries(source, target)
+				confirmed := true
+				// A "y" here is easy to fire off on autopilot when scanning a long
+				// run — differing years are the cheapest, most reliable signal that
+				// these are two genuinely different publications wearing the same
+				// title (e.g. a book and an unrelated encyclopedia chapter), so
+				// double-check before doing something merges can't cleanly undo.
+				sourceYear := l.EntryFieldValueity(source, "year")
+				targetYear := l.EntryFieldValueity(target, "year")
+				if sourceYear != "" && targetYear != "" && sourceYear != targetYear {
+					confirmed = l.WarningYesNoQuestion("The years differ — are you sure you want to merge these entries",
+						"First entry (year %s):\n%s\nSecond entry (year %s):\n%s",
+						sourceYear, sourceEntry, targetYear, targetEntry)
+				}
+				if confirmed {
+					l.MergeEntries(source, target)
+				} else if !l.QuitWasRequested() {
+					l.AddNonDoubleEntries(source, target)
+				}
 			} else if !l.QuitWasRequested() {
 				// WarningYesNoQuestion collapses "n" and "q" into the same false —
 				// a "q" answer must not be recorded as "confirmed different entries",
@@ -1241,13 +1258,24 @@ func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) str
 	if !entry.Exists() {
 		return ""
 	}
+	return l.entryStringFromEntry(entry, groups, prefixes...)
+}
+
+// entryStringFromEntry is the entry-argument counterpart of EntryString — see
+// renderEntryAsHTML for the same reasoning: a raw DBLP file-store entry
+// (dblpEntryFromFile) has no library key to load via loadEntryFromDb, so callers
+// that already have such an entry in hand pass it directly instead.
+func (l *TBibTeXLibrary) entryStringFromEntry(entry *TBibTeXEntry, groups string, prefixes ...string) string {
+	if !entry.Exists() {
+		return ""
+	}
 
 	linePrefix := ""
 	for _, prefix := range prefixes {
 		linePrefix += prefix
 	}
 
-	result := linePrefix + "@" + entry.EntryType() + "{" + key + ",\n"
+	result := linePrefix + "@" + entry.EntryType() + "{" + entry.Key + ",\n"
 
 	if groups != "" {
 		result += FormatBibTeXFieldAssignment(linePrefix, GroupsField, groups)
@@ -1258,13 +1286,13 @@ func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) str
 			continue
 		}
 		if field == LocalURLField {
-			if l.PDFFiles[key] {
-				result += FormatBibTeXFieldAssignment(linePrefix, field, l.FilesRoot+l.FilesFolder+key+".pdf")
+			if l.PDFFiles[entry.Key] {
+				result += FormatBibTeXFieldAssignment(linePrefix, field, l.FilesRoot+l.FilesFolder+entry.Key+".pdf")
 			}
 			continue
 		}
 		if value := entry.FieldValue(field); value != "" {
-			mapped := l.MapEntryFieldValue(key, field, value)
+			mapped := l.MapEntryFieldValue(entry.Key, field, value)
 			result += FormatBibTeXFieldAssignment(linePrefix, field, mapped)
 		}
 	}

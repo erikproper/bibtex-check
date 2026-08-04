@@ -54,9 +54,9 @@ const (
 	ProgressCheckingConsistencyOfKeyOldies = "  Checking consistency and completeness of key oldies"
 
 	// Ignore an (illegal) field
-	QuestionIgnore         = "Ignore this field?"
-	QuestionAddToDblpWaived        = "Add to dblp_waived (suppress further warnings)?"
-	QuestionNoDblpKeyForChildAction = "Enter DBLP key, waive (suppress warnings), or skip? (k=dblp key, y=waive, n=skip)"
+	QuestionIgnore                  = "Ignore this field?"
+	QuestionAddToDblpWaived         = "Add to dblp_waived (suppress further warnings)?"
+	QuestionNoDblpKeyForChildAction = "Enter DBLP key, waive (suppress warnings), skip, or show DBLP table of contents? (k=dblp key, y=waive, n=skip, s=show ToC)"
 
 	// Warnings when reading files
 	WarningUnknownEntryType                 = "Entry %s has an unknown entry type %s."

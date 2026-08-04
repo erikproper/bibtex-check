@@ -52,7 +52,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.25"
+const AppVersion = "29.28"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -4014,7 +4014,7 @@ flag.BoolVar(&cmdAlignBooktitleCountries, "align_booktitle_countries", false, "d
 
 	Reporting = TInteraction{}
 
-	loadBibTeXFolders(bibTeXFolder + bibTeXBaseName + FoldersFileExtension)
+	loadBibTeXFolders(bibTeXFolder + bibTeXBaseName + SettingsFileExtension)
 	if backupFolder == "" {
 		backupFolder = bibTeXFolder + bibTeXBaseName + ".backups/"
 	}
