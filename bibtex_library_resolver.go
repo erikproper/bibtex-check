@@ -358,7 +358,7 @@ func (l *TBibTeXLibrary) ResolveFieldValue(key, challengeKey, field, challengeRa
 	for {
 		answer = l.WarningQuestion(question, options, warning, key, field, current, currentLineageDisplay, challenge, challengerLineageDisplay)
 		if answer == "s" {
-			l.displayDblpOriginalEntry(dblpKey)
+			l.displayDblpEntry(dblpKey)
 			continue
 		}
 		if answer == "S" {

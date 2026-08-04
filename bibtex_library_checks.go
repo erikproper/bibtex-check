@@ -1776,18 +1776,39 @@ func (l *TBibTeXLibrary) displayDblpChildrenToC(entryDBLP, parentKey string) {
 	displayContent(sb.String())
 }
 
-// displayDblpOriginalEntry renders dblpKey's raw record from the local DBLP file
-// store as a BibTeX field dump (the same style as the "Current entry"/"Challenging
-// entry" blocks already shown alongside a field-conflict question) and sends it to
-// displayContent, so the user can check a disputed field against what DBLP itself
-// actually says instead of trusting either side of the conflict blind.
-func (l *TBibTeXLibrary) displayDblpOriginalEntry(dblpKey string) {
+// displayDblpEntry renders dblpKey as a text bibliography reference — the same
+// citation-style rendering displayDblpChildrenToC uses for children, not the raw
+// BibTeX field dump — and sends it to displayContent, so the user can check a
+// disputed field (or a manually looked-up key) against what DBLP itself actually
+// says instead of trusting either side of a conflict blind. When dblpKey is
+// itself a bookish/parent entry (has children on file), those are listed right
+// after it in the same style, giving the same overview displayDblpChildrenToC
+// already gives when resolving a known parent's children — useful when the
+// looked-up key (e.g. via "S") turns out to be a proceedings itself.
+func (l *TBibTeXLibrary) displayDblpEntry(dblpKey string) {
 	entry := dblpEntryFromFile(dblpKey)
 	if entry == nil {
 		l.Progress("DBLP key %s not found in local file store", dblpKey)
 		return
 	}
-	displayContent("Original DBLP entry for " + dblpKey + ":\n\n" + l.entryStringFromEntry(entry, "", "  "))
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "dblp: %s\n%s\n\n", dblpKey, l.renderEntryAsText(entry, nil))
+
+	children := readDblpCrossrefChildren(dblpKey)
+	if len(children) > 0 {
+		header := fmt.Sprintf("Children of %s (%d)", dblpKey, len(children))
+		fmt.Fprintf(&sb, "%s\n%s\n\n", header, strings.Repeat("=", len(header)))
+		for _, childDBLP := range children {
+			childEntry := dblpEntryFromFile(childDBLP)
+			if childEntry == nil {
+				fmt.Fprintf(&sb, "dblp: %s\n(not found in local file store)\n\n", childDBLP)
+				continue
+			}
+			fmt.Fprintf(&sb, "dblp: %s\n%s\n\n", childDBLP, l.renderEntryAsText(childEntry, entry))
+		}
+	}
+	displayContent(sb.String())
 }
 
 // askAndDisplayDblpEntry is the "S" companion to "s": rather than showing a
@@ -1803,7 +1824,7 @@ func (l *TBibTeXLibrary) askAndDisplayDblpEntry(displayKey string) {
 		return
 	}
 	if dblpKey := l.resolveTypedDblpKey(displayKey, typed); dblpKey != "" {
-		l.displayDblpOriginalEntry(dblpKey)
+		l.displayDblpEntry(dblpKey)
 	}
 }
 
