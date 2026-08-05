@@ -649,10 +649,18 @@ func flushWorkingDbToHome() {
 	}
 }
 
-// abandonWorkingDatabase closes the DB connection and deletes the working copy
-// (including WAL/SHM) from the cache folder. Called when postCheckGate fails
-// so the stale working copy does not trigger a spurious "restore?" prompt on
-// the next run.
+// abandonWorkingDatabase closes the DB connection and moves the working copy
+// (including WAL/SHM) aside with a timestamp suffix, out of dbPath()'s way, so
+// the stale working copy does not trigger a spurious "restore?" prompt on the
+// next run. Called when postCheckGate fails.
+//
+// Renamed aside, not deleted: confirmed live (2026-08-05) that hard-deleting
+// here can throw away hours of legitimate work — including everything
+// interactively decided during a long run — over a single write failure
+// anywhere in that run, with no way to even inspect what was lost afterward.
+// The renamed file just sits in the cache folder; nothing reads it back
+// automatically, so it costs disk space until manually reviewed and deleted,
+// never silent, irrecoverable data loss.
 func abandonWorkingDatabase() {
 	if !dbIsolationActive() {
 		return
@@ -662,9 +670,22 @@ func abandonWorkingDatabase() {
 		db = nil
 	}
 	working := dbPath()
-	os.Remove(working)
-	os.Remove(working + "-wal")
-	os.Remove(working + "-shm")
+	if !FileExists(working) {
+		return
+	}
+	abandoned := working + ".abandoned-" + time.Now().Format("20060102-150405")
+	if err := os.Rename(working, abandoned); err != nil {
+		dbInteraction.Warning("Could not move abandoned working database aside (%s) — removing instead: %s", abandoned, err)
+		os.Remove(working)
+		os.Remove(working + "-wal")
+		os.Remove(working + "-shm")
+		return
+	}
+	dbInteraction.Warning("Working database moved to %s for inspection — not deleted.", abandoned)
+	// WAL/SHM can hold writes not yet checkpointed into the main file; keep them
+	// alongside the renamed copy rather than discarding them.
+	os.Rename(working+"-wal", abandoned+"-wal")
+	os.Rename(working+"-shm", abandoned+"-shm")
 }
 
 // finaliseWorkingDatabase copies the working database back to the home path,
