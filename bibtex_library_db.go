@@ -1809,9 +1809,21 @@ func ensureOthersContributor(l *TBibTeXLibrary) {
 // lookupEntryContributorID returns the recorded contributor ID for
 // (key, role, position) from entry_contributor_names when the stored name_used
 // matches name. Returns ("", false) if no matching record exists.
+//
+// Must read via the active transaction (bibQueryRow), not db.QueryRow directly —
+// see the matching comment in applyDblpAuthorORCIDs for the full rationale. This
+// is resolveContributorForPosition's step 1, called from
+// upsertContributorRolesForField, which runs inside the same large transaction
+// wrapping "Fixing DBLP entries" (beginBibTransaction in main.go). A plain
+// db.QueryRow only ever sees the pre-transaction committed state, so a
+// contributor merged away earlier in this same transaction (contributors row
+// deleted, entry_contributor_names repointed) still reads back here as the old,
+// now-nonexistent ID — and the write below (via bibExec → activeTx) correctly
+// sees the live, already-mutated state and rejects it: a real, deterministic FK
+// violation caused by this stale read, not by the data itself.
 func lookupEntryContributorID(key, role string, position int, name string) (string, bool) {
 	var storedID, storedName string
-	err := db.QueryRow(
+	err := bibQueryRow(
 		`SELECT contributor_id, name_used FROM entry_contributor_names
 		 WHERE entry_key = ? AND role = ? AND position = ?`,
 		key, role, position).Scan(&storedID, &storedName)
@@ -1824,6 +1836,9 @@ func lookupEntryContributorID(key, role string, position int, name string) (stri
 // coauthorInference returns the candidate ID that has the most entries in
 // contributor_roles shared with the already-resolved contributors in the same
 // (entry, role). Returns "" when no candidate has any shared entries.
+// Reads via bibQueryRow, not db.QueryRow — see the matching comment in
+// lookupEntryContributorID; this is resolveContributorForPosition's step 3,
+// called from the same transaction-wrapped context.
 func coauthorInference(candidates, resolvedSoFar []string) string {
 	if len(resolvedSoFar) == 0 {
 		return ""
@@ -1834,7 +1849,7 @@ func coauthorInference(candidates, resolvedSoFar []string) string {
 		count := 0
 		for _, coID := range resolvedSoFar {
 			var n int
-			db.QueryRow( //nolint:errcheck
+			bibQueryRow( //nolint:errcheck
 				`SELECT COUNT(*) FROM contributor_roles cr1
 				 JOIN contributor_roles cr2
 				   ON cr2.entry_key = cr1.entry_key AND cr2.role = cr1.role
