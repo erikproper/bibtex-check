@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-isatty"
 )
@@ -69,6 +70,21 @@ type TProgressTicker struct {
 	totalWidth  int // digits in total; 0 when indeterminate
 	rendered    bool
 	interaction *TInteraction
+	lastRender  time.Time
+}
+
+// tickerRenderInterval throttles redraws for fast, tight loops (e.g. scanning
+// hundreds of thousands of entries where most iterations are a no-op continue).
+// Without this, Step()/SetCount() redraw on literally every call — far faster
+// than a terminal or a human eye can track, seen live as a line that "keeps
+// flashing in/out completely" rather than a normal steadily-updating counter.
+const tickerRenderInterval = 80 * time.Millisecond
+
+// dueToRender reports whether enough time has passed since the last redraw to
+// draw another one. Always true for the very first frame (t.rendered false)
+// so progress appears immediately rather than after an initial delay.
+func (t *TProgressTicker) dueToRender() bool {
+	return !t.rendered || time.Since(t.lastRender) >= tickerRenderInterval
 }
 
 var activeTicker *TProgressTicker
@@ -167,6 +183,7 @@ func (t *TProgressTicker) render() {
 		fmt.Fprintf(os.Stderr, "\r\033[K%s: ...", t.label)
 	}
 	t.rendered = true
+	t.lastRender = time.Now()
 }
 
 // Step increments the count by one, redraws the line, and non-blockingly checks
@@ -186,7 +203,9 @@ func (t *TProgressTicker) Step() bool {
 		}
 	default:
 	}
-	t.render()
+	if t.dueToRender() {
+		t.render()
+	}
 	return t.interaction != nil && t.interaction.quitRequested
 }
 
@@ -207,7 +226,9 @@ func (t *TProgressTicker) SetCount(n int) bool {
 		}
 	default:
 	}
-	t.render()
+	if t.dueToRender() {
+		t.render()
+	}
 	return t.interaction != nil && t.interaction.quitRequested
 }
 
@@ -227,7 +248,9 @@ func (t *TProgressTicker) Tick() bool {
 		}
 	default:
 	}
-	t.render()
+	if t.dueToRender() {
+		t.render()
+	}
 	return t.interaction != nil && t.interaction.quitRequested
 }
 

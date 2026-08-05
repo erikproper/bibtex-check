@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.39"
+const AppVersion = "29.40"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -3801,17 +3801,25 @@ func main() {
 	// wraps its entire pass in one open transaction, committed only at the very end)
 	// kills the process with zero cleanup: no commit, no finaliseWorkingDatabase.
 	// Every decision made during that run — including every interactively-answered
-	// question — is silently discarded, as if it never happened. quitNow() does the
-	// same commit/finalise-then-exit sequence a "q" answer to any prompt now
-	// triggers directly (interaction.go) — SIGINT is just another way to ask for
-	// the same thing, so it shares the exact same exit path (and quitOnce guard,
-	// so a second Ctrl-C while the first is still committing is a harmless no-op).
+	// question — is silently discarded, as if it never happened.
+	//
+	// Unlike a typed "q" (handled synchronously on the main goroutine, inside
+	// whatever prompt is asking — see interaction.go), SIGINT is delivered to this
+	// goroutine asynchronously while the main goroutine keeps running. Calling
+	// quitNow() (commit/save/finalise, touching db) directly from here used to race
+	// the main goroutine's own db use — observed live as a storm of "database is
+	// locked" errors followed by a nil-pointer panic once finaliseWorkingDatabase
+	// closed out from under a still-running main-goroutine query. So this handler
+	// only sets quitRequested and returns; every outer scan loop already checks
+	// QuitWasRequested() at the top of each iteration (that's what quitNow()'s
+	// v29.29 unification was for), so the main goroutine unwinds itself to main()'s
+	// own cleanup tail on its own — the only goroutine ever touching db.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		stderrPrintf("\nInterrupted — committing work done so far before exiting...\n")
-		quitNow()
+		stderrPrintf("\nInterrupted — finishing the current step, then committing and saving...\n")
+		Reporting.quitRequested = true
 	}()
 
 	baseFlag := flag.String("base", "", "path/basename of the library (required)")
