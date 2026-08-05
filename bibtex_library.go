@@ -840,6 +840,21 @@ func (l *TBibTeXLibrary) MergeEntries(sourceRAW, targetRAW string) string {
 						addEntryDoiAlias(target, targetVal)
 					}
 				}
+				// DBLP sometimes assigns a near-duplicate key to the same publication
+				// (e.g. journals/emisa/MeitzLM13 vs MeitzLM13a). Whichever of the two
+				// keys did NOT become the merged value must still resolve to the
+				// surviving target — otherwise a future DBLP payload tagged with it
+				// looks like an unrelated, unknown key instead of this same
+				// publication. Do this even when merged == the kept value (the field
+				// itself doesn't "change" in that case, so the underlying write path
+				// never sees the discarded key at all).
+				if regularField == DBLPField && sourceVal != "" && targetVal != "" && sourceVal != targetVal {
+					loser := sourceVal
+					if merged == sourceVal {
+						loser = targetVal
+					}
+					upsertDblpCanonical(loser, target)
+				}
 			}
 
 			// Inherit lineage records from source for fields where target has none.
@@ -935,8 +950,22 @@ func (l *TBibTeXLibrary) MergeInMemoryDBLPEntry(sourceEntry *TBibTeXEntry, targe
 			sourceEntry.FieldValue("booktitle") == sourceEntry.FieldValue(TitleField) {
 			continue
 		}
-		merged := l.MaybeResolveFieldValue(target, sourceEntry.Key, regularField, sourceEntry.FieldValue(regularField), targetEntry.FieldValue(regularField))
+		sourceVal := sourceEntry.FieldValue(regularField)
+		targetVal := targetEntry.FieldValue(regularField)
+		merged := l.MaybeResolveFieldValue(target, sourceEntry.Key, regularField, sourceVal, targetVal)
 		l.setEntryField(targetEntry, regularField, merged)
+		// See the matching comment in MergeEntries: DBLP sometimes assigns a
+		// near-duplicate key to the same publication, so whichever key didn't
+		// become the merged value must still resolve to target — even when
+		// merged == the kept value, since then the field never "changes" and
+		// the underlying write path never sees the discarded key at all.
+		if regularField == DBLPField && sourceVal != "" && targetVal != "" && sourceVal != targetVal {
+			loser := sourceVal
+			if merged == sourceVal {
+				loser = targetVal
+			}
+			upsertDblpCanonical(loser, target)
+		}
 	}
 
 	l.CheckIfFieldsAreAllowed(targetEntry, func(key, field, value string) {

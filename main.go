@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.44"
+const AppVersion = "29.46"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2313,33 +2313,39 @@ func doUpsertDblpEntries() {
 		total := dblpLinkedCount
 		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
-		childrenCheckedTotal := 0
 		newDblpLinkedTotal := 0
 		processKey := func(key string) {
-			scanned++
-			// Keep the ticker's total honest against the DBLP-linked baseline counted
-			// above, not the whole library. Two distinct reasons scanned can outpace
-			// that baseline: (1) checking a parent's children can create genuinely new
-			// DBLP-linked entries mid-run (newDblpLinkedTotal), and (2) childrenChecked
-			// below adds to scanned for entries already counted once as their own
-			// top-level bookishKeys/otherKeys scan — the same entry legitimately gets
-			// touched twice, once as itself and once as someone else's child, so
-			// scanned can exceed the baseline even with zero real growth
-			// (childrenCheckedTotal).
-			total = dblpLinkedCount + newDblpLinkedTotal + childrenCheckedTotal
-			ticker.SetTotal(total)
+			// scanned/total both only count DBLP-linked entries — matching what
+			// dblpLinkedCount (the ticker's baseline) counts. Children inspected along
+			// the way via doC2Checks are deliberately NOT added here even though they
+			// take real time: every such child is already represented in this same
+			// total, either because it already had a dblp key (already inside
+			// dblpLinkedCount) or because it's newly created (added to
+			// newDblpLinkedTotal by the drain loop below) — counting it a second time
+			// here would inflate total for entries this pass will visit anyway,
+			// exactly the "why is total now way past DBLP links" confusion this
+			// replaced. ticker.SetCount is still called for every key, DBLP-linked or
+			// not, purely so a "q" typed mid-run is polled promptly; it just repeats
+			// the same count for a non-DBLP-linked key rather than advancing it.
+			dblpVal := Library.EntryFieldValueity(key, DBLPField)
+			if dblpVal != "" {
+				scanned++
+				newTotal := dblpLinkedCount + newDblpLinkedTotal
+				if newTotal != total {
+					total = newTotal
+					ticker.SetTotal(total)
+				}
+			}
 			if ticker.SetCount(scanned) {
 				return
 			}
-			if dblpVal := Library.EntryFieldValueity(key, DBLPField); dblpVal != "" {
+			if dblpVal != "" {
 				Library.ResetQuestionFlag()
 				doC1Checks(key)
-				modified, childrenChecked := doC2Checks(key)
+				modified, _ := doC2Checks(key)
 				if modified {
 					dblpUpdated++
 				}
-				scanned += childrenChecked
-				childrenCheckedTotal += childrenChecked
 				doC3Checks(key)
 				if pmOk {
 					if normKey := normalizeDblpKey(dblpVal); normKey != "" {

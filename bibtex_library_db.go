@@ -3388,6 +3388,27 @@ func closeEntry(entry *TBibTeXEntry) bool {
 					dbInteraction.Warning("bib_entries write failed for %s.%s: %s", entry.Key, field, err)
 					markDbWriteFailed(fmt.Sprintf("closeEntry: bib_entries write failed (key=%s, field=%s, value=%s): %s", entry.Key, field, value, err))
 				}
+				// upsertBibEntryField is the normal write path for a single field and
+				// keeps dblp_canonical in sync; this per-field loop bypasses it entirely
+				// (it batches every changed field from one open/closeEntry span), so it
+				// needs the same maintenance here. Without it, an entry whose dblp field
+				// changes via MergeInMemoryDBLPEntry (the common path during
+				// -update_all_dblp_entries) leaves dblp_canonical untouched altogether —
+				// neither pointing at the new key nor cleaned up for a cleared one.
+				if field == DBLPField {
+					if value == "" {
+						deleteDblpCanonicalByCanonicalKey(entry.Key)
+					} else {
+						// See the matching comment in upsertBibEntryField: no delete of any
+						// prior dblp_key row for this entry — DBLP sometimes assigns a
+						// near-duplicate key for the same publication (e.g.
+						// journals/emisa/MeitzLM13 vs MeitzLM13a), and dblp_canonical's
+						// schema already supports several dblp_key rows pointing at one
+						// canonical_key, so the superseded key keeps resolving here too.
+						upsertDblpCanonical(value, entry.Key)
+					}
+					Library.DeleteMetadata(entry.Key, MetaPropDblpKeyMissing)
+				}
 			}
 		}
 	}
@@ -3401,6 +3422,10 @@ func closeEntry(entry *TBibTeXEntry) bool {
 				if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, entry.Key, field); err != nil {
 					dbInteraction.Warning("bib_entries delete failed for %s.%s: %s", entry.Key, field, err)
 					markDbWriteFailed(fmt.Sprintf("closeEntry: bib_entries delete failed (key=%s, field=%s): %s", entry.Key, field, err))
+				}
+				if field == DBLPField {
+					deleteDblpCanonicalByCanonicalKey(entry.Key)
+					Library.DeleteMetadata(entry.Key, MetaPropDblpKeyMissing)
 				}
 			}
 		}
@@ -3851,10 +3876,15 @@ func upsertBibEntryField(key, field, value string) {
 			   ON CONFLICT(entry_key, field) DO UPDATE SET value = excluded.value;`,
 			key, field, value)
 		if field == DBLPField {
-			// Remove any stale row (old dblp_key → key) before inserting the new one.
-			// dblp_canonical PK is dblp_key, so changing the dblp value requires
-			// the old row to be removed explicitly.
-			deleteDblpCanonicalByCanonicalKey(key)
+			// No delete of any prior dblp_key row for this entry before adding the new
+			// one. DBLP sometimes assigns a near-duplicate key for the same publication
+			// (e.g. journals/emisa/MeitzLM13 vs MeitzLM13a) — dblp_canonical's schema
+			// already supports several dblp_key rows pointing at one canonical_key
+			// (PK is dblp_key, not canonical_key), so when the field changes from one
+			// non-empty value to another, the superseded key keeps resolving to this
+			// entry too rather than becoming an unknown key on the next DBLP payload
+			// that carries it. Only an explicit clear (value == "", handled above) drops
+			// the mapping — see the matching comment there.
 			upsertDblpCanonical(value, key)
 			// The dblp key changed, so any earlier "not found in file store" flag was
 			// about a different key — clear it. MarkDblpKeyMissing re-sets it on the
