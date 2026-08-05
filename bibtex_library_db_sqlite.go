@@ -840,7 +840,11 @@ func foreignKeyCheckOK() bool {
 // which set dbWriteFailed) can otherwise discard an entire session's other edits.
 func postCheckGate() bool {
 	if dbWriteFailed {
-		dbInteraction.Warning("Post-check: DB write failure(s) detected — home database not updated")
+		if dbWriteFailureReason != "" {
+			dbInteraction.Warning("Post-check: DB write failure(s) detected — home database not updated. First failure: %s", dbWriteFailureReason)
+		} else {
+			dbInteraction.Warning("Post-check: DB write failure(s) detected — home database not updated")
+		}
 		return false
 	}
 

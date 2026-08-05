@@ -1812,7 +1812,7 @@ func (l *TBibTeXLibrary) AddNonDoubleEntries(a, b string) {
 				if k1 < k2 {
 					if err := bibExec(upsert, k1, k2); err != nil {
 						dbInteraction.Warning("non_double_entries upsert failed: %s", err)
-						dbWriteFailed = true
+						markDbWriteFailed(fmt.Sprintf("non_double_entries upsert failed (key1=%s, key2=%s): %s", k1, k2, err))
 					}
 				}
 			}

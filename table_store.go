@@ -16,7 +16,10 @@
 
 package main
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 // TTableStore is the read/write interface that both TSQLiteTable and TCachedTable satisfy.
 type TTableStore[K comparable, V any] interface {
@@ -48,14 +51,14 @@ func (s *TSQLiteTable[K, V]) Get(_ K) (V, bool) {
 func (s *TSQLiteTable[K, V]) Set(key K, value V) {
 	if err := bibExec(s.upsertSQL, s.upsertArgs(key, value)...); err != nil {
 		dbInteraction.Warning("table write failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("table write failed (key=%v): %s [%s]", key, err, s.upsertSQL))
 	}
 }
 
 func (s *TSQLiteTable[K, V]) Delete(key K) {
 	if err := bibExec(s.deleteSQL, s.deleteArgs(key)...); err != nil {
 		dbInteraction.Warning("table delete failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("table delete failed (key=%v): %s [%s]", key, err, s.deleteSQL))
 	}
 }
 
@@ -271,7 +274,11 @@ func (t *TKeyAliasTable) Load() {
 		if !bibEntryExists(canonical) {
 			// Target gone — delete from DB immediately.
 			if err := bibExec(t.deleteSQL, p.alias); err != nil {
-				dbWriteFailed = true
+				// Previously silent — set the flag with no visible warning at all,
+				// which is exactly the kind of gap that makes "DB write failure(s)
+				// detected" undiagnosable after the fact (confirmed live 2026-08-05).
+				dbInteraction.Warning("key alias table delete failed: %s", err)
+				markDbWriteFailed(fmt.Sprintf("key alias delete failed (alias=%s, stale target=%s): %s", p.alias, canonical, err))
 			}
 			continue
 		}
@@ -345,7 +352,7 @@ func (t *TKeyAliasTable) Set(alias, canonical string) {
 			t.inverse[canonical] = append(t.inverse[canonical], indirect)
 			if err := bibExec(t.upsertSQL, indirect, canonical); err != nil {
 				dbInteraction.Warning("table write failed: %s", err)
-				dbWriteFailed = true
+				markDbWriteFailed(fmt.Sprintf("key alias bulk-update failed (alias=%s → canonical=%s): %s", indirect, canonical, err))
 			}
 		}
 		delete(t.inverse, alias)
@@ -361,7 +368,7 @@ func (t *TKeyAliasTable) Set(alias, canonical string) {
 
 	if err := bibExec(t.upsertSQL, alias, canonical); err != nil {
 		dbInteraction.Warning("table write failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("key alias write failed (alias=%s → canonical=%s): %s", alias, canonical, err))
 		return
 	}
 	if t.onModify != nil {
@@ -398,7 +405,7 @@ func (t *TKeyAliasTable) Delete(alias string) {
 	delete(t.forward, alias)
 	if err := bibExec(t.deleteSQL, alias); err != nil {
 		dbInteraction.Warning("table delete failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("key alias delete failed (alias=%s → canonical=%s): %s", alias, canonical, err))
 		return
 	}
 	if t.onModify != nil {
@@ -415,7 +422,7 @@ func (t *TKeyAliasTable) DeleteByTarget(canonical string) {
 		delete(t.forward, alias)
 		if err := bibExec(t.deleteSQL, alias); err != nil {
 			dbInteraction.Warning("table delete failed: %s", err)
-			dbWriteFailed = true
+			markDbWriteFailed(fmt.Sprintf("key alias delete-by-target failed (alias=%s → canonical=%s): %s", alias, canonical, err))
 		} else {
 			modified = true
 		}

@@ -24,6 +24,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -136,7 +137,7 @@ func importContributorsFromCSV(replace bool) {
 		}
 		if _, err := tx.Exec(upsert, f[0], f[1], orcid); err != nil {
 			dbInteraction.Warning("importContributorsFromCSV: row write failed for %s: %s", f[0], err)
-			dbWriteFailed = true
+			markDbWriteFailed(fmt.Sprintf("importContributorsFromCSV: row write failed (id=%s): %s", f[0], err))
 		}
 	})
 	if ok {
@@ -170,7 +171,7 @@ func importContributorNamesFromCSV(replace bool) {
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		if _, err := tx.Exec(insert, f[0], f[1]); err != nil {
 			dbInteraction.Warning("importContributorNamesFromCSV: row write failed for %s: %s", f[0], err)
-			dbWriteFailed = true
+			markDbWriteFailed(fmt.Sprintf("importContributorNamesFromCSV: row write failed (id=%s): %s", f[0], err))
 		}
 	})
 	if ok {
@@ -205,7 +206,7 @@ func importContributorIDOldiesFromCSV(replace bool) {
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		if _, err := tx.Exec(upsert, f[0], f[1]); err != nil {
 			dbInteraction.Warning("importContributorIDOldiesFromCSV: row write failed for %s: %s", f[0], err)
-			dbWriteFailed = true
+			markDbWriteFailed(fmt.Sprintf("importContributorIDOldiesFromCSV: row write failed (absorbed_id=%s): %s", f[0], err))
 		}
 	})
 	if ok {
@@ -248,7 +249,7 @@ func importContributorORCIDSeenFromCSV(replace bool) {
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		if _, err := tx.Exec(upsert, f[0], f[1], f[2], f[3], f[4], f[5]); err != nil {
 			dbInteraction.Warning("importContributorORCIDSeenFromCSV: row write failed for %s: %s", f[0], err)
-			dbWriteFailed = true
+			markDbWriteFailed(fmt.Sprintf("importContributorORCIDSeenFromCSV: row write failed (contributor_id=%s): %s", f[0], err))
 		}
 	})
 	if ok {
@@ -450,7 +451,7 @@ func importEntryDoiAliasesFromCSV(replace bool) {
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		if _, err := tx.Exec(upsert, f[0], f[1]); err != nil {
 			dbInteraction.Warning("importEntryDoiAliasesFromCSV: row write failed for %s: %s", f[0], err)
-			dbWriteFailed = true
+			markDbWriteFailed(fmt.Sprintf("importEntryDoiAliasesFromCSV: row write failed (doi=%s): %s", f[0], err))
 		}
 	})
 	if ok {
@@ -635,7 +636,7 @@ func importIgnoreTitlesFromCSV(replace bool) {
 	n, ok := importTwoPhase(path, validate, clearFn, func(tx *sql.Tx, f []string) {
 		if _, err := tx.Exec(insert, strings.TrimSpace(f[0])); err != nil {
 			dbInteraction.Warning("importIgnoreTitlesFromCSV: row write failed for %s: %s", f[0], err)
-			dbWriteFailed = true
+			markDbWriteFailed(fmt.Sprintf("importIgnoreTitlesFromCSV: row write failed (title=%s): %s", f[0], err))
 		}
 	})
 	if ok {

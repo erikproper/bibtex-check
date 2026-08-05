@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.42"
+const AppVersion = "29.44"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -983,13 +983,17 @@ func doTriageAuthorMappings() {
 
 	retireSuperseded := func(key, field, superseded string) {
 		if err := bibExec(`DELETE FROM superseded_field_values WHERE entry_key=? AND field=? AND value=?`, key, field, superseded); err != nil {
-			dbWriteFailed = true
+			// Previously silent — see the matching comment in TKeyAliasTable.Load.
+			Library.Warning("retireSuperseded: delete failed (key=%s, field=%s): %s", key, field, err)
+			markDbWriteFailed(fmt.Sprintf("retireSuperseded: delete failed (key=%s, field=%s, value=%s): %s", key, field, superseded, err))
 		}
 	}
 
 	markKept := func(key, field, superseded string) {
 		if err := bibExec(`UPDATE superseded_field_values SET triage_status='kept' WHERE entry_key=? AND field=? AND value=?`, key, field, superseded); err != nil {
-			dbWriteFailed = true
+			// Previously silent — see the matching comment in TKeyAliasTable.Load.
+			Library.Warning("markKept: update failed (key=%s, field=%s): %s", key, field, err)
+			markDbWriteFailed(fmt.Sprintf("markKept: update failed (key=%s, field=%s, value=%s): %s", key, field, superseded, err))
 		}
 	}
 
@@ -2264,7 +2268,6 @@ func doFixDuplicates() {
 func doUpsertDblpEntries() {
 	if openLibraryToUpdate() {
 		Library.ReadKeyNonDoublesFile()
-		total := countBibEntries()
 
 		// Load DBLP person maps once for contributor role cross-checking during
 		// entry processing. If unavailable (no dblp import yet), the check is skipped.
@@ -2303,25 +2306,28 @@ func doUpsertDblpEntries() {
 		dblpUpdated := 0
 		stderrPrintf("\nDoing analysis based on DBLP data:\n")
 		Library.FixDblpHierarchy()
+		// Same definition as the "DBLP links" startup stat (countDblpKeyedEntries),
+		// so the ticker's denominator matches what's reported at session start
+		// instead of the much larger, less meaningful total library size.
+		dblpLinkedCount := countDblpKeyedEntries()
+		total := dblpLinkedCount
 		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
 		childrenCheckedTotal := 0
+		newDblpLinkedTotal := 0
 		processKey := func(key string) {
 			scanned++
-			// Keep the ticker's total honest. Two distinct reasons scanned can outpace
-			// a plain len(entryCache) snapshot: (1) checking a parent's children can
-			// create genuinely new entries mid-run, and (2) childrenChecked below adds
-			// to scanned for entries already counted once as their own top-level
-			// bookishKeys/otherKeys scan — the same entry legitimately gets touched
-			// twice, once as itself and once as someone else's child, so scanned can
-			// exceed len(entryCache) even with zero real growth. Track (2)'s
-			// contribution separately and add it back so total never falls behind
-			// scanned for a reason that isn't actual growth. len(entryCache) is an
-			// O(1) map-length read, not a re-scan — cheap enough to call every
-			// iteration, unlike countBibEntries().
-			if entryCache != nil {
-				ticker.SetTotal(len(entryCache) + childrenCheckedTotal)
-			}
+			// Keep the ticker's total honest against the DBLP-linked baseline counted
+			// above, not the whole library. Two distinct reasons scanned can outpace
+			// that baseline: (1) checking a parent's children can create genuinely new
+			// DBLP-linked entries mid-run (newDblpLinkedTotal), and (2) childrenChecked
+			// below adds to scanned for entries already counted once as their own
+			// top-level bookishKeys/otherKeys scan — the same entry legitimately gets
+			// touched twice, once as itself and once as someone else's child, so
+			// scanned can exceed the baseline even with zero real growth
+			// (childrenCheckedTotal).
+			total = dblpLinkedCount + newDblpLinkedTotal + childrenCheckedTotal
+			ticker.SetTotal(total)
 			if ticker.SetCount(scanned) {
 				return
 			}
@@ -2358,6 +2364,9 @@ func doUpsertDblpEntries() {
 				if !seenKeys[key] {
 					seenKeys[key] = true
 					newKeys = append(newKeys, key)
+					if Library.EntryFieldValueity(key, DBLPField) != "" {
+						newDblpLinkedTotal++
+					}
 				}
 			})
 			if len(newKeys) == 0 {
@@ -3189,7 +3198,9 @@ func doCorrectName(args []string) {
 		ndRows.Close()
 		for _, p := range pairs {
 			if err := bibExec(`DELETE FROM non_double_contributor_names WHERE name1 = ? AND name2 = ?`, p[0], p[1]); err != nil {
-				dbWriteFailed = true
+				// Previously silent — see the matching comment in TKeyAliasTable.Load.
+				Library.Warning("non_double_contributor_names delete failed (name1=%s, name2=%s): %s", p[0], p[1], err)
+				markDbWriteFailed(fmt.Sprintf("non_double_contributor_names delete failed (name1=%s, name2=%s): %s", p[0], p[1], err))
 			}
 			n1, n2 := p[0], p[1]
 			if n1 == oldName {
@@ -3203,7 +3214,9 @@ func doCorrectName(args []string) {
 					n1, n2 = n2, n1
 				}
 				if err := bibExec(`INSERT OR IGNORE INTO non_double_contributor_names (name1, name2) VALUES (?, ?)`, n1, n2); err != nil {
-					dbWriteFailed = true
+					// Previously silent — see the matching comment in TKeyAliasTable.Load.
+					Library.Warning("non_double_contributor_names insert failed (name1=%s, name2=%s): %s", n1, n2, err)
+					markDbWriteFailed(fmt.Sprintf("non_double_contributor_names insert failed (name1=%s, name2=%s): %s", n1, n2, err))
 				}
 			}
 		}

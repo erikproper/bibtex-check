@@ -55,6 +55,7 @@ var (
 	entryModified             bool
 	dbWriteSessionActive      bool
 	dbWriteFailed             bool   // set when any end-of-run DB write fails; blocks finaliseWorkingDatabase
+	dbWriteFailureReason      string // first failure's context (message + error); see markDbWriteFailed
 	changesAtSessionOpen      int64  // total_changes() right after markWriteSessionOpen; used to detect zero-write sessions
 	homeDbSizeAtOpen          int64  // size of the home DB as stat'd in prepareWorkingDatabase; safeguards against overwriting home with a shrunken working copy
 	fieldMappingsLoading      bool   // suppresses DB write-through in AddGenericFieldAlias/AddFieldMapping during initial load
@@ -65,27 +66,49 @@ var (
 	preCloseHook              func() // called inside finaliseWorkingDatabase while DB is still open; set by openLibraryToUpdate
 )
 
+// markDbWriteFailed sets dbWriteFailed and records reason as the failure detail
+// for postCheckGate's report, keeping only the first failure recorded this run.
+// Later failures are frequently just cascading consequences of the first one
+// (e.g. a FOREIGN KEY violation triggering more failures downstream) and are
+// already visible individually as each one's own Warning() fired — the first
+// is the one most likely to actually be the root cause worth surfacing again
+// in the final "DB write failure(s) detected" summary.
+func markDbWriteFailed(reason string) {
+	dbWriteFailed = true
+	if dbWriteFailureReason == "" {
+		dbWriteFailureReason = reason
+	}
+}
+
 // dbExecSave executes a DB statement during the end-of-run save phase. On error it
 // logs msg and sets dbWriteFailed so postCheckGate blocks the home-DB copy. A
 // "FOREIGN KEY constraint failed" error additionally runs PRAGMA foreign_key_check
 // on the same, still-open connection — the only place the live (possibly still
 // mid-transaction, uncommitted) violating row is visible, since a failure this deep
 // in a run always blocks the write-back and a post-mortem read of the home DB only
-// ever sees the pre-run state.
+// ever sees the pre-run state. When foreign_key_check finds no actual violation, the
+// referenced parent row simply hadn't landed yet at the moment of the failing insert
+// (e.g. a contributor row created earlier in the same transaction by a code path that
+// hasn't committed-in-order relative to this one) — by check time it's there, so the
+// statement is retried once instead of dropping the row and failing the whole run.
 func dbExecSave(msg, query string, args ...any) {
-	if err := bibExec(query, args...); err != nil {
-		dbInteraction.Warning("%s: %s (args: %v)", msg, err, args)
-		dbWriteFailed = true
-		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-			logForeignKeyCheck(msg)
+	err := bibExec(query, args...)
+	if err != nil && strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+		if !foreignKeyViolationsFound(msg) {
+			err = bibExec(query, args...)
 		}
+	}
+	if err != nil {
+		dbInteraction.Warning("%s: %s (args: %v)", msg, err, args)
+		markDbWriteFailed(fmt.Sprintf("%s: %s (args: %v)", msg, err, args))
 	}
 }
 
-// logForeignKeyCheck runs PRAGMA foreign_key_check (no table argument — checks every
-// table) and warns once per violating row: table, rowid, the parent table it fails
-// to reference, and the failing FK's index within that table's FK list.
-func logForeignKeyCheck(context string) {
+// foreignKeyViolationsFound runs PRAGMA foreign_key_check (no table argument — checks
+// every table), warns once per violating row found (table, rowid, the parent table it
+// fails to reference, and the failing FK's index within that table's FK list), and
+// reports whether any were found.
+func foreignKeyViolationsFound(context string) bool {
 	// Must run on the same handle bibExec used (activeTx during a transaction, db
 	// otherwise) — database/sql gives a plain db.Query() no visibility into an open
 	// transaction's uncommitted state, so querying the wrong handle here silently
@@ -101,7 +124,7 @@ func logForeignKeyCheck(context string) {
 	}
 	if err != nil {
 		dbInteraction.Warning("%s: could not run foreign_key_check: %s", context, err)
-		return
+		return true // can't confirm safety — treat as a real violation
 	}
 	defer rows.Close()
 	found := false
@@ -116,8 +139,9 @@ func logForeignKeyCheck(context string) {
 			context, table, rowid, parent, fkid)
 	}
 	if !found {
-		dbInteraction.Warning("%s: foreign_key_check found no violations (constraint failure was likely transient, mid-transaction)", context)
+		dbInteraction.Warning("%s: foreign_key_check found no violations — parent row landed after the failing insert; retrying", context)
 	}
+	return found
 }
 
 // --- entry cache ---
@@ -715,14 +739,14 @@ func upsertContributorORCIDToDB(id, orcid string, canonical bool) {
 	if err := bibExec(`INSERT OR IGNORE INTO contributor_orcids (orcid, contributor_id, is_canonical) VALUES (?, ?, ?)`,
 		orcid, id, isCanon); err != nil {
 		dbInteraction.Warning("contributor_orcids upsert failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("contributor_orcids upsert failed (id=%s, orcid=%s): %s", id, orcid, err))
 		return
 	}
 	if canonical {
 		if err := bibExec(`UPDATE contributors SET orcid = ? WHERE id = ? AND (orcid IS NULL OR orcid = '')`,
 			orcid, id); err != nil {
 			dbInteraction.Warning("contributors orcid update failed: %s", err)
-			dbWriteFailed = true
+			markDbWriteFailed(fmt.Sprintf("contributors orcid update failed (id=%s, orcid=%s): %s", id, orcid, err))
 			return
 		}
 		setTableDate("contributors", time.Now().UnixMicro())
@@ -895,7 +919,7 @@ func upsertContributorToDB(id, name, orcid string) {
 	                      orcid = COALESCE(NULLIF(excluded.orcid, ''), orcid)`,
 		id, name, orcid); err != nil {
 		dbInteraction.Warning("contributors upsert failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("contributors upsert failed (id=%s, name=%s): %s", id, name, err))
 		return
 	}
 	setTableDate("contributors", time.Now().UnixMicro())
@@ -906,7 +930,7 @@ func upsertGarbledContributorToDB(id, name string) {
 	                    ON CONFLICT(id) DO UPDATE SET name = excluded.name, garbled = 1`,
 		id, name); err != nil {
 		dbInteraction.Warning("contributors (garbled) upsert failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("contributors (garbled) upsert failed (id=%s, name=%s): %s", id, name, err))
 		return
 	}
 	setTableDate("contributors", time.Now().UnixMicro())
@@ -915,14 +939,14 @@ func upsertGarbledContributorToDB(id, name string) {
 func upsertContributorNameToDB(id, name string) {
 	if err := bibExec(`INSERT OR IGNORE INTO contributor_names (id, name) VALUES (?, ?)`, id, name); err != nil {
 		dbInteraction.Warning("contributor_names upsert failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("contributor_names upsert failed (id=%s, name=%s): %s", id, name, err))
 	}
 }
 
 func deleteContributorNameFromDB(id, name string) {
 	if err := bibExec(`DELETE FROM contributor_names WHERE id = ? AND name = ?`, id, name); err != nil {
 		dbInteraction.Warning("contributor_names delete failed: %s", err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("contributor_names delete failed (id=%s, name=%s): %s", id, name, err))
 	}
 }
 
@@ -3007,7 +3031,9 @@ func deleteEntryWarning(key, warning string) {
 // anchor row first rather than rely on it already being there.
 func insertEntryWarning(key, warning string) {
 	if err := bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, key); err != nil {
-		dbWriteFailed = true
+		// Previously silent — see the matching comment in TKeyAliasTable.Load.
+		dbInteraction.Warning("insertEntryWarning: bib_entry_keys anchor insert failed: %s", err)
+		markDbWriteFailed(fmt.Sprintf("insertEntryWarning: bib_entry_keys anchor insert failed (key=%s): %s", key, err))
 		return
 	}
 	dbExecSave("insertEntryWarning", `INSERT OR IGNORE INTO entry_warnings (key, warning) VALUES (?, ?)`, key, warning)
@@ -3341,7 +3367,9 @@ func closeEntry(entry *TBibTeXEntry) bool {
 					// MergeInMemoryDBLPEntry, used by -watch to add new entries — hits
 					// a FOREIGN KEY violation on every contributor_roles insert.
 					if err2 := bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, entry.Key); err2 != nil {
-						dbWriteFailed = true
+						// Previously silent — see the matching comment in TKeyAliasTable.Load.
+						dbInteraction.Warning("closeEntry: bib_entry_keys anchor insert failed for %s: %s", entry.Key, err2)
+						markDbWriteFailed(fmt.Sprintf("closeEntry: bib_entry_keys anchor insert failed (key=%s, field=%s): %s", entry.Key, field, err2))
 						continue
 					}
 				}
@@ -3358,7 +3386,7 @@ func closeEntry(entry *TBibTeXEntry) bool {
 				}
 				if err != nil {
 					dbInteraction.Warning("bib_entries write failed for %s.%s: %s", entry.Key, field, err)
-					dbWriteFailed = true
+					markDbWriteFailed(fmt.Sprintf("closeEntry: bib_entries write failed (key=%s, field=%s, value=%s): %s", entry.Key, field, value, err))
 				}
 			}
 		}
@@ -3372,7 +3400,7 @@ func closeEntry(entry *TBibTeXEntry) bool {
 			} else {
 				if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, entry.Key, field); err != nil {
 					dbInteraction.Warning("bib_entries delete failed for %s.%s: %s", entry.Key, field, err)
-					dbWriteFailed = true
+					markDbWriteFailed(fmt.Sprintf("closeEntry: bib_entries delete failed (key=%s, field=%s): %s", entry.Key, field, err))
 				}
 			}
 		}
@@ -3776,7 +3804,9 @@ func upsertBibEntryField(key, field, value string) {
 			// field (e.g. entry creation during -watch) hits a FOREIGN KEY violation
 			// on every contributor_roles insert for that entry.
 			if err2 := bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, key); err2 != nil {
-				dbWriteFailed = true
+				// Previously silent — see the matching comment in TKeyAliasTable.Load.
+				dbInteraction.Warning("upsertBibEntryField: bib_entry_keys anchor insert failed for %s: %s", key, err2)
+				markDbWriteFailed(fmt.Sprintf("upsertBibEntryField: bib_entry_keys anchor insert failed (key=%s, field=%s): %s", key, field, err2))
 				return
 			}
 		}
@@ -3811,7 +3841,9 @@ func upsertBibEntryField(key, field, value string) {
 		// bib transaction is active — a bare db.Exec competes for a second write
 		// slot and gets SQLITE_BUSY_SNAPSHOT (517) in WAL mode.
 		if err2 := bibExec(`INSERT OR IGNORE INTO bib_entry_keys (entry_key) VALUES (?)`, key); err2 != nil {
-			dbWriteFailed = true
+			// Previously silent — see the matching comment in TKeyAliasTable.Load.
+			dbInteraction.Warning("upsertBibEntryField: bib_entry_keys anchor insert failed for %s: %s", key, err2)
+			markDbWriteFailed(fmt.Sprintf("upsertBibEntryField: bib_entry_keys anchor insert failed (key=%s, field=%s): %s", key, field, err2))
 			return
 		}
 		err = bibExec(
@@ -3832,7 +3864,7 @@ func upsertBibEntryField(key, field, value string) {
 	}
 	if err != nil {
 		dbInteraction.Warning("bib_entries write failed for %s.%s: %s", key, field, err)
-		dbWriteFailed = true
+		markDbWriteFailed(fmt.Sprintf("upsertBibEntryField: bib_entries write failed (key=%s, field=%s, value=%s): %s", key, field, value, err))
 	}
 	if entryCache != nil {
 		if value == "" {
