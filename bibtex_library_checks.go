@@ -1633,8 +1633,20 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) && entryDBLP != "" {
 		children := readDblpCrossrefChildren(entryDBLP)
 		if len(children) > 0 {
-			ticker := l.NewProgressTicker(fmt.Sprintf("  Checking %d children of %s", len(children), entryDBLP), len(children))
+			// No per-parent ticker here on purpose: this runs once per bookish parent
+			// in a bulk pass, so a fresh ticker (whose first frame always renders
+			// immediately, so progress isn't delayed) firing for every single parent
+			// visually collides with the outer "Fixing DBLP entries" ticker on the
+			// same terminal line — seen live as that ticker "flashing." It also
+			// clobbers the shared activeTicker slot (NewProgressTicker sets it
+			// unconditionally, DoneQuiet nils it), breaking the outer ticker's
+			// SpinnerInterrupt/SpinnerCommit bookkeeping for the rest of this key.
+			// The outer ticker already shows overall progress; just honour a
+			// pending quit here rather than rendering a second, competing one.
 			for _, childDBLP := range children {
+				if l.QuitWasRequested() {
+					break
+				}
 				if c2TrackingActive {
 					c2ChildrenChecked++
 				}
@@ -1650,11 +1662,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}
-				if ticker.Step() {
-					break
-				}
 			}
-			ticker.DoneQuiet()
 		}
 
 		// Check that every library child of this DBLP-keyed parent also has a DBLP key.

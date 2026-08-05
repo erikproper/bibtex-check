@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.40"
+const AppVersion = "29.41"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2305,14 +2305,22 @@ func doUpsertDblpEntries() {
 		Library.FixDblpHierarchy()
 		ticker := Library.NewProgressTicker(ProgressFixingDblpEntries, total)
 		beginBibTransaction()
+		childrenCheckedTotal := 0
 		processKey := func(key string) {
 			scanned++
-			// Keep the ticker's total honest: checking a parent's children can create
-			// new entries mid-run, so the snapshot taken before this loop started can
-			// fall behind. len(entryCache) is an O(1) map-length read, not a re-scan —
-			// cheap enough to call every iteration, unlike countBibEntries().
+			// Keep the ticker's total honest. Two distinct reasons scanned can outpace
+			// a plain len(entryCache) snapshot: (1) checking a parent's children can
+			// create genuinely new entries mid-run, and (2) childrenChecked below adds
+			// to scanned for entries already counted once as their own top-level
+			// bookishKeys/otherKeys scan — the same entry legitimately gets touched
+			// twice, once as itself and once as someone else's child, so scanned can
+			// exceed len(entryCache) even with zero real growth. Track (2)'s
+			// contribution separately and add it back so total never falls behind
+			// scanned for a reason that isn't actual growth. len(entryCache) is an
+			// O(1) map-length read, not a re-scan — cheap enough to call every
+			// iteration, unlike countBibEntries().
 			if entryCache != nil {
-				ticker.SetTotal(len(entryCache))
+				ticker.SetTotal(len(entryCache) + childrenCheckedTotal)
 			}
 			if ticker.SetCount(scanned) {
 				return
@@ -2325,6 +2333,7 @@ func doUpsertDblpEntries() {
 					dblpUpdated++
 				}
 				scanned += childrenChecked
+				childrenCheckedTotal += childrenChecked
 				doC3Checks(key)
 				if pmOk {
 					if normKey := normalizeDblpKey(dblpVal); normKey != "" {

@@ -419,8 +419,14 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 	if BibTeXBookish.Contains(entryType) && !l.EntryHasFlag(key, EntryFlagNoDBLPChildren) {
 		children := readDblpCrossrefChildren(DBLPKey)
 		if len(children) > 0 {
-			ticker := l.NewProgressTicker(fmt.Sprintf("Adding %d children of %s", len(children), DBLPKey), len(children))
+			// No per-parent ticker here — see the matching comment in CheckDBLP
+			// (bibtex_library_checks.go): a fresh ticker per bookish parent in a bulk
+			// pass visually collides with the outer scan ticker and clobbers the
+			// shared activeTicker slot. Just honour a pending quit.
 			for _, childDBLP := range children {
+				if l.QuitWasRequested() {
+					break
+				}
 				if childKey := l.LookupDBLPKey(childDBLP); childKey != "" {
 					// Child already in library via DBLP key — only redirect crossref if safe,
 					// then check for a title-duplicate that hasn't been linked yet.
@@ -435,11 +441,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 				} else {
 					l.MaybeAddDBLPChildEntry(childDBLP, key)
 				}
-				if ticker.Step() {
-					break
-				}
 			}
-			ticker.DoneQuiet()
 		}
 	}
 
