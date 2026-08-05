@@ -121,6 +121,25 @@ func (r *TInteraction) NewProgressTicker(label string, total int) *TProgressTick
 	return t
 }
 
+// SetTotal updates the ticker's total (and the digit-width used to pad
+// current/total) for subsequent renders. For a total that's really just a
+// snapshot taken before the loop started — e.g. -update_all_dblp_entries,
+// where checking a parent's children can create new entries mid-run — call
+// this every iteration with a cheap, O(1) count (e.g. len(entryCache), not a
+// full re-scan) so the percentage tracks reality instead of drifting past 100%
+// and needing to be clamped.
+func (t *TProgressTicker) SetTotal(total int) {
+	if t == nil || total == t.total {
+		return
+	}
+	t.total = total
+	if total > 0 {
+		t.totalWidth = len(fmt.Sprintf("%d", total))
+	} else {
+		t.totalWidth = 0
+	}
+}
+
 // render redraws the progress line in place via \r\033[K (clears to EOL before
 // writing, so any character the user typed on the same line is erased).
 // Determined mode:   label:  N/Total (XX%)
@@ -131,7 +150,15 @@ func (t *TProgressTicker) render() {
 		return
 	}
 	if t.total > 0 {
+		// total is a snapshot taken before the loop starts, not a true ceiling —
+		// callers that also drain newly-created entries or count nested sub-items
+		// (e.g. -update_all_dblp_entries counting DBLP children checked along the
+		// way) can legitimately push current past it. The raw counts are still
+		// useful there, but the percentage must never claim more than 100% done.
 		pct := float64(t.current) * 100.0 / float64(t.total)
+		if pct > 100 {
+			pct = 100
+		}
 		fmt.Fprintf(os.Stderr, "\r\033[K%s:  %*d/%d (%.0f%%)",
 			t.label, t.totalWidth, t.current, t.total, pct)
 	} else if t.current > 0 {
@@ -223,6 +250,23 @@ func (t *TProgressTicker) Done() {
 		fmt.Fprint(os.Stderr, "\r\033[K")
 	}
 	fmt.Fprintf(os.Stderr, "%s: done\n", t.label)
+	t.rendered = false
+	activeTicker = nil
+}
+
+// DoneQuiet clears the ticker's line (no "done" record left behind) and
+// deactivates it. Use instead of Done() for a ticker nested inside a larger
+// batch operation (e.g. one per parent within a bulk multi-parent pass) —
+// leaving a permanent completed-line per item defeats the point of a ticker
+// when there can be hundreds of items; whatever runs next just overwrites the
+// same line, exactly like an in-progress Step() would.
+func (t *TProgressTicker) DoneQuiet() {
+	if t == nil {
+		return
+	}
+	if t.rendered {
+		fmt.Fprint(os.Stderr, "\r\033[K")
+	}
 	t.rendered = false
 	activeTicker = nil
 }

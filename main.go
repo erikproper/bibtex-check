@@ -53,7 +53,7 @@ var (
 	Reporting TInteraction
 )
 
-const AppVersion = "29.36"
+const AppVersion = "29.39"
 
 // Run-state flags consumed by the write tail in main.
 var (
@@ -2307,6 +2307,13 @@ func doUpsertDblpEntries() {
 		beginBibTransaction()
 		processKey := func(key string) {
 			scanned++
+			// Keep the ticker's total honest: checking a parent's children can create
+			// new entries mid-run, so the snapshot taken before this loop started can
+			// fall behind. len(entryCache) is an O(1) map-length read, not a re-scan —
+			// cheap enough to call every iteration, unlike countBibEntries().
+			if entryCache != nil {
+				ticker.SetTotal(len(entryCache))
+			}
 			if ticker.SetCount(scanned) {
 				return
 			}

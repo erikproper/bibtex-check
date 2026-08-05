@@ -998,6 +998,18 @@ func (l *TBibTeXLibrary) EvidenceForBeingDifferentEntries(source, target string)
 // fairly to the absolute path shown in the bib entry.
 func (l *TBibTeXLibrary) entryDisplayLines(key string) string {
 	entry := loadEntryFromDb(key)
+	if !entry.Exists() && entryCache != nil {
+		// entryCache said this key doesn't exist (or is momentarily incomplete —
+		// e.g. a sibling entry just created earlier in the same pass, cache update
+		// still catching up). Confirmed live: a merge-confirmation prompt silently
+		// dropped a fully-populated parent's "Parent entry:" block this way. Display
+		// code runs rarely enough that a direct DB query as a fallback here is cheap
+		// insurance — unlike loadEntryFromDb's hot-path callers, which must not pay
+		// this cost on every ordinary cache miss.
+		if direct := loadEntryFromDbDirect(key); direct.Exists() {
+			entry = direct
+		}
+	}
 	if !entry.Exists() {
 		return ""
 	}
@@ -1255,6 +1267,14 @@ func FormatBibTeXFieldAssignment(prefix, field, value string) string {
 
 func (l *TBibTeXLibrary) EntryString(key, groups string, prefixes ...string) string {
 	entry := loadEntryFromDb(key)
+	if !entry.Exists() && entryCache != nil {
+		// See the matching fallback in entryDisplayLines — a cache miss/incomplete
+		// entry here shouldn't silently drop a field-conflict prompt's "Current
+		// entry:"/"Challenging entry:" block for a key that does exist in the DB.
+		if direct := loadEntryFromDbDirect(key); direct.Exists() {
+			entry = direct
+		}
+	}
 	if !entry.Exists() {
 		return ""
 	}

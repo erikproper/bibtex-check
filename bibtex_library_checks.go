@@ -1654,7 +1654,7 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 					break
 				}
 			}
-			ticker.Done()
+			ticker.DoneQuiet()
 		}
 
 		// Check that every library child of this DBLP-keyed parent also has a DBLP key.

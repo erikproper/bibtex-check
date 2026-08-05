@@ -439,7 +439,7 @@ func (l *TBibTeXLibrary) MaybeAddDBLPEntry(DBLPKey string) string {
 					break
 				}
 			}
-			ticker.Done()
+			ticker.DoneQuiet()
 		}
 	}
 

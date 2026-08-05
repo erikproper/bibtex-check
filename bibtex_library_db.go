@@ -3798,6 +3798,11 @@ func upsertBibEntryField(key, field, value string) {
 		err = bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, key, field)
 		if field == DBLPField {
 			deleteDblpCanonicalByCanonicalKey(key)
+			// dblp_key_missing records "this entry's dblp key isn't in the file store
+			// yet" — meaningless once the entry has no dblp key at all. Without this,
+			// clearing dblp leaves a stale flag behind forever (nothing else re-checks
+			// or clears it for an entry with an empty dblp field).
+			Library.DeleteMetadata(key, MetaPropDblpKeyMissing)
 		}
 	} else {
 		// Keep bib_entry_keys anchor in sync so FK-dependent tables can reference
@@ -3819,6 +3824,10 @@ func upsertBibEntryField(key, field, value string) {
 			// the old row to be removed explicitly.
 			deleteDblpCanonicalByCanonicalKey(key)
 			upsertDblpCanonical(value, key)
+			// The dblp key changed, so any earlier "not found in file store" flag was
+			// about a different key — clear it. MarkDblpKeyMissing re-sets it on the
+			// next check if the new key is also missing.
+			Library.DeleteMetadata(key, MetaPropDblpKeyMissing)
 		}
 	}
 	if err != nil {
@@ -3870,9 +3879,11 @@ func deleteBibEntryField(key, field string) {
 		// Mirror upsertBibEntryField's empty-value branch: clearing the dblp field
 		// must also drop the dblp_canonical row, or the old dblp key keeps resolving
 		// to this entry (via LookupDblpCanonical/buildKeyAliasesFromDb) even though
-		// bib_entries no longer shows it.
+		// bib_entries no longer shows it. Same for dblp_key_missing — "not found in
+		// file store" is meaningless once there's no dblp key to look up at all.
 		if field == DBLPField {
 			deleteDblpCanonicalByCanonicalKey(key)
+			Library.DeleteMetadata(key, MetaPropDblpKeyMissing)
 		}
 	}
 	if entryCache != nil {
@@ -3971,6 +3982,14 @@ func loadEntryFromDb(key string) *TBibTeXEntry {
 		}
 		return &TBibTeXEntry{Key: key, Fields: map[string]string{}}
 	}
+	return loadEntryFromDbDirect(key)
+}
+
+// loadEntryFromDbDirect queries bib_entries (and contributor_roles, when active)
+// directly, bypassing entryCache entirely. Used as loadEntryFromDb's slow path
+// when entryCache is nil, and as a fallback for display code that hit an
+// unexpectedly empty cache entry for a key that does exist in the DB.
+func loadEntryFromDbDirect(key string) *TBibTeXEntry {
 	rows, err := bibQuery(`SELECT field, value FROM bib_entries WHERE entry_key = ?`, key)
 	if err != nil {
 		dbInteraction.Warning("Could not query bib_entries for %s: %s", key, err)
