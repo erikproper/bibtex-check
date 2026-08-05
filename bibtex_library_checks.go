@@ -1616,7 +1616,14 @@ func (l *TBibTeXLibrary) CheckDBLP(keyRAW string) {
 			l.Warning("Crossref entry type without a crossref %s", key)
 		}
 
-		if entryDBLP != "" && crossrefDBLP == "" && !strings.HasPrefix(entryDBLP, "homepages/") {
+		// homepages/ and data/ are standalone DBLP record types with no real crossref
+		// hierarchy — a homepage has no parent, and a data/ entry (e.g. a dataset
+		// deposited on Zenodo) is DBLP-tagged as "misc" but stands on its own in
+		// DBLP's own data, with no crossref field at all (verified against the file
+		// store). Warning about a "missing parent DBLP key" for either is a false
+		// positive, not something to fix.
+		if entryDBLP != "" && crossrefDBLP == "" &&
+			!strings.HasPrefix(entryDBLP, "homepages/") && !strings.HasPrefix(entryDBLP, "data/") {
 			l.Warning("Parent entry %s does not have a dblp key, while the child %s does have dblp key %s", crossrefKey, key, entryDBLP)
 		}
 

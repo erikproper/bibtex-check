@@ -3867,6 +3867,13 @@ func deleteBibEntryField(key, field string) {
 		if err := bibExec(`DELETE FROM bib_entries WHERE entry_key = ? AND field = ?`, key, field); err != nil {
 			dbInteraction.Warning("bib_entries delete failed for %s.%s: %s", key, field, err)
 		}
+		// Mirror upsertBibEntryField's empty-value branch: clearing the dblp field
+		// must also drop the dblp_canonical row, or the old dblp key keeps resolving
+		// to this entry (via LookupDblpCanonical/buildKeyAliasesFromDb) even though
+		// bib_entries no longer shows it.
+		if field == DBLPField {
+			deleteDblpCanonicalByCanonicalKey(key)
+		}
 	}
 	if entryCache != nil {
 		if e, ok := entryCache[key]; ok {
